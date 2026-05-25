@@ -47,6 +47,8 @@ export function DeviceScreen(): React.JSX.Element {
     setConnectedDeviceName,
     setSendChannelMessageHandler,
     setDeviceStatus,
+    setContacts,
+    clearContacts,
     clearChannels,
   } = useBushMesh();
 
@@ -275,6 +277,7 @@ export function DeviceScreen(): React.JSX.Element {
       setTxFrames([]);
       setRxLogs([]);
       clearChannels();
+      clearContacts();
       setSharedConnectionStatus('Connected');
       setConnectedDeviceName(deviceName);
       setStatus('Connected');
@@ -331,6 +334,7 @@ export function DeviceScreen(): React.JSX.Element {
     setTxFrames([]);
     setRxLogs([]);
     clearChannels();
+    clearContacts();
     setSharedConnectionStatus('Disconnected');
     setConnectedDeviceName(null);
     setStatus('Disconnected');
@@ -350,7 +354,37 @@ export function DeviceScreen(): React.JSX.Element {
       setIsWriting(false);
     }
   };
+  const syncContacts = async () => {
+    try {
+      setIsWriting(true);
 
+      const contacts = await meshCoreClientRef.current?.syncContacts();
+
+      setContacts(
+        contacts?.map(contact => ({
+          publicKey: contact.publicKey,
+          publicKeyPrefix: contact.publicKeyPrefix,
+          name: contact.name,
+          type: contact.type,
+          flags: contact.flags,
+          outPathLength: contact.outPathLength,
+          lastAdvert: contact.lastAdvert,
+          latitude: contact.latitude,
+          longitude: contact.longitude,
+          lastModified: contact.lastModified,
+        })) ?? [],
+      );
+
+      setStatusDetail(`Contacts sync complete. Loaded ${contacts?.length ?? 0} contact(s).`);
+    } catch (error) {
+      setStatus('Error');
+      setStatusDetail(
+        error instanceof Error ? error.message : 'Failed to sync contacts.',
+      );
+    } finally {
+      setIsWriting(false);
+    }
+  };
   const sendDeviceQuery = async () => {
     try {
       setIsWriting(true);
@@ -667,6 +701,17 @@ export function DeviceScreen(): React.JSX.Element {
                 disabled={!canSendCommands}>
                 <Text style={styles.commandButtonSecondaryText}>
                   Get Battery / Storage
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.commandButtonSecondary,
+                  !canSendCommands && styles.commandButtonDisabled,
+                ]}
+                onPress={syncContacts}
+                disabled={!canSendCommands}>
+                <Text style={styles.commandButtonSecondaryText}>
+                  Sync Contacts
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity

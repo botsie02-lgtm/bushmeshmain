@@ -9,7 +9,33 @@ export function bytesToHex(bytes: number[]): string {
     .map(byte => byte.toString(16).padStart(2, '0').toUpperCase())
     .join(' ');
 }
+export function buildGetContactsCommand(since?: number): string {
+  if (typeof since === 'number') {
+    return bytesToBase64([
+      0x04,
+      since & 0xff,
+      (since >> 8) & 0xff,
+      (since >> 16) & 0xff,
+      (since >> 24) & 0xff,
+    ]);
+  }
 
+  return bytesToBase64([0x04]);
+}
+
+export function getContactsCommandHex(since?: number): string {
+  if (typeof since === 'number') {
+    return bytesToHex([
+      0x04,
+      since & 0xff,
+      (since >> 8) & 0xff,
+      (since >> 16) & 0xff,
+      (since >> 24) & 0xff,
+    ]);
+  }
+
+  return bytesToHex([0x04]);
+}
 function writeUInt32LE(value: number): number[] {
   return [
     value & 0xff,

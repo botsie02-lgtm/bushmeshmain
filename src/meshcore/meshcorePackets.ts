@@ -24,6 +24,9 @@ const PACKET_LABELS: Record<number, string> = {
   0x82: 'PACKET_ACK',
   0x83: 'PACKET_MESSAGES_WAITING',
   0x88: 'PACKET_LOG_DATA',
+  0x02: 'PACKET_CONTACTS_START',
+  0x03: 'PACKET_CONTACT',
+  0x04: 'PACKET_CONTACTS_END',
 };
 
 export function base64ToBytes(value: string): number[] {

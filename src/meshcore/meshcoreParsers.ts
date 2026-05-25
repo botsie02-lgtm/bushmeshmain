@@ -32,6 +32,21 @@ export type ParsedMeshCorePacket = {
   channelMessage?: ParsedChannelMessage;
   contactMessage?: ParsedContactMessage;
   batteryInfo?: ParsedBatteryInfo;
+  contactInfo?: ParsedContactInfo;
+  contactsStartCount?: number;
+  contactsEndLastModified?: number | null;
+};
+export type ParsedContactInfo = {
+  publicKey: string;
+  publicKeyPrefix: string;
+  type: number;
+  flags: number;
+  outPathLength: number;
+  name: string;
+  lastAdvert: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  lastModified: number | null;
 };
 
 function readUInt32LE(bytes: number[], offset: number): number | null {
@@ -428,6 +443,88 @@ function parseBatteryInfo(bytes: number[]): ParsedMeshCorePacket {
     },
   };
 }
+function parseContactsStart(bytes: number[]): ParsedMeshCorePacket {
+  const count = readUInt32LE(bytes, 1) ?? 0;
+
+  return {
+    title: 'Parsed Contacts Start',
+    lines: [`Byte Length: ${bytes.length}`, `Contact Count: ${count}`],
+    contactsStartCount: count,
+  };
+}
+
+function parseContactInfo(bytes: number[]): ParsedMeshCorePacket {
+  const lines: string[] = [];
+
+  lines.push(`Byte Length: ${bytes.length}`);
+
+  if (bytes.length < 143) {
+    lines.push('Parser Note: Packet is shorter than expected for CONTACT.');
+    return {
+      title: 'Parsed Contact',
+      lines,
+    };
+  }
+
+  const publicKey = readHex(bytes, 1, 32);
+  const publicKeyPrefix = publicKey.slice(0, 12);
+  const type = bytes[33];
+  const flags = bytes[34];
+  const outPathLengthRaw = bytes[35];
+  const outPathLength = outPathLengthRaw > 127 ? outPathLengthRaw - 256 : outPathLengthRaw;
+  const name = readText(bytes, 100, 32) || 'Unnamed Contact';
+  const lastAdvert = readUInt32LE(bytes, 132);
+  const latitudeRaw = readInt32LE(bytes, 136);
+  const longitudeRaw = readInt32LE(bytes, 140);
+  const lastModified = readUInt32LE(bytes, 144);
+
+  const latitude = latitudeRaw !== null ? latitudeRaw / 1_000_000 : null;
+  const longitude = longitudeRaw !== null ? longitudeRaw / 1_000_000 : null;
+
+  lines.push(`Name: ${name}`);
+  lines.push(`Public Key Prefix: ${publicKeyPrefix}`);
+  lines.push(`Type: ${type}`);
+  lines.push(`Flags: ${flags}`);
+  lines.push(`Out Path Length: ${outPathLength}`);
+  lines.push(`Last Advert: ${lastAdvert ?? 'Unavailable'}`);
+
+  if (latitude !== null && longitude !== null) {
+    lines.push(`Latitude: ${latitude}`);
+    lines.push(`Longitude: ${longitude}`);
+  }
+
+  lines.push(`Last Modified: ${lastModified ?? 'Unavailable'}`);
+
+  return {
+    title: 'Parsed Contact',
+    lines,
+    contactInfo: {
+      publicKey,
+      publicKeyPrefix,
+      type,
+      flags,
+      outPathLength,
+      name,
+      lastAdvert,
+      latitude,
+      longitude,
+      lastModified,
+    },
+  };
+}
+
+function parseContactsEnd(bytes: number[]): ParsedMeshCorePacket {
+  const lastModified = readUInt32LE(bytes, 1);
+
+  return {
+    title: 'Parsed Contacts End',
+    lines: [
+      `Byte Length: ${bytes.length}`,
+      `Most Recent Last Modified: ${lastModified ?? 'Unavailable'}`,
+    ],
+    contactsEndLastModified: lastModified,
+  };
+}
 export function parseMeshCorePacketFields(
   bytes: number[],
 ): ParsedMeshCorePacket | null {
@@ -459,6 +556,14 @@ export function parseMeshCorePacketFields(
     
     case 0x0c:
       return parseBatteryInfo(bytes);
+    case 0x02:
+      return parseContactsStart(bytes);
+
+    case 0x03:
+      return parseContactInfo(bytes);
+
+    case 0x04:
+      return parseContactsEnd(bytes);
       
     default:
       return null;

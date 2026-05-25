@@ -27,7 +27,18 @@ export type BushMeshChannelMessage = {
   status: 'sent' | 'failed' | 'pending';
   createdAt: string;
 };
-
+export type BushMeshContact = {
+  publicKey: string;
+  publicKeyPrefix: string;
+  name: string;
+  type: number;
+  flags: number;
+  outPathLength: number;
+  lastAdvert: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  lastModified: number | null;
+};
 type BushMeshConnectionStatus = 'Disconnected' | 'Connected';
 
 type SendChannelMessageHandler = (
@@ -44,7 +55,10 @@ type BushMeshContextValue = {
   channelMessages: BushMeshChannelMessage[];
   canSendChannelMessage: boolean;
   deviceStatus: BushMeshDeviceStatus | null;
+  contacts: BushMeshContact[];
 
+  setContacts: (contacts: BushMeshContact[]) => void;
+  setDeviceStatus: (status: BushMeshDeviceStatus | null) => void;
   setConnectionStatus: (status: BushMeshConnectionStatus) => void;
   setConnectedDeviceName: (name: string | null) => void;
   setChannels: (channels: BushMeshChannel[]) => void;
@@ -58,7 +72,7 @@ type BushMeshContextValue = {
   ) => void;
   clearChannels: () => void;
   clearChannelMessages: () => void;
-  setDeviceStatus: (status: BushMeshDeviceStatus | null) => void;
+  clearContacts: () => void;
 };
 
 const BushMeshContext = createContext<BushMeshContextValue | null>(null);
@@ -68,6 +82,10 @@ export function BushMeshProvider({
 }: {
   children: React.ReactNode;
 }): React.JSX.Element {
+  const [contacts, setContacts] = useState<BushMeshContact[]>([]);
+  const clearContacts = () => {
+    setContacts([]);
+  };
   const [connectionStatus, setConnectionStatus] =
     useState<BushMeshConnectionStatus>('Disconnected');
 
@@ -75,7 +93,7 @@ export function BushMeshProvider({
     null,
   );
   const [channels, setChannelsState] = useState<BushMeshChannel[]>([]);
-
+  
   const [activeChannelIndex, setActiveChannelIndex] = useState<string | null>(
     null,
   );
@@ -161,9 +179,11 @@ export function BushMeshProvider({
       activeChannel,
       channelMessages,
       deviceStatus,
+      contacts,
       canSendChannelMessage: sendChannelMessageHandlerState !== null,
       setDeviceStatus,
 
+      setContacts,
       setConnectionStatus,
       setConnectedDeviceName,
       setChannels,
@@ -173,6 +193,7 @@ export function BushMeshProvider({
       addLocalChannelMessage,
       clearChannels,
       clearChannelMessages,
+      clearContacts,
     }),
     [
       connectionStatus,
@@ -182,6 +203,7 @@ export function BushMeshProvider({
       activeChannel,
       channelMessages,
       deviceStatus,
+      contacts,
       sendChannelMessageHandlerState,
       sendChannelMessage,
       addLocalChannelMessage,
