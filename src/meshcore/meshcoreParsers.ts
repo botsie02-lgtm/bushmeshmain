@@ -1,8 +1,30 @@
 import {Buffer} from 'buffer';
 
+export type ParsedChannelMessage = {
+  packetType: 'channel';
+  channelIndex: string;
+  text: string;
+  timestamp: number | null;
+  pathLength: number | null;
+  textType: number | null;
+  snr: number | null;
+};
+
+export type ParsedContactMessage = {
+  packetType: 'contact';
+  publicKeyPrefix: string;
+  text: string;
+  timestamp: number | null;
+  pathLength: number | null;
+  textType: number | null;
+  snr: number | null;
+};
+
 export type ParsedMeshCorePacket = {
   title: string;
   lines: string[];
+  channelMessage?: ParsedChannelMessage;
+  contactMessage?: ParsedContactMessage;
 };
 
 function readUInt32LE(bytes: number[], offset: number): number | null {
@@ -26,6 +48,10 @@ function readInt32LE(bytes: number[], offset: number): number | null {
   }
 
   return value > 0x7fffffff ? value - 0x100000000 : value;
+}
+
+function readSignedByte(byte: number): number {
+  return byte > 127 ? byte - 256 : byte;
 }
 
 function readText(bytes: number[], start: number, length?: number): string {
@@ -198,6 +224,153 @@ function parseChannelInfo(bytes: number[]): ParsedMeshCorePacket {
   };
 }
 
+function parseChannelMessage(bytes: number[]): ParsedMeshCorePacket {
+  const lines: string[] = [];
+  const isV3 = bytes[0] === 0x11;
+
+  lines.push(`Byte Length: ${bytes.length}`);
+
+  let offset = 1;
+  let snr: number | null = null;
+
+  if (isV3) {
+    if (bytes.length < 11) {
+      lines.push('Parser Note: Packet is shorter than expected for CHANNEL_MSG_RECV_V3.');
+      return {
+        title: 'Parsed Channel Message',
+        lines,
+      };
+    }
+
+    snr = readSignedByte(bytes[offset]) / 4;
+    offset += 3;
+  } else if (bytes.length < 8) {
+    lines.push('Parser Note: Packet is shorter than expected for CHANNEL_MSG_RECV.');
+    return {
+      title: 'Parsed Channel Message',
+      lines,
+    };
+  }
+
+  const channelIndex = bytes[offset];
+  const pathLength = bytes[offset + 1];
+  const textType = bytes[offset + 2];
+  const timestamp = readUInt32LE(bytes, offset + 3);
+  const text = readText(bytes, offset + 7);
+
+  lines.push(`Channel Index: ${channelIndex}`);
+  lines.push(`Path Length: ${pathLength}`);
+  lines.push(`Text Type: ${textType}`);
+  lines.push(`Timestamp: ${timestamp ?? 'Unavailable'}`);
+
+  if (snr !== null) {
+    lines.push(`SNR: ${snr}`);
+  }
+
+  lines.push(`Message: ${text}`);
+
+  return {
+    title: isV3 ? 'Parsed Channel Message V3' : 'Parsed Channel Message',
+    lines,
+    channelMessage: {
+      packetType: 'channel',
+      channelIndex: String(channelIndex),
+      text,
+      timestamp,
+      pathLength,
+      textType,
+      snr,
+    },
+  };
+}
+
+function parseContactMessage(bytes: number[]): ParsedMeshCorePacket {
+  const lines: string[] = [];
+  const isV3 = bytes[0] === 0x10;
+
+  lines.push(`Byte Length: ${bytes.length}`);
+
+  let offset = 1;
+  let snr: number | null = null;
+
+  if (isV3) {
+    if (bytes.length < 20) {
+      lines.push('Parser Note: Packet is shorter than expected for CONTACT_MSG_RECV_V3.');
+      return {
+        title: 'Parsed Contact Message',
+        lines,
+      };
+    }
+
+    snr = readSignedByte(bytes[offset]) / 4;
+    offset += 3;
+  } else if (bytes.length < 13) {
+    lines.push('Parser Note: Packet is shorter than expected for CONTACT_MSG_RECV.');
+    return {
+      title: 'Parsed Contact Message',
+      lines,
+    };
+  }
+
+  const publicKeyPrefix = readHex(bytes, offset, 6);
+  offset += 6;
+
+  const pathLength = bytes[offset];
+  const textType = bytes[offset + 1];
+  offset += 2;
+
+  const timestamp = readUInt32LE(bytes, offset);
+  offset += 4;
+
+  if (textType === 2) {
+    offset += 4;
+  }
+
+  const text = readText(bytes, offset);
+
+  lines.push(`Public Key Prefix: ${publicKeyPrefix}`);
+  lines.push(`Path Length: ${pathLength}`);
+  lines.push(`Text Type: ${textType}`);
+  lines.push(`Timestamp: ${timestamp ?? 'Unavailable'}`);
+
+  if (snr !== null) {
+    lines.push(`SNR: ${snr}`);
+  }
+
+  lines.push(`Message: ${text}`);
+
+  return {
+    title: isV3 ? 'Parsed Contact Message V3' : 'Parsed Contact Message',
+    lines,
+    contactMessage: {
+      packetType: 'contact',
+      publicKeyPrefix,
+      text,
+      timestamp,
+      pathLength,
+      textType,
+      snr,
+    },
+  };
+}
+
+function parseNoMoreMessages(bytes: number[]): ParsedMeshCorePacket {
+  return {
+    title: 'Parsed No More Messages',
+    lines: [`Byte Length: ${bytes.length}`, 'No more queued messages.'],
+  };
+}
+
+function parseMessagesWaiting(bytes: number[]): ParsedMeshCorePacket {
+  return {
+    title: 'Parsed Messages Waiting',
+    lines: [
+      `Byte Length: ${bytes.length}`,
+      'Messages are waiting on the companion node.',
+    ],
+  };
+}
+
 export function parseMeshCorePacketFields(
   bytes: number[],
 ): ParsedMeshCorePacket | null {
@@ -212,6 +385,20 @@ export function parseMeshCorePacketFields(
 
     case 0x12:
       return parseChannelInfo(bytes);
+
+    case 0x08:
+    case 0x11:
+      return parseChannelMessage(bytes);
+
+    case 0x07:
+    case 0x10:
+      return parseContactMessage(bytes);
+
+    case 0x0a:
+      return parseNoMoreMessages(bytes);
+
+    case 0x83:
+      return parseMessagesWaiting(bytes);
 
     default:
       return null;

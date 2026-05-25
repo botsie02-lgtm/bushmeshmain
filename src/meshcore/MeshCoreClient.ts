@@ -5,8 +5,10 @@ import {
   buildAppStartCommand,
   buildDeviceQueryCommand,
   buildGetChannelCommand,
+  buildGetMessageCommand,
   buildSendChannelMessageCommand,
   getChannelCommandHex,
+  getMessageCommandHex,
   sendChannelMessageCommandHex,
 } from './meshcoreCommands';
 import {
@@ -14,7 +16,11 @@ import {
   decodeMeshCoreBytes,
   decodeMeshCorePacket,
 } from './meshcorePackets';
-import {parseMeshCorePacketFields} from './meshcoreParsers';
+import {
+  ParsedChannelMessage,
+  ParsedContactMessage,
+  parseMeshCorePacketFields,
+} from './meshcoreParsers';
 import {
   MeshCoreReassembler,
   createIdleReassembler,
@@ -25,6 +31,13 @@ export type MeshCoreLogItem = {
   value: string;
   detail?: string;
   parsedLines?: string[];
+  channelMessage?: ParsedChannelMessage;
+  contactMessage?: ParsedContactMessage;
+};
+
+export type MeshCoreSyncedMessage = {
+  type: 'channel' | 'contact';
+  log: MeshCoreLogItem;
 };
 
 export type MeshCoreClientEvents = {
@@ -32,11 +45,14 @@ export type MeshCoreClientEvents = {
   onTxFrame: (log: MeshCoreLogItem) => void;
   onStatus: (message: string) => void;
   onError: (message: string) => void;
+  onMessagesWaiting?: () => void;
+  onChannelMessage?: (message: ParsedChannelMessage) => void;
+  onContactMessage?: (message: ParsedContactMessage) => void;
 };
 
 type PendingCommand = {
   label: string;
-  expectedPacketType: number;
+  expectedPacketTypes: number[];
   resolve: (log: MeshCoreLogItem) => void;
   reject: (error: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
@@ -74,9 +90,25 @@ export class MeshCoreClient {
           ? `${decoded.byteLength} bytes assembled — ${parsed.title}`
           : `${decoded.byteLength} bytes assembled`,
         parsedLines: parsed?.lines,
+        channelMessage: parsed?.channelMessage,
+        contactMessage: parsed?.contactMessage,
       };
 
       this.events.onTxFrame(frameLog);
+
+      if (decoded.packetType === 0x83) {
+        this.events.onStatus('Messages waiting on companion node.');
+        this.events.onMessagesWaiting?.();
+      }
+
+      if (parsed?.channelMessage) {
+        this.events.onChannelMessage?.(parsed.channelMessage);
+      }
+
+      if (parsed?.contactMessage) {
+        this.events.onContactMessage?.(parsed.contactMessage);
+      }
+
       this.handlePossibleCommandResponse(decoded.packetType, frameLog);
     });
 
@@ -131,7 +163,7 @@ export class MeshCoreClient {
       'CMD_APP_START',
       buildAppStartCommand(appName),
       '01 00 00 00 00 00 00 00 42 75 73 68 4D 65 73 68',
-      0x05,
+      [0x05],
       'PACKET_SELF_INFO',
     );
   }
@@ -141,7 +173,7 @@ export class MeshCoreClient {
       'CMD_DEVICE_QUERY',
       buildDeviceQueryCommand(),
       '16 03',
-      0x0d,
+      [0x0d],
       'PACKET_DEVICE_INFO',
     );
   }
@@ -151,7 +183,7 @@ export class MeshCoreClient {
       `CMD_GET_CHANNEL_${channelIndex}`,
       buildGetChannelCommand(channelIndex),
       getChannelCommandHex(channelIndex),
-      0x12,
+      [0x12],
       'PACKET_CHANNEL_INFO',
     );
   }
@@ -177,65 +209,114 @@ export class MeshCoreClient {
     return results;
   }
 
-async sendChannelMessage(
-  channelIndex: number,
-  message: string,
-): Promise<MeshCoreLogItem> {
-  const cleanMessage = message.trim();
+  async sendChannelMessage(
+    channelIndex: number,
+    message: string,
+  ): Promise<MeshCoreLogItem> {
+    const cleanMessage = message.trim();
 
-  if (!cleanMessage) {
-    throw new Error('Message is empty.');
+    if (!cleanMessage) {
+      throw new Error('Message is empty.');
+    }
+
+    if (cleanMessage.length > 133) {
+      throw new Error('Message is too long. Keep it under 133 characters.');
+    }
+
+    const timestampSeconds = Math.floor(Date.now() / 1000);
+    const label = `CMD_SEND_CHANNEL_MESSAGE_${channelIndex}`;
+    const base64Command = buildSendChannelMessageCommand(
+      channelIndex,
+      cleanMessage,
+      timestampSeconds,
+    );
+    const displayHex = sendChannelMessageCommandHex(
+      channelIndex,
+      cleanMessage,
+      timestampSeconds,
+    );
+
+    this.events.onStatus(`${label} sending...`);
+
+    this.events.onTxChunk({
+      label: 'RX_WRITE',
+      value: `${label}: ${displayHex}`,
+      detail: 'Channel message sent from BushMesh to device.',
+    });
+
+    await this.manager.writeCharacteristicWithResponseForDevice(
+      this.device.id,
+      MESHCORE_BLE.serviceUuid,
+      MESHCORE_BLE.rxCharacteristicUuid,
+      base64Command,
+    );
+
+    const log: MeshCoreLogItem = {
+      label: 'CHANNEL_MESSAGE_QUEUED',
+      value: cleanMessage,
+      detail: `Queued to channel ${channelIndex}.`,
+    };
+
+    this.events.onTxFrame(log);
+    this.events.onStatus(`${label} written to device.`);
+
+    return log;
   }
 
-  if (cleanMessage.length > 133) {
-    throw new Error('Message is too long. Keep it under 133 characters.');
+  async syncNextMessage(): Promise<MeshCoreLogItem> {
+    return this.writeCommandAndWaitForPacket(
+      'CMD_SYNC_NEXT_MESSAGE',
+      buildGetMessageCommand(),
+      getMessageCommandHex(),
+      [0x07, 0x08, 0x0a, 0x10, 0x11],
+      'PACKET_MESSAGE_OR_NO_MORE_MSGS',
+    );
   }
 
-  const timestampSeconds = Math.floor(Date.now() / 1000);
-  const label = `CMD_SEND_CHANNEL_MESSAGE_${channelIndex}`;
-  const base64Command = buildSendChannelMessageCommand(
-    channelIndex,
-    cleanMessage,
-    timestampSeconds,
-  );
-  const displayHex = sendChannelMessageCommandHex(
-    channelIndex,
-    cleanMessage,
-    timestampSeconds,
-  );
+  async syncQueuedMessages(maxMessages = 20): Promise<MeshCoreSyncedMessage[]> {
+    const syncedMessages: MeshCoreSyncedMessage[] = [];
 
-  this.events.onStatus(`${label} sending...`);
+    for (let index = 0; index < maxMessages; index += 1) {
+      this.events.onStatus(`Syncing queued message ${index + 1}...`);
 
-  this.events.onTxChunk({
-    label: 'RX_WRITE',
-    value: `${label}: ${displayHex}`,
-    detail: 'Channel message sent from BushMesh to device.',
-  });
+      const result = await this.syncNextMessage();
 
-  await this.manager.writeCharacteristicWithResponseForDevice(
-    this.device.id,
-    MESHCORE_BLE.serviceUuid,
-    MESHCORE_BLE.rxCharacteristicUuid,
-    base64Command,
-  );
+      if (result.label === 'PACKET_NO_MORE_MSGS') {
+        this.events.onStatus(
+          `Message sync complete. Pulled ${syncedMessages.length} message(s).`,
+        );
+        return syncedMessages;
+      }
 
-  const log: MeshCoreLogItem = {
-    label: 'CHANNEL_MESSAGE_QUEUED',
-    value: cleanMessage,
-    detail: `Queued to channel ${channelIndex}.`,
-  };
+      if (result.channelMessage) {
+        syncedMessages.push({
+          type: 'channel',
+          log: result,
+        });
+      }
 
-  this.events.onTxFrame(log);
-  this.events.onStatus(`${label} written to device.`);
+      if (result.contactMessage) {
+        syncedMessages.push({
+          type: 'contact',
+          log: result,
+        });
+      }
 
-  return log;
-}
+      await this.delay(120);
+    }
+
+    this.events.onStatus(
+      `Message sync stopped after ${maxMessages} message check(s).`,
+    );
+
+    return syncedMessages;
+  }
 
   private async writeCommandAndWaitForPacket(
     label: string,
     base64Command: string,
     displayHex: string,
-    expectedPacketType: number,
+    expectedPacketTypes: number[],
     expectedPacketLabel: string,
   ): Promise<MeshCoreLogItem> {
     if (this.pendingCommand) {
@@ -248,7 +329,7 @@ async sendChannelMessage(
 
     const responsePromise = this.waitForPacket(
       label,
-      expectedPacketType,
+      expectedPacketTypes,
       expectedPacketLabel,
     );
 
@@ -272,7 +353,7 @@ async sendChannelMessage(
 
   private waitForPacket(
     label: string,
-    expectedPacketType: number,
+    expectedPacketTypes: number[],
     expectedPacketLabel: string,
   ): Promise<MeshCoreLogItem> {
     return new Promise((resolve, reject) => {
@@ -288,7 +369,7 @@ async sendChannelMessage(
 
       this.pendingCommand = {
         label,
-        expectedPacketType,
+        expectedPacketTypes,
         resolve,
         reject,
         timeoutId,
@@ -304,7 +385,7 @@ async sendChannelMessage(
       return;
     }
 
-    if (packetType !== this.pendingCommand.expectedPacketType) {
+    if (!this.pendingCommand.expectedPacketTypes.includes(packetType)) {
       return;
     }
 

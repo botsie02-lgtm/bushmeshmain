@@ -47,6 +47,14 @@ export function getChannelCommandHex(channelIndex: number): string {
   return bytesToHex([0x1f, channelIndex]);
 }
 
+export function buildGetMessageCommand(): string {
+  return bytesToBase64([0x0a]);
+}
+
+export function getMessageCommandHex(): string {
+  return bytesToHex([0x0a]);
+}
+
 export function buildSendChannelMessageCommand(
   channelIndex: number,
   message: string,

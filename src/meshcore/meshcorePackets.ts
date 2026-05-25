@@ -8,10 +8,22 @@ export type MeshCorePacketInfo = {
 };
 
 const PACKET_LABELS: Record<number, string> = {
+  0x00: 'PACKET_OK',
+  0x01: 'PACKET_ERROR',
   0x05: 'PACKET_SELF_INFO',
   0x06: 'PACKET_MSG_SENT',
+  0x07: 'PACKET_CONTACT_MSG_RECV',
+  0x08: 'PACKET_CHANNEL_MSG_RECV',
+  0x0a: 'PACKET_NO_MORE_MSGS',
+  0x0c: 'PACKET_BATTERY',
   0x0d: 'PACKET_DEVICE_INFO',
+  0x10: 'PACKET_CONTACT_MSG_RECV_V3',
+  0x11: 'PACKET_CHANNEL_MSG_RECV_V3',
   0x12: 'PACKET_CHANNEL_INFO',
+  0x80: 'PACKET_ADVERTISEMENT',
+  0x82: 'PACKET_ACK',
+  0x83: 'PACKET_MESSAGES_WAITING',
+  0x88: 'PACKET_LOG_DATA',
 };
 
 export function base64ToBytes(value: string): number[] {
