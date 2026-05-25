@@ -11,7 +11,13 @@ export type BushMeshChannel = {
   channelName: string;
   secret: string;
 };
-
+export type BushMeshDeviceStatus = {
+  batteryMv: number;
+  batteryVolts: number;
+  usedStorageKb: number | null;
+  totalStorageKb: number | null;
+  storagePercent: number | null;
+};
 export type BushMeshChannelMessage = {
   id: string;
   channelIndex: string;
@@ -37,6 +43,7 @@ type BushMeshContextValue = {
   activeChannel: BushMeshChannel | null;
   channelMessages: BushMeshChannelMessage[];
   canSendChannelMessage: boolean;
+  deviceStatus: BushMeshDeviceStatus | null;
 
   setConnectionStatus: (status: BushMeshConnectionStatus) => void;
   setConnectedDeviceName: (name: string | null) => void;
@@ -51,6 +58,7 @@ type BushMeshContextValue = {
   ) => void;
   clearChannels: () => void;
   clearChannelMessages: () => void;
+  setDeviceStatus: (status: BushMeshDeviceStatus | null) => void;
 };
 
 const BushMeshContext = createContext<BushMeshContextValue | null>(null);
@@ -66,13 +74,14 @@ export function BushMeshProvider({
   const [connectedDeviceName, setConnectedDeviceName] = useState<string | null>(
     null,
   );
-
   const [channels, setChannelsState] = useState<BushMeshChannel[]>([]);
 
   const [activeChannelIndex, setActiveChannelIndex] = useState<string | null>(
     null,
   );
-
+  const [deviceStatus, setDeviceStatus] = useState<BushMeshDeviceStatus | null>(
+  null,
+  );
   const [channelMessages, setChannelMessages] = useState<
     BushMeshChannelMessage[]
   >([]);
@@ -151,7 +160,9 @@ export function BushMeshProvider({
       activeChannelIndex,
       activeChannel,
       channelMessages,
+      deviceStatus,
       canSendChannelMessage: sendChannelMessageHandlerState !== null,
+      setDeviceStatus,
 
       setConnectionStatus,
       setConnectedDeviceName,
@@ -170,6 +181,7 @@ export function BushMeshProvider({
       activeChannelIndex,
       activeChannel,
       channelMessages,
+      deviceStatus,
       sendChannelMessageHandlerState,
       sendChannelMessage,
       addLocalChannelMessage,

@@ -50,7 +50,13 @@ export function getChannelCommandHex(channelIndex: number): string {
 export function buildGetMessageCommand(): string {
   return bytesToBase64([0x0a]);
 }
+export function buildGetBatteryCommand(): string {
+  return bytesToBase64([0x14]);
+}
 
+export function getBatteryCommandHex(): string {
+  return bytesToHex([0x14]);
+}
 export function getMessageCommandHex(): string {
   return bytesToHex([0x0a]);
 }

@@ -46,6 +46,7 @@ export function DeviceScreen(): React.JSX.Element {
     setConnectionStatus: setSharedConnectionStatus,
     setConnectedDeviceName,
     setSendChannelMessageHandler,
+    setDeviceStatus,
     clearChannels,
   } = useBushMesh();
 
@@ -65,7 +66,31 @@ export function DeviceScreen(): React.JSX.Element {
   const [showDebugLogs, setShowDebugLogs] = useState(false);
 
   const channelProbeResults = sharedChannels;
+  const getBatteryStatus = async () => {
+  try {
+    setIsWriting(true);
 
+    const result = await meshCoreClientRef.current?.getBatteryStatus();
+
+    if (result?.batteryInfo) {
+      setDeviceStatus(result.batteryInfo);
+      setStatusDetail(
+        `Battery ${result.batteryInfo.batteryVolts.toFixed(2)} V. Storage ${
+          result.batteryInfo.storagePercent ?? 0
+        }% used.`,
+      );
+    } else {
+      setStatusDetail('Battery response received, but no battery info parsed.');
+    }
+  } catch (error) {
+    setStatus('Error');
+    setStatusDetail(
+      error instanceof Error ? error.message : 'Failed to get battery status.',
+    );
+  } finally {
+    setIsWriting(false);
+  }
+};
   const isScanning = status === 'Scanning';
   const isConnecting = status === 'Connecting';
 
@@ -633,7 +658,17 @@ export function DeviceScreen(): React.JSX.Element {
                   Send App Start
                 </Text>
               </TouchableOpacity>
-
+              <TouchableOpacity
+                style={[
+                  styles.commandButtonSecondary,
+                  !canSendCommands && styles.commandButtonDisabled,
+                ]}
+                onPress={getBatteryStatus}
+                disabled={!canSendCommands}>
+                <Text style={styles.commandButtonSecondaryText}>
+                  Get Battery / Storage
+                </Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={[
                   styles.commandButtonSecondary,

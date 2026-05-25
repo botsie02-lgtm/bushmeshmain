@@ -9,7 +9,13 @@ export type ParsedChannelMessage = {
   textType: number | null;
   snr: number | null;
 };
-
+export type ParsedBatteryInfo = {
+  batteryMv: number;
+  batteryVolts: number;
+  usedStorageKb: number | null;
+  totalStorageKb: number | null;
+  storagePercent: number | null;
+};
 export type ParsedContactMessage = {
   packetType: 'contact';
   publicKeyPrefix: string;
@@ -25,6 +31,7 @@ export type ParsedMeshCorePacket = {
   lines: string[];
   channelMessage?: ParsedChannelMessage;
   contactMessage?: ParsedContactMessage;
+  batteryInfo?: ParsedBatteryInfo;
 };
 
 function readUInt32LE(bytes: number[], offset: number): number | null {
@@ -370,7 +377,57 @@ function parseMessagesWaiting(bytes: number[]): ParsedMeshCorePacket {
     ],
   };
 }
+function parseBatteryInfo(bytes: number[]): ParsedMeshCorePacket {
+  const lines: string[] = [];
 
+  lines.push(`Byte Length: ${bytes.length}`);
+
+  if (bytes.length < 3) {
+    lines.push('Parser Note: Packet is shorter than expected for BATTERY.');
+    return {
+      title: 'Parsed Battery Info',
+      lines,
+    };
+  }
+
+  const batteryMv = bytes[1] | (bytes[2] << 8);
+  const batteryVolts = batteryMv / 1000;
+
+  const usedStorageKb = readUInt32LE(bytes, 3);
+  const totalStorageKb = readUInt32LE(bytes, 7);
+
+  const storagePercent =
+    usedStorageKb !== null && totalStorageKb !== null && totalStorageKb > 0
+      ? Math.round((usedStorageKb / totalStorageKb) * 100)
+      : null;
+
+  lines.push(`Battery: ${batteryMv} mV`);
+  lines.push(`Battery Volts: ${batteryVolts.toFixed(2)} V`);
+
+  if (usedStorageKb !== null) {
+    lines.push(`Used Storage: ${usedStorageKb} KB`);
+  }
+
+  if (totalStorageKb !== null) {
+    lines.push(`Total Storage: ${totalStorageKb} KB`);
+  }
+
+  if (storagePercent !== null) {
+    lines.push(`Storage Used: ${storagePercent}%`);
+  }
+
+  return {
+    title: 'Parsed Battery Info',
+    lines,
+    batteryInfo: {
+      batteryMv,
+      batteryVolts,
+      usedStorageKb,
+      totalStorageKb,
+      storagePercent,
+    },
+  };
+}
 export function parseMeshCorePacketFields(
   bytes: number[],
 ): ParsedMeshCorePacket | null {
@@ -399,7 +456,10 @@ export function parseMeshCorePacketFields(
 
     case 0x83:
       return parseMessagesWaiting(bytes);
-
+    
+    case 0x0c:
+      return parseBatteryInfo(bytes);
+      
     default:
       return null;
   }

@@ -4,9 +4,11 @@ import {MESHCORE_BLE} from './meshcoreBle';
 import {
   buildAppStartCommand,
   buildDeviceQueryCommand,
+  buildGetBatteryCommand,
   buildGetChannelCommand,
   buildGetMessageCommand,
   buildSendChannelMessageCommand,
+  getBatteryCommandHex,
   getChannelCommandHex,
   getMessageCommandHex,
   sendChannelMessageCommandHex,
@@ -17,6 +19,7 @@ import {
   decodeMeshCorePacket,
 } from './meshcorePackets';
 import {
+  ParsedBatteryInfo,
   ParsedChannelMessage,
   ParsedContactMessage,
   parseMeshCorePacketFields,
@@ -33,6 +36,7 @@ export type MeshCoreLogItem = {
   parsedLines?: string[];
   channelMessage?: ParsedChannelMessage;
   contactMessage?: ParsedContactMessage;
+  batteryInfo?: ParsedBatteryInfo;
 };
 
 export type MeshCoreSyncedMessage = {
@@ -92,6 +96,7 @@ export class MeshCoreClient {
         parsedLines: parsed?.lines,
         channelMessage: parsed?.channelMessage,
         contactMessage: parsed?.contactMessage,
+        batteryInfo: parsed?.batteryInfo,
       };
 
       this.events.onTxFrame(frameLog);
@@ -177,7 +182,15 @@ export class MeshCoreClient {
       'PACKET_DEVICE_INFO',
     );
   }
-
+  async getBatteryStatus(): Promise<MeshCoreLogItem> {
+    return this.writeCommandAndWaitForPacket(
+      'CMD_GET_BATTERY',
+      buildGetBatteryCommand(),
+      getBatteryCommandHex(),
+      [0x0c],
+      'PACKET_BATTERY',
+    );
+  }
   async getChannel(channelIndex: number): Promise<MeshCoreLogItem> {
     return this.writeCommandAndWaitForPacket(
       `CMD_GET_CHANNEL_${channelIndex}`,
