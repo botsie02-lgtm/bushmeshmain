@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 
 import {BushMeshProvider} from './src/state/BushMeshContext';
+import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
@@ -19,9 +20,9 @@ type TabKey = 'device' | 'channels' | 'contacts' | 'map';
 
 const tabs: Array<{key: TabKey; label: string}> = [
   {key: 'device', label: 'Device'},
-  {key: 'channels', label: 'Channels'},
+  {key: 'channels', label: 'Radio'},
   {key: 'contacts', label: 'Contacts'},
-  {key: 'map', label: 'Map'},
+  {key: 'map', label: 'Convoy'},
 ];
 
 function AppContent(): React.JSX.Element {
@@ -33,7 +34,7 @@ function AppContent(): React.JSX.Element {
 
       <View style={styles.header}>
         <Text style={styles.appName}>BushMesh</Text>
-        <Text style={styles.subtitle}>MeshCore companion app</Text>
+        <Text style={styles.subtitle}>Off-grid vehicle network</Text>
       </View>
 
       <View style={styles.content}>
@@ -77,7 +78,9 @@ function AppContent(): React.JSX.Element {
 function App(): React.JSX.Element {
   return (
     <BushMeshProvider>
-      <AppContent />
+      <ConvoyProvider>
+        <AppContent />
+      </ConvoyProvider>
     </BushMeshProvider>
   );
 }
