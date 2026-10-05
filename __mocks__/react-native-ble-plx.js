@@ -7,6 +7,9 @@ class BleManager {
   cancelDeviceConnection() {
     return Promise.resolve();
   }
+  requestMTUForDevice() {
+    return Promise.resolve({mtu: 185});
+  }
   monitorCharacteristicForDevice() {
     return {remove() {}};
   }
