@@ -11,7 +11,15 @@ export enum BushMeshMessageType {
   Position = 0x01,
 }
 
+/**
+ * Compact 48-bit Bushmesh identity reference, encoded as 12 hexadecimal
+ * characters. This is intentionally small enough for LoRa while still giving
+ * convoy packets a stable sender identity independent of display names.
+ */
+export type BushMeshIdentityRef = string;
+
 export type BushMeshPosition = {
+  senderId: BushMeshIdentityRef;
   sequence: number;
   timestampSeconds: number;
   latitude: number;
@@ -28,13 +36,34 @@ export type DecodedBushMeshPosition = BushMeshPosition & {
   type: BushMeshMessageType.Position;
 };
 
-const POSITION_PACKET_BYTES = 24;
+const IDENTITY_REF_BYTES = 6;
+const POSITION_PACKET_BYTES = 30;
 const UNKNOWN_ALTITUDE = 0x7fff;
 const UNKNOWN_HEADING = 0xffff;
 const UNKNOWN_ACCURACY = 0xff;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function identityRefToBytes(identityRef: BushMeshIdentityRef): number[] {
+  const normalized = identityRef.replace(/[^0-9a-f]/gi, '').toUpperCase();
+
+  if (!/^[0-9A-F]{12}$/.test(normalized)) {
+    throw new Error('BushMesh senderId must contain exactly 12 hexadecimal characters.');
+  }
+
+  const bytes: number[] = [];
+  for (let index = 0; index < normalized.length; index += 2) {
+    bytes.push(Number.parseInt(normalized.slice(index, index + 2), 16));
+  }
+  return bytes;
+}
+
+function bytesToIdentityRef(bytes: Uint8Array, offset: number): string {
+  return Array.from(bytes.slice(offset, offset + IDENTITY_REF_BYTES))
+    .map(byte => byte.toString(16).padStart(2, '0').toUpperCase())
+    .join('');
 }
 
 function writeUInt16LE(bytes: number[], value: number): void {
@@ -104,6 +133,7 @@ export function encodeBushMeshPosition(position: BushMeshPosition): Uint8Array {
     BUSHMESH_PROTOCOL_VERSION,
     BushMeshMessageType.Position,
     position.flags ?? 0,
+    ...identityRefToBytes(position.senderId),
   ];
 
   writeUInt16LE(bytes, position.sequence);
@@ -155,19 +185,20 @@ export function decodeBushMeshPosition(
     throw new Error(`Packet is not a BushMesh position message: ${payload[1]}.`);
   }
 
-  const altitudeRaw = readInt16LE(payload, 17);
-  const speedRaw = readUInt16LE(payload, 19);
-  const headingRaw = readUInt16LE(payload, 21);
-  const accuracyRaw = payload[23];
+  const altitudeRaw = readInt16LE(payload, 23);
+  const speedRaw = readUInt16LE(payload, 25);
+  const headingRaw = readUInt16LE(payload, 27);
+  const accuracyRaw = payload[29];
 
   return {
     version: payload[0],
     type: BushMeshMessageType.Position,
     flags: payload[2],
-    sequence: readUInt16LE(payload, 3),
-    timestampSeconds: readUInt32LE(payload, 5),
-    latitude: readInt32LE(payload, 9) / 1e7,
-    longitude: readInt32LE(payload, 13) / 1e7,
+    senderId: bytesToIdentityRef(payload, 3),
+    sequence: readUInt16LE(payload, 9),
+    timestampSeconds: readUInt32LE(payload, 11),
+    latitude: readInt32LE(payload, 15) / 1e7,
+    longitude: readInt32LE(payload, 19) / 1e7,
     altitudeMeters: altitudeRaw === UNKNOWN_ALTITUDE ? null : altitudeRaw,
     speedKmh: speedRaw / 10,
     headingDegrees:
