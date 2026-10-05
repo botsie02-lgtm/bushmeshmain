@@ -1,5 +1,13 @@
-import React, {createContext, useCallback, useContext, useMemo, useState} from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 
+import {subscribeBushMeshInboundMessages} from '../bushmesh/inboundBus';
 import {BushMeshInboundMessage} from '../bushmesh/meshcoreBridge';
 import {BushMeshMessageType} from '../bushmesh/protocol';
 import {
@@ -60,6 +68,10 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
     },
     [upsertVehicle],
   );
+
+  useEffect(() => {
+    return subscribeBushMeshInboundMessages(upsertBushMeshMessage);
+  }, [upsertBushMeshMessage]);
 
   const loadDemoConvoy = useCallback(() => {
     const now = Date.now();
