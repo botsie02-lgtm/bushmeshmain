@@ -4,6 +4,7 @@ import {
   DecodedBushMeshPosition,
   decodeBushMeshPosition,
 } from './protocol';
+import {publishBushMeshInboundMessage} from './inboundBus';
 import {MeshCoreChannelDataFrame} from '../meshcore/meshcoreChannelData';
 
 export type BushMeshInboundMessage =
@@ -32,14 +33,18 @@ export function decodeBushMeshMeshCoreFrame(
   }
 
   switch (frame.payload[1]) {
-    case BushMeshMessageType.Position:
-      return {
+    case BushMeshMessageType.Position: {
+      const message: BushMeshInboundMessage = {
         type: BushMeshMessageType.Position,
         channelIndex: frame.channelIndex,
         snrDb: frame.snrDb,
         pathLength: frame.pathLength,
         position: decodeBushMeshPosition(frame.payload),
       };
+
+      publishBushMeshInboundMessage(message);
+      return message;
+    }
 
     default:
       return null;
