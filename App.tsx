@@ -13,16 +13,16 @@ import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
-import {MapScreen} from './src/screens/MapScreen';
+import {ConvoyScreen} from './src/screens/ConvoyScreen';
 import {colors} from './src/theme/colors';
 
-type TabKey = 'device' | 'channels' | 'contacts' | 'map';
+type TabKey = 'device' | 'channels' | 'contacts' | 'convoy';
 
 const tabs: Array<{key: TabKey; label: string}> = [
   {key: 'device', label: 'Device'},
   {key: 'channels', label: 'Radio'},
   {key: 'contacts', label: 'Contacts'},
-  {key: 'map', label: 'Convoy'},
+  {key: 'convoy', label: 'Convoy'},
 ];
 
 function AppContent(): React.JSX.Element {
@@ -50,8 +50,8 @@ function AppContent(): React.JSX.Element {
           <ContactsScreen />
         </View>
 
-        <View style={[styles.screenWrap, activeTab !== 'map' && styles.hidden]}>
-          <MapScreen />
+        <View style={[styles.screenWrap, activeTab !== 'convoy' && styles.hidden]}>
+          <ConvoyScreen />
         </View>
       </View>
 
