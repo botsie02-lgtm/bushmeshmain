@@ -11,8 +11,9 @@ describe('BushMesh v1 protocol', () => {
     expect(BUSHMESH_MESHCORE_DEV_DATA_TYPE).toBe(0xff00);
   });
 
-  test('encodes a position in 24 bytes and round-trips it', () => {
+  test('encodes a position in 30 bytes and round-trips it', () => {
     const packet = encodeBushMeshPosition({
+      senderId: 'A1B2C3D4E5F6',
       sequence: 513,
       timestampSeconds: 1_800_000_000,
       latitude: -37.813629,
@@ -24,12 +25,13 @@ describe('BushMesh v1 protocol', () => {
       flags: 0x03,
     });
 
-    expect(packet).toHaveLength(24);
+    expect(packet).toHaveLength(30);
     expect(packet[0]).toBe(BUSHMESH_PROTOCOL_VERSION);
     expect(packet[1]).toBe(BushMeshMessageType.Position);
 
     const decoded = decodeBushMeshPosition(packet);
 
+    expect(decoded.senderId).toBe('A1B2C3D4E5F6');
     expect(decoded.sequence).toBe(513);
     expect(decoded.timestampSeconds).toBe(1_800_000_000);
     expect(decoded.latitude).toBeCloseTo(-37.813629, 6);
@@ -43,6 +45,7 @@ describe('BushMesh v1 protocol', () => {
 
   test('preserves unknown optional position fields', () => {
     const packet = encodeBushMeshPosition({
+      senderId: '001122334455',
       sequence: 1,
       timestampSeconds: 2,
       latitude: 0,
@@ -51,6 +54,7 @@ describe('BushMesh v1 protocol', () => {
 
     const decoded = decodeBushMeshPosition(packet);
 
+    expect(decoded.senderId).toBe('001122334455');
     expect(decoded.altitudeMeters).toBeNull();
     expect(decoded.headingDegrees).toBeNull();
     expect(decoded.accuracyMeters).toBeNull();
@@ -60,11 +64,24 @@ describe('BushMesh v1 protocol', () => {
   test('rejects invalid coordinates', () => {
     expect(() =>
       encodeBushMeshPosition({
+        senderId: '001122334455',
         sequence: 1,
         timestampSeconds: 2,
         latitude: 91,
         longitude: 0,
       }),
     ).toThrow('Latitude');
+  });
+
+  test('rejects invalid sender identities', () => {
+    expect(() =>
+      encodeBushMeshPosition({
+        senderId: 'NOT-A-NODE',
+        sequence: 1,
+        timestampSeconds: 2,
+        latitude: 0,
+        longitude: 0,
+      }),
+    ).toThrow('senderId');
   });
 });
