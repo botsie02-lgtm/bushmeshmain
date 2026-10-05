@@ -118,3 +118,51 @@ export function sendChannelMessageCommandHex(
     ...messageBytes,
   ]);
 }
+
+/** MeshCore CMD_SEND_CHANNEL_DATA (0x3E), using flood routing. */
+export function buildSendChannelDataFloodCommand(
+  channelIndex: number,
+  dataType: number,
+  payload: Uint8Array,
+): string {
+  return bytesToBase64(
+    sendChannelDataFloodCommandBytes(channelIndex, dataType, payload),
+  );
+}
+
+export function sendChannelDataFloodCommandHex(
+  channelIndex: number,
+  dataType: number,
+  payload: Uint8Array,
+): string {
+  return bytesToHex(
+    sendChannelDataFloodCommandBytes(channelIndex, dataType, payload),
+  );
+}
+
+function sendChannelDataFloodCommandBytes(
+  channelIndex: number,
+  dataType: number,
+  payload: Uint8Array,
+): number[] {
+  if (!Number.isInteger(channelIndex) || channelIndex < 0 || channelIndex > 7) {
+    throw new Error('MeshCore channel index must be between 0 and 7.');
+  }
+
+  if (!Number.isInteger(dataType) || dataType <= 0 || dataType > 0xffff) {
+    throw new Error('MeshCore channel data type must be between 0x0001 and 0xFFFF.');
+  }
+
+  if (payload.length > 163) {
+    throw new Error('MeshCore channel data payload cannot exceed 163 bytes.');
+  }
+
+  return [
+    0x3e,
+    channelIndex,
+    0xff,
+    dataType & 0xff,
+    (dataType >>> 8) & 0xff,
+    ...Array.from(payload),
+  ];
+}
