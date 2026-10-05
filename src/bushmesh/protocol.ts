@@ -28,7 +28,7 @@ export type DecodedBushMeshPosition = BushMeshPosition & {
   type: BushMeshMessageType.Position;
 };
 
-const POSITION_PACKET_BYTES = 25;
+const POSITION_PACKET_BYTES = 24;
 const UNKNOWN_ALTITUDE = 0x7fff;
 const UNKNOWN_HEADING = 0xffff;
 const UNKNOWN_ACCURACY = 0xff;
@@ -84,11 +84,19 @@ function readInt32LE(bytes: Uint8Array, offset: number): number {
 }
 
 export function encodeBushMeshPosition(position: BushMeshPosition): Uint8Array {
-  if (!Number.isFinite(position.latitude) || position.latitude < -90 || position.latitude > 90) {
+  if (
+    !Number.isFinite(position.latitude) ||
+    position.latitude < -90 ||
+    position.latitude > 90
+  ) {
     throw new Error('Latitude must be between -90 and 90 degrees.');
   }
 
-  if (!Number.isFinite(position.longitude) || position.longitude < -180 || position.longitude > 180) {
+  if (
+    !Number.isFinite(position.longitude) ||
+    position.longitude < -180 ||
+    position.longitude > 180
+  ) {
     throw new Error('Longitude must be between -180 and 180 degrees.');
   }
 
