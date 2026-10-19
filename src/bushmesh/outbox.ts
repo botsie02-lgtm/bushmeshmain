@@ -19,13 +19,18 @@ export type BushMeshOutboxInput = {
   priority: BushMeshOutboxPriority;
   description: string;
   identityRef?: string | null;
+  expiresAtMs?: number | null;
   createdAtMs?: number;
   maxAttempts?: number;
 };
 
-export type BushMeshOutboxEntry = Omit<BushMeshOutboxInput, 'identityRef'> & {
+export type BushMeshOutboxEntry = Omit<
+  BushMeshOutboxInput,
+  'identityRef' | 'expiresAtMs'
+> & {
   id: string;
   identityRef: string | null;
+  expiresAtMs: number | null;
   createdAtMs: number;
   maxAttempts: number;
   attempts: number;
@@ -62,6 +67,10 @@ function retryDelayMs(attempts: number): number {
   );
 }
 
+function validOptionalTimestamp(value: number | null): boolean {
+  return value === null || (Number.isFinite(value) && value >= 0);
+}
+
 /**
  * Transport-neutral Bushmesh outbox.
  *
@@ -75,6 +84,11 @@ export class InMemoryBushMeshOutbox {
 
   enqueue(input: BushMeshOutboxInput): BushMeshOutboxEntry {
     const createdAtMs = input.createdAtMs ?? Date.now();
+    const expiresAtMs = input.expiresAtMs ?? null;
+    if (!validOptionalTimestamp(expiresAtMs)) {
+      throw new Error('Outbox expiry must be null or a non-negative timestamp.');
+    }
+
     const entry: BushMeshOutboxEntry = {
       channelIndex: input.channelIndex,
       dataType: input.dataType,
@@ -82,6 +96,7 @@ export class InMemoryBushMeshOutbox {
       priority: input.priority,
       description: input.description,
       identityRef: input.identityRef ?? null,
+      expiresAtMs,
       id: `outbox-${this.nextId++}`,
       createdAtMs,
       maxAttempts: Math.max(1, input.maxAttempts ?? 5),
@@ -131,6 +146,8 @@ export class InMemoryBushMeshOutbox {
   }
 
   nextReady(nowMs = Date.now()): BushMeshOutboxEntry | null {
+    this.cancelExpiredQueued(nowMs);
+
     const ready = this.entries
       .filter(
         entry => entry.state === 'queued' && entry.nextAttemptAtMs <= nowMs,
@@ -151,6 +168,11 @@ export class InMemoryBushMeshOutbox {
     const entry = this.requireEntry(id);
     if (entry.state !== 'queued') {
       throw new Error(`Outbox entry ${id} is not queued.`);
+    }
+    if (entry.expiresAtMs !== null && entry.expiresAtMs <= nowMs) {
+      entry.state = 'cancelled';
+      entry.lastError = 'Expired before radio acceptance.';
+      throw new Error(`Outbox entry ${id} expired before transmission.`);
     }
 
     entry.attempts += 1;
@@ -184,7 +206,11 @@ export class InMemoryBushMeshOutbox {
 
     entry.lastError = error;
 
-    if (entry.attempts >= entry.maxAttempts) {
+    if (entry.expiresAtMs !== null && entry.expiresAtMs <= nowMs) {
+      entry.state = 'cancelled';
+      entry.lastError = `${error} Packet expired before retry.`;
+      entry.nextAttemptAtMs = nowMs;
+    } else if (entry.attempts >= entry.maxAttempts) {
       entry.state = 'failed';
       entry.nextAttemptAtMs = nowMs;
     } else {
@@ -264,6 +290,20 @@ export class InMemoryBushMeshOutbox {
     );
   }
 
+  private cancelExpiredQueued(nowMs: number): void {
+    for (const entry of this.entries) {
+      if (
+        entry.state === 'queued' &&
+        entry.expiresAtMs !== null &&
+        entry.expiresAtMs <= nowMs
+      ) {
+        entry.state = 'cancelled';
+        entry.lastError = 'Expired before radio acceptance.';
+        entry.nextAttemptAtMs = nowMs;
+      }
+    }
+  }
+
   private validateRestoredEntry(entry: BushMeshOutboxEntry): void {
     if (!entry.id || typeof entry.id !== 'string') {
       throw new Error('Restored outbox entry id is invalid.');
@@ -286,6 +326,9 @@ export class InMemoryBushMeshOutbox {
     }
     if (!OUTBOX_STATES.includes(entry.state)) {
       throw new Error(`Restored outbox entry ${entry.id} has an invalid state.`);
+    }
+    if (!validOptionalTimestamp(entry.expiresAtMs)) {
+      throw new Error(`Restored outbox entry ${entry.id} has an invalid expiry.`);
     }
     if (
       !Number.isInteger(entry.maxAttempts) ||
