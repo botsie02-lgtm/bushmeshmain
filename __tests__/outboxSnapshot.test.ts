@@ -16,6 +16,7 @@ function entry(overrides?: Partial<BushMeshOutboxEntry>): BushMeshOutboxEntry {
     priority: 'safety',
     description: 'HELP from AABBCCDDEEFF',
     identityRef: 'AABBCCDDEEFF',
+    expiresAtMs: null,
     createdAtMs: 1_000,
     maxAttempts: 5,
     attempts: 1,
@@ -39,6 +40,17 @@ describe('Bushmesh outbox snapshots', () => {
     expect(Array.from(restored[0].payload)).toEqual([1, 2, 3, 4]);
     expect(restored[0].identityRef).toBe('AABBCCDDEEFF');
     expect(restored[0].state).toBe('queued');
+  });
+
+  test('retains expiry so stale control traffic cannot resurrect after restart', () => {
+    const snapshot = createOutboxSnapshot(
+      [entry({expiresAtMs: 7_500})],
+      5_000,
+    );
+    const restored = restoreOutboxSnapshot(snapshot, 6_000)[0];
+
+    expect(snapshot.entries[0].expiresAtMs).toBe(7_500);
+    expect(restored.expiresAtMs).toBe(7_500);
   });
 
   test('recovers an in-flight packet as queued for at-least-once retry', () => {
