@@ -49,6 +49,7 @@ export class BushMeshRadioSession {
   private readonly listeners = new Set<SessionListener>();
   private identityRef: BushMeshIdentityRef | null = null;
   private lastAttempt: TransmissionAttemptResult | null = null;
+  private drainPromise: Promise<TransmissionAttemptResult> | null = null;
 
   constructor(controller = new BushMeshTransmissionController()) {
     this.controller = controller;
@@ -111,10 +112,23 @@ export class BushMeshRadioSession {
     return entry;
   }
 
-  async drainOnce(nowMs = Date.now()): Promise<TransmissionAttemptResult> {
-    this.lastAttempt = await this.controller.drainOnce(nowMs);
-    this.emit();
-    return this.lastAttempt;
+  drainOnce(nowMs = Date.now()): Promise<TransmissionAttemptResult> {
+    if (this.drainPromise) {
+      return this.drainPromise;
+    }
+
+    this.drainPromise = this.controller
+      .drainOnce(nowMs)
+      .then(result => {
+        this.lastAttempt = result;
+        this.emit();
+        return result;
+      })
+      .finally(() => {
+        this.drainPromise = null;
+      });
+
+    return this.drainPromise;
   }
 
   listOutbox(): BushMeshOutboxEntry[] {
