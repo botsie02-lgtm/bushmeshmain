@@ -10,23 +10,26 @@ import {
 
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
+import {DriveProvider} from './src/state/DriveContext';
+import {DriveScreen} from './src/screens/DriveScreen';
 import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
 import {ConvoyScreen} from './src/screens/ConvoyScreen';
 import {colors} from './src/theme/colors';
 
-type TabKey = 'device' | 'channels' | 'contacts' | 'convoy';
+type TabKey = 'drive' | 'channels' | 'convoy' | 'contacts' | 'device';
 
 const tabs: Array<{key: TabKey; label: string}> = [
-  {key: 'device', label: 'Device'},
+  {key: 'drive', label: 'Drive'},
   {key: 'channels', label: 'Radio'},
-  {key: 'contacts', label: 'Contacts'},
   {key: 'convoy', label: 'Convoy'},
+  {key: 'contacts', label: 'Contacts'},
+  {key: 'device', label: 'Device'},
 ];
 
 function AppContent(): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<TabKey>('device');
+  const [activeTab, setActiveTab] = useState<TabKey>('drive');
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -38,20 +41,24 @@ function AppContent(): React.JSX.Element {
       </View>
 
       <View style={styles.content}>
-        <View style={[styles.screenWrap, activeTab !== 'device' && styles.hidden]}>
-          <DeviceScreen />
+        <View style={[styles.screenWrap, activeTab !== 'drive' && styles.hidden]}>
+          <DriveScreen />
         </View>
 
         <View style={[styles.screenWrap, activeTab !== 'channels' && styles.hidden]}>
           <ChannelsScreen />
         </View>
 
+        <View style={[styles.screenWrap, activeTab !== 'convoy' && styles.hidden]}>
+          <ConvoyScreen />
+        </View>
+
         <View style={[styles.screenWrap, activeTab !== 'contacts' && styles.hidden]}>
           <ContactsScreen />
         </View>
 
-        <View style={[styles.screenWrap, activeTab !== 'convoy' && styles.hidden]}>
-          <ConvoyScreen />
+        <View style={[styles.screenWrap, activeTab !== 'device' && styles.hidden]}>
+          <DeviceScreen />
         </View>
       </View>
 
@@ -79,7 +86,9 @@ function App(): React.JSX.Element {
   return (
     <BushMeshProvider>
       <ConvoyProvider>
-        <AppContent />
+        <DriveProvider>
+          <AppContent />
+        </DriveProvider>
       </ConvoyProvider>
     </BushMeshProvider>
   );
@@ -92,20 +101,20 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
   appName: {
     color: colors.textPrimary,
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '800',
   },
   subtitle: {
     color: colors.textSecondary,
-    fontSize: 14,
-    marginTop: 4,
+    fontSize: 12,
+    marginTop: 2,
   },
   content: {
     flex: 1,
@@ -118,15 +127,16 @@ const styles = StyleSheet.create({
   },
   tabBar: {
     flexDirection: 'row',
-    padding: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.surface,
   },
   tabButton: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
     alignItems: 'center',
   },
   tabButtonActive: {
@@ -134,7 +144,7 @@ const styles = StyleSheet.create({
   },
   tabText: {
     color: colors.textSecondary,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '700',
   },
   tabTextActive: {
