@@ -1,12 +1,18 @@
 import {
+  BushMeshControlledFloodForwarder,
   BushMeshFileContentType,
   BushMeshNodeHello,
+  BushMeshPriority,
   BushMeshSyncFrameKind,
   BushMeshTypedPacket,
   CompactLocation,
+  decodeBushMeshTypedPacket,
+  decodeBushMeshWire,
   encodeBushMeshFileWire,
   encodeBushMeshNodeHelloWire,
-  encodeBushMeshTextCarrier,
+  encodeBushMeshRoutedWire,
+  encodeBushMeshTextMessage,
+  encodeTextForBushMeshPeer,
 } from '../protocol';
 import {
   BushMeshNetworkRuntime,
@@ -36,6 +42,16 @@ export type BushMeshNodeRuntimeEvents = BushMeshNetworkRuntimeEvents & {
   onAutomaticResponse?: (kind: string, channelIndex: number) => void;
   onFileProgress?: (result: BushMeshFileManagerResult, channelIndex: number) => void;
   onFileComplete?: (file: BushMeshIncomingFile, channelIndex: number) => void;
+  onForwarded?: (
+    sourceNodeId: number,
+    messageId: number,
+    channelIndex: number,
+    nextTtlHops: number,
+  ) => void;
+};
+
+type RoutedDeliveryContext = {
+  replyNodeId: number;
 };
 
 export class BushMeshNodeRuntime {
@@ -48,6 +64,8 @@ export class BushMeshNodeRuntime {
   private localHelloState: BushMeshNodeHello | null = null;
   private latestLocation: BushMeshLocationSnapshot | null = null;
   private identityUnsubscribe: (() => void) | null = null;
+  private forwarder = new BushMeshControlledFloodForwarder();
+  private readonly forwardTimers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly transport: BushMeshRuntimeTransport,
@@ -96,6 +114,11 @@ export class BushMeshNodeRuntime {
     this.network.stop();
     this.identityUnsubscribe?.();
     this.identityUnsubscribe = null;
+
+    for (const timer of this.forwardTimers) {
+      clearTimeout(timer);
+    }
+    this.forwardTimers.clear();
   }
 
   isRunning(): boolean {
@@ -116,6 +139,7 @@ export class BushMeshNodeRuntime {
     this.peerRegistryState = new BushMeshPeerRegistry(hello, {
       allowExperimentalBinary: this.allowExperimentalBinary,
     });
+    this.forwarder = new BushMeshControlledFloodForwarder();
     this.responder = new BushMeshCommandResponder({
       localHello: () => ({...this.requireLocalHello()}),
       currentLocation: () =>
@@ -176,6 +200,51 @@ export class BushMeshNodeRuntime {
     });
   }
 
+  async sendRoutedText(
+    channelIndex: number,
+    destinationNodeId: number | undefined,
+    text: string,
+    options?: {
+      ttlHops?: number;
+      priority?: BushMeshPriority;
+    },
+  ): Promise<BushMeshRuntimeSendResult> {
+    const local = this.requireLocalHello();
+    const innerMessageId = this.network.nextMessageId();
+    const peerPolicy =
+      destinationNodeId !== undefined
+        ? this.peerRegistryState?.peerPolicy(destinationNodeId) ?? undefined
+        : undefined;
+    const innerWireBytes =
+      peerPolicy?.compatible === true
+        ? encodeTextForBushMeshPeer(text, innerMessageId, peerPolicy, {
+            priority: options?.priority,
+            ackRequested: false,
+            storeAndForward: false,
+          }).wireBytes
+        : encodeBushMeshTextMessage(text, innerMessageId, {
+            priority: options?.priority,
+            ackRequested: false,
+            storeAndForward: false,
+            semantic: true,
+          }).wireBytes;
+    const routedMessageId = this.network.nextMessageId();
+    const routedWire = encodeBushMeshRoutedWire(
+      {
+        sourceNodeId: local.nodeId,
+        destinationNodeId,
+        innerWireBytes,
+      },
+      routedMessageId,
+      {
+        ttlHops: options?.ttlHops ?? 4,
+        priority: options?.priority ?? BushMeshPriority.DirectMessage,
+      },
+    );
+
+    return this.network.sendWire(channelIndex, routedWire);
+  }
+
   async broadcastNodeHello(channelIndex: number): Promise<void> {
     const hello = this.requireLocalHello();
     const wireBytes = encodeBushMeshNodeHelloWire(
@@ -231,6 +300,105 @@ export class BushMeshNodeRuntime {
   private async handleReceivedMessage(
     message: BushMeshRuntimeReceivedMessage,
   ): Promise<void> {
+    if (message.typed.kind === 'routed') {
+      await this.handleRoutedMessage(message);
+      return;
+    }
+
+    await this.handleLocalMessage(message);
+  }
+
+  private async handleRoutedMessage(
+    message: BushMeshRuntimeReceivedMessage,
+  ): Promise<void> {
+    const local = this.localHelloState;
+
+    if (!local || message.typed.kind !== 'routed') {
+      this.events.onTypedPacket?.(message.typed, message.channelIndex);
+      this.events.onMessage?.(message);
+      return;
+    }
+
+    const routed = message.typed.value;
+    const ttlHops = message.decoded.envelope.ttlHops ?? 0;
+    const decision = this.forwarder.evaluate({
+      sourceNodeId: routed.sourceNodeId,
+      messageId: message.decoded.envelope.messageId,
+      localNodeId: local.nodeId,
+      destinationNodeId: routed.destinationNodeId,
+      ttlHops,
+    });
+
+    if (decision.deliverLocally) {
+      try {
+        const innerDecoded = decodeBushMeshWire(routed.innerWireBytes);
+        const innerTyped = decodeBushMeshTypedPacket(routed.innerWireBytes);
+
+        if (innerTyped.kind === 'routed') {
+          throw new Error('Nested routed BushMesh packets are not allowed.');
+        }
+
+        await this.handleLocalMessage(
+          {
+            channelIndex: message.channelIndex,
+            decoded: innerDecoded,
+            typed: innerTyped,
+          },
+          {replyNodeId: routed.sourceNodeId},
+        );
+      } catch (error) {
+        this.events.onError?.(
+          error instanceof Error
+            ? `Routed BushMesh payload rejected: ${error.message}`
+            : 'Routed BushMesh payload rejected.',
+        );
+      }
+    }
+
+    if (!decision.forward) {
+      return;
+    }
+
+    const forwardedWire = encodeBushMeshRoutedWire(
+      {
+        sourceNodeId: routed.sourceNodeId,
+        destinationNodeId: routed.destinationNodeId,
+        innerWireBytes: routed.innerWireBytes,
+      },
+      message.decoded.envelope.messageId,
+      {
+        ttlHops: decision.nextTtlHops,
+        priority: message.decoded.envelope.priority as BushMeshPriority,
+      },
+    );
+
+    const timer = setTimeout(() => {
+      this.forwardTimers.delete(timer);
+      void this.network
+        .sendWire(message.channelIndex, forwardedWire)
+        .then(() => {
+          this.events.onForwarded?.(
+            routed.sourceNodeId,
+            message.decoded.envelope.messageId,
+            message.channelIndex,
+            decision.nextTtlHops,
+          );
+        })
+        .catch(error => {
+          this.events.onError?.(
+            error instanceof Error
+              ? `BushMesh forwarding failed: ${error.message}`
+              : 'BushMesh forwarding failed.',
+          );
+        });
+    }, decision.jitterMs);
+    this.forwardTimers.add(timer);
+  }
+
+  private async handleLocalMessage(
+    message: BushMeshRuntimeReceivedMessage,
+    routedContext?: RoutedDeliveryContext,
+  ): Promise<void> {
     const {typed, channelIndex} = message;
 
     if (typed.kind === 'device-info' && this.peerRegistryState) {
@@ -249,7 +417,7 @@ export class BushMeshNodeRuntime {
     }
 
     if (typed.kind === 'file') {
-      await this.handleFileFrame(typed.value, channelIndex);
+      await this.handleFileFrame(typed.value, channelIndex, routedContext);
     }
 
     if (!message.decoded.renderedText) {
@@ -260,7 +428,10 @@ export class BushMeshNodeRuntime {
     }
 
     this.events.onTypedPacket?.(typed, channelIndex);
-    this.events.onMessage?.(message);
+
+    if (typed.kind !== 'file') {
+      this.events.onMessage?.(message);
+    }
 
     if (!this.responder) {
       return;
@@ -270,7 +441,11 @@ export class BushMeshNodeRuntime {
 
     for (const response of responses) {
       try {
-        await this.sendResponseWire(channelIndex, response.wireBytes);
+        await this.sendAutomaticWire(
+          channelIndex,
+          response.wireBytes,
+          routedContext?.replyNodeId,
+        );
         this.events.onAutomaticResponse?.(response.kind, channelIndex);
       } catch (error) {
         this.events.onError?.(
@@ -285,6 +460,7 @@ export class BushMeshNodeRuntime {
   private async handleFileFrame(
     fileFrame: number[],
     channelIndex: number,
+    routedContext?: RoutedDeliveryContext,
   ): Promise<void> {
     try {
       const result = this.files.acceptFrame(fileFrame);
@@ -295,7 +471,11 @@ export class BushMeshNodeRuntime {
           responseFrame,
           this.network.nextMessageId(),
         );
-        await this.sendResponseWire(channelIndex, wireBytes);
+        await this.sendAutomaticWire(
+          channelIndex,
+          wireBytes,
+          routedContext?.replyNodeId,
+        );
       }
 
       if (result.completedFile) {
@@ -310,14 +490,34 @@ export class BushMeshNodeRuntime {
     }
   }
 
+  private async sendAutomaticWire(
+    channelIndex: number,
+    wireBytes: number[],
+    destinationNodeId?: number,
+  ): Promise<void> {
+    if (destinationNodeId === undefined) {
+      await this.sendResponseWire(channelIndex, wireBytes);
+      return;
+    }
+
+    const local = this.requireLocalHello();
+    const routedWire = encodeBushMeshRoutedWire(
+      {
+        sourceNodeId: local.nodeId,
+        destinationNodeId,
+        innerWireBytes: wireBytes,
+      },
+      this.network.nextMessageId(),
+      {ttlHops: 4, priority: BushMeshPriority.DirectMessage},
+    );
+    await this.network.sendWire(channelIndex, routedWire);
+  }
+
   private async sendResponseWire(
     channelIndex: number,
     wireBytes: number[],
   ): Promise<void> {
-    await this.transport.sendTextChannelMessage(
-      channelIndex,
-      encodeBushMeshTextCarrier(wireBytes),
-    );
+    await this.network.sendWire(channelIndex, wireBytes);
   }
 
   private requireLocalHello(): BushMeshNodeHello {
