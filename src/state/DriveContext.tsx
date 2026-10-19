@@ -13,6 +13,10 @@ import {
   BushMeshQuickActionCode,
 } from '../bushmesh/protocol';
 import {Coordinate} from '../convoy/convoy';
+import {
+  OperationalMarker,
+  operationalMarkerFromQuickAction,
+} from '../convoy/operationalMarkers';
 import {getQuickActionDefinition} from '../drive/quickActions';
 
 export type DriveAlert = {
@@ -35,6 +39,7 @@ export type DriveAlert = {
 type DriveContextValue = {
   alerts: DriveAlert[];
   latestAlert: DriveAlert | null;
+  operationalMarkers: OperationalMarker[];
   previewQuickAction: (
     action: BushMeshQuickActionCode,
     location?: Coordinate | null,
@@ -78,7 +83,9 @@ export function DriveProvider({
         receivedAtMs,
         packetTimestampSeconds: action.timestampSeconds,
         expiresAtMs:
-          ttlSeconds > 0 ? action.timestampSeconds * 1000 + ttlSeconds * 1000 : null,
+          ttlSeconds > 0
+            ? action.timestampSeconds * 1000 + ttlSeconds * 1000
+            : null,
         snrDb: message.snrDb,
         pathLength: message.pathLength,
         source: 'radio',
@@ -136,16 +143,41 @@ export function DriveProvider({
   }, []);
 
   const latestAlert = alerts[0] ?? null;
+  const operationalMarkers = useMemo(
+    () =>
+      alerts
+        .map(alert =>
+          operationalMarkerFromQuickAction({
+            id: alert.id,
+            senderId: alert.senderId,
+            action: alert.action,
+            latitude: alert.latitude,
+            longitude: alert.longitude,
+            receivedAtMs: alert.receivedAtMs,
+            expiresAtMs: alert.expiresAtMs,
+          }),
+        )
+        .filter((marker): marker is OperationalMarker => marker !== null),
+    [alerts],
+  );
 
   const value = useMemo<DriveContextValue>(
     () => ({
       alerts,
       latestAlert,
+      operationalMarkers,
       previewQuickAction,
       dismissAlert,
       clearAlerts,
     }),
-    [alerts, latestAlert, previewQuickAction, dismissAlert, clearAlerts],
+    [
+      alerts,
+      latestAlert,
+      operationalMarkers,
+      previewQuickAction,
+      dismissAlert,
+      clearAlerts,
+    ],
   );
 
   return <DriveContext.Provider value={value}>{children}</DriveContext.Provider>;
