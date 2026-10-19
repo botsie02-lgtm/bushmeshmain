@@ -143,18 +143,31 @@ export function RadioSessionProvider({
           setPersistenceStatus('ready');
           setPersistenceError(null);
         }
-      } catch (error) {
-        // A corrupt/unreadable queue must not deadlock the live radio forever.
-        // Surface the failure, leave the runtime queue untouched, and permit new
-        // traffic to proceed rather than silently inventing recovered packets.
-        persistenceReadyRef.current = true;
-        if (active) {
-          setPersistenceStatus('error');
-          setPersistenceError(
-            error instanceof Error
-              ? error.message
-              : 'Encrypted Bushmesh outbox could not be restored.',
-          );
+      } catch (restoreError) {
+        const restoreMessage =
+          restoreError instanceof Error
+            ? restoreError.message
+            : 'Encrypted Bushmesh outbox could not be restored.';
+
+        try {
+          await androidBushMeshPersistence.resetSecureStorage();
+          persistenceReadyRef.current = true;
+          if (active) {
+            setPersistenceStatus('ready');
+            setPersistenceError(
+              `Previous pending radio traffic could not be authenticated and was discarded. Secure outbox storage was re-keyed and is ready for new traffic. ${restoreMessage}`,
+            );
+          }
+        } catch (resetError) {
+          persistenceReadyRef.current = true;
+          if (active) {
+            setPersistenceStatus('error');
+            setPersistenceError(
+              resetError instanceof Error
+                ? `Encrypted outbox restore failed (${restoreMessage}) and secure storage could not be reinitialized: ${resetError.message}`
+                : `Encrypted outbox restore failed (${restoreMessage}) and secure storage could not be reinitialized.`,
+            );
+          }
         }
       }
     };
