@@ -1,5 +1,7 @@
 import {Buffer} from 'buffer';
 
+export const MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES = 133;
+
 export function bytesToBase64(bytes: number[]): string {
   return Buffer.from(bytes).toString('base64');
 }
@@ -45,6 +47,20 @@ function writeUInt32LE(value: number): number[] {
   ];
 }
 
+function assertChannelPayload(payloadBytes: number[]): void {
+  if (payloadBytes.length > MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES) {
+    throw new Error(
+      `Channel payload is ${payloadBytes.length} bytes; maximum is ${MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES}.`,
+    );
+  }
+
+  payloadBytes.forEach((byte, index) => {
+    if (!Number.isInteger(byte) || byte < 0 || byte > 0xff) {
+      throw new Error(`Channel payload byte ${index} is invalid.`);
+    }
+  });
+}
+
 export function buildAppStartCommand(appName = 'BushMesh'): string {
   const appNameBytes = Array.from(Buffer.from(appName, 'utf8'));
 
@@ -87,20 +103,49 @@ export function getMessageCommandHex(): string {
   return bytesToHex([0x0a]);
 }
 
-export function buildSendChannelMessageCommand(
+export function buildSendChannelPayloadCommand(
   channelIndex: number,
-  message: string,
+  payloadBytes: number[],
   timestampSeconds = Math.floor(Date.now() / 1000),
 ): string {
-  const messageBytes = Array.from(Buffer.from(message, 'utf8'));
+  assertChannelPayload(payloadBytes);
 
   return bytesToBase64([
     0x03,
     0x00,
     channelIndex,
     ...writeUInt32LE(timestampSeconds),
-    ...messageBytes,
+    ...payloadBytes,
   ]);
+}
+
+export function sendChannelPayloadCommandHex(
+  channelIndex: number,
+  payloadBytes: number[],
+  timestampSeconds = Math.floor(Date.now() / 1000),
+): string {
+  assertChannelPayload(payloadBytes);
+
+  return bytesToHex([
+    0x03,
+    0x00,
+    channelIndex,
+    ...writeUInt32LE(timestampSeconds),
+    ...payloadBytes,
+  ]);
+}
+
+export function buildSendChannelMessageCommand(
+  channelIndex: number,
+  message: string,
+  timestampSeconds = Math.floor(Date.now() / 1000),
+): string {
+  const messageBytes = Array.from(Buffer.from(message, 'utf8'));
+  return buildSendChannelPayloadCommand(
+    channelIndex,
+    messageBytes,
+    timestampSeconds,
+  );
 }
 
 export function sendChannelMessageCommandHex(
@@ -109,12 +154,9 @@ export function sendChannelMessageCommandHex(
   timestampSeconds = Math.floor(Date.now() / 1000),
 ): string {
   const messageBytes = Array.from(Buffer.from(message, 'utf8'));
-
-  return bytesToHex([
-    0x03,
-    0x00,
+  return sendChannelPayloadCommandHex(
     channelIndex,
-    ...writeUInt32LE(timestampSeconds),
-    ...messageBytes,
-  ]);
+    messageBytes,
+    timestampSeconds,
+  );
 }
