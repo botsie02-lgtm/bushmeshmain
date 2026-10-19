@@ -17,7 +17,9 @@ describe('BushMeshRadioSession', () => {
 
   test('injects the current radio identity into queued actions', () => {
     const session = new BushMeshRadioSession();
-    session.setIdentity('AABBCCDDEEFF');
+    const owner = {};
+    session.claimTransport(owner, async () => {});
+    session.setIdentityForOwner(owner, 'AABBCCDDEEFF');
 
     session.queueQuickAction({
       channelIndex: 1,
@@ -27,28 +29,31 @@ describe('BushMeshRadioSession', () => {
     });
 
     expect(session.getSnapshot().queuedCount).toBe(1);
+    expect(session.listOutbox()[0].identityRef).toBe('AABBCCDDEEFF');
     expect(session.listOutbox()[0].description).toContain('AABBCCDDEEFF');
   });
 
   test('notifies subscribers when session readiness changes', () => {
     const session = new BushMeshRadioSession();
+    const owner = {};
     let notifications = 0;
     const unsubscribe = session.subscribe(() => {
       notifications += 1;
     });
 
-    session.setIdentity('001122334455');
-    session.setTransport(async () => {});
+    session.claimTransport(owner, async () => {});
+    session.setIdentityForOwner(owner, '001122334455');
     unsubscribe();
-    session.setIdentity(null);
+    session.releaseTransport(owner);
 
     expect(notifications).toBe(2);
   });
 
   test('drain updates accepted counts', async () => {
     const session = new BushMeshRadioSession();
-    session.setIdentity('001122334455');
-    session.setTransport(async () => {});
+    const owner = {};
+    session.claimTransport(owner, async () => {});
+    session.setIdentityForOwner(owner, '001122334455');
     session.queuePosition({
       channelIndex: 0,
       sequence: 4,
@@ -62,5 +67,70 @@ describe('BushMeshRadioSession', () => {
     expect(result.outcome).toBe('accepted');
     expect(session.getSnapshot().acceptedCount).toBe(1);
     expect(session.getSnapshot().queuedCount).toBe(0);
+  });
+
+  test('an old client cannot release a newer transport lease', () => {
+    const session = new BushMeshRadioSession();
+    const oldOwner = {};
+    const newOwner = {};
+
+    session.claimTransport(oldOwner, async () => {});
+    session.setIdentityForOwner(oldOwner, 'AAAAAAAAAAAA');
+    session.claimTransport(newOwner, async () => {});
+    session.setIdentityForOwner(newOwner, 'BBBBBBBBBBBB');
+
+    expect(session.releaseTransport(oldOwner)).toBe(false);
+    expect(session.getSnapshot().transportReady).toBe(true);
+    expect(session.getSnapshot().identityRef).toBe('BBBBBBBBBBBB');
+  });
+
+  test('a new radio identity cancels queued packets encoded for the old radio', () => {
+    const session = new BushMeshRadioSession();
+    const oldOwner = {};
+    const newOwner = {};
+
+    session.claimTransport(oldOwner, async () => {});
+    session.setIdentityForOwner(oldOwner, 'AAAAAAAAAAAA');
+    session.queuePosition({
+      channelIndex: 0,
+      sequence: 1,
+      timestampSeconds: 100,
+      latitude: -37.8,
+      longitude: 145.2,
+    });
+
+    session.claimTransport(newOwner, async () => {});
+    expect(session.getSnapshot().identityRef).toBeNull();
+    session.setIdentityForOwner(newOwner, 'BBBBBBBBBBBB');
+
+    expect(session.getSnapshot().queuedCount).toBe(0);
+    expect(session.getSnapshot().cancelledCount).toBe(1);
+    expect(session.listOutbox()[0].state).toBe('cancelled');
+  });
+
+  test('drain stays idle until the claimed radio has identified itself', async () => {
+    const session = new BushMeshRadioSession();
+    const oldOwner = {};
+    const newOwner = {};
+    let sendCount = 0;
+
+    session.claimTransport(oldOwner, async () => {
+      sendCount += 1;
+    });
+    session.setIdentityForOwner(oldOwner, 'AAAAAAAAAAAA');
+    session.queuePosition({
+      channelIndex: 0,
+      sequence: 1,
+      timestampSeconds: 100,
+      latitude: -37.8,
+      longitude: 145.2,
+    });
+
+    session.claimTransport(newOwner, async () => {
+      sendCount += 1;
+    });
+
+    expect(await session.drainOnce()).toEqual({entry: null, outcome: 'idle'});
+    expect(sendCount).toBe(0);
   });
 });
