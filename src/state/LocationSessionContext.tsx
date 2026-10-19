@@ -10,11 +10,13 @@ import React, {
 
 import {distanceMeters, getConvoyFreshness} from '../convoy/convoy';
 import {getConvoyGapDecision} from '../convoy/gapMonitor';
+import {androidGpsLocationProvider} from '../location/AndroidGpsLocationProvider';
 import {
   BushMeshLocationProvider,
   LocationProviderStop,
   createDefaultSimulatedRoute,
 } from '../location/LocationProvider';
+import {requestAndroidPreciseLocationPermission} from '../location/locationPermissions';
 import {
   BushMeshLocationFix,
   BushMeshPositionPlanner,
@@ -39,7 +41,9 @@ type LocationSessionContextValue = {
   transmittedPlanCount: number;
   rejectedFixCount: number;
   lastError: string | null;
+  nativeGpsSupported: boolean;
   startProvider: (provider: BushMeshLocationProvider) => void;
+  startNativeGps: () => Promise<void>;
   startSimulation: () => void;
   stop: () => void;
 };
@@ -81,6 +85,8 @@ export function LocationSessionProvider({
   const radioSessionRef = useRef(radioSession);
   const queuePositionRef = useRef(queuePosition);
   const drainOnceRef = useRef(drainOnce);
+
+  const nativeGpsSupported = androidGpsLocationProvider.isSupported();
 
   useEffect(() => {
     activeChannelRef.current = activeChannel;
@@ -236,6 +242,34 @@ export function LocationSessionProvider({
     [handleFix],
   );
 
+  const startNativeGps = useCallback(async () => {
+    if (!androidGpsLocationProvider.isSupported()) {
+      setStatus('error');
+      setLastError('Native Android GPS is unavailable on this device.');
+      return;
+    }
+
+    try {
+      const granted = await requestAndroidPreciseLocationPermission();
+      if (!granted) {
+        setStatus('error');
+        setLastError(
+          'Precise location permission is required for offline GPS tracking.',
+        );
+        return;
+      }
+
+      startProvider(androidGpsLocationProvider);
+    } catch (error) {
+      setStatus('error');
+      setLastError(
+        error instanceof Error
+          ? error.message
+          : 'Android GPS permission could not be requested.',
+      );
+    }
+  }, [startProvider]);
+
   const startSimulation = useCallback(() => {
     startProvider(createDefaultSimulatedRoute());
   }, [startProvider]);
@@ -249,7 +283,9 @@ export function LocationSessionProvider({
       transmittedPlanCount,
       rejectedFixCount,
       lastError,
+      nativeGpsSupported,
       startProvider,
+      startNativeGps,
       startSimulation,
       stop,
     }),
@@ -261,7 +297,9 @@ export function LocationSessionProvider({
       transmittedPlanCount,
       rejectedFixCount,
       lastError,
+      nativeGpsSupported,
       startProvider,
+      startNativeGps,
       startSimulation,
       stop,
     ],
