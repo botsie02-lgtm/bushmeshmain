@@ -17,6 +17,15 @@ import {
   encodeRouteAdvertisement,
 } from './routeAdvertisement';
 import {
+  BushMeshInventorySummary,
+  BushMeshRangeRequest,
+  BushMeshSyncFrame,
+  BushMeshSyncFrameKind,
+  decodeBushMeshSyncFrame,
+  encodeInventorySummary,
+  encodeRangeRequest,
+} from './syncProtocol';
+import {
   BushMeshDistress,
   BushMeshTelemetry,
   decodeDistressPayload,
@@ -40,6 +49,7 @@ export type BushMeshTypedPacket =
       wire: DecodedBushMeshWireMessage;
       value: BushMeshRouteAdvertisement;
     }
+  | {kind: 'sync'; wire: DecodedBushMeshWireMessage; value: BushMeshSyncFrame}
   | {kind: 'file'; wire: DecodedBushMeshWireMessage; value: number[]}
   | {kind: 'other'; wire: DecodedBushMeshWireMessage; value: number[]};
 
@@ -121,6 +131,25 @@ export function encodeBushMeshRouteWire(
   });
 }
 
+export function encodeBushMeshSyncWire(
+  frame: BushMeshSyncFrame,
+  messageId: number,
+): number[] {
+  const payload =
+    frame.kind === BushMeshSyncFrameKind.Summary
+      ? encodeInventorySummary(frame as BushMeshInventorySummary)
+      : encodeRangeRequest(frame as BushMeshRangeRequest);
+
+  return encodeBushMeshWire({
+    type: BushMeshPacketType.Sync,
+    priority: BushMeshPriority.Background,
+    compression: BushMeshCompressionProfile.Raw,
+    messageId,
+    ackRequested: frame.kind === BushMeshSyncFrameKind.RequestRanges,
+    payload,
+  });
+}
+
 export function encodeBushMeshFileWire(
   fileFrame: number[],
   messageId: number,
@@ -164,6 +193,12 @@ export function decodeBushMeshTypedPacket(bytes: number[]): BushMeshTypedPacket 
         kind: 'route',
         wire,
         value: decodeRouteAdvertisement(wire.envelope.payload),
+      };
+    case BushMeshPacketType.Sync:
+      return {
+        kind: 'sync',
+        wire,
+        value: decodeBushMeshSyncFrame(wire.envelope.payload),
       };
     case BushMeshPacketType.File:
       return {kind: 'file', wire, value: [...wire.envelope.payload]};
