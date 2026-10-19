@@ -22,6 +22,28 @@ export type BushMeshQueueEnqueueOptions = {
   maxAttempts?: number;
 };
 
+function validateQueuedMessage(message: BushMeshQueuedMessage): void {
+  assertIntegerInRange(message.messageId, 0, 0xffffffff, 'Message ID');
+  assertBytes(message.wireBytes, 'wire bytes');
+  assertIntegerInRange(message.priority, 0, 7, 'Priority');
+  assertIntegerInRange(message.attempts, 0, 255, 'Attempts');
+  assertIntegerInRange(message.maxAttempts, 1, 255, 'Max attempts');
+
+  for (const [label, value] of [
+    ['createdAt', message.createdAt],
+    ['expiresAt', message.expiresAt],
+    ['nextAttemptAt', message.nextAttemptAt],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`Queue ${label} must be a non-negative finite number.`);
+    }
+  }
+
+  if (message.expiresAt < message.createdAt) {
+    throw new Error('Queue expiry cannot be before creation time.');
+  }
+}
+
 export class BushMeshDeliveryQueue {
   private readonly messages = new Map<number, BushMeshQueuedMessage>();
 
@@ -145,6 +167,35 @@ export class BushMeshDeliveryQueue {
       ...message,
       wireBytes: [...message.wireBytes],
     }));
+  }
+
+  restoreSnapshot(
+    snapshot: BushMeshQueuedMessage[],
+    options?: {now?: number; replace?: boolean},
+  ): number {
+    const now = options?.now ?? Date.now();
+
+    if (options?.replace !== false) {
+      this.messages.clear();
+    }
+
+    let restored = 0;
+
+    for (const message of snapshot) {
+      validateQueuedMessage(message);
+
+      if (message.expiresAt <= now || message.attempts >= message.maxAttempts) {
+        continue;
+      }
+
+      this.messages.set(message.messageId, {
+        ...message,
+        wireBytes: [...message.wireBytes],
+      });
+      restored += 1;
+    }
+
+    return restored;
   }
 
   clear(): void {
