@@ -24,13 +24,16 @@ class BushMeshPersistenceModule(
     private const val OUTBOX_KEY = "encrypted_outbox_snapshot"
     private const val TRACK_KEY = "encrypted_track_snapshot"
     private const val CONTACTS_KEY = "encrypted_contacts_snapshot"
+    private const val MESSAGES_KEY = "encrypted_messages_snapshot"
     private const val OUTBOX_KEY_ALIAS = "bushmesh_outbox_aes_v1"
     private const val TRACK_KEY_ALIAS = "bushmesh_track_aes_v1"
     private const val CONTACTS_KEY_ALIAS = "bushmesh_contacts_aes_v1"
+    private const val MESSAGES_KEY_ALIAS = "bushmesh_messages_aes_v1"
     private const val ENVELOPE_VERSION = "v1"
     private const val OUTBOX_AAD = ENVELOPE_VERSION
     private const val TRACK_AAD = "$ENVELOPE_VERSION:track"
     private const val CONTACTS_AAD = "$ENVELOPE_VERSION:contacts"
+    private const val MESSAGES_AAD = "$ENVELOPE_VERSION:messages"
     private const val GCM_TAG_BITS = 128
     private const val GCM_IV_BYTES = 12
   }
@@ -39,140 +42,82 @@ class BushMeshPersistenceModule(
 
   @ReactMethod
   fun loadOutbox(promise: Promise) {
-    loadSecureValue(
-      preferenceKey = OUTBOX_KEY,
-      keyAlias = OUTBOX_KEY_ALIAS,
-      aad = OUTBOX_AAD,
-      label = "outbox",
-      errorCode = "BUSHMESH_OUTBOX_LOAD_FAILED",
-      promise = promise,
-    )
+    loadSecureValue(OUTBOX_KEY, OUTBOX_KEY_ALIAS, OUTBOX_AAD, "outbox", "BUSHMESH_OUTBOX_LOAD_FAILED", promise)
   }
 
   @ReactMethod
   fun saveOutbox(serializedSnapshot: String, promise: Promise) {
-    saveSecureValue(
-      preferenceKey = OUTBOX_KEY,
-      keyAlias = OUTBOX_KEY_ALIAS,
-      aad = OUTBOX_AAD,
-      label = "outbox",
-      errorCode = "BUSHMESH_OUTBOX_SAVE_FAILED",
-      serializedSnapshot = serializedSnapshot,
-      promise = promise,
-    )
+    saveSecureValue(OUTBOX_KEY, OUTBOX_KEY_ALIAS, OUTBOX_AAD, "outbox", "BUSHMESH_OUTBOX_SAVE_FAILED", serializedSnapshot, promise)
   }
 
   @ReactMethod
   fun clearOutbox(promise: Promise) {
-    clearSecureValue(
-      preferenceKey = OUTBOX_KEY,
-      label = "outbox",
-      errorCode = "BUSHMESH_OUTBOX_CLEAR_FAILED",
-      promise = promise,
-    )
+    clearSecureValue(OUTBOX_KEY, "outbox", "BUSHMESH_OUTBOX_CLEAR_FAILED", promise)
   }
 
   @ReactMethod
   fun resetOutboxStorage(promise: Promise) {
-    resetStorage(
-      preferenceKey = OUTBOX_KEY,
-      keyAlias = OUTBOX_KEY_ALIAS,
-      errorCode = "BUSHMESH_OUTBOX_RESET_FAILED",
-      label = "outbox",
-      promise = promise,
-    )
+    resetStorage(OUTBOX_KEY, OUTBOX_KEY_ALIAS, "BUSHMESH_OUTBOX_RESET_FAILED", "outbox", promise)
   }
 
   @ReactMethod
   fun loadTrack(promise: Promise) {
-    loadSecureValue(
-      preferenceKey = TRACK_KEY,
-      keyAlias = TRACK_KEY_ALIAS,
-      aad = TRACK_AAD,
-      label = "track",
-      errorCode = "BUSHMESH_TRACK_LOAD_FAILED",
-      promise = promise,
-    )
+    loadSecureValue(TRACK_KEY, TRACK_KEY_ALIAS, TRACK_AAD, "track", "BUSHMESH_TRACK_LOAD_FAILED", promise)
   }
 
   @ReactMethod
   fun saveTrack(serializedSnapshot: String, promise: Promise) {
-    saveSecureValue(
-      preferenceKey = TRACK_KEY,
-      keyAlias = TRACK_KEY_ALIAS,
-      aad = TRACK_AAD,
-      label = "track",
-      errorCode = "BUSHMESH_TRACK_SAVE_FAILED",
-      serializedSnapshot = serializedSnapshot,
-      promise = promise,
-    )
+    saveSecureValue(TRACK_KEY, TRACK_KEY_ALIAS, TRACK_AAD, "track", "BUSHMESH_TRACK_SAVE_FAILED", serializedSnapshot, promise)
   }
 
   @ReactMethod
   fun clearTrack(promise: Promise) {
-    clearSecureValue(
-      preferenceKey = TRACK_KEY,
-      label = "track",
-      errorCode = "BUSHMESH_TRACK_CLEAR_FAILED",
-      promise = promise,
-    )
+    clearSecureValue(TRACK_KEY, "track", "BUSHMESH_TRACK_CLEAR_FAILED", promise)
   }
 
   @ReactMethod
   fun resetTrackStorage(promise: Promise) {
-    resetStorage(
-      preferenceKey = TRACK_KEY,
-      keyAlias = TRACK_KEY_ALIAS,
-      errorCode = "BUSHMESH_TRACK_RESET_FAILED",
-      label = "track",
-      promise = promise,
-    )
+    resetStorage(TRACK_KEY, TRACK_KEY_ALIAS, "BUSHMESH_TRACK_RESET_FAILED", "track", promise)
   }
 
   @ReactMethod
   fun loadContacts(promise: Promise) {
-    loadSecureValue(
-      preferenceKey = CONTACTS_KEY,
-      keyAlias = CONTACTS_KEY_ALIAS,
-      aad = CONTACTS_AAD,
-      label = "contacts",
-      errorCode = "BUSHMESH_CONTACTS_LOAD_FAILED",
-      promise = promise,
-    )
+    loadSecureValue(CONTACTS_KEY, CONTACTS_KEY_ALIAS, CONTACTS_AAD, "contacts", "BUSHMESH_CONTACTS_LOAD_FAILED", promise)
   }
 
   @ReactMethod
   fun saveContacts(serializedSnapshot: String, promise: Promise) {
-    saveSecureValue(
-      preferenceKey = CONTACTS_KEY,
-      keyAlias = CONTACTS_KEY_ALIAS,
-      aad = CONTACTS_AAD,
-      label = "contacts",
-      errorCode = "BUSHMESH_CONTACTS_SAVE_FAILED",
-      serializedSnapshot = serializedSnapshot,
-      promise = promise,
-    )
+    saveSecureValue(CONTACTS_KEY, CONTACTS_KEY_ALIAS, CONTACTS_AAD, "contacts", "BUSHMESH_CONTACTS_SAVE_FAILED", serializedSnapshot, promise)
   }
 
   @ReactMethod
   fun clearContacts(promise: Promise) {
-    clearSecureValue(
-      preferenceKey = CONTACTS_KEY,
-      label = "contacts",
-      errorCode = "BUSHMESH_CONTACTS_CLEAR_FAILED",
-      promise = promise,
-    )
+    clearSecureValue(CONTACTS_KEY, "contacts", "BUSHMESH_CONTACTS_CLEAR_FAILED", promise)
   }
 
   @ReactMethod
   fun resetContactsStorage(promise: Promise) {
-    resetStorage(
-      preferenceKey = CONTACTS_KEY,
-      keyAlias = CONTACTS_KEY_ALIAS,
-      errorCode = "BUSHMESH_CONTACTS_RESET_FAILED",
-      label = "contacts",
-      promise = promise,
-    )
+    resetStorage(CONTACTS_KEY, CONTACTS_KEY_ALIAS, "BUSHMESH_CONTACTS_RESET_FAILED", "contacts", promise)
+  }
+
+  @ReactMethod
+  fun loadMessages(promise: Promise) {
+    loadSecureValue(MESSAGES_KEY, MESSAGES_KEY_ALIAS, MESSAGES_AAD, "messages", "BUSHMESH_MESSAGES_LOAD_FAILED", promise)
+  }
+
+  @ReactMethod
+  fun saveMessages(serializedSnapshot: String, promise: Promise) {
+    saveSecureValue(MESSAGES_KEY, MESSAGES_KEY_ALIAS, MESSAGES_AAD, "messages", "BUSHMESH_MESSAGES_SAVE_FAILED", serializedSnapshot, promise)
+  }
+
+  @ReactMethod
+  fun clearMessages(promise: Promise) {
+    clearSecureValue(MESSAGES_KEY, "messages", "BUSHMESH_MESSAGES_CLEAR_FAILED", promise)
+  }
+
+  @ReactMethod
+  fun resetMessagesStorage(promise: Promise) {
+    resetStorage(MESSAGES_KEY, MESSAGES_KEY_ALIAS, "BUSHMESH_MESSAGES_RESET_FAILED", "messages", promise)
   }
 
   private fun loadSecureValue(
@@ -209,10 +154,7 @@ class BushMeshPersistenceModule(
       val envelope = encrypt(serializedSnapshot, keyAlias, aad)
       val committed = preferences().edit().putString(preferenceKey, envelope).commit()
       if (!committed) {
-        promise.reject(
-          errorCode,
-          "Android secure $label storage did not commit the snapshot.",
-        )
+        promise.reject(errorCode, "Android secure $label storage did not commit the snapshot.")
         return
       }
       promise.resolve(true)
@@ -230,10 +172,7 @@ class BushMeshPersistenceModule(
     try {
       val committed = preferences().edit().remove(preferenceKey).commit()
       if (!committed) {
-        promise.reject(
-          errorCode,
-          "Android secure $label storage did not clear the snapshot.",
-        )
+        promise.reject(errorCode, "Android secure $label storage did not clear the snapshot.")
         return
       }
       promise.resolve(true)
@@ -326,10 +265,7 @@ class BushMeshPersistenceModule(
     try {
       val cleared = preferences().edit().remove(preferenceKey).commit()
       if (!cleared) {
-        promise.reject(
-          errorCode,
-          "Android secure $label storage did not clear the unreadable snapshot.",
-        )
+        promise.reject(errorCode, "Android secure $label storage did not clear the unreadable snapshot.")
         return
       }
 
