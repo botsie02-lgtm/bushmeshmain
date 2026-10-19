@@ -4,6 +4,11 @@ import {
   BushMeshPriority,
 } from './codec';
 import {
+  BushMeshControlPacket,
+  decodeControlPacket,
+  encodeControlPacket,
+} from './controlPackets';
+import {
   BushMeshNodeHello,
   BushMeshPing,
   decodeNodeHello,
@@ -49,6 +54,7 @@ export type BushMeshTypedPacket =
       wire: DecodedBushMeshWireMessage;
       value: BushMeshRouteAdvertisement;
     }
+  | {kind: 'command'; wire: DecodedBushMeshWireMessage; value: BushMeshControlPacket}
   | {kind: 'sync'; wire: DecodedBushMeshWireMessage; value: BushMeshSyncFrame}
   | {kind: 'file'; wire: DecodedBushMeshWireMessage; value: number[]}
   | {kind: 'other'; wire: DecodedBushMeshWireMessage; value: number[]};
@@ -131,6 +137,20 @@ export function encodeBushMeshRouteWire(
   });
 }
 
+export function encodeBushMeshControlWire(
+  control: BushMeshControlPacket,
+  messageId: number,
+): number[] {
+  return encodeBushMeshWire({
+    type: BushMeshPacketType.Command,
+    priority: BushMeshPriority.DirectMessage,
+    compression: BushMeshCompressionProfile.Command,
+    messageId,
+    ackRequested: true,
+    payload: encodeControlPacket(control),
+  });
+}
+
 export function encodeBushMeshSyncWire(
   frame: BushMeshSyncFrame,
   messageId: number,
@@ -193,6 +213,12 @@ export function decodeBushMeshTypedPacket(bytes: number[]): BushMeshTypedPacket 
         kind: 'route',
         wire,
         value: decodeRouteAdvertisement(wire.envelope.payload),
+      };
+    case BushMeshPacketType.Command:
+      return {
+        kind: 'command',
+        wire,
+        value: decodeControlPacket(wire.envelope.payload),
       };
     case BushMeshPacketType.Sync:
       return {
