@@ -1,5 +1,6 @@
 import {
   BushMeshQuickActionCode,
+  decodeBushMeshPosition,
   decodeBushMeshQuickAction,
 } from '../src/bushmesh/protocol';
 import {BushMeshTransmissionController} from '../src/radio/BushMeshTransmissionController';
@@ -77,6 +78,46 @@ describe('BushMeshTransmissionController', () => {
 
     await controller.drainOnce(2_000);
     expect(sentTypes).toEqual([2]);
+  });
+
+  test('newer queued positions supersede stale positions for the same radio and channel', async () => {
+    const controller = new BushMeshTransmissionController();
+    const sentSequences: number[] = [];
+
+    controller.setSender(async (_channelIndex, _dataType, payload) => {
+      sentSequences.push(decodeBushMeshPosition(payload).sequence);
+    });
+
+    controller.enqueuePosition(
+      0,
+      {
+        senderId: '001122334455',
+        sequence: 10,
+        timestampSeconds: 100,
+        latitude: -37.8,
+        longitude: 145.2,
+      },
+      1_000,
+    );
+
+    controller.enqueuePosition(
+      0,
+      {
+        senderId: '001122334455',
+        sequence: 11,
+        timestampSeconds: 110,
+        latitude: -37.79,
+        longitude: 145.21,
+      },
+      1_100,
+    );
+
+    const entries = controller.list();
+    expect(entries.filter(entry => entry.state === 'cancelled')).toHaveLength(1);
+    expect(entries.filter(entry => entry.state === 'queued')).toHaveLength(1);
+
+    await controller.drainOnce(2_000);
+    expect(sentSequences).toEqual([11]);
   });
 
   test('transport failures retain the packet for retry', async () => {
