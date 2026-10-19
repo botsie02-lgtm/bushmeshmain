@@ -84,6 +84,47 @@ describe('BushMeshRadioSession', () => {
     expect(session.getSnapshot().identityRef).toBe('BBBBBBBBBBBB');
   });
 
+  test('radio profile belongs to the active transport owner', () => {
+    const session = new BushMeshRadioSession();
+    const oldOwner = {};
+    const newOwner = {};
+    const oldProfile = {
+      source: 'meshcore' as const,
+      frequencyMhz: 915.2,
+      txPower: 18,
+      maxTxPower: 22,
+      modem: {
+        spreadingFactor: 9,
+        bandwidthKhz: 125,
+        codingRate: 5 as const,
+      },
+    };
+    const newProfile = {
+      source: 'meshcore' as const,
+      frequencyMhz: 917.0,
+      txPower: 20,
+      maxTxPower: 22,
+      modem: {
+        spreadingFactor: 8,
+        bandwidthKhz: 250,
+        codingRate: 5 as const,
+      },
+    };
+
+    session.claimTransport(oldOwner, async () => {});
+    expect(session.setRadioProfileForOwner(oldOwner, oldProfile)).toBe(true);
+    expect(session.getSnapshot().radioProfile?.frequencyMhz).toBe(915.2);
+
+    session.claimTransport(newOwner, async () => {});
+    expect(session.getSnapshot().radioProfile).toBeNull();
+    expect(session.setRadioProfileForOwner(oldOwner, oldProfile)).toBe(false);
+    expect(session.setRadioProfileForOwner(newOwner, newProfile)).toBe(true);
+    expect(session.getSnapshot().radioProfile?.frequencyMhz).toBe(917.0);
+
+    expect(session.releaseTransport(newOwner)).toBe(true);
+    expect(session.getSnapshot().radioProfile).toBeNull();
+  });
+
   test('a new radio identity cancels queued packets encoded for the old radio', () => {
     const session = new BushMeshRadioSession();
     const oldOwner = {};
