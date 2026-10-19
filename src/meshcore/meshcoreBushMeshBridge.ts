@@ -84,6 +84,7 @@ export function prepareBushMeshTextChannelFrames(
     storeAndForward?: boolean;
     ttlHops?: number;
     maxPayloadBytes?: number;
+    semantic?: boolean;
   },
 ): PreparedBushMeshChannelFrame[] {
   const transport = options?.transport ?? 'text-safe';
@@ -128,6 +129,7 @@ export async function sendBushMeshTextSafeChannelMessage(
     storeAndForward?: boolean;
     ttlHops?: number;
     maxPayloadBytes?: number;
+    semantic?: boolean;
   },
 ): Promise<unknown[]> {
   const frames = prepareBushMeshTextChannelFrames(text, messageId, {
@@ -158,6 +160,7 @@ export function buildBushMeshBinaryChannelCommands(
     ttlHops?: number;
     maxPayloadBytes?: number;
     timestampSeconds?: number;
+    semantic?: boolean;
   },
 ): string[] {
   const frames = prepareBushMeshTextChannelFrames(text, messageId, {
