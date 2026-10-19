@@ -17,6 +17,8 @@ import {
   BushMeshCommandResponder,
   BushMeshLocationSnapshot,
 } from './BushMeshCommandResponder';
+import {createBushMeshNodeHelloFromPublicKey} from './BushMeshIdentity';
+import {subscribeMeshCorePublicKey} from './BushMeshIdentityHub';
 import {BushMeshPeerRegistry} from './BushMeshPeerRegistry';
 import {BushMeshSyncManager} from './BushMeshSyncManager';
 
@@ -34,6 +36,7 @@ export class BushMeshNodeRuntime {
   private responder: BushMeshCommandResponder | null = null;
   private localHelloState: BushMeshNodeHello | null = null;
   private latestLocation: BushMeshLocationSnapshot | null = null;
+  private identityUnsubscribe: (() => void) | null = null;
 
   constructor(
     private readonly transport: BushMeshRuntimeTransport,
@@ -65,11 +68,23 @@ export class BushMeshNodeRuntime {
   private readonly allowExperimentalBinary: boolean;
 
   start(): void {
+    if (!this.identityUnsubscribe) {
+      this.identityUnsubscribe = subscribeMeshCorePublicKey(publicKey => {
+        const hello = createBushMeshNodeHelloFromPublicKey(publicKey);
+
+        if (hello.nodeId !== this.localHelloState?.nodeId) {
+          this.configureLocalNode(hello);
+        }
+      });
+    }
+
     this.network.start();
   }
 
   stop(): void {
     this.network.stop();
+    this.identityUnsubscribe?.();
+    this.identityUnsubscribe = null;
   }
 
   isRunning(): boolean {
@@ -77,6 +92,15 @@ export class BushMeshNodeRuntime {
   }
 
   configureLocalNode(hello: BushMeshNodeHello): void {
+    if (
+      this.localHelloState?.nodeId === hello.nodeId &&
+      this.localHelloState.capabilities === hello.capabilities &&
+      this.localHelloState.dictionaryVersion === hello.dictionaryVersion
+    ) {
+      this.localHelloState = {...hello};
+      return;
+    }
+
     this.localHelloState = {...hello};
     this.peerRegistryState = new BushMeshPeerRegistry(hello, {
       allowExperimentalBinary: this.allowExperimentalBinary,
