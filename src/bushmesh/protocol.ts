@@ -1,3 +1,5 @@
+export * from './wireProtocol';
+
 export const BUSHMESH_PROTOCOL_VERSION = 1;
 
 /**
