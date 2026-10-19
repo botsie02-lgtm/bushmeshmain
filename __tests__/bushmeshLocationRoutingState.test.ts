@@ -20,7 +20,12 @@ describe('Bushmesh GPS state and route freshness', () => {
     expect(first.mode).toBe('absolute');
 
     const absolute = decodeLocationPayload(first.payload);
-    decoder.acceptAbsolute(absolute);
+    decoder.acceptAbsolute({
+      latitude: absolute.latitude,
+      longitude: absolute.longitude,
+      precision: absolute.precision,
+      batteryPercent: absolute.batteryPercent ?? undefined,
+    });
 
     const second = encoder.encode({
       latitude: -37.7999,
