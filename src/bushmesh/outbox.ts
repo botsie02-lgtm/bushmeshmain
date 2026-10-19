@@ -43,6 +43,14 @@ const PRIORITY_RANK: Record<BushMeshOutboxPriority, number> = {
   bulk: 4,
 };
 
+const OUTBOX_STATES: BushMeshOutboxState[] = [
+  'queued',
+  'inflight',
+  'accepted',
+  'failed',
+  'cancelled',
+];
+
 const BASE_RETRY_DELAY_MS = 2_000;
 const MAX_RETRY_DELAY_MS = 60_000;
 
@@ -90,6 +98,36 @@ export class InMemoryBushMeshOutbox {
 
   list(): BushMeshOutboxEntry[] {
     return this.entries.map(entry => this.clone(entry));
+  }
+
+  /**
+   * Replaces the in-memory queue from an already validated persistence restore.
+   * This is intended for cold start before transmissions begin, not live merging.
+   */
+  replaceEntries(restored: BushMeshOutboxEntry[]): void {
+    const ids = new Set<string>();
+    let highestGeneratedId = 0;
+
+    const nextEntries = restored.map(entry => {
+      this.validateRestoredEntry(entry);
+      if (ids.has(entry.id)) {
+        throw new Error(`Duplicate restored outbox id ${entry.id}.`);
+      }
+      ids.add(entry.id);
+
+      const generatedMatch = /^outbox-(\d+)$/.exec(entry.id);
+      if (generatedMatch) {
+        highestGeneratedId = Math.max(
+          highestGeneratedId,
+          Number.parseInt(generatedMatch[1], 10),
+        );
+      }
+
+      return this.clone(entry);
+    });
+
+    this.entries = nextEntries;
+    this.nextId = Math.max(1, highestGeneratedId + 1);
   }
 
   nextReady(nowMs = Date.now()): BushMeshOutboxEntry | null {
@@ -224,6 +262,40 @@ export class InMemoryBushMeshOutbox {
         entry.state !== 'failed' &&
         entry.state !== 'cancelled',
     );
+  }
+
+  private validateRestoredEntry(entry: BushMeshOutboxEntry): void {
+    if (!entry.id || typeof entry.id !== 'string') {
+      throw new Error('Restored outbox entry id is invalid.');
+    }
+    if (
+      !Number.isInteger(entry.channelIndex) ||
+      entry.channelIndex < 0 ||
+      entry.channelIndex > 7
+    ) {
+      throw new Error(`Restored outbox entry ${entry.id} has an invalid channel.`);
+    }
+    if (!Number.isInteger(entry.dataType) || entry.dataType < 1 || entry.dataType > 0xffff) {
+      throw new Error(`Restored outbox entry ${entry.id} has an invalid data type.`);
+    }
+    if (!(entry.payload instanceof Uint8Array)) {
+      throw new Error(`Restored outbox entry ${entry.id} has an invalid payload.`);
+    }
+    if (!(entry.priority in PRIORITY_RANK)) {
+      throw new Error(`Restored outbox entry ${entry.id} has an invalid priority.`);
+    }
+    if (!OUTBOX_STATES.includes(entry.state)) {
+      throw new Error(`Restored outbox entry ${entry.id} has an invalid state.`);
+    }
+    if (
+      !Number.isInteger(entry.maxAttempts) ||
+      entry.maxAttempts < 1 ||
+      !Number.isInteger(entry.attempts) ||
+      entry.attempts < 0 ||
+      entry.attempts > entry.maxAttempts
+    ) {
+      throw new Error(`Restored outbox entry ${entry.id} has invalid retry metadata.`);
+    }
   }
 
   private clone(entry: BushMeshOutboxEntry): BushMeshOutboxEntry {
