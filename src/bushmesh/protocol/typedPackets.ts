@@ -27,6 +27,10 @@ import {
   encodeRouteAdvertisement,
 } from './routeAdvertisement';
 import {
+  BushMeshRoutedPayload,
+  decodeRoutedPayload,
+} from './routedPayload';
+import {
   BushMeshInventorySummary,
   BushMeshRangeRequest,
   BushMeshSyncFrame,
@@ -60,6 +64,7 @@ export type BushMeshTypedPacket =
       wire: DecodedBushMeshWireMessage;
       value: BushMeshRouteAdvertisement;
     }
+  | {kind: 'routed'; wire: DecodedBushMeshWireMessage; value: BushMeshRoutedPayload}
   | {kind: 'command'; wire: DecodedBushMeshWireMessage; value: BushMeshControlPacket}
   | {kind: 'sync'; wire: DecodedBushMeshWireMessage; value: BushMeshSyncFrame}
   | {kind: 'file'; wire: DecodedBushMeshWireMessage; value: number[]}
@@ -247,6 +252,12 @@ export function decodeBushMeshTypedPacket(bytes: number[]): BushMeshTypedPacket 
         kind: 'route',
         wire,
         value: decodeRouteAdvertisement(wire.envelope.payload),
+      };
+    case BushMeshPacketType.Routed:
+      return {
+        kind: 'routed',
+        wire,
+        value: decodeRoutedPayload(wire.envelope.payload),
       };
     case BushMeshPacketType.Command:
       return {
