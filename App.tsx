@@ -15,6 +15,7 @@ import {BushMeshProvider} from './src/state/BushMeshContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DriveProvider} from './src/state/DriveContext';
 import {RadioSessionProvider} from './src/state/RadioSessionContext';
+import {LocationSessionProvider} from './src/state/LocationSessionContext';
 import {DriveScreen} from './src/screens/DriveScreen';
 import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
@@ -93,7 +94,9 @@ function App(): React.JSX.Element {
         <ConvoyProvider>
           <DriveProvider>
             <RadioSessionProvider>
-              <AppContent />
+              <LocationSessionProvider>
+                <AppContent />
+              </LocationSessionProvider>
             </RadioSessionProvider>
           </DriveProvider>
         </ConvoyProvider>
