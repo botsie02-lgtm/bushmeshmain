@@ -80,13 +80,45 @@ class BushMeshPersistenceModule(
     }
   }
 
+  /**
+   * Drops an unreadable encrypted snapshot and the corresponding Keystore key,
+   * then creates a fresh key. This is intentionally destructive and should only
+   * be called after restore has already failed: ciphertext that cannot be
+   * authenticated/decrypted cannot be trusted as recoverable outbox traffic.
+   */
+  @ReactMethod
+  fun resetOutboxStorage(promise: Promise) {
+    try {
+      val cleared = preferences().edit().remove(OUTBOX_KEY).commit()
+      if (!cleared) {
+        promise.reject(
+          "BUSHMESH_OUTBOX_RESET_FAILED",
+          "Android secure outbox storage did not clear the unreadable snapshot.",
+        )
+        return
+      }
+
+      val keyStore = keyStore()
+      if (keyStore.containsAlias(KEY_ALIAS)) {
+        keyStore.deleteEntry(KEY_ALIAS)
+      }
+      getOrCreateKey()
+      promise.resolve(true)
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_OUTBOX_RESET_FAILED", error.message, error)
+    }
+  }
+
   private fun preferences() = reactContext.getSharedPreferences(
     STORE_NAME,
     Context.MODE_PRIVATE,
   )
 
+  private fun keyStore(): KeyStore =
+    KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+
   private fun getOrCreateKey(): SecretKey {
-    val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    val keyStore = keyStore()
     val existing = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
     if (existing != null) {
       return existing
