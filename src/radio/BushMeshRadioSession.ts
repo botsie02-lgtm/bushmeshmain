@@ -188,6 +188,16 @@ export class BushMeshRadioSession {
     return entry;
   }
 
+  /**
+   * Replaces the runtime outbox during cold-start recovery. Call before a radio
+   * transport is allowed to drain queued traffic.
+   */
+  restoreOutbox(entries: BushMeshOutboxEntry[]): void {
+    this.controller.restoreEntries(entries);
+    this.lastAttempt = null;
+    this.emit();
+  }
+
   drainOnce(nowMs = Date.now()): Promise<TransmissionAttemptResult> {
     if (!this.identityRef) {
       return Promise.resolve({entry: null, outcome: 'idle'});
