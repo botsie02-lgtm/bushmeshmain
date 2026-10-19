@@ -9,6 +9,7 @@ import {
   BushMeshInboundMessage,
   decodeBushMeshMeshCoreFrame,
 } from '../bushmesh/meshcoreBridge';
+import {bushMeshRadioSession} from '../radio/BushMeshRadioSession';
 import {MESHCORE_BLE} from './meshcoreBle';
 import {
   buildAppStartCommand,
@@ -34,6 +35,10 @@ import {
   MeshCoreDeviceInfo,
   parseMeshCoreDeviceInfo,
 } from './meshcoreDeviceInfo';
+import {
+  MeshCoreSelfInfo,
+  parseMeshCoreSelfInfo,
+} from './meshcoreSelfInfo';
 import {
   base64ToBytes,
   decodeMeshCoreBytes,
@@ -69,6 +74,7 @@ export type MeshCoreLogItem = {
   contactsStartCount?: number;
   contactsEndLastModified?: number | null;
   deviceInfo?: MeshCoreDeviceInfo;
+  selfInfo?: MeshCoreSelfInfo;
   channelData?: MeshCoreChannelDataFrame;
   bushMeshMessage?: BushMeshInboundMessage;
 };
@@ -155,6 +161,10 @@ export class MeshCoreClient {
       },
     );
 
+    bushMeshRadioSession.setTransport(async (channelIndex, dataType, payload) => {
+      await this.sendChannelData(channelIndex, dataType, payload);
+    });
+
     this.events.onStatus('MeshCore client started. Listening for TX packets.');
   }
 
@@ -168,6 +178,9 @@ export class MeshCoreClient {
     this.commandQueue.cancelPending();
     this.mtuPromise = null;
     this.lastDeviceInfo = null;
+
+    bushMeshRadioSession.setTransport(null);
+    bushMeshRadioSession.setIdentity(null);
 
     if (this.pendingCommand) {
       const pending = this.pendingCommand;
@@ -474,6 +487,7 @@ export class MeshCoreClient {
     const decoded = decodeMeshCoreBytes(bytes);
     const parsed = parseMeshCorePacketFields(bytes);
     const deviceInfo = parseMeshCoreDeviceInfo(bytes) ?? undefined;
+    const selfInfo = parseMeshCoreSelfInfo(bytes) ?? undefined;
 
     let channelData: MeshCoreChannelDataFrame | undefined;
     let bushMeshMessage: BushMeshInboundMessage | undefined;
@@ -496,6 +510,10 @@ export class MeshCoreClient {
       this.lastDeviceInfo = deviceInfo;
     }
 
+    if (selfInfo) {
+      bushMeshRadioSession.setIdentity(selfInfo.bushMeshIdentityRef);
+    }
+
     const frameLog: MeshCoreLogItem = {
       label: decoded.label,
       value: decoded.hex,
@@ -511,6 +529,7 @@ export class MeshCoreClient {
       contactsStartCount: parsed?.contactsStartCount,
       contactsEndLastModified: parsed?.contactsEndLastModified,
       deviceInfo,
+      selfInfo,
       channelData,
       bushMeshMessage,
     };
