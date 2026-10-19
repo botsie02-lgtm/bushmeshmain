@@ -8,17 +8,11 @@ import {
   prepareFileTransfer,
 } from '../protocol';
 
-export type BushMeshFileCheckpointStore = {
-  getItem: (key: string) => Promise<string | null>;
-  setItem: (key: string, value: string) => Promise<void>;
-  removeItem?: (key: string) => Promise<void>;
-};
-
-export type BushMeshOutgoingFileCheckpoint = {
+export type BushMeshFileTransferCheckpoint = {
   transferId: number;
   dataBase64: string;
   chunkSize: number;
-  contentType: number;
+  contentType: BushMeshFileContentType | number;
   fileName?: string;
   acknowledgedChunkIndexes: number[];
   nextMissingChunkIndex: number;
@@ -26,20 +20,26 @@ export type BushMeshOutgoingFileCheckpoint = {
   updatedAt: number;
 };
 
+export type BushMeshFileCheckpointStore = {
+  getItem: (key: string) => Promise<string | null>;
+  setItem: (key: string, value: string) => Promise<void>;
+  removeItem?: (key: string) => Promise<void>;
+};
+
 export type BushMeshRestoredFileTransfer = {
-  checkpoint: BushMeshOutgoingFileCheckpoint;
+  checkpoint: BushMeshFileTransferCheckpoint;
   transfer: PreparedBushMeshFileTransfer;
 };
 
-const CHECKPOINT_VERSION = 1;
-const DEFAULT_KEY = 'bushmesh.fileCheckpoints.v1';
+const SNAPSHOT_VERSION = 1;
+const DEFAULT_STORE_KEY = 'bushmesh.fileTransfers.v1';
 
 export class BushMeshFileCheckpointRuntime {
-  private readonly checkpoints = new Map<number, BushMeshOutgoingFileCheckpoint>();
+  private readonly checkpoints = new Map<number, BushMeshFileTransferCheckpoint>();
 
   constructor(
     private readonly store?: BushMeshFileCheckpointStore,
-    private readonly key = DEFAULT_KEY,
+    private readonly storeKey = DEFAULT_STORE_KEY,
   ) {}
 
   async initialize(): Promise<number> {
@@ -47,7 +47,7 @@ export class BushMeshFileCheckpointRuntime {
       return 0;
     }
 
-    const raw = await this.store.getItem(this.key);
+    const raw = await this.store.getItem(this.storeKey);
     if (!raw) {
       return 0;
     }
@@ -59,22 +59,25 @@ export class BushMeshFileCheckpointRuntime {
       throw new Error('Stored BushMesh file checkpoints are invalid JSON.');
     }
 
-    const envelope = parsed as {
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Stored BushMesh file checkpoints have invalid shape.');
+    }
+
+    const snapshot = parsed as {
       version?: number;
-      checkpoints?: BushMeshOutgoingFileCheckpoint[];
+      checkpoints?: BushMeshFileTransferCheckpoint[];
     };
 
     if (
-      !envelope ||
-      envelope.version !== CHECKPOINT_VERSION ||
-      !Array.isArray(envelope.checkpoints)
+      snapshot.version !== SNAPSHOT_VERSION ||
+      !Array.isArray(snapshot.checkpoints)
     ) {
-      throw new Error('Stored BushMesh file checkpoint version is unsupported.');
+      throw new Error('Unsupported BushMesh file checkpoint snapshot.');
     }
 
     this.checkpoints.clear();
-    for (const checkpoint of envelope.checkpoints) {
-      this.validateCheckpoint(checkpoint);
+    for (const checkpoint of snapshot.checkpoints) {
+      this.validate(checkpoint);
       this.checkpoints.set(checkpoint.transferId, this.clone(checkpoint));
     }
 
@@ -93,7 +96,7 @@ export class BushMeshFileCheckpointRuntime {
   ): Promise<BushMeshRestoredFileTransfer> {
     const transfer = prepareFileTransfer(transferId, data, options);
     const now = options?.now ?? Date.now();
-    const checkpoint: BushMeshOutgoingFileCheckpoint = {
+    const checkpoint: BushMeshFileTransferCheckpoint = {
       transferId,
       dataBase64: Buffer.from(data).toString('base64'),
       chunkSize: transfer.metadata.chunkSize,
@@ -140,7 +143,7 @@ export class BushMeshFileCheckpointRuntime {
     );
     checkpoint.nextMissingChunkIndex =
       ack.missingChunkIndexes[0] ??
-      Math.max(checkpoint.nextMissingChunkIndex, ack.baseChunkIndex + ack.windowSize);
+      Math.max(checkpoint.nextMissingChunkIndex, ack.baseChunkIndex + ack.bitCount);
     checkpoint.updatedAt = now;
     await this.persist();
   }
@@ -192,15 +195,26 @@ export class BushMeshFileCheckpointRuntime {
     return frames;
   }
 
-  startFrame(transferId: number): number[] | null {
-    return this.restore(transferId)?.transfer.startFrame ?? null;
+  progress(transferId: number): {
+    acknowledgedChunks: number;
+    nextMissingChunkIndex: number;
+    complete: boolean;
+  } | null {
+    const restored = this.restore(transferId);
+    if (!restored) {
+      return null;
+    }
+
+    const acknowledged = new Set(restored.checkpoint.acknowledgedChunkIndexes);
+    const chunkCount = restored.transfer.chunkFrames.length;
+    return {
+      acknowledgedChunks: acknowledged.size,
+      nextMissingChunkIndex: restored.checkpoint.nextMissingChunkIndex,
+      complete: chunkCount === 0 || acknowledged.size >= chunkCount,
+    };
   }
 
-  endFrame(transferId: number): number[] | null {
-    return this.restore(transferId)?.transfer.endFrame ?? null;
-  }
-
-  async complete(transferId: number): Promise<boolean> {
+  async remove(transferId: number): Promise<boolean> {
     const removed = this.checkpoints.delete(transferId);
     if (removed) {
       await this.persist();
@@ -208,13 +222,13 @@ export class BushMeshFileCheckpointRuntime {
     return removed;
   }
 
-  list(): BushMeshOutgoingFileCheckpoint[] {
-    return Array.from(this.checkpoints.values())
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map(checkpoint => this.clone(checkpoint));
+  snapshot(): BushMeshFileTransferCheckpoint[] {
+    return Array.from(this.checkpoints.values()).map(checkpoint =>
+      this.clone(checkpoint),
+    );
   }
 
-  private require(transferId: number): BushMeshOutgoingFileCheckpoint {
+  private require(transferId: number): BushMeshFileTransferCheckpoint {
     const checkpoint = this.checkpoints.get(transferId);
     if (!checkpoint) {
       throw new Error(`Unknown BushMesh file checkpoint ${transferId}.`);
@@ -222,33 +236,30 @@ export class BushMeshFileCheckpointRuntime {
     return checkpoint;
   }
 
-  private validateCheckpoint(checkpoint: BushMeshOutgoingFileCheckpoint): void {
+  private validate(checkpoint: BushMeshFileTransferCheckpoint): void {
     if (!Number.isInteger(checkpoint.transferId) || checkpoint.transferId < 0) {
-      throw new Error('Stored file checkpoint transfer ID is invalid.');
+      throw new Error('Stored file transfer ID is invalid.');
     }
-    if (!checkpoint.dataBase64 || !Number.isInteger(checkpoint.chunkSize)) {
-      throw new Error('Stored file checkpoint payload metadata is invalid.');
+    if (!checkpoint.dataBase64 || typeof checkpoint.dataBase64 !== 'string') {
+      throw new Error('Stored file transfer data is missing.');
+    }
+    if (!Number.isInteger(checkpoint.chunkSize) || checkpoint.chunkSize < 1) {
+      throw new Error('Stored file chunk size is invalid.');
+    }
+    if (!Array.isArray(checkpoint.acknowledgedChunkIndexes)) {
+      throw new Error('Stored acknowledged chunk indexes are invalid.');
     }
     if (
-      !Array.isArray(checkpoint.acknowledgedChunkIndexes) ||
-      !Number.isInteger(checkpoint.nextMissingChunkIndex)
+      !Number.isInteger(checkpoint.nextMissingChunkIndex) ||
+      checkpoint.nextMissingChunkIndex < 0
     ) {
-      throw new Error('Stored file checkpoint progress is invalid.');
+      throw new Error('Stored next missing chunk index is invalid.');
     }
-
-    // Validate that the payload can still reconstruct the same deterministic
-    // transfer metadata before accepting the checkpoint into runtime state.
-    const data = Array.from(Buffer.from(checkpoint.dataBase64, 'base64'));
-    prepareFileTransfer(checkpoint.transferId, data, {
-      chunkSize: checkpoint.chunkSize,
-      contentType: checkpoint.contentType,
-      fileName: checkpoint.fileName,
-    });
   }
 
   private clone(
-    checkpoint: BushMeshOutgoingFileCheckpoint,
-  ): BushMeshOutgoingFileCheckpoint {
+    checkpoint: BushMeshFileTransferCheckpoint,
+  ): BushMeshFileTransferCheckpoint {
     return {
       ...checkpoint,
       acknowledgedChunkIndexes: [...checkpoint.acknowledgedChunkIndexes],
@@ -261,10 +272,10 @@ export class BushMeshFileCheckpointRuntime {
     }
 
     await this.store.setItem(
-      this.key,
+      this.storeKey,
       JSON.stringify({
-        version: CHECKPOINT_VERSION,
-        checkpoints: this.list(),
+        version: SNAPSHOT_VERSION,
+        checkpoints: this.snapshot(),
       }),
     );
   }
