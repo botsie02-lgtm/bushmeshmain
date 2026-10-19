@@ -1,3 +1,5 @@
+import {Buffer} from 'buffer';
+
 import {assertBytes, assertIntegerInRange, decodeVarUint, encodeVarUint} from './codec';
 import {BushMeshSyncSummary, createSyncSummary} from './syncSummary';
 
