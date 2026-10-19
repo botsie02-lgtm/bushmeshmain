@@ -1,3 +1,5 @@
+import {Buffer} from 'buffer';
+
 import {parseMeshCorePacketFields} from '../src/meshcore/meshcoreParsers';
 
 describe('MeshCore contact info parser', () => {
