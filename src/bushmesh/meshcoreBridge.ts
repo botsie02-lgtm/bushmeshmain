@@ -2,7 +2,9 @@ import {
   BUSHMESH_MESHCORE_DEV_DATA_TYPE,
   BushMeshMessageType,
   DecodedBushMeshPosition,
+  DecodedBushMeshQuickAction,
   decodeBushMeshPosition,
+  decodeBushMeshQuickAction,
 } from './protocol';
 import {publishBushMeshInboundMessage} from './inboundBus';
 import {MeshCoreChannelDataFrame} from '../meshcore/meshcoreChannelData';
@@ -14,6 +16,13 @@ export type BushMeshInboundMessage =
       snrDb: number;
       pathLength: number;
       position: DecodedBushMeshPosition;
+    }
+  | {
+      type: BushMeshMessageType.QuickAction;
+      channelIndex: number;
+      snrDb: number;
+      pathLength: number;
+      action: DecodedBushMeshQuickAction;
     };
 
 /**
@@ -32,21 +41,33 @@ export function decodeBushMeshMeshCoreFrame(
     return null;
   }
 
+  let message: BushMeshInboundMessage | null = null;
+
   switch (frame.payload[1]) {
-    case BushMeshMessageType.Position: {
-      const message: BushMeshInboundMessage = {
+    case BushMeshMessageType.Position:
+      message = {
         type: BushMeshMessageType.Position,
         channelIndex: frame.channelIndex,
         snrDb: frame.snrDb,
         pathLength: frame.pathLength,
         position: decodeBushMeshPosition(frame.payload),
       };
+      break;
 
-      publishBushMeshInboundMessage(message);
-      return message;
-    }
+    case BushMeshMessageType.QuickAction:
+      message = {
+        type: BushMeshMessageType.QuickAction,
+        channelIndex: frame.channelIndex,
+        snrDb: frame.snrDb,
+        pathLength: frame.pathLength,
+        action: decodeBushMeshQuickAction(frame.payload),
+      };
+      break;
 
     default:
       return null;
   }
+
+  publishBushMeshInboundMessage(message);
+  return message;
 }
