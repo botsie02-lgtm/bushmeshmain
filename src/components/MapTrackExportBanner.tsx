@@ -10,6 +10,8 @@ export function MapTrackExportBanner(): React.JSX.Element | null {
     trackPoints,
     trackDistanceMeters,
     trackExportSupported,
+    trackPersistenceStatus,
+    trackPersistenceError,
     exportTrackGpx,
   } = useLocationSession();
   const [exporting, setExporting] = useState(false);
@@ -38,13 +40,35 @@ export function MapTrackExportBanner(): React.JSX.Element | null {
     }
   };
 
+  const durabilityLabel =
+    trackPersistenceStatus === 'ready'
+      ? 'ENCRYPTED + DURABLE'
+      : trackPersistenceStatus === 'restoring'
+        ? 'RESTORING TRAIL'
+        : trackPersistenceStatus === 'unsupported'
+          ? 'MEMORY ONLY'
+          : 'PERSISTENCE ERROR';
+
   return (
     <View style={styles.wrap}>
       <View style={styles.copy}>
-        <Text style={styles.eyebrow}>RECORDED TRAIL</Text>
+        <View style={styles.eyebrowRow}>
+          <Text style={styles.eyebrow}>RECORDED TRAIL</Text>
+          <Text
+            style={
+              trackPersistenceStatus === 'ready'
+                ? styles.persistenceReady
+                : styles.persistenceWarning
+            }>
+            {durabilityLabel}
+          </Text>
+        </View>
         <Text style={styles.summary}>
           {trackPoints.length} points · {formatDistance(trackDistanceMeters)}
         </Text>
+        {trackPersistenceError ? (
+          <Text style={styles.warningMessage}>{trackPersistenceError}</Text>
+        ) : null}
         {message ? <Text style={styles.message}>{message}</Text> : null}
       </View>
 
@@ -81,11 +105,27 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   copy: {flex: 1},
+  eyebrowRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    flexWrap: 'wrap',
+  },
   eyebrow: {
     color: colors.textMuted,
     fontSize: 8,
     fontWeight: '900',
     letterSpacing: 1,
+  },
+  persistenceReady: {
+    color: colors.success,
+    fontSize: 7,
+    fontWeight: '900',
+  },
+  persistenceWarning: {
+    color: colors.warning,
+    fontSize: 7,
+    fontWeight: '900',
   },
   summary: {
     color: colors.textPrimary,
@@ -95,6 +135,12 @@ const styles = StyleSheet.create({
   },
   message: {
     color: colors.textSecondary,
+    fontSize: 9,
+    lineHeight: 13,
+    marginTop: 3,
+  },
+  warningMessage: {
+    color: colors.warning,
     fontSize: 9,
     lineHeight: 13,
     marginTop: 3,
