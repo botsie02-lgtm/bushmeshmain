@@ -66,6 +66,9 @@ export class BushMeshNodeRuntime {
   private identityUnsubscribe: (() => void) | null = null;
   private forwarder = new BushMeshControlledFloodForwarder();
   private readonly forwardTimers = new Set<ReturnType<typeof setTimeout>>();
+  private discoveryChannelIndex: number | null = null;
+  private discoveryIntervalMs = 5 * 60 * 1000;
+  private discoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly transport: BushMeshRuntimeTransport,
@@ -108,12 +111,14 @@ export class BushMeshNodeRuntime {
     }
 
     this.network.start();
+    this.armDiscovery(true);
   }
 
   stop(): void {
     this.network.stop();
     this.identityUnsubscribe?.();
     this.identityUnsubscribe = null;
+    this.clearDiscoveryTimer();
 
     for (const timer of this.forwardTimers) {
       clearTimeout(timer);
@@ -132,6 +137,7 @@ export class BushMeshNodeRuntime {
       this.localHelloState.dictionaryVersion === hello.dictionaryVersion
     ) {
       this.localHelloState = {...hello};
+      this.armDiscovery(false);
       return;
     }
 
@@ -155,6 +161,7 @@ export class BushMeshNodeRuntime {
     this.events.onStatus?.(
       `BushMesh local node configured as ${hello.nodeId.toString(16).padStart(8, '0')}.`,
     );
+    this.armDiscovery(true);
   }
 
   localHello(): BushMeshNodeHello | null {
@@ -163,6 +170,26 @@ export class BushMeshNodeRuntime {
 
   peers(): BushMeshPeerRegistry | null {
     return this.peerRegistryState;
+  }
+
+  setDiscoveryChannel(
+    channelIndex: number | null,
+    intervalMs = 5 * 60 * 1000,
+  ): void {
+    if (
+      channelIndex !== null &&
+      (!Number.isInteger(channelIndex) || channelIndex < 0 || channelIndex > 255)
+    ) {
+      throw new Error('BushMesh discovery channel must be an integer from 0 to 255.');
+    }
+
+    if (!Number.isFinite(intervalMs) || intervalMs < 30 * 1000) {
+      throw new Error('BushMesh discovery interval must be at least 30 seconds.');
+    }
+
+    this.discoveryChannelIndex = channelIndex;
+    this.discoveryIntervalMs = intervalMs;
+    this.armDiscovery(true);
   }
 
   setLocation(location: CompactLocation, capturedAtMs = Date.now()): void {
@@ -518,6 +545,50 @@ export class BushMeshNodeRuntime {
     wireBytes: number[],
   ): Promise<void> {
     await this.network.sendWire(channelIndex, wireBytes);
+  }
+
+  private armDiscovery(sendNow: boolean): void {
+    this.clearDiscoveryTimer();
+
+    const channelIndex = this.discoveryChannelIndex;
+    const local = this.localHelloState;
+
+    if (!this.network.isRunning() || channelIndex === null || !local) {
+      return;
+    }
+
+    if (sendNow) {
+      void this.broadcastNodeHello(channelIndex).catch(error => {
+        this.events.onError?.(
+          error instanceof Error
+            ? `BushMesh discovery hello failed: ${error.message}`
+            : 'BushMesh discovery hello failed.',
+        );
+      });
+    }
+
+    const staggerMs = local.nodeId % 30000;
+    this.discoveryTimer = setTimeout(() => {
+      this.discoveryTimer = null;
+      void this.broadcastNodeHello(channelIndex)
+        .catch(error => {
+          this.events.onError?.(
+            error instanceof Error
+              ? `BushMesh discovery heartbeat failed: ${error.message}`
+              : 'BushMesh discovery heartbeat failed.',
+          );
+        })
+        .finally(() => {
+          this.armDiscovery(false);
+        });
+    }, this.discoveryIntervalMs + staggerMs);
+  }
+
+  private clearDiscoveryTimer(): void {
+    if (this.discoveryTimer) {
+      clearTimeout(this.discoveryTimer);
+      this.discoveryTimer = null;
+    }
   }
 
   private requireLocalHello(): BushMeshNodeHello {
