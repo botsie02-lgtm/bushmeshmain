@@ -168,6 +168,33 @@ export class InMemoryBushMeshOutbox {
   }
 
   /**
+   * Position traffic represents current state, not an event history. When a
+   * newer fix is queued, older queued fixes for the same vehicle/channel are
+   * superseded so reconnecting does not waste LoRa airtime on stale locations.
+   */
+  cancelQueuedPositions(
+    identityRef: string,
+    channelIndex: number,
+  ): BushMeshOutboxEntry[] {
+    const cancelled: BushMeshOutboxEntry[] = [];
+
+    for (const entry of this.entries) {
+      if (
+        entry.state === 'queued' &&
+        entry.priority === 'position' &&
+        entry.identityRef === identityRef &&
+        entry.channelIndex === channelIndex
+      ) {
+        entry.state = 'cancelled';
+        entry.lastError = 'Superseded by a newer position update.';
+        cancelled.push(this.clone(entry));
+      }
+    }
+
+    return cancelled;
+  }
+
+  /**
    * Prevents packets encoded with a previous radio identity from being sent by
    * a newly connected radio. In-flight work is left alone because its transport
    * call has already begun; queued work is safe to cancel deterministically.
