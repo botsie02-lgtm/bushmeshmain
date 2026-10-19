@@ -50,6 +50,7 @@ type SessionListener = () => void;
 export class BushMeshRadioSession {
   private readonly controller: BushMeshTransmissionController;
   private readonly listeners = new Set<SessionListener>();
+  private readonly compatibilityOwner: BushMeshTransportOwner = {};
   private transportOwner: BushMeshTransportOwner | null = null;
   private identityRef: BushMeshIdentityRef | null = null;
   private lastAttempt: TransmissionAttemptResult | null = null;
@@ -114,6 +115,28 @@ export class BushMeshRadioSession {
     this.identityRef = identityRef;
     this.emit();
     return true;
+  }
+
+  /** @deprecated MeshCoreClient is migrating to claimTransport/releaseTransport. */
+  setTransport(sender: BushMeshDatagramSender | null): void {
+    if (sender) {
+      this.claimTransport(this.compatibilityOwner, sender);
+    } else {
+      this.releaseTransport(this.compatibilityOwner);
+    }
+  }
+
+  /** @deprecated MeshCoreClient is migrating to owner-scoped identity updates. */
+  setIdentity(identityRef: BushMeshIdentityRef | null): void {
+    if (identityRef) {
+      this.setIdentityForOwner(this.compatibilityOwner, identityRef);
+      return;
+    }
+
+    if (this.transportOwner === this.compatibilityOwner) {
+      this.identityRef = null;
+      this.emit();
+    }
   }
 
   queueQuickAction(input: QueueQuickActionInput): BushMeshOutboxEntry {
