@@ -44,7 +44,13 @@ class BushMeshRadioService : Service() {
     }
 
     if (!BushMeshRadioServiceState.shouldRun()) {
+      // Calls arrive through startForegroundService on modern Android. Promote
+      // immediately, even for a final release action, then tear down cleanly so
+      // Android never sees a foreground-service start that failed to foreground.
+      BushMeshRadioServiceState.markRunning()
+      startForeground(NOTIFICATION_ID, buildNotification())
       stopForeground(STOP_FOREGROUND_REMOVE)
+      BushMeshRadioServiceState.markStopped()
       stopSelf(startId)
       return START_NOT_STICKY
     }
@@ -109,7 +115,7 @@ class BushMeshRadioService : Service() {
       locationRequested ->
         "GPS trail and convoy position tracking active"
       else ->
-        "Bushmesh runtime active"
+        "Bushmesh runtime shutting down"
     }
 
     val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
