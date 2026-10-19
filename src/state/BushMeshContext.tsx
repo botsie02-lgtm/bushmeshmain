@@ -2,9 +2,14 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
+
+import {androidContactPersistence} from '../persistence/AndroidContactPersistence';
+import {createContactSnapshot} from '../persistence/contactSnapshot';
 
 export type BushMeshChannel = {
   channelIndex: string;
@@ -40,6 +45,11 @@ export type BushMeshContact = {
   lastModified: number | null;
 };
 type BushMeshConnectionStatus = 'Disconnected' | 'Connected';
+export type ContactPersistenceStatus =
+  | 'restoring'
+  | 'ready'
+  | 'unsupported'
+  | 'error';
 
 type SendChannelMessageHandler = (
   channelIndex: number,
@@ -58,6 +68,8 @@ type BushMeshContextValue = {
   canSyncContacts: boolean;
   deviceStatus: BushMeshDeviceStatus | null;
   contacts: BushMeshContact[];
+  contactPersistenceStatus: ContactPersistenceStatus;
+  contactPersistenceError: string | null;
 
   setContacts: (contacts: BushMeshContact[]) => void;
   setDeviceStatus: (status: BushMeshDeviceStatus | null) => void;
@@ -86,18 +98,22 @@ export function BushMeshProvider({
 }: {
   children: React.ReactNode;
 }): React.JSX.Element {
-  const [contacts, setContacts] = useState<BushMeshContact[]>([]);
-  const clearContacts = () => {
-    setContacts([]);
-  };
+  const [contacts, setContactsState] = useState<BushMeshContact[]>([]);
+  const [contactPersistenceStatus, setContactPersistenceStatus] =
+    useState<ContactPersistenceStatus>(() =>
+      androidContactPersistence.isSupported() ? 'restoring' : 'unsupported',
+    );
+  const [contactPersistenceError, setContactPersistenceError] = useState<
+    string | null
+  >(null);
+  const contactWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+
   const [connectionStatus, setConnectionStatus] =
     useState<BushMeshConnectionStatus>('Disconnected');
-
   const [connectedDeviceName, setConnectedDeviceName] = useState<string | null>(
     null,
   );
   const [channels, setChannelsState] = useState<BushMeshChannel[]>([]);
-
   const [activeChannelIndex, setActiveChannelIndex] = useState<string | null>(
     null,
   );
@@ -107,11 +123,103 @@ export function BushMeshProvider({
   const [channelMessages, setChannelMessages] = useState<
     BushMeshChannelMessage[]
   >([]);
-
   const [sendChannelMessageHandlerState, setSendChannelMessageHandlerState] =
     useState<SendChannelMessageHandler | null>(null);
   const [syncContactsHandlerState, setSyncContactsHandlerState] =
     useState<SyncContactsHandler | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const restoreContactBook = async () => {
+      if (!androidContactPersistence.isSupported()) {
+        if (active) {
+          setContactPersistenceStatus('unsupported');
+        }
+        return;
+      }
+
+      try {
+        const snapshot = await androidContactPersistence.load();
+        if (snapshot && active) {
+          setContactsState(snapshot.contacts);
+        }
+        if (active) {
+          setContactPersistenceStatus('ready');
+          setContactPersistenceError(null);
+        }
+      } catch (restoreError) {
+        const restoreMessage =
+          restoreError instanceof Error
+            ? restoreError.message
+            : 'Encrypted Bushmesh contacts could not be restored.';
+
+        try {
+          await androidContactPersistence.resetSecureStorage();
+          if (active) {
+            setContactsState([]);
+            setContactPersistenceStatus('ready');
+            setContactPersistenceError(
+              `The previous encrypted contact book could not be authenticated and was discarded. Secure contact storage was re-keyed. ${restoreMessage}`,
+            );
+          }
+        } catch (resetError) {
+          if (active) {
+            setContactPersistenceStatus('error');
+            setContactPersistenceError(
+              resetError instanceof Error
+                ? `Contact restore failed (${restoreMessage}) and secure storage could not be reinitialized: ${resetError.message}`
+                : `Contact restore failed (${restoreMessage}) and secure storage could not be reinitialized.`,
+            );
+          }
+        }
+      }
+    };
+
+    restoreContactBook().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const persistContacts = useCallback((nextContacts: BushMeshContact[]) => {
+    if (!androidContactPersistence.isSupported()) {
+      return;
+    }
+
+    const snapshot = createContactSnapshot(nextContacts, Date.now());
+    contactWriteChainRef.current = contactWriteChainRef.current
+      .then(() => androidContactPersistence.save(snapshot))
+      .then(() => {
+        setContactPersistenceStatus('ready');
+        setContactPersistenceError(null);
+      })
+      .catch(error => {
+        setContactPersistenceStatus('error');
+        setContactPersistenceError(
+          error instanceof Error
+            ? error.message
+            : 'Encrypted Bushmesh contacts could not be saved.',
+        );
+      });
+  }, []);
+
+  const setContacts = useCallback(
+    (nextContacts: BushMeshContact[]) => {
+      const normalized = createContactSnapshot(nextContacts, Date.now()).contacts;
+      setContactsState(normalized);
+      persistContacts(normalized);
+    },
+    [persistContacts],
+  );
+
+  /**
+   * A radio disconnect is not a request to forget known people/nodes. Existing
+   * DeviceScreen session cleanup calls this method, so it deliberately retains
+   * the durable contact book. A future explicit "erase contact book" action can
+   * clear both state and encrypted storage with a separate user-facing command.
+   */
+  const clearContacts = useCallback(() => undefined, []);
 
   const activeChannel =
     channels.find(channel => channel.channelIndex === activeChannelIndex) ??
@@ -188,7 +296,7 @@ export function BushMeshProvider({
     const nextContacts = await syncContactsHandlerState();
     setContacts(nextContacts);
     return nextContacts;
-  }, [syncContactsHandlerState]);
+  }, [setContacts, syncContactsHandlerState]);
 
   const value = useMemo<BushMeshContextValue>(
     () => ({
@@ -200,6 +308,8 @@ export function BushMeshProvider({
       channelMessages,
       deviceStatus,
       contacts,
+      contactPersistenceStatus,
+      contactPersistenceError,
       canSendChannelMessage: sendChannelMessageHandlerState !== null,
       canSyncContacts: syncContactsHandlerState !== null,
       setDeviceStatus,
@@ -226,11 +336,15 @@ export function BushMeshProvider({
       channelMessages,
       deviceStatus,
       contacts,
+      contactPersistenceStatus,
+      contactPersistenceError,
       sendChannelMessageHandlerState,
       syncContactsHandlerState,
+      setContacts,
       sendChannelMessage,
       syncContacts,
       addLocalChannelMessage,
+      clearContacts,
     ],
   );
 
