@@ -10,12 +10,14 @@ import React, {
 
 import {
   BushMeshRuntimeSendResult,
+  BushMeshRuntimeStats,
   BushMeshRuntimeTransport,
 } from '../bushmesh/runtime/BushMeshNetworkRuntime';
 import {
   createBushMeshNodeHelloFromPublicKey,
   deriveBushMeshNodeId,
 } from '../bushmesh/runtime/BushMeshIdentity';
+import {subscribeMeshCorePublicKey} from '../bushmesh/runtime/BushMeshIdentityHub';
 import {BushMeshNodeRuntime} from '../bushmesh/runtime/BushMeshNodeRuntime';
 import {setActiveBushMeshRuntime} from '../bushmesh/runtime/BushMeshRuntimeHub';
 
@@ -41,7 +43,7 @@ export type BushMeshChannelMessage = {
   direction: 'sent' | 'received';
   status: 'sent' | 'failed' | 'pending';
   createdAt: string;
-  protocol?: 'meshcore-text' | 'bushmesh';
+  protocol?: 'meshcore-text' | 'bushmesh' | 'bushmesh-routed';
 };
 
 export type BushMeshContact = {
@@ -55,6 +57,14 @@ export type BushMeshContact = {
   latitude: number | null;
   longitude: number | null;
   lastModified: number | null;
+};
+
+export type BushMeshPeerSummary = {
+  nodeId: number;
+  role: number;
+  capabilities: number;
+  batteryPercent?: number;
+  lastSeenAt: string;
 };
 
 export type BushMeshNetworkStatus = {
@@ -74,17 +84,38 @@ type SendBushMeshMessageHandler = (
   message: string,
 ) => Promise<BushMeshRuntimeSendResult>;
 
+type SendBushMeshRoutedMessageHandler = (
+  channelIndex: number,
+  message: string,
+  destinationNodeId?: number,
+) => Promise<BushMeshRuntimeSendResult>;
+
+const EMPTY_RUNTIME_STATS: BushMeshRuntimeStats = {
+  sentMessages: 0,
+  sentFrames: 0,
+  receivedFrames: 0,
+  receivedMessages: 0,
+  ackFramesSent: 0,
+  ackFramesReceived: 0,
+  retransmittedFrames: 0,
+  ignoredFrames: 0,
+  decodeErrors: 0,
+};
+
 type BushMeshContextValue = {
   connectionStatus: BushMeshConnectionStatus;
   connectedDeviceName: string | null;
   meshCorePublicKey: string | null;
   localBushMeshNodeId: number | null;
+  knownBushMeshPeers: BushMeshPeerSummary[];
+  bushMeshRuntimeStats: BushMeshRuntimeStats;
   channels: BushMeshChannel[];
   activeChannelIndex: string | null;
   activeChannel: BushMeshChannel | null;
   channelMessages: BushMeshChannelMessage[];
   canSendChannelMessage: boolean;
   canSendBushMeshMessage: boolean;
+  canSendBushMeshRoutedMessage: boolean;
   bushMeshNetworkStatus: BushMeshNetworkStatus;
   deviceStatus: BushMeshDeviceStatus | null;
   contacts: BushMeshContact[];
@@ -107,6 +138,11 @@ type BushMeshContextValue = {
   sendBushMeshMessage: (
     channelIndex: number,
     message: string,
+  ) => Promise<BushMeshRuntimeSendResult>;
+  sendBushMeshRoutedMessage: (
+    channelIndex: number,
+    message: string,
+    destinationNodeId?: number,
   ) => Promise<BushMeshRuntimeSendResult>;
   addLocalChannelMessage: (
     message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>,
@@ -132,6 +168,11 @@ export function BushMeshProvider({
   const [meshCorePublicKeyState, setMeshCorePublicKeyState] = useState<
     string | null
   >(null);
+  const [knownBushMeshPeers, setKnownBushMeshPeers] = useState<
+    BushMeshPeerSummary[]
+  >([]);
+  const [bushMeshRuntimeStats, setBushMeshRuntimeStats] =
+    useState<BushMeshRuntimeStats>(EMPTY_RUNTIME_STATS);
   const [channels, setChannelsState] = useState<BushMeshChannel[]>([]);
   const [activeChannelIndex, setActiveChannelIndex] = useState<string | null>(
     null,
@@ -152,7 +193,10 @@ export function BushMeshProvider({
     useState<SendChannelMessageHandler | null>(null);
   const [sendBushMeshMessageHandlerState, setSendBushMeshMessageHandlerState] =
     useState<SendBushMeshMessageHandler | null>(null);
+  const [sendBushMeshRoutedMessageHandlerState, setSendBushMeshRoutedMessageHandlerState] =
+    useState<SendBushMeshRoutedMessageHandler | null>(null);
   const bushMeshNodeRuntimeRef = useRef<BushMeshNodeRuntime | null>(null);
+  const meshCorePublicKeyRef = useRef<string | null>(null);
 
   const activeChannel =
     channels.find(channel => channel.channelIndex === activeChannelIndex) ??
@@ -202,17 +246,23 @@ export function BushMeshProvider({
   );
 
   const configureNodeIdentity = useCallback((publicKey: string | null) => {
+    meshCorePublicKeyRef.current = publicKey;
     setMeshCorePublicKeyState(publicKey);
 
     if (!publicKey) {
       return;
     }
 
-    const runtime = bushMeshNodeRuntimeRef.current;
-    if (runtime) {
-      runtime.configureLocalNode(createBushMeshNodeHelloFromPublicKey(publicKey));
-    }
+    bushMeshNodeRuntimeRef.current?.configureLocalNode(
+      createBushMeshNodeHelloFromPublicKey(publicKey),
+    );
   }, []);
+
+  useEffect(() => {
+    return subscribeMeshCorePublicKey(publicKey => {
+      configureNodeIdentity(publicKey);
+    });
+  }, [configureNodeIdentity]);
 
   const setSendChannelMessageHandler = useCallback(
     (handler: SendChannelMessageHandler | null) => {
@@ -224,6 +274,11 @@ export function BushMeshProvider({
 
       if (!handler) {
         setSendBushMeshMessageHandlerState(null);
+        setSendBushMeshRoutedMessageHandlerState(null);
+        setKnownBushMeshPeers([]);
+        setBushMeshRuntimeStats({...EMPTY_RUNTIME_STATS});
+        meshCorePublicKeyRef.current = null;
+        setMeshCorePublicKeyState(null);
         setBushMeshNetworkStatus({
           active: false,
           detail: 'BushMesh protocol runtime is not connected.',
@@ -243,6 +298,9 @@ export function BushMeshProvider({
         },
         onError: detail => {
           setBushMeshNetworkStatus({active: true, detail});
+        },
+        onStats: stats => {
+          setBushMeshRuntimeStats(stats);
         },
         onMessage: received => {
           const text = received.decoded.renderedText;
@@ -266,19 +324,54 @@ export function BushMeshProvider({
           ]);
         },
         onPeerHello: hello => {
+          const now = new Date().toISOString();
+          setKnownBushMeshPeers(current => {
+            const next = current.filter(peer => peer.nodeId !== hello.nodeId);
+            next.push({
+              nodeId: hello.nodeId,
+              role: hello.role,
+              capabilities: hello.capabilities,
+              batteryPercent: hello.batteryPercent,
+              lastSeenAt: now,
+            });
+            return next.sort((a, b) =>
+              b.lastSeenAt.localeCompare(a.lastSeenAt),
+            );
+          });
           setBushMeshNetworkStatus({
             active: true,
             detail: `BushMesh peer ${hello.nodeId.toString(16).padStart(8, '0')} discovered.`,
           });
+        },
+        onForwarded: (sourceNodeId, messageId, _channelIndex, nextTtlHops) => {
+          setBushMeshNetworkStatus({
+            active: true,
+            detail: `Forwarded ${sourceNodeId.toString(16).padStart(8, '0')}:${messageId} with ${nextTtlHops} hop(s) remaining.`,
+          });
+        },
+        onFileComplete: (file, channelIndex) => {
+          setChannelMessages(currentMessages => [
+            {
+              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              channelIndex: String(channelIndex),
+              channelName: `Channel #${channelIndex}`,
+              text: `Received ${file.fileName ?? 'BushMesh file'} (${file.data.length} bytes).`,
+              direction: 'received',
+              status: 'sent',
+              protocol: 'bushmesh',
+              createdAt: new Date().toISOString(),
+            },
+            ...currentMessages,
+          ]);
         },
       });
 
       bushMeshNodeRuntimeRef.current = runtime;
       setActiveBushMeshRuntime(runtime.network);
 
-      if (meshCorePublicKeyState) {
+      if (meshCorePublicKeyRef.current) {
         runtime.configureLocalNode(
-          createBushMeshNodeHelloFromPublicKey(meshCorePublicKeyState),
+          createBushMeshNodeHelloFromPublicKey(meshCorePublicKeyRef.current),
         );
       }
 
@@ -291,14 +384,23 @@ export function BushMeshProvider({
           ): Promise<BushMeshRuntimeSendResult> =>
             runtime.sendText(channelIndex, message),
       );
+      setSendBushMeshRoutedMessageHandlerState(
+        () =>
+          async (
+            channelIndex: number,
+            message: string,
+            destinationNodeId?: number,
+          ): Promise<BushMeshRuntimeSendResult> =>
+            runtime.sendRoutedText(channelIndex, destinationNodeId, message),
+      );
       setBushMeshNetworkStatus({
         active: true,
-        detail: meshCorePublicKeyState
+        detail: meshCorePublicKeyRef.current
           ? 'BushMesh node runtime ready (text-safe transport).'
           : 'BushMesh transport ready; waiting for MeshCore node identity.',
       });
     },
-    [meshCorePublicKeyState],
+    [],
   );
 
   useEffect(() => {
@@ -347,12 +449,33 @@ export function BushMeshProvider({
     [sendBushMeshMessageHandlerState],
   );
 
+  const sendBushMeshRoutedMessage = useCallback(
+    async (
+      channelIndex: number,
+      message: string,
+      destinationNodeId?: number,
+    ): Promise<BushMeshRuntimeSendResult> => {
+      if (!sendBushMeshRoutedMessageHandlerState) {
+        throw new Error('BushMesh routed mesh runtime is not ready for messaging.');
+      }
+
+      return sendBushMeshRoutedMessageHandlerState(
+        channelIndex,
+        message,
+        destinationNodeId,
+      );
+    },
+    [sendBushMeshRoutedMessageHandlerState],
+  );
+
   const value = useMemo<BushMeshContextValue>(
     () => ({
       connectionStatus,
       connectedDeviceName,
       meshCorePublicKey: meshCorePublicKeyState,
       localBushMeshNodeId,
+      knownBushMeshPeers,
+      bushMeshRuntimeStats,
       channels,
       activeChannelIndex,
       activeChannel,
@@ -362,6 +485,9 @@ export function BushMeshProvider({
       bushMeshNetworkStatus,
       canSendChannelMessage: sendChannelMessageHandlerState !== null,
       canSendBushMeshMessage: sendBushMeshMessageHandlerState !== null,
+      canSendBushMeshRoutedMessage:
+        sendBushMeshRoutedMessageHandlerState !== null &&
+        localBushMeshNodeId !== null,
       setDeviceStatus,
       setContacts,
       setConnectionStatus,
@@ -374,6 +500,7 @@ export function BushMeshProvider({
       setSendBushMeshMessageHandler,
       sendChannelMessage,
       sendBushMeshMessage,
+      sendBushMeshRoutedMessage,
       addLocalChannelMessage,
       clearChannels,
       clearChannelMessages,
@@ -384,6 +511,8 @@ export function BushMeshProvider({
       connectedDeviceName,
       meshCorePublicKeyState,
       localBushMeshNodeId,
+      knownBushMeshPeers,
+      bushMeshRuntimeStats,
       channels,
       activeChannelIndex,
       activeChannel,
@@ -393,11 +522,13 @@ export function BushMeshProvider({
       bushMeshNetworkStatus,
       sendChannelMessageHandlerState,
       sendBushMeshMessageHandlerState,
+      sendBushMeshRoutedMessageHandlerState,
       configureNodeIdentity,
       setSendChannelMessageHandler,
       setSendBushMeshMessageHandler,
       sendChannelMessage,
       sendBushMeshMessage,
+      sendBushMeshRoutedMessage,
       addLocalChannelMessage,
     ],
   );
