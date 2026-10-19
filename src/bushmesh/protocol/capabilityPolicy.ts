@@ -14,7 +14,10 @@ import {
 } from './discovery';
 import {encodeSemanticMessage} from './semantic';
 import {tryParseSemanticText} from './semanticText';
-import {compareDictionaryCompression} from './textDictionary';
+import {
+  BUSHMESH_TEXT_DICTIONARY_VERSION,
+  compareDictionaryCompression,
+} from './textDictionary';
 import {encodeBushMeshWire} from './transport';
 
 export type BushMeshPeerPolicy = {
@@ -24,10 +27,13 @@ export type BushMeshPeerPolicy = {
   transport: 'text-safe' | 'binary';
   allowSemantic: boolean;
   allowDictionary: boolean;
+  dictionaryVersion: number | null;
   allowFragmentation: boolean;
   allowSelectiveAck: boolean;
   allowStoreAndForward: boolean;
   allowLocationDelta: boolean;
+  allowSensorDelta: boolean;
+  allowCompressedBinary: boolean;
   allowFileTransfer: boolean;
   allowRouting: boolean;
 };
@@ -55,6 +61,12 @@ export function negotiateBushMeshPeerPolicy(
   const canUseBinary =
     options?.allowExperimentalBinary === true &&
     hasBushMeshCapability(capabilities, BushMeshCapability.BinaryTransport);
+  const localDictionaryVersion =
+    local.dictionaryVersion ?? BUSHMESH_TEXT_DICTIONARY_VERSION;
+  const remoteDictionaryVersion = remote.dictionaryVersion;
+  const dictionaryVersionMatches =
+    remoteDictionaryVersion !== undefined &&
+    remoteDictionaryVersion === localDictionaryVersion;
 
   return {
     compatible: supportsCurrentVersion,
@@ -65,10 +77,10 @@ export function negotiateBushMeshPeerPolicy(
       capabilities,
       BushMeshCapability.SemanticMessages,
     ),
-    allowDictionary: hasBushMeshCapability(
-      capabilities,
-      BushMeshCapability.DictionaryText,
-    ),
+    allowDictionary:
+      dictionaryVersionMatches &&
+      hasBushMeshCapability(capabilities, BushMeshCapability.DictionaryText),
+    dictionaryVersion: dictionaryVersionMatches ? localDictionaryVersion : null,
     allowFragmentation: hasBushMeshCapability(
       capabilities,
       BushMeshCapability.Fragmentation,
@@ -84,6 +96,14 @@ export function negotiateBushMeshPeerPolicy(
     allowLocationDelta: hasBushMeshCapability(
       capabilities,
       BushMeshCapability.LocationDelta,
+    ),
+    allowSensorDelta: hasBushMeshCapability(
+      capabilities,
+      BushMeshCapability.SensorDelta,
+    ),
+    allowCompressedBinary: hasBushMeshCapability(
+      capabilities,
+      BushMeshCapability.CompressedBinary,
     ),
     allowFileTransfer: hasBushMeshCapability(
       capabilities,
