@@ -11,6 +11,8 @@ import {
 import {BushMeshChannel, useBushMesh} from '../state/BushMeshContext';
 import {colors} from '../theme/colors';
 
+type SendMode = 'bushmesh' | 'meshcore';
+
 function isPrivateChannel(channel: BushMeshChannel): boolean {
   return (
     channel.secret !== 'Empty / Public' &&
@@ -20,7 +22,7 @@ function isPrivateChannel(channel: BushMeshChannel): boolean {
 }
 
 export function ChannelsScreen(): React.JSX.Element {
-    const {
+  const {
     connectionStatus,
     connectedDeviceName,
     channels,
@@ -28,12 +30,16 @@ export function ChannelsScreen(): React.JSX.Element {
     activeChannel,
     channelMessages,
     canSendChannelMessage,
+    canSendBushMeshMessage,
+    bushMeshNetworkStatus,
     sendChannelMessage,
+    sendBushMeshMessage,
     addLocalChannelMessage,
     setActiveChannelIndex,
   } = useBushMesh();
 
   const [messageText, setMessageText] = useState('Test from BushMesh');
+  const [sendMode, setSendMode] = useState<SendMode>('bushmesh');
   const [sendStatus, setSendStatus] = useState<string>(
     'No channel message sent yet.',
   );
@@ -42,16 +48,16 @@ export function ChannelsScreen(): React.JSX.Element {
   const visibleChannels = channels.filter(
     channel => channel.channelName && channel.channelName !== 'Empty',
   );
-
   const activeIsPrivate = activeChannel ? isPrivateChannel(activeChannel) : false;
-
   const trimmedMessage = messageText.trim();
-  const messageTooLong = trimmedMessage.length > 133;
+  const plainMessageTooLong = sendMode === 'meshcore' && trimmedMessage.length > 133;
+  const selectedTransportReady =
+    sendMode === 'bushmesh' ? canSendBushMeshMessage : canSendChannelMessage;
   const canSend =
     !!activeChannel &&
-    canSendChannelMessage &&
+    selectedTransportReady &&
     trimmedMessage.length > 0 &&
-    !messageTooLong &&
+    !plainMessageTooLong &&
     !isSending;
 
   const sendActiveChannelMessage = async () => {
@@ -69,19 +75,41 @@ export function ChannelsScreen(): React.JSX.Element {
 
     try {
       setIsSending(true);
-      setSendStatus(`Sending to ${activeChannel.channelName}...`);
 
-      await sendChannelMessage(channelIndex, trimmedMessage);
+      if (sendMode === 'bushmesh') {
+        setSendStatus(
+          `Encoding and sending BushMesh message to ${activeChannel.channelName}...`,
+        );
+        const result = await sendBushMeshMessage(channelIndex, trimmedMessage);
 
-      addLocalChannelMessage({
-        channelIndex: activeChannel.channelIndex,
-        channelName: activeChannel.channelName,
-        text: trimmedMessage,
-        direction: 'sent',
-        status: 'sent',
-      });
+        addLocalChannelMessage({
+          channelIndex: activeChannel.channelIndex,
+          channelName: activeChannel.channelName,
+          text: trimmedMessage,
+          direction: 'sent',
+          status: 'sent',
+          protocol: 'bushmesh',
+        });
 
-      setSendStatus(`Sent to ${activeChannel.channelName}.`);
+        setSendStatus(
+          `BushMesh message ${result.messageId} sent in ${result.frameCount} frame(s) via ${result.transport}.`,
+        );
+      } else {
+        setSendStatus(`Sending plain MeshCore text to ${activeChannel.channelName}...`);
+        await sendChannelMessage(channelIndex, trimmedMessage);
+
+        addLocalChannelMessage({
+          channelIndex: activeChannel.channelIndex,
+          channelName: activeChannel.channelName,
+          text: trimmedMessage,
+          direction: 'sent',
+          status: 'sent',
+          protocol: 'meshcore-text',
+        });
+
+        setSendStatus(`Plain MeshCore text sent to ${activeChannel.channelName}.`);
+      }
+
       setMessageText('');
     } catch (error) {
       setSendStatus(
@@ -122,6 +150,23 @@ export function ChannelsScreen(): React.JSX.Element {
             ? `Connected to ${connectedDeviceName}`
             : 'No companion node connected.'}
         </Text>
+
+        <View style={styles.protocolStatusRow}>
+          <View
+            style={[
+              styles.protocolDot,
+              {
+                backgroundColor: bushMeshNetworkStatus.active
+                  ? colors.success
+                  : colors.textMuted,
+              },
+            ]}
+          />
+          <View style={styles.protocolStatusTextWrap}>
+            <Text style={styles.protocolStatusTitle}>BushMesh Protocol</Text>
+            <Text style={styles.statusDetail}>{bushMeshNetworkStatus.detail}</Text>
+          </View>
+        </View>
       </View>
 
       <View style={styles.activeCard}>
@@ -149,10 +194,10 @@ export function ChannelsScreen(): React.JSX.Element {
             </View>
 
             <View style={styles.messageReadyCard}>
-              <Text style={styles.messageReadyTitle}>Message-ready</Text>
+              <Text style={styles.messageReadyTitle}>Protocol-ready</Text>
               <Text style={styles.messageReadyText}>
-                Future convoy chat, TTS, and push-to-talk controls will use this
-                selected channel first.
+                BushMesh can encode semantic/dictionary messages and fragment
+                longer payloads while using the text-safe MeshCore carrier.
               </Text>
             </View>
 
@@ -186,40 +231,91 @@ export function ChannelsScreen(): React.JSX.Element {
       </View>
 
       <View style={styles.sendCard}>
-        <Text style={styles.sectionTitle}>Send Test Message</Text>
-
+        <Text style={styles.sectionTitle}>Send Message</Text>
         <Text style={styles.body}>
-          Sends a short text message to the active MeshCore channel.
+          BushMesh Protocol is the compact application-layer format. Plain
+          MeshCore Text remains available as a compatibility fallback.
+        </Text>
+
+        <View style={styles.modeRow}>
+          <TouchableOpacity
+            style={[
+              styles.modeButton,
+              sendMode === 'bushmesh' && styles.modeButtonActive,
+            ]}
+            onPress={() => setSendMode('bushmesh')}>
+            <Text
+              style={[
+                styles.modeButtonText,
+                sendMode === 'bushmesh' && styles.modeButtonTextActive,
+              ]}>
+              BushMesh Protocol
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.modeButton,
+              sendMode === 'meshcore' && styles.modeButtonActive,
+            ]}
+            onPress={() => setSendMode('meshcore')}>
+            <Text
+              style={[
+                styles.modeButtonText,
+                sendMode === 'meshcore' && styles.modeButtonTextActive,
+              ]}>
+              Plain MeshCore Text
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.modeHelp}>
+          {sendMode === 'bushmesh'
+            ? 'Uses semantic/dictionary compression where useful and fragments automatically when required.'
+            : 'Sends the message exactly as normal MeshCore channel text and is limited to 133 characters.'}
         </Text>
 
         <TextInput
           style={styles.messageInput}
           value={messageText}
           onChangeText={setMessageText}
-          placeholder="Type a short channel message"
+          placeholder="Type a channel message"
           placeholderTextColor={colors.textMuted}
           multiline
-          maxLength={133}
+          maxLength={1000}
         />
 
         <View style={styles.messageMetaRow}>
           <Text
             style={[
               styles.messageCount,
-              messageTooLong && styles.messageCountError,
+              plainMessageTooLong && styles.messageCountError,
             ]}>
-            {trimmedMessage.length}/133
+            {trimmedMessage.length}
+            {sendMode === 'meshcore' ? '/133' : ' characters'}
           </Text>
-
           <Text style={styles.messageStatus}>{sendStatus}</Text>
         </View>
-              <View style={styles.messageHistoryCard}>
+
+        <TouchableOpacity
+          style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+          onPress={sendActiveChannelMessage}
+          disabled={!canSend}>
+          <Text style={styles.sendButtonText}>
+            {isSending
+              ? 'Sending...'
+              : sendMode === 'bushmesh'
+                ? 'Send via BushMesh Protocol'
+                : 'Send Plain MeshCore Text'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.messageHistoryCard}>
         <Text style={styles.sectionTitle}>Channel Messages</Text>
 
         {channelMessages.length === 0 ? (
-          <Text style={styles.emptyText}>
-            No local messages yet. Send a test message to the active channel.
-          </Text>
+          <Text style={styles.emptyText}>No local messages yet.</Text>
         ) : (
           channelMessages.map(message => (
             <View key={message.id} style={styles.messageBubble}>
@@ -234,22 +330,21 @@ export function ChannelsScreen(): React.JSX.Element {
 
               <Text style={styles.messageText}>{message.text}</Text>
 
-              <Text style={styles.messageTime}>
-                {new Date(message.createdAt).toLocaleTimeString()}
-              </Text>
+              <View style={styles.messageFooterRow}>
+                <Text style={styles.messageTime}>
+                  {new Date(message.createdAt).toLocaleTimeString()}
+                </Text>
+                <Text style={styles.protocolLabel}>
+                  {message.protocol === 'bushmesh'
+                    ? 'BushMesh'
+                    : message.protocol === 'meshcore-text'
+                      ? 'MeshCore text'
+                      : 'Local'}
+                </Text>
+              </View>
             </View>
           ))
         )}
-      </View>
-
-        <TouchableOpacity
-          style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-          onPress={sendActiveChannelMessage}
-          disabled={!canSend}>
-          <Text style={styles.sendButtonText}>
-            {isSending ? 'Sending...' : 'Send to Active Channel'}
-          </Text>
-        </TouchableOpacity>
       </View>
 
       <View style={styles.sectionCard}>
@@ -314,7 +409,8 @@ export function ChannelsScreen(): React.JSX.Element {
 
           {channels.map(channel => {
             const isActive = channel.channelIndex === activeChannelIndex;
-            const canSelect = channel.channelName && channel.channelName !== 'Empty';
+            const canSelect =
+              channel.channelName && channel.channelName !== 'Empty';
 
             return (
               <TouchableOpacity
@@ -341,51 +437,6 @@ export function ChannelsScreen(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-    messageHistoryCard: {
-    marginTop: 18,
-    backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  messageBubble: {
-    backgroundColor: colors.background,
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 10,
-  },
-  messageBubbleTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
-  },
-  messageChannel: {
-    flex: 1,
-    color: colors.accent,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  messageDirection: {
-    color: colors.success,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  messageText: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 21,
-  },
-  messageTime: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 8,
-  },
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -439,8 +490,32 @@ const styles = StyleSheet.create({
   },
   statusDetail: {
     color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
+  },
+  protocolStatusRow: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  protocolDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 5,
+  },
+  protocolStatusTextWrap: {
+    flex: 1,
+  },
+  protocolStatusTitle: {
+    color: colors.textPrimary,
     fontSize: 14,
-    marginTop: 6,
+    fontWeight: '900',
   },
   activeCard: {
     marginTop: 18,
@@ -526,6 +601,26 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '900',
   },
+  secretBox: {
+    marginTop: 12,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  secretLabel: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  secretValue: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
   sendCard: {
     marginTop: 18,
     backgroundColor: colors.surface,
@@ -534,9 +629,44 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  modeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+  },
+  modeButton: {
+    flex: 1,
+    minHeight: 44,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeButtonActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surfaceSoft,
+  },
+  modeButtonText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  modeButtonTextActive: {
+    color: colors.accent,
+  },
+  modeHelp: {
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 10,
+  },
   messageInput: {
     marginTop: 12,
-    minHeight: 82,
+    minHeight: 90,
     backgroundColor: colors.background,
     borderRadius: 14,
     borderWidth: 1,
@@ -580,6 +710,64 @@ const styles = StyleSheet.create({
     color: colors.background,
     fontSize: 14,
     fontWeight: '900',
+    textAlign: 'center',
+  },
+  messageHistoryCard: {
+    marginTop: 18,
+    backgroundColor: colors.surface,
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  messageBubble: {
+    backgroundColor: colors.background,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 10,
+  },
+  messageBubbleTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  messageChannel: {
+    flex: 1,
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  messageDirection: {
+    color: colors.success,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  messageText: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 21,
+  },
+  messageFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 8,
+  },
+  messageTime: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  protocolLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   sectionCard: {
     marginTop: 18,
@@ -647,26 +835,6 @@ const styles = StyleSheet.create({
   },
   smallTypeTextPrivate: {
     color: colors.warning,
-  },
-  secretBox: {
-    marginTop: 12,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  secretLabel: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-  secretValue: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 18,
   },
   slotRow: {
     backgroundColor: colors.background,
