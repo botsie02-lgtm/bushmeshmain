@@ -72,6 +72,17 @@ describe('offline map packs', () => {
     ).toBe(false);
   });
 
+  test('simulated metadata never satisfies real offline readiness', () => {
+    const simulated = readyPack({simulated: true});
+
+    expect(isOfflineMapPackReady(simulated)).toBe(false);
+    expect(
+      getTripMapCoverage([simulated], [
+        {latitude: -37.56, longitude: 146.25},
+      ]).complete,
+    ).toBe(false);
+  });
+
   test('trip coverage only counts verified ready packs', () => {
     const packs = [
       readyPack(),
