@@ -33,6 +33,7 @@ type RadioSessionContextValue = {
 };
 
 const RadioSessionContext = createContext<RadioSessionContextValue | null>(null);
+const OUTBOX_DRAIN_INTERVAL_MS = 1_000;
 
 export function RadioSessionProvider({
   children,
@@ -54,6 +55,19 @@ export function RadioSessionProvider({
 
     refresh();
     return bushMeshRadioSession.subscribe(refresh);
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const current = bushMeshRadioSession.getSnapshot();
+      if (!current.transportReady || current.queuedCount === 0) {
+        return;
+      }
+
+      void bushMeshRadioSession.drainOnce();
+    }, OUTBOX_DRAIN_INTERVAL_MS);
+
+    return () => clearInterval(timer);
   }, []);
 
   const queueDriverAction = useCallback(
