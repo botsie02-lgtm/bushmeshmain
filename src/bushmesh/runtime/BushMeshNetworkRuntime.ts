@@ -19,6 +19,10 @@ import {
   prepareBushMeshWireChannelFrames,
   tryDecodeBushMeshChannelFrame,
 } from '../../meshcore/meshcoreBushMeshBridge';
+import {
+  BushMeshTransportQueue,
+  BushMeshTransportQueueSnapshot,
+} from './BushMeshTransportQueue';
 
 export type BushMeshRuntimeTransport = {
   sendTextChannelMessage: (
@@ -72,6 +76,7 @@ type OutboundFragmentedMessage = {
 export class BushMeshNetworkRuntime {
   private readonly messageIds: BushMeshMessageIdGenerator;
   private readonly reliability: BushMeshReliabilityController;
+  private readonly transportQueue = new BushMeshTransportQueue();
   private readonly outboundFragmented = new Map<
     number,
     OutboundFragmentedMessage
@@ -132,6 +137,9 @@ export class BushMeshNetworkRuntime {
       this.retryTimer = null;
     }
 
+    this.transportQueue.cancelPending(
+      new Error('BushMesh networking runtime stopped.'),
+    );
     this.events.onStatus?.('BushMesh networking runtime stopped.');
   }
 
@@ -145,6 +153,10 @@ export class BushMeshNetworkRuntime {
 
   stats(): BushMeshRuntimeStats {
     return {...this.statsState};
+  }
+
+  transportQueueSnapshot(): BushMeshTransportQueueSnapshot {
+    return this.transportQueue.snapshot();
   }
 
   async sendText(
@@ -394,23 +406,27 @@ export class BushMeshNetworkRuntime {
     channelIndex: number,
     frame: PreparedBushMeshChannelFrame,
   ): Promise<void> {
-    if (frame.transport === 'binary') {
-      if (!this.transport.sendBinaryChannelPayload) {
-        throw new Error('Binary BushMesh transport is not available.');
+    const priority = decodeBushMeshWire(frame.wireBytes).envelope.priority;
+
+    await this.transportQueue.enqueue(priority, async () => {
+      if (frame.transport === 'binary') {
+        if (!this.transport.sendBinaryChannelPayload) {
+          throw new Error('Binary BushMesh transport is not available.');
+        }
+
+        await this.transport.sendBinaryChannelPayload(
+          channelIndex,
+          frame.payloadBytes,
+        );
+        return;
       }
 
-      await this.transport.sendBinaryChannelPayload(
-        channelIndex,
-        frame.payloadBytes,
-      );
-      return;
-    }
+      if (!frame.text) {
+        throw new Error('Text-safe BushMesh frame is missing carrier text.');
+      }
 
-    if (!frame.text) {
-      throw new Error('Text-safe BushMesh frame is missing carrier text.');
-    }
-
-    await this.transport.sendTextChannelMessage(channelIndex, frame.text);
+      await this.transport.sendTextChannelMessage(channelIndex, frame.text);
+    });
   }
 
   private async sendWireBytes(
@@ -418,15 +434,19 @@ export class BushMeshNetworkRuntime {
     wireBytes: number[],
     transport: BushMeshChannelTransport,
   ): Promise<void> {
-    if (transport === 'binary' && this.transport.sendBinaryChannelPayload) {
-      await this.transport.sendBinaryChannelPayload(channelIndex, wireBytes);
-      return;
-    }
+    const priority = decodeBushMeshWire(wireBytes).envelope.priority;
 
-    await this.transport.sendTextChannelMessage(
-      channelIndex,
-      encodeBushMeshTextCarrier(wireBytes),
-    );
+    await this.transportQueue.enqueue(priority, async () => {
+      if (transport === 'binary' && this.transport.sendBinaryChannelPayload) {
+        await this.transport.sendBinaryChannelPayload(channelIndex, wireBytes);
+        return;
+      }
+
+      await this.transport.sendTextChannelMessage(
+        channelIndex,
+        encodeBushMeshTextCarrier(wireBytes),
+      );
+    });
   }
 
   private detectIncomingTransport(
