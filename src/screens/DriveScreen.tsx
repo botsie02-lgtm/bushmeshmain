@@ -18,6 +18,7 @@ import {getAdaptivePositionDecision} from '../location/adaptivePosition';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
 import {DriveAlertSource, useDrive} from '../state/DriveContext';
+import {useOfflineMaps} from '../state/OfflineMapContext';
 import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
 
@@ -56,6 +57,7 @@ function alertSourceLabel(source: DriveAlertSource): string {
 export function DriveScreen(): React.JSX.Element {
   const {connectionStatus, activeChannel, deviceStatus} = useBushMesh();
   const {vehicles, localPosition} = useConvoy();
+  const {coverage: mapCoverage} = useOfflineMaps();
   const {
     latestAlert,
     alerts,
@@ -94,6 +96,7 @@ export function DriveScreen(): React.JSX.Element {
     convoyGapMeters: null,
   });
 
+  const navigationRequired = mapCoverage.totalPointCount > 0;
   const tripReadiness = getTripReadiness({
     radioConnected: connectionStatus === 'Connected',
     radioTransportReady: radioSession.transportReady,
@@ -101,8 +104,8 @@ export function DriveScreen(): React.JSX.Element {
     channelSelected: activeChannel !== null,
     localPositionReady: localPosition !== null,
     convoyMembersKnown: vehicles.length > 0,
-    offlineMapReady: false,
-    navigationRequired: false,
+    offlineMapReady: mapCoverage.complete,
+    navigationRequired,
   });
 
   const bushMeshLinkReady =
