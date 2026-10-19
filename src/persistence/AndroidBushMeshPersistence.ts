@@ -11,6 +11,7 @@ type NativePersistenceModule = {
   loadOutbox: () => Promise<string | null>;
   saveOutbox: (serializedSnapshot: string) => Promise<boolean>;
   clearOutbox: () => Promise<boolean>;
+  resetOutboxStorage: () => Promise<boolean>;
 };
 
 const module = NativeModules.BushMeshPersistence as
@@ -45,6 +46,14 @@ export class AndroidBushMeshPersistence implements BushMeshPersistence {
     }
 
     await module.clearOutbox();
+  }
+
+  async resetSecureStorage(): Promise<void> {
+    if (!this.isSupported() || !module) {
+      return;
+    }
+
+    await module.resetOutboxStorage();
   }
 }
 
