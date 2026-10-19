@@ -1,9 +1,18 @@
 import {Buffer} from 'buffer';
 
 import {
+  BushMeshPriority,
+  BushMeshWireReassembler,
   DecodedBushMeshWireMessage,
+  encodeBushMeshTextCarrier,
+  encodeBushMeshTextMessage,
+  fragmentBushMeshWireMessage,
   tryDecodeBushMeshChannelPayload,
 } from '../bushmesh/protocol';
+import {
+  MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES,
+  buildSendChannelPayloadCommand,
+} from './meshcoreCommands';
 
 export type MeshCoreBushMeshChannelFrame = {
   channelIndex: number;
@@ -12,6 +21,20 @@ export type MeshCoreBushMeshChannelFrame = {
   timestamp: number | null;
   payloadBytes: number[];
   decoded: DecodedBushMeshWireMessage;
+};
+
+export type BushMeshChannelTransport = 'text-safe' | 'binary';
+
+export type PreparedBushMeshChannelFrame = {
+  transport: BushMeshChannelTransport;
+  payloadBytes: number[];
+  text?: string;
+  wireBytes: number[];
+  fragmented: boolean;
+};
+
+export type BushMeshChannelSendClient = {
+  sendChannelMessage: (channelIndex: number, message: string) => Promise<unknown>;
 };
 
 function readUInt32LE(bytes: number[], offset: number): number | null {
@@ -25,6 +48,131 @@ function readUInt32LE(bytes: number[], offset: number): number | null {
     (bytes[offset + 2] << 16) |
     (bytes[offset + 3] << 24)
   ) >>> 0;
+}
+
+function wireToTransportFrame(
+  wireBytes: number[],
+  transport: BushMeshChannelTransport,
+  fragmented: boolean,
+): PreparedBushMeshChannelFrame {
+  if (transport === 'binary') {
+    return {
+      transport,
+      payloadBytes: wireBytes,
+      wireBytes,
+      fragmented,
+    };
+  }
+
+  const text = encodeBushMeshTextCarrier(wireBytes);
+  return {
+    transport,
+    payloadBytes: Array.from(Buffer.from(text, 'utf8')),
+    text,
+    wireBytes,
+    fragmented,
+  };
+}
+
+export function prepareBushMeshTextChannelFrames(
+  text: string,
+  messageId: number,
+  options?: {
+    transport?: BushMeshChannelTransport;
+    priority?: BushMeshPriority;
+    ackRequested?: boolean;
+    storeAndForward?: boolean;
+    ttlHops?: number;
+    maxPayloadBytes?: number;
+  },
+): PreparedBushMeshChannelFrame[] {
+  const transport = options?.transport ?? 'text-safe';
+  const maxPayloadBytes =
+    options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES;
+  const encoded = encodeBushMeshTextMessage(text, messageId, options);
+  const single = wireToTransportFrame(encoded.wireBytes, transport, false);
+
+  if (single.payloadBytes.length <= maxPayloadBytes) {
+    return [single];
+  }
+
+  const maxCandidate = Math.min(80, encoded.wireBytes.length);
+
+  for (let dataBytes = maxCandidate; dataBytes >= 1; dataBytes -= 1) {
+    const fragmentedWireFrames = fragmentBushMeshWireMessage(
+      encoded.wireBytes,
+      messageId,
+      dataBytes,
+      options?.priority ?? BushMeshPriority.DirectMessage,
+    );
+    const prepared = fragmentedWireFrames.map(wireBytes =>
+      wireToTransportFrame(wireBytes, transport, true),
+    );
+
+    if (prepared.every(frame => frame.payloadBytes.length <= maxPayloadBytes)) {
+      return prepared;
+    }
+  }
+
+  throw new Error('Unable to fit Bushmesh fragments into MeshCore payload limit.');
+}
+
+export async function sendBushMeshTextSafeChannelMessage(
+  client: BushMeshChannelSendClient,
+  channelIndex: number,
+  text: string,
+  messageId: number,
+  options?: {
+    priority?: BushMeshPriority;
+    ackRequested?: boolean;
+    storeAndForward?: boolean;
+    ttlHops?: number;
+    maxPayloadBytes?: number;
+  },
+): Promise<unknown[]> {
+  const frames = prepareBushMeshTextChannelFrames(text, messageId, {
+    ...options,
+    transport: 'text-safe',
+  });
+  const results: unknown[] = [];
+
+  for (const frame of frames) {
+    if (!frame.text) {
+      throw new Error('Text-safe Bushmesh frame is missing carrier text.');
+    }
+
+    results.push(await client.sendChannelMessage(channelIndex, frame.text));
+  }
+
+  return results;
+}
+
+export function buildBushMeshBinaryChannelCommands(
+  channelIndex: number,
+  text: string,
+  messageId: number,
+  options?: {
+    priority?: BushMeshPriority;
+    ackRequested?: boolean;
+    storeAndForward?: boolean;
+    ttlHops?: number;
+    maxPayloadBytes?: number;
+    timestampSeconds?: number;
+  },
+): string[] {
+  const frames = prepareBushMeshTextChannelFrames(text, messageId, {
+    ...options,
+    transport: 'binary',
+  });
+  const timestampSeconds = options?.timestampSeconds;
+
+  return frames.map(frame =>
+    buildSendChannelPayloadCommand(
+      channelIndex,
+      frame.payloadBytes,
+      timestampSeconds,
+    ),
+  );
 }
 
 export function tryDecodeBushMeshChannelFrame(
@@ -66,4 +214,51 @@ export function tryDecodeBushMeshChannelFrame(
     payloadBytes,
     decoded,
   };
+}
+
+export type MeshCoreBushMeshReassemblyResult = {
+  channelFrame: MeshCoreBushMeshChannelFrame;
+  complete: boolean;
+  decoded?: DecodedBushMeshWireMessage;
+  missingFragments?: number[];
+};
+
+export class MeshCoreBushMeshReassembler {
+  private readonly reassembler: BushMeshWireReassembler;
+
+  constructor(timeoutMs = 120000) {
+    this.reassembler = new BushMeshWireReassembler(timeoutMs);
+  }
+
+  acceptMeshCoreFrame(
+    bytes: number[],
+    now = Date.now(),
+  ): MeshCoreBushMeshReassemblyResult | null {
+    const channelFrame = tryDecodeBushMeshChannelFrame(bytes);
+
+    if (!channelFrame) {
+      return null;
+    }
+
+    const result = this.reassembler.accept(channelFrame.decoded.wireBytes, now);
+
+    return {
+      channelFrame,
+      complete: result.complete,
+      decoded: result.decoded,
+      missingFragments: result.reassembly?.missingFragments,
+    };
+  }
+
+  getMissing(messageId: number): number[] | null {
+    return this.reassembler.getMissing(messageId);
+  }
+
+  pruneExpired(now = Date.now()): number[] {
+    return this.reassembler.pruneExpired(now);
+  }
+
+  reset(messageId?: number): void {
+    this.reassembler.reset(messageId);
+  }
 }
