@@ -16,6 +16,10 @@ import {
   LocationProviderStop,
   createDefaultSimulatedRoute,
 } from '../location/LocationProvider';
+import {
+  BushMeshTrackPoint,
+  BushMeshTrackRecorder,
+} from '../location/TrackRecorder';
 import {requestAndroidPreciseLocationPermission} from '../location/locationPermissions';
 import {
   BushMeshLocationFix,
@@ -42,9 +46,13 @@ type LocationSessionContextValue = {
   rejectedFixCount: number;
   lastError: string | null;
   nativeGpsSupported: boolean;
+  trackPoints: BushMeshTrackPoint[];
+  trackDistanceMeters: number;
+  trackStartedAtMs: number | null;
   startProvider: (provider: BushMeshLocationProvider) => void;
   startNativeGps: () => Promise<void>;
   startSimulation: () => void;
+  clearTrack: () => void;
   stop: () => void;
 };
 
@@ -76,8 +84,12 @@ export function LocationSessionProvider({
   const [transmittedPlanCount, setTransmittedPlanCount] = useState(0);
   const [rejectedFixCount, setRejectedFixCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [trackPoints, setTrackPoints] = useState<BushMeshTrackPoint[]>([]);
+  const [trackDistanceMeters, setTrackDistanceMeters] = useState(0);
+  const [trackStartedAtMs, setTrackStartedAtMs] = useState<number | null>(null);
 
   const plannerRef = useRef(new BushMeshPositionPlanner());
+  const trackRecorderRef = useRef(new BushMeshTrackRecorder());
   const stopProviderRef = useRef<LocationProviderStop | null>(null);
   const lastAcceptedFixTimestampRef = useRef<number | null>(null);
   const activeChannelRef = useRef(activeChannel);
@@ -104,6 +116,18 @@ export function LocationSessionProvider({
     queuePositionRef.current = queuePosition;
     drainOnceRef.current = drainOnce;
   }, [queuePosition, drainOnce]);
+
+  const refreshTrackSnapshot = useCallback(() => {
+    const snapshot = trackRecorderRef.current.snapshot();
+    setTrackPoints(snapshot.points);
+    setTrackDistanceMeters(snapshot.totalDistanceMeters);
+    setTrackStartedAtMs(snapshot.startedAtMs);
+  }, []);
+
+  const clearTrack = useCallback(() => {
+    trackRecorderRef.current.clear();
+    refreshTrackSnapshot();
+  }, [refreshTrackSnapshot]);
 
   const stop = useCallback(() => {
     stopProviderRef.current?.();
@@ -142,6 +166,10 @@ export function LocationSessionProvider({
         longitude: fix.longitude,
       });
       setLastError(null);
+
+      if (trackRecorderRef.current.ingest(fix)) {
+        refreshTrackSnapshot();
+      }
 
       const currentRadio = radioSessionRef.current;
       const channelIndex = parseChannelIndex(
@@ -218,7 +246,7 @@ export function LocationSessionProvider({
         );
       }
     },
-    [setLocalPosition],
+    [refreshTrackSnapshot, setLocalPosition],
   );
 
   const startProvider = useCallback(
@@ -284,9 +312,13 @@ export function LocationSessionProvider({
       rejectedFixCount,
       lastError,
       nativeGpsSupported,
+      trackPoints,
+      trackDistanceMeters,
+      trackStartedAtMs,
       startProvider,
       startNativeGps,
       startSimulation,
+      clearTrack,
       stop,
     }),
     [
@@ -298,9 +330,13 @@ export function LocationSessionProvider({
       rejectedFixCount,
       lastError,
       nativeGpsSupported,
+      trackPoints,
+      trackDistanceMeters,
+      trackStartedAtMs,
       startProvider,
       startNativeGps,
       startSimulation,
+      clearTrack,
       stop,
     ],
   );
