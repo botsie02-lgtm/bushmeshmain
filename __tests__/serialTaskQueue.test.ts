@@ -5,7 +5,7 @@ describe('SerialTaskQueue', () => {
     const queue = new SerialTaskQueue();
     const order: string[] = [];
 
-    let releaseFirst: (() => void) | null = null;
+    let releaseFirst!: () => void;
     const firstGate = new Promise<void>(resolve => {
       releaseFirst = resolve;
     });
@@ -26,7 +26,7 @@ describe('SerialTaskQueue', () => {
     await Promise.resolve();
     expect(order).toEqual(['first-start']);
 
-    releaseFirst?.();
+    releaseFirst();
 
     await expect(first).resolves.toBe(1);
     await expect(second).resolves.toBe(2);
@@ -41,7 +41,7 @@ describe('SerialTaskQueue', () => {
   test('cancelPending prevents queued work from starting', async () => {
     const queue = new SerialTaskQueue();
 
-    let releaseFirst: (() => void) | null = null;
+    let releaseFirst!: () => void;
     const firstGate = new Promise<void>(resolve => {
       releaseFirst = resolve;
     });
@@ -55,7 +55,7 @@ describe('SerialTaskQueue', () => {
 
     await Promise.resolve();
     queue.cancelPending();
-    releaseFirst?.();
+    releaseFirst();
 
     await expect(first).resolves.toBe('done');
     await expect(second).rejects.toThrow('second cancelled.');
