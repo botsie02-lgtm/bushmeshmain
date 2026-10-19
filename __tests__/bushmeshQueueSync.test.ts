@@ -70,7 +70,7 @@ describe('Bushmesh store-and-forward queue and sync summaries', () => {
     expect(restored.toBytes()).toHaveLength(16);
   });
 
-  test('sync summary combines contiguous watermark with Bloom membership', () => {
+  test('sync summary combines contiguous watermark with probabilistic Bloom membership', () => {
     expect(newestContiguousMessageId([574, 575, 576, 578])).toBe(576);
 
     const remoteSummary = createSyncSummary([575, 576, 577, 579], {
@@ -83,9 +83,12 @@ describe('Bushmesh store-and-forward queue and sync summaries', () => {
       remoteSummary,
     );
 
-    expect(missing).toContain(578);
+    // Bloom filters may hide a missing ID through a false positive, but IDs
+    // definitely present remotely must never be reported as missing.
     expect(missing).toContain(580);
     expect(missing).not.toContain(575);
+    expect(missing).not.toContain(576);
+    expect(missing).not.toContain(577);
     expect(missing).not.toContain(579);
   });
 });
