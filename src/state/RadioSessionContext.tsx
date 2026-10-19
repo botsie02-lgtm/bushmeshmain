@@ -13,6 +13,7 @@ import {
   BushMeshRadioSessionSnapshot,
   bushMeshRadioSession,
 } from '../radio/BushMeshRadioSession';
+import {TransmissionAttemptResult} from '../radio/BushMeshTransmissionController';
 
 type QueueDriverActionInput = {
   channelIndex: number;
@@ -28,7 +29,7 @@ type RadioSessionContextValue = {
   snapshot: BushMeshRadioSessionSnapshot;
   outbox: BushMeshOutboxEntry[];
   queueDriverAction: (input: QueueDriverActionInput) => BushMeshOutboxEntry;
-  drainOnce: () => Promise<void>;
+  drainOnce: () => Promise<TransmissionAttemptResult>;
 };
 
 const RadioSessionContext = createContext<RadioSessionContextValue | null>(null);
@@ -65,8 +66,8 @@ export function RadioSessionProvider({
     [],
   );
 
-  const drainOnce = useCallback(async (): Promise<void> => {
-    await bushMeshRadioSession.drainOnce();
+  const drainOnce = useCallback(async (): Promise<TransmissionAttemptResult> => {
+    return bushMeshRadioSession.drainOnce();
   }, []);
 
   const value = useMemo<RadioSessionContextValue>(
