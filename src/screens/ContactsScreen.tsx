@@ -9,6 +9,10 @@ import {
 } from 'react-native';
 
 import {BushMeshNodeRole} from '../bushmesh/protocol';
+import {
+  requestBushMeshPeerLocation,
+  requestBushMeshPeerNodeInfo,
+} from '../bushmesh/runtime';
 import {useBushMesh} from '../state/BushMeshContext';
 import {colors} from '../theme/colors';
 
@@ -73,6 +77,7 @@ export function ContactsScreen(): React.JSX.Element {
   );
   const [isSending, setIsSending] = useState(false);
   const [isDiscovering, setIsDiscovering] = useState(false);
+  const [peerAction, setPeerAction] = useState<'info' | 'location' | null>(null);
 
   const sortedPeers = useMemo(
     () =>
@@ -86,12 +91,14 @@ export function ContactsScreen(): React.JSX.Element {
     sortedPeers.find(peer => peer.nodeId === selectedPeerId) ?? null;
   const cleanMessage = messageText.trim();
   const channelIndex = activeChannel ? Number(activeChannel.channelIndex) : NaN;
-  const canSendDirect =
+  const canUsePeerActions =
     selectedPeer !== null &&
+    localBushMeshNodeId !== null &&
     Number.isInteger(channelIndex) &&
     canSendBushMeshRoutedMessage &&
-    cleanMessage.length > 0 &&
-    !isSending;
+    peerAction === null;
+  const canSendDirect =
+    canUsePeerActions && cleanMessage.length > 0 && !isSending;
   const canRefreshDiscovery =
     connectionStatus === 'Connected' &&
     Number.isInteger(channelIndex) &&
@@ -111,6 +118,67 @@ export function ContactsScreen(): React.JSX.Element {
       );
     } finally {
       setIsDiscovering(false);
+    }
+  };
+
+  const sendPeerInfoRequest = async () => {
+    if (
+      !selectedPeer ||
+      localBushMeshNodeId === null ||
+      !Number.isInteger(channelIndex)
+    ) {
+      setSendStatus('Select a peer and active BushMesh channel first.');
+      return;
+    }
+
+    try {
+      setPeerAction('info');
+      setSendStatus(`Requesting node info from ${nodeIdLabel(selectedPeer.nodeId)}...`);
+      const result = await requestBushMeshPeerNodeInfo(
+        channelIndex,
+        localBushMeshNodeId,
+        selectedPeer.nodeId,
+      );
+      setSendStatus(
+        `Node-info request ${result.routedMessageId} sent to ${nodeIdLabel(selectedPeer.nodeId)}. The peer should answer with its current HELLO data.`,
+      );
+    } catch (error) {
+      setSendStatus(
+        error instanceof Error ? error.message : 'Failed to request peer node info.',
+      );
+    } finally {
+      setPeerAction(null);
+    }
+  };
+
+  const sendPeerLocationRequest = async () => {
+    if (
+      !selectedPeer ||
+      localBushMeshNodeId === null ||
+      !Number.isInteger(channelIndex)
+    ) {
+      setSendStatus('Select a peer and active BushMesh channel first.');
+      return;
+    }
+
+    try {
+      setPeerAction('location');
+      setSendStatus(`Requesting location from ${nodeIdLabel(selectedPeer.nodeId)}...`);
+      const result = await requestBushMeshPeerLocation(
+        channelIndex,
+        localBushMeshNodeId,
+        selectedPeer.nodeId,
+        {maxAgeSeconds: 300},
+      );
+      setSendStatus(
+        `Location request ${result.routedMessageId} sent to ${nodeIdLabel(selectedPeer.nodeId)}. A peer with a recent location fix will return a compact location packet.`,
+      );
+    } catch (error) {
+      setSendStatus(
+        error instanceof Error ? error.message : 'Failed to request peer location.',
+      );
+    } finally {
+      setPeerAction(null);
     }
   };
 
@@ -165,7 +233,7 @@ export function ContactsScreen(): React.JSX.Element {
         <Text style={styles.body}>
           MeshCore contacts are synced from the companion node. BushMesh peers are
           discovered over the selected channel and can receive routed direct
-          messages by node ID.
+          messages and control requests by node ID.
         </Text>
       </View>
 
@@ -203,7 +271,7 @@ export function ContactsScreen(): React.JSX.Element {
           <View style={styles.flexOne}>
             <Text style={styles.sectionTitle}>BushMesh Peers</Text>
             <Text style={styles.sectionBody}>
-              Tap a peer to make it the destination for a routed message.
+              Tap a peer to make it the destination for routed operations.
             </Text>
           </View>
           <TouchableOpacity
@@ -254,6 +322,33 @@ export function ContactsScreen(): React.JSX.Element {
             );
           })
         )}
+      </View>
+
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>Peer Actions</Text>
+        <Text style={styles.sectionBody}>
+          {selectedPeer
+            ? `Send compact control requests to ${nodeIdLabel(selectedPeer.nodeId)}.`
+            : 'Select a BushMesh peer above.'}
+        </Text>
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.actionButton, !canUsePeerActions && styles.actionButtonDisabled]}
+            disabled={!canUsePeerActions}
+            onPress={sendPeerInfoRequest}>
+            <Text style={styles.actionButtonText}>
+              {peerAction === 'info' ? 'Requesting...' : 'Request node info'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, !canUsePeerActions && styles.actionButtonDisabled]}
+            disabled={!canUsePeerActions}
+            onPress={sendPeerLocationRequest}>
+            <Text style={styles.actionButtonText}>
+              {peerAction === 'location' ? 'Requesting...' : 'Request location'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.sectionCard}>
@@ -484,6 +579,29 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '900',
     marginTop: 8,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  actionButton: {
+    flex: 1,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingVertical: 11,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+  },
+  actionButtonDisabled: {
+    opacity: 0.4,
+  },
+  actionButtonText: {
+    color: colors.accent,
+    fontSize: 11,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   input: {
     minHeight: 90,
