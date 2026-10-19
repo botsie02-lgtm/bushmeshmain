@@ -21,14 +21,22 @@ import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
 import {ConvoyScreen} from './src/screens/ConvoyScreen';
+import {LocationScreen} from './src/screens/LocationScreen';
 import {colors} from './src/theme/colors';
 
-type TabKey = 'drive' | 'channels' | 'convoy' | 'contacts' | 'device';
+type TabKey =
+  | 'drive'
+  | 'channels'
+  | 'convoy'
+  | 'location'
+  | 'contacts'
+  | 'device';
 
 const tabs: Array<{key: TabKey; label: string}> = [
   {key: 'drive', label: 'Drive'},
   {key: 'channels', label: 'Radio'},
   {key: 'convoy', label: 'Convoy'},
+  {key: 'location', label: 'GPS'},
   {key: 'contacts', label: 'Contacts'},
   {key: 'device', label: 'Device'},
 ];
@@ -56,6 +64,10 @@ function AppContent(): React.JSX.Element {
 
         <View style={[styles.screenWrap, activeTab !== 'convoy' && styles.hidden]}>
           <ConvoyScreen />
+        </View>
+
+        <View style={[styles.screenWrap, activeTab !== 'location' && styles.hidden]}>
+          <LocationScreen />
         </View>
 
         <View style={[styles.screenWrap, activeTab !== 'contacts' && styles.hidden]}>
@@ -155,7 +167,7 @@ const styles = StyleSheet.create({
   },
   tabText: {
     color: colors.textSecondary,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
   },
   tabTextActive: {
