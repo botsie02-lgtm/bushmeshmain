@@ -105,4 +105,43 @@ describe('Bushmesh outbound queue', () => {
     expect(accepted.state).toBe('accepted');
     expect(accepted.acceptedAtMs).toBe(1_050);
   });
+
+  test('new positions cancel older queued positions for the same identity and channel', () => {
+    const outbox = new InMemoryBushMeshOutbox();
+    const stale = outbox.enqueue({
+      channelIndex: 2,
+      dataType: 0xff00,
+      payload: Uint8Array.from([1]),
+      priority: 'position',
+      description: 'old position',
+      identityRef: 'AABBCCDDEEFF',
+      createdAtMs: 1_000,
+    });
+    const otherChannel = outbox.enqueue({
+      channelIndex: 3,
+      dataType: 0xff00,
+      payload: Uint8Array.from([2]),
+      priority: 'position',
+      description: 'other channel',
+      identityRef: 'AABBCCDDEEFF',
+      createdAtMs: 1_001,
+    });
+    const safety = outbox.enqueue({
+      channelIndex: 2,
+      dataType: 0xff00,
+      payload: Uint8Array.from([3]),
+      priority: 'safety',
+      description: 'help',
+      identityRef: 'AABBCCDDEEFF',
+      createdAtMs: 1_002,
+    });
+
+    const cancelled = outbox.cancelQueuedPositions('AABBCCDDEEFF', 2);
+    const entries = outbox.list();
+
+    expect(cancelled.map(entry => entry.id)).toEqual([stale.id]);
+    expect(entries.find(entry => entry.id === stale.id)?.state).toBe('cancelled');
+    expect(entries.find(entry => entry.id === otherChannel.id)?.state).toBe('queued');
+    expect(entries.find(entry => entry.id === safety.id)?.state).toBe('queued');
+  });
 });
