@@ -2,8 +2,11 @@ import {
   BUSHMESH_MESHCORE_DEV_DATA_TYPE,
   BUSHMESH_PROTOCOL_VERSION,
   BushMeshMessageType,
+  BushMeshQuickActionCode,
   decodeBushMeshPosition,
+  decodeBushMeshQuickAction,
   encodeBushMeshPosition,
+  encodeBushMeshQuickAction,
 } from '../src/bushmesh/protocol';
 
 describe('BushMesh v1 protocol', () => {
@@ -58,7 +61,57 @@ describe('BushMesh v1 protocol', () => {
     expect(decoded.altitudeMeters).toBeNull();
     expect(decoded.headingDegrees).toBeNull();
     expect(decoded.accuracyMeters).toBeNull();
-    expect(decoded.speedKmh).toBe(0);
+    expect(decoded.speedKmh).toBeNull();
+  });
+
+  test('encodes a located quick action in 26 bytes and round-trips it', () => {
+    const packet = encodeBushMeshQuickAction({
+      senderId: 'AABBCCDDEEFF',
+      sequence: 14,
+      timestampSeconds: 1_800_000_123,
+      action: BushMeshQuickActionCode.Hazard,
+      latitude: -37.9,
+      longitude: 145.1,
+      ttlSeconds: 900,
+      flags: 0x02,
+    });
+
+    expect(packet).toHaveLength(26);
+    expect(packet[1]).toBe(BushMeshMessageType.QuickAction);
+
+    const decoded = decodeBushMeshQuickAction(packet);
+    expect(decoded.senderId).toBe('AABBCCDDEEFF');
+    expect(decoded.action).toBe(BushMeshQuickActionCode.Hazard);
+    expect(decoded.latitude).toBeCloseTo(-37.9, 6);
+    expect(decoded.longitude).toBeCloseTo(145.1, 6);
+    expect(decoded.ttlSeconds).toBe(900);
+    expect(decoded.flags).toBe(0x02);
+  });
+
+  test('quick actions may omit location without pretending coordinates are zero', () => {
+    const packet = encodeBushMeshQuickAction({
+      senderId: 'AABBCCDDEEFF',
+      sequence: 15,
+      timestampSeconds: 1_800_000_124,
+      action: BushMeshQuickActionCode.Ok,
+    });
+
+    const decoded = decodeBushMeshQuickAction(packet);
+    expect(decoded.latitude).toBeNull();
+    expect(decoded.longitude).toBeNull();
+    expect(decoded.ttlSeconds).toBe(0);
+  });
+
+  test('rejects incomplete quick-action locations', () => {
+    expect(() =>
+      encodeBushMeshQuickAction({
+        senderId: 'AABBCCDDEEFF',
+        sequence: 16,
+        timestampSeconds: 1_800_000_125,
+        action: BushMeshQuickActionCode.Regroup,
+        latitude: -37.8,
+      }),
+    ).toThrow('both latitude and longitude');
   });
 
   test('rejects invalid coordinates', () => {
