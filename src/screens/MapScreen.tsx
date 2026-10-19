@@ -113,30 +113,33 @@ export function MapScreen(): React.JSX.Element {
           </Text>
         </View>
       ) : (
-        packs.map(pack => (
-          <View key={pack.id} style={styles.packCard}>
-            <View style={styles.packTopRow}>
-              <View style={styles.packCopy}>
-                <Text style={styles.packName}>{pack.name}</Text>
-                <Text style={styles.packVersion}>Version {pack.version}</Text>
+        packs.map(pack => {
+          const packVerified =
+            !pack.simulated && pack.state === 'ready' && pack.checksumVerified;
+          const packStatus = pack.simulated
+            ? 'SIMULATED'
+            : packVerified
+              ? 'VERIFIED'
+              : pack.state.toUpperCase();
+
+          return (
+            <View key={pack.id} style={styles.packCard}>
+              <View style={styles.packTopRow}>
+                <View style={styles.packCopy}>
+                  <Text style={styles.packName}>{pack.name}</Text>
+                  <Text style={styles.packVersion}>Version {pack.version}</Text>
+                </View>
+                <Text style={packVerified ? styles.readyText : styles.warningText}>
+                  {packStatus}
+                </Text>
               </View>
-              <Text
-                style={
-                  pack.state === 'ready' && pack.checksumVerified
-                    ? styles.readyText
-                    : styles.warningText
-                }>
-                {pack.state === 'ready' && pack.checksumVerified
-                  ? 'VERIFIED'
-                  : pack.state.toUpperCase()}
+              <Text style={styles.packBounds}>
+                {pack.bounds.south.toFixed(2)} → {pack.bounds.north.toFixed(2)} lat ·{' '}
+                {pack.bounds.west.toFixed(2)} → {pack.bounds.east.toFixed(2)} lon
               </Text>
             </View>
-            <Text style={styles.packBounds}>
-              {pack.bounds.south.toFixed(2)} → {pack.bounds.north.toFixed(2)} lat ·{' '}
-              {pack.bounds.west.toFixed(2)} → {pack.bounds.east.toFixed(2)} lon
-            </Text>
-          </View>
-        ))
+          );
+        })
       )}
 
       <View style={styles.buttonRow}>
