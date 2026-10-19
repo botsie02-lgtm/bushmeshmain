@@ -37,14 +37,14 @@ import {
   parseMeshCoreDeviceInfo,
 } from './meshcoreDeviceInfo';
 import {
+  redactMeshCoreDiagnosticBytes,
+  redactMeshCoreParsedLines,
+} from './meshcoreDiagnostics';
+import {
   MeshCoreSelfInfo,
   parseMeshCoreSelfInfo,
 } from './meshcoreSelfInfo';
-import {
-  base64ToBytes,
-  decodeMeshCoreBytes,
-  decodeMeshCorePacket,
-} from './meshcorePackets';
+import {base64ToBytes, decodeMeshCoreBytes} from './meshcorePackets';
 import {
   ParsedBatteryInfo,
   ParsedChannelMessage,
@@ -518,13 +518,14 @@ export class MeshCoreClient {
           return;
         }
 
-        const decodedChunk = decodeMeshCorePacket(characteristic.value);
         const bytes = base64ToBytes(characteristic.value);
+        const diagnosticBytes = redactMeshCoreDiagnosticBytes(bytes);
+        const decodedChunk = decodeMeshCoreBytes(diagnosticBytes);
 
         this.events.onTxChunk({
           label: decodedChunk.label,
           value: decodedChunk.hex,
-          rawBytes: bytes,
+          rawBytes: diagnosticBytes,
           detail: `${decodedChunk.byteLength} byte BLE frame`,
         });
 
@@ -786,8 +787,10 @@ export class MeshCoreClient {
   }
 
   private handleIncomingFrame(bytes: number[]): void {
-    const decoded = decodeMeshCoreBytes(bytes);
+    const diagnosticBytes = redactMeshCoreDiagnosticBytes(bytes);
+    const decoded = decodeMeshCoreBytes(diagnosticBytes);
     const parsed = parseMeshCorePacketFields(bytes);
+    const parsedLines = redactMeshCoreParsedLines(decoded.packetType, parsed?.lines);
     const deviceInfo = parseMeshCoreDeviceInfo(bytes) ?? undefined;
     const selfInfo = parseMeshCoreSelfInfo(bytes) ?? undefined;
 
@@ -826,11 +829,11 @@ export class MeshCoreClient {
     const frameLog: MeshCoreLogItem = {
       label: decoded.label,
       value: decoded.hex,
-      rawBytes: bytes,
+      rawBytes: diagnosticBytes,
       detail: parsed
         ? `${decoded.byteLength} byte BLE frame — ${parsed.title}`
         : `${decoded.byteLength} byte BLE frame`,
-      parsedLines: parsed?.lines,
+      parsedLines,
       channelMessage: parsed?.channelMessage,
       contactMessage: parsed?.contactMessage,
       batteryInfo: parsed?.batteryInfo,
