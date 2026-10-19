@@ -18,6 +18,7 @@ export * from './location';
 export * from './locationState';
 export * from './messageIdentity';
 export * from './persistence';
+export * from './reliabilityController';
 export * from './retransmission';
 export * from './routeAdvertisement';
 export * from './routeFreshness';
