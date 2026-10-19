@@ -8,6 +8,7 @@ import {
   BushMeshTypedPacket,
   DecodedBushMeshWireMessage,
   decodeBushMeshTypedPacket,
+  decodeBushMeshWire,
   encodeBushMeshTextCarrier,
 } from '../protocol';
 import {
@@ -15,6 +16,7 @@ import {
   PreparedBushMeshChannelFrame,
   prepareBushMeshPeerTextChannelFrames,
   prepareBushMeshTextChannelFrames,
+  prepareBushMeshWireChannelFrames,
   tryDecodeBushMeshChannelFrame,
 } from '../../meshcore/meshcoreBushMeshBridge';
 
@@ -189,42 +191,29 @@ export class BushMeshNetworkRuntime {
           maxPayloadBytes: options?.maxPayloadBytes,
         });
 
-    const fragmented = frames.some(frame => frame.fragmented);
+    return this.sendPreparedFrames(channelIndex, messageId, frames, 'message');
+  }
 
-    if (fragmented) {
-      this.reliability.registerOutgoingFragments(
-        messageId,
-        frames.map(frame => frame.wireBytes),
-      );
-      this.outboundFragmented.set(messageId, {
-        channelIndex,
-        transport: frames[0]?.transport ?? 'text-safe',
-      });
-    }
+  async sendWire(
+    channelIndex: number,
+    wireBytes: number[],
+    options?: {
+      transport?: BushMeshChannelTransport;
+      maxPayloadBytes?: number;
+      allowFragmentation?: boolean;
+    },
+  ): Promise<BushMeshRuntimeSendResult> {
+    const decoded = decodeBushMeshWire(wireBytes);
+    const messageId = decoded.envelope.messageId;
+    const priority = decoded.envelope.priority as BushMeshPriority;
+    const frames = prepareBushMeshWireChannelFrames(wireBytes, messageId, {
+      transport: options?.transport ?? 'text-safe',
+      priority,
+      maxPayloadBytes: options?.maxPayloadBytes,
+      allowFragmentation: options?.allowFragmentation,
+    });
 
-    for (let index = 0; index < frames.length; index += 1) {
-      await this.sendPreparedFrame(channelIndex, frames[index]);
-
-      if (fragmented) {
-        this.reliability.markFragmentSent(messageId, index);
-      }
-    }
-
-    this.statsState.sentMessages += 1;
-    this.statsState.sentFrames += frames.length;
-    this.emitStats();
-
-    const transport = frames[0]?.transport ?? 'text-safe';
-    this.events.onStatus?.(
-      `BushMesh message ${messageId} queued as ${frames.length} ${transport} frame(s).`,
-    );
-
-    return {
-      messageId,
-      frameCount: frames.length,
-      fragmented,
-      transport,
-    };
+    return this.sendPreparedFrames(channelIndex, messageId, frames, 'wire packet');
   }
 
   async acceptMeshCoreFrame(bytes: number[], now = Date.now()): Promise<boolean> {
@@ -355,6 +344,50 @@ export class BushMeshNetworkRuntime {
   cancelMessage(messageId: number): boolean {
     this.outboundFragmented.delete(messageId);
     return this.reliability.cancel(messageId);
+  }
+
+  private async sendPreparedFrames(
+    channelIndex: number,
+    messageId: number,
+    frames: PreparedBushMeshChannelFrame[],
+    label: string,
+  ): Promise<BushMeshRuntimeSendResult> {
+    const fragmented = frames.some(frame => frame.fragmented);
+
+    if (fragmented) {
+      this.reliability.registerOutgoingFragments(
+        messageId,
+        frames.map(frame => frame.wireBytes),
+      );
+      this.outboundFragmented.set(messageId, {
+        channelIndex,
+        transport: frames[0]?.transport ?? 'text-safe',
+      });
+    }
+
+    for (let index = 0; index < frames.length; index += 1) {
+      await this.sendPreparedFrame(channelIndex, frames[index]);
+
+      if (fragmented) {
+        this.reliability.markFragmentSent(messageId, index);
+      }
+    }
+
+    this.statsState.sentMessages += 1;
+    this.statsState.sentFrames += frames.length;
+    this.emitStats();
+
+    const transport = frames[0]?.transport ?? 'text-safe';
+    this.events.onStatus?.(
+      `BushMesh ${label} ${messageId} sent as ${frames.length} ${transport} frame(s).`,
+    );
+
+    return {
+      messageId,
+      frameCount: frames.length,
+      fragmented,
+      transport,
+    };
   }
 
   private async sendPreparedFrame(
