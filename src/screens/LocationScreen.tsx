@@ -37,7 +37,11 @@ export function LocationScreen(): React.JSX.Element {
     startSimulation,
     stop,
   } = useLocationSession();
-  const {snapshot: radioSession} = useRadioSession();
+  const {
+    snapshot: radioSession,
+    nativeRuntime,
+    nativeRuntimeError,
+  } = useRadioSession();
 
   const running = status !== 'stopped';
   const intervalSeconds = lastPlan?.decision
@@ -173,6 +177,30 @@ export function LocationScreen(): React.JSX.Element {
         )}
       </View>
 
+      <View style={styles.card}>
+        <Text style={styles.cardLabel}>ANDROID FOREGROUND RADIO RUNTIME</Text>
+        <Text
+          style={[
+            styles.planValue,
+            !nativeRuntime.running && styles.inactiveValue,
+          ]}>
+          {nativeRuntime.running ? 'ACTIVE' : 'INACTIVE'}
+        </Text>
+        <Text style={styles.detailText}>
+          Ownership: {nativeRuntime.ownership}. This foreground service currently
+          protects the active React Native radio runtime; native BLE ownership is
+          the next migration stage.
+        </Text>
+        {nativeRuntime.startedAtMs > 0 ? (
+          <Text style={styles.detailText}>
+            Started {new Date(nativeRuntime.startedAtMs).toLocaleTimeString()}.
+          </Text>
+        ) : null}
+        {nativeRuntimeError ? (
+          <Text style={styles.runtimeError}>{nativeRuntimeError}</Text>
+        ) : null}
+      </View>
+
       <View style={styles.noticeCard}>
         <Text style={styles.noticeTitle}>Truthful delivery semantics</Text>
         <Text style={styles.noticeText}>
@@ -301,11 +329,20 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     marginTop: 8,
   },
+  inactiveValue: {
+    color: colors.textMuted,
+  },
   detailText: {
     color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     marginTop: 7,
+  },
+  runtimeError: {
+    color: colors.danger,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 8,
   },
   emptyText: {
     color: colors.textMuted,
