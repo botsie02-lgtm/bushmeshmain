@@ -15,6 +15,7 @@ import {
   Coordinate,
   shouldReplaceVehiclePosition,
 } from '../convoy/convoy';
+import {useBushMesh} from './BushMeshContext';
 
 type ConvoyContextValue = {
   vehicles: ConvoyVehicle[];
@@ -32,11 +33,33 @@ type ConvoyContextValue = {
 const ConvoyContext = createContext<ConvoyContextValue | null>(null);
 
 export function ConvoyProvider({children}: {children: React.ReactNode}): React.JSX.Element {
+  const {contacts} = useBushMesh();
   const [vehicles, setVehicles] = useState<ConvoyVehicle[]>([]);
   const [localPosition, setLocalPosition] = useState<Coordinate | null>(null);
   const [navigationTargetVehicleId, setNavigationTargetVehicleId] = useState<
     string | null
   >(null);
+
+  const contactNames = useMemo(() => {
+    const names = new Map<string, string>();
+    contacts.forEach(contact => {
+      const name = contact.name.trim();
+      if (name) {
+        names.set(contact.publicKeyPrefix.toUpperCase(), name);
+      }
+    });
+    return names;
+  }, [contacts]);
+
+  const resolvedVehicleName = useCallback(
+    (identityRef: string): string => {
+      return (
+        contactNames.get(identityRef.toUpperCase()) ??
+        `Vehicle ${identityRef.slice(-4)}`
+      );
+    },
+    [contactNames],
+  );
 
   const upsertVehicle = useCallback((incoming: ConvoyVehicle) => {
     setVehicles(current => {
@@ -59,7 +82,7 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
       const position = message.position;
       upsertVehicle({
         id: position.senderId,
-        name: `Vehicle ${position.senderId.slice(-4)}`,
+        name: resolvedVehicleName(position.senderId),
         latitude: position.latitude,
         longitude: position.longitude,
         altitudeMeters: position.altitudeMeters ?? null,
@@ -73,12 +96,37 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
         pathLength: message.pathLength,
       });
     },
-    [upsertVehicle],
+    [resolvedVehicleName, upsertVehicle],
   );
 
   useEffect(() => {
     return subscribeBushMeshInboundMessages(upsertBushMeshMessage);
   }, [upsertBushMeshMessage]);
+
+  useEffect(() => {
+    if (contactNames.size === 0) {
+      return;
+    }
+
+    setVehicles(current => {
+      let changed = false;
+      const next = current.map(vehicle => {
+        if (vehicle.simulated) {
+          return vehicle;
+        }
+
+        const contactName = contactNames.get(vehicle.id.toUpperCase());
+        if (!contactName || contactName === vehicle.name) {
+          return vehicle;
+        }
+
+        changed = true;
+        return {...vehicle, name: contactName};
+      });
+
+      return changed ? next : current;
+    });
+  }, [contactNames]);
 
   const setNavigationTarget = useCallback((vehicleId: string) => {
     setNavigationTargetVehicleId(vehicleId);
