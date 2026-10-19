@@ -10,6 +10,10 @@ import React, {
 import {BushMeshOutboxEntry} from '../bushmesh/outbox';
 import {BushMeshQuickActionCode} from '../bushmesh/protocol';
 import {
+  NativeRadioServiceStatus,
+  nativeRadioService,
+} from '../native/NativeRadioService';
+import {
   BushMeshRadioSessionSnapshot,
   QueuePositionInput,
   bushMeshRadioSession,
@@ -29,6 +33,8 @@ type QueueDriverActionInput = {
 type RadioSessionContextValue = {
   snapshot: BushMeshRadioSessionSnapshot;
   outbox: BushMeshOutboxEntry[];
+  nativeRuntime: NativeRadioServiceStatus;
+  nativeRuntimeError: string | null;
   queueDriverAction: (input: QueueDriverActionInput) => BushMeshOutboxEntry;
   queuePosition: (input: QueuePositionInput) => BushMeshOutboxEntry;
   drainOnce: () => Promise<TransmissionAttemptResult>;
@@ -36,6 +42,13 @@ type RadioSessionContextValue = {
 
 const RadioSessionContext = createContext<RadioSessionContextValue | null>(null);
 const OUTBOX_DRAIN_INTERVAL_MS = 1_000;
+
+const initialNativeRuntime: NativeRadioServiceStatus = {
+  running: false,
+  deviceLabel: null,
+  startedAtMs: 0,
+  ownership: 'unknown',
+};
 
 export function RadioSessionProvider({
   children,
@@ -48,6 +61,12 @@ export function RadioSessionProvider({
   const [outbox, setOutbox] = useState<BushMeshOutboxEntry[]>(() =>
     bushMeshRadioSession.listOutbox(),
   );
+  const [nativeRuntime, setNativeRuntime] = useState<NativeRadioServiceStatus>(
+    initialNativeRuntime,
+  );
+  const [nativeRuntimeError, setNativeRuntimeError] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     const refresh = () => {
@@ -58,6 +77,42 @@ export function RadioSessionProvider({
     refresh();
     return bushMeshRadioSession.subscribe(refresh);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const syncNativeRuntime = async () => {
+      try {
+        if (snapshot.transportReady) {
+          await nativeRadioService.start(null);
+        } else {
+          await nativeRadioService.stop();
+        }
+
+        const status = await nativeRadioService.getStatus();
+        if (active) {
+          setNativeRuntime(status);
+          setNativeRuntimeError(null);
+        }
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        setNativeRuntimeError(
+          error instanceof Error
+            ? error.message
+            : 'Android foreground radio runtime could not be updated.',
+        );
+      }
+    };
+
+    syncNativeRuntime().catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, [snapshot.transportReady]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -97,11 +152,21 @@ export function RadioSessionProvider({
     () => ({
       snapshot,
       outbox,
+      nativeRuntime,
+      nativeRuntimeError,
       queueDriverAction,
       queuePosition,
       drainOnce,
     }),
-    [snapshot, outbox, queueDriverAction, queuePosition, drainOnce],
+    [
+      snapshot,
+      outbox,
+      nativeRuntime,
+      nativeRuntimeError,
+      queueDriverAction,
+      queuePosition,
+      drainOnce,
+    ],
   );
 
   return (
