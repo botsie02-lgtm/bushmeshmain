@@ -2,8 +2,8 @@ import {NativeModules, Platform} from 'react-native';
 
 export type NativeRadioServiceStatus = {
   running: boolean;
-  radioRequested: boolean;
-  locationRequested: boolean;
+  radioRequested?: boolean;
+  locationRequested?: boolean;
   deviceLabel: string | null;
   startedAtMs: number;
   ownership: 'react-native-session' | string;
