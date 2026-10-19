@@ -2,11 +2,16 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
-import type {BushMeshRuntimeSendResult} from '../bushmesh/runtime/BushMeshNetworkRuntime';
+import {
+  BushMeshNetworkRuntime,
+  BushMeshRuntimeSendResult,
+} from '../bushmesh/runtime/BushMeshNetworkRuntime';
 
 export type BushMeshChannel = {
   channelIndex: string;
@@ -135,6 +140,7 @@ export function BushMeshProvider({
     useState<SendChannelMessageHandler | null>(null);
   const [sendBushMeshMessageHandlerState, setSendBushMeshMessageHandlerState] =
     useState<SendBushMeshMessageHandler | null>(null);
+  const bushMeshRuntimeRef = useRef<BushMeshNetworkRuntime | null>(null);
 
   const activeChannel =
     channels.find(channel => channel.channelIndex === activeChannelIndex) ??
@@ -159,31 +165,6 @@ export function BushMeshProvider({
     });
   };
 
-  const setSendChannelMessageHandler = (
-    handler: SendChannelMessageHandler | null,
-  ) => {
-    setSendChannelMessageHandlerState(() => handler);
-  };
-
-  const setSendBushMeshMessageHandler = (
-    handler: SendBushMeshMessageHandler | null,
-  ) => {
-    setSendBushMeshMessageHandlerState(() => handler);
-  };
-
-  const clearChannels = () => {
-    setChannelsState([]);
-    setActiveChannelIndex(null);
-  };
-
-  const clearChannelMessages = () => {
-    setChannelMessages([]);
-  };
-
-  const clearContacts = () => {
-    setContacts([]);
-  };
-
   const addLocalChannelMessage = useCallback(
     (message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>) => {
       setChannelMessages(currentMessages => [
@@ -197,6 +178,104 @@ export function BushMeshProvider({
     },
     [],
   );
+
+  const setSendBushMeshMessageHandler = useCallback(
+    (handler: SendBushMeshMessageHandler | null) => {
+      setSendBushMeshMessageHandlerState(() => handler);
+    },
+    [],
+  );
+
+  const setSendChannelMessageHandler = useCallback(
+    (handler: SendChannelMessageHandler | null) => {
+      setSendChannelMessageHandlerState(() => handler);
+
+      bushMeshRuntimeRef.current?.stop();
+      bushMeshRuntimeRef.current = null;
+
+      if (!handler) {
+        setSendBushMeshMessageHandlerState(null);
+        setBushMeshNetworkStatus({
+          active: false,
+          detail: 'BushMesh protocol runtime is not connected.',
+        });
+        return;
+      }
+
+      const runtime = new BushMeshNetworkRuntime(
+        {
+          sendTextChannelMessage: async (channelIndex, message) => {
+            await handler(channelIndex, message);
+          },
+        },
+        {
+          onStatus: detail => {
+            setBushMeshNetworkStatus({active: true, detail});
+          },
+          onError: detail => {
+            setBushMeshNetworkStatus({active: true, detail});
+          },
+          onMessage: received => {
+            const text = received.decoded.renderedText;
+
+            if (!text) {
+              return;
+            }
+
+            setChannelMessages(currentMessages => [
+              {
+                id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                channelIndex: String(received.channelIndex),
+                channelName: `Channel #${received.channelIndex}`,
+                text,
+                direction: 'received',
+                status: 'sent',
+                protocol: 'bushmesh',
+                createdAt: new Date().toISOString(),
+              },
+              ...currentMessages,
+            ]);
+          },
+        },
+      );
+
+      bushMeshRuntimeRef.current = runtime;
+      runtime.start();
+      setSendBushMeshMessageHandlerState(() => async (channelIndex, message) =>
+        runtime.sendText(channelIndex, message, {
+          ackRequested: true,
+          storeAndForward: true,
+          ttlHops: 4,
+          semantic: true,
+        }),
+      );
+      setBushMeshNetworkStatus({
+        active: true,
+        detail: 'BushMesh protocol runtime ready (text-safe transport).',
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      bushMeshRuntimeRef.current?.stop();
+      bushMeshRuntimeRef.current = null;
+    };
+  }, []);
+
+  const clearChannels = () => {
+    setChannelsState([]);
+    setActiveChannelIndex(null);
+  };
+
+  const clearChannelMessages = () => {
+    setChannelMessages([]);
+  };
+
+  const clearContacts = () => {
+    setContacts([]);
+  };
 
   const sendChannelMessage = useCallback(
     async (channelIndex: number, message: string): Promise<void> => {
@@ -264,6 +343,8 @@ export function BushMeshProvider({
       bushMeshNetworkStatus,
       sendChannelMessageHandlerState,
       sendBushMeshMessageHandlerState,
+      setSendChannelMessageHandler,
+      setSendBushMeshMessageHandler,
       sendChannelMessage,
       sendBushMeshMessage,
       addLocalChannelMessage,
