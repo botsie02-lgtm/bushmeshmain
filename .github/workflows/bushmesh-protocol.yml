@@ -5,8 +5,11 @@ on:
     branches:
       - feature/bushmesh-lora-protocol
     paths:
+      - 'App.tsx'
       - 'src/bushmesh/**'
       - 'src/meshcore/**'
+      - 'src/screens/**'
+      - 'src/state/**'
       - '__tests__/**'
       - 'package.json'
       - 'package-lock.json'
@@ -14,8 +17,11 @@ on:
       - '.github/workflows/bushmesh-protocol.yml'
   pull_request:
     paths:
+      - 'App.tsx'
       - 'src/bushmesh/**'
       - 'src/meshcore/**'
+      - 'src/screens/**'
+      - 'src/state/**'
       - '__tests__/**'
       - 'package.json'
       - 'package-lock.json'
