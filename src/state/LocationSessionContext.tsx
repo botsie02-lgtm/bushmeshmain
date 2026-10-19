@@ -74,6 +74,7 @@ export function LocationSessionProvider({
 
   const plannerRef = useRef(new BushMeshPositionPlanner());
   const stopProviderRef = useRef<LocationProviderStop | null>(null);
+  const lastAcceptedFixTimestampRef = useRef<number | null>(null);
   const activeChannelRef = useRef(activeChannel);
   const vehiclesRef = useRef(vehicles);
   const radioSessionRef = useRef(radioSession);
@@ -101,6 +102,7 @@ export function LocationSessionProvider({
     stopProviderRef.current?.();
     stopProviderRef.current = null;
     plannerRef.current.reset();
+    lastAcceptedFixTimestampRef.current = null;
     setProviderLabel(null);
     setStatus('stopped');
     setLastError(null);
@@ -117,6 +119,16 @@ export function LocationSessionProvider({
         return;
       }
 
+      if (
+        lastAcceptedFixTimestampRef.current !== null &&
+        fix.timestampMs <= lastAcceptedFixTimestampRef.current
+      ) {
+        setRejectedFixCount(count => count + 1);
+        setLastError('Location fix is older than the latest accepted local fix.');
+        return;
+      }
+
+      lastAcceptedFixTimestampRef.current = fix.timestampMs;
       setLatestFix(fix);
       setLocalPosition({
         latitude: fix.latitude,
@@ -188,6 +200,7 @@ export function LocationSessionProvider({
     (provider: BushMeshLocationProvider) => {
       stopProviderRef.current?.();
       plannerRef.current.reset();
+      lastAcceptedFixTimestampRef.current = null;
       setProviderLabel(provider.label);
       setLatestFix(null);
       setLastPlan(null);
