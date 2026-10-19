@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -13,10 +13,12 @@ import {
   DRIVER_QUICK_ACTIONS,
   QuickActionDefinition,
 } from '../drive/quickActions';
+import {getTripReadiness} from '../drive/tripReadiness';
 import {getAdaptivePositionDecision} from '../location/adaptivePosition';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
-import {useDrive} from '../state/DriveContext';
+import {DriveAlertSource, useDrive} from '../state/DriveContext';
+import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
 
 function actionButtonStyle(definition: QuickActionDefinition) {
@@ -35,6 +37,22 @@ function actionTextStyle(definition: QuickActionDefinition) {
     : styles.actionTextLight;
 }
 
+function alertSourceLabel(source: DriveAlertSource): string {
+  switch (source) {
+    case 'radio':
+      return 'INCOMING';
+    case 'local-accepted':
+      return 'RADIO ACCEPTED';
+    case 'local-queued':
+      return 'QUEUED FOR RETRY';
+    case 'local-failed':
+      return 'SEND FAILED';
+    case 'local-preview':
+    default:
+      return 'LOCAL PREVIEW';
+  }
+}
+
 export function DriveScreen(): React.JSX.Element {
   const {
     connectionStatus,
@@ -43,8 +61,21 @@ export function DriveScreen(): React.JSX.Element {
     deviceStatus,
   } = useBushMesh();
   const {vehicles, localPosition} = useConvoy();
-  const {latestAlert, alerts, previewQuickAction, dismissAlert} = useDrive();
+  const {
+    latestAlert,
+    alerts,
+    previewQuickAction,
+    recordLocalQuickAction,
+    dismissAlert,
+  } = useDrive();
+  const {
+    snapshot: radioSession,
+    queueDriverAction,
+    drainOnce,
+  } = useRadioSession();
   const [nowMs, setNowMs] = useState(Date.now());
+  const [quickActionStatus, setQuickActionStatus] = useState<string | null>(null);
+  const quickActionSequenceRef = useRef(1);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 5_000);
@@ -68,37 +99,109 @@ export function DriveScreen(): React.JSX.Element {
     convoyGapMeters: null,
   });
 
-  const readiness = [
-    {
-      label: 'Radio',
-      ready: connectionStatus === 'Connected',
-      detail:
-        connectionStatus === 'Connected'
-          ? connectedDeviceName ?? 'MeshCore connected'
-          : 'Connect a MeshCore radio',
-    },
-    {
-      label: 'Channel',
-      ready: activeChannel !== null,
-      detail: activeChannel?.channelName ?? 'Select a convoy channel',
-    },
-    {
-      label: 'Position',
-      ready: localPosition !== null,
-      detail: localPosition ? 'Local position available' : 'GPS hook not active yet',
-    },
-    {
-      label: 'Convoy',
-      ready: vehicles.length > 0,
-      detail:
-        vehicles.length > 0
-          ? `${vehicles.length} vehicle${vehicles.length === 1 ? '' : 's'} known`
-          : 'No remote vehicles yet',
-    },
-  ];
+  const tripReadiness = getTripReadiness({
+    radioConnected: connectionStatus === 'Connected',
+    radioTransportReady: radioSession.transportReady,
+    radioIdentityReady: radioSession.identityRef !== null,
+    channelSelected: activeChannel !== null,
+    localPositionReady: localPosition !== null,
+    convoyMembersKnown: vehicles.length > 0,
+    offlineMapReady: false,
+    navigationRequired: false,
+  });
 
-  const handleQuickAction = (action: BushMeshQuickActionCode) => {
-    previewQuickAction(action, localPosition);
+  const bushMeshLinkReady =
+    radioSession.transportReady &&
+    radioSession.identityRef !== null &&
+    activeChannel !== null;
+
+  const nextQuickActionSequence = (): number => {
+    const sequence = quickActionSequenceRef.current;
+    quickActionSequenceRef.current = sequence >= 0xffff ? 1 : sequence + 1;
+    return sequence;
+  };
+
+  const handleQuickAction = async (definition: QuickActionDefinition) => {
+    const locatedAction = definition.includesLocation;
+
+    if (locatedAction && !localPosition) {
+      previewQuickAction(definition.code, localPosition);
+      setQuickActionStatus(
+        `${definition.label} previewed only — a GPS fix is required before this located action can be transmitted.`,
+      );
+      return;
+    }
+
+    if (!bushMeshLinkReady || !activeChannel || !radioSession.identityRef) {
+      previewQuickAction(definition.code, localPosition);
+      setQuickActionStatus(
+        `${definition.label} previewed only — waiting for radio transport, identity and convoy channel.`,
+      );
+      return;
+    }
+
+    const channelIndex = Number(activeChannel.channelIndex);
+    if (!Number.isInteger(channelIndex) || channelIndex < 0 || channelIndex > 7) {
+      previewQuickAction(definition.code, localPosition);
+      setQuickActionStatus(
+        `${definition.label} previewed only — active channel index is invalid.`,
+      );
+      return;
+    }
+
+    const sequence = nextQuickActionSequence();
+
+    try {
+      queueDriverAction({
+        channelIndex,
+        sequence,
+        action: definition.code,
+        latitude: locatedAction ? localPosition?.latitude ?? null : null,
+        longitude: locatedAction ? localPosition?.longitude ?? null : null,
+        ttlSeconds: definition.defaultTtlSeconds,
+      });
+
+      const result = await drainOnce();
+      const source: Exclude<DriveAlertSource, 'radio'> =
+        result.outcome === 'accepted'
+          ? 'local-accepted'
+          : result.outcome === 'failed'
+            ? 'local-failed'
+            : 'local-queued';
+
+      recordLocalQuickAction(
+        definition.code,
+        locatedAction ? localPosition : null,
+        source,
+        radioSession.identityRef,
+        channelIndex,
+      );
+
+      if (result.outcome === 'accepted') {
+        setQuickActionStatus(
+          `${definition.label} accepted by MeshCore for transmission. Peer delivery is not yet confirmed.`,
+        );
+      } else if (result.outcome === 'failed') {
+        setQuickActionStatus(
+          `${definition.label} could not be accepted by the radio after retries.`,
+        );
+      } else {
+        setQuickActionStatus(
+          `${definition.label} remains queued and will be retried when the radio link is available.`,
+        );
+      }
+    } catch (error) {
+      recordLocalQuickAction(
+        definition.code,
+        locatedAction ? localPosition : null,
+        'local-failed',
+        radioSession.identityRef,
+        channelIndex,
+      );
+      setQuickActionStatus(
+        error instanceof Error ? error.message : 'Quick action could not be queued.',
+      );
+    }
   };
 
   return (
@@ -114,20 +217,30 @@ export function DriveScreen(): React.JSX.Element {
         <View
           style={[
             styles.connectionPill,
-            connectionStatus === 'Connected'
-              ? styles.connectionReady
-              : styles.connectionOffline,
+            bushMeshLinkReady ? styles.connectionReady : styles.connectionOffline,
           ]}>
-          <Text style={styles.connectionText}>{connectionStatus}</Text>
+          <Text style={styles.connectionText}>
+            {bushMeshLinkReady ? 'LINK READY' : connectionStatus}
+          </Text>
         </View>
       </View>
 
-      <View style={styles.previewBanner}>
-        <Text style={styles.previewTitle}>DEVELOPMENT PREVIEW</Text>
+      <View
+        style={[
+          styles.previewBanner,
+          bushMeshLinkReady ? styles.readyBanner : undefined,
+        ]}>
+        <Text
+          style={[
+            styles.previewTitle,
+            bushMeshLinkReady ? styles.readyBannerTitle : undefined,
+          ]}>
+          {bushMeshLinkReady ? 'BUSHMESH DATA LINK READY' : 'SAFE PREVIEW MODE'}
+        </Text>
         <Text style={styles.previewText}>
-          Driver controls below exercise the Bushmesh protocol and alert UI but
-          are not transmitted over the radio yet. The outbound transport hook is
-          the next integration step.
+          {bushMeshLinkReady
+            ? `Radio identity ${radioSession.identityRef}. Driver actions will be encoded, queued and submitted to MeshCore; radio acceptance does not mean peer delivery.`
+            : 'Driver controls remain local previews until a MeshCore transport, radio identity and convoy channel are all available.'}
         </Text>
       </View>
 
@@ -143,7 +256,7 @@ export function DriveScreen(): React.JSX.Element {
           <View style={styles.alertHeader}>
             <View>
               <Text style={styles.alertKicker}>
-                {latestAlert.source === 'radio' ? 'INCOMING' : 'LOCAL PREVIEW'}
+                {alertSourceLabel(latestAlert.source)}
               </Text>
               <Text style={styles.alertTitle}>{latestAlert.label}</Text>
             </View>
@@ -177,7 +290,7 @@ export function DriveScreen(): React.JSX.Element {
             key={definition.code}
             activeOpacity={0.78}
             style={[styles.actionButton, actionButtonStyle(definition)]}
-            onPress={() => handleQuickAction(definition.code)}>
+            onPress={() => void handleQuickAction(definition)}>
             <Text style={[styles.actionText, actionTextStyle(definition)]}>
               {definition.shortLabel}
             </Text>
@@ -188,22 +301,68 @@ export function DriveScreen(): React.JSX.Element {
         ))}
       </View>
 
+      {quickActionStatus ? (
+        <View style={styles.statusCard}>
+          <Text style={styles.statusText}>{quickActionStatus}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Outbound radio queue</Text>
+        <Text style={styles.sectionMeta}>
+          {radioSession.queuedCount} queued
+        </Text>
+      </View>
+      <View style={styles.queueRow}>
+        <View style={styles.queueCell}>
+          <Text style={styles.queueValue}>{radioSession.queuedCount}</Text>
+          <Text style={styles.queueLabel}>QUEUED</Text>
+        </View>
+        <View style={styles.queueCell}>
+          <Text style={styles.queueValue}>{radioSession.inflightCount}</Text>
+          <Text style={styles.queueLabel}>IN FLIGHT</Text>
+        </View>
+        <View style={styles.queueCell}>
+          <Text style={styles.queueValue}>{radioSession.acceptedCount}</Text>
+          <Text style={styles.queueLabel}>ACCEPTED</Text>
+        </View>
+        <View style={styles.queueCell}>
+          <Text style={styles.queueValue}>{radioSession.failedCount}</Text>
+          <Text style={styles.queueLabel}>FAILED</Text>
+        </View>
+      </View>
+
       <Text style={styles.sectionTitle}>Trip readiness</Text>
       <View style={styles.readinessCard}>
-        {readiness.map(item => (
-          <View key={item.label} style={styles.readinessRow}>
+        {tripReadiness.items.map(item => (
+          <View key={item.key} style={styles.readinessRow}>
             <View
               style={[
                 styles.readinessDot,
-                item.ready ? styles.dotReady : styles.dotNotReady,
+                item.state === 'ready'
+                  ? styles.dotReady
+                  : item.state === 'warning'
+                    ? styles.dotWarning
+                    : styles.dotNotReady,
               ]}
             />
             <View style={styles.readinessCopy}>
               <Text style={styles.readinessLabel}>{item.label}</Text>
               <Text style={styles.readinessDetail}>{item.detail}</Text>
             </View>
-            <Text style={item.ready ? styles.readyText : styles.notReadyText}>
-              {item.ready ? 'READY' : 'WAIT'}
+            <Text
+              style={
+                item.state === 'ready'
+                  ? styles.readyText
+                  : item.state === 'warning'
+                    ? styles.warningText
+                    : styles.notReadyText
+              }>
+              {item.state === 'ready'
+                ? 'READY'
+                : item.state === 'warning'
+                  ? 'CHECK'
+                  : 'WAIT'}
             </Text>
           </View>
         ))}
@@ -311,11 +470,17 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 18,
   },
+  readyBanner: {
+    borderColor: colors.success,
+  },
   previewTitle: {
     color: colors.warning,
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 1,
+  },
+  readyBannerTitle: {
+    color: colors.success,
   },
   previewText: {
     color: colors.textSecondary,
@@ -395,7 +560,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 22,
+    marginBottom: 12,
   },
   actionButton: {
     width: '48.5%',
@@ -429,6 +594,41 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     opacity: 0.8,
   },
+  statusCard: {
+    backgroundColor: colors.surfaceSoft,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 20,
+  },
+  statusText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  queueRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 18,
+    marginBottom: 22,
+  },
+  queueCell: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  queueValue: {
+    color: colors.textPrimary,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  queueLabel: {
+    color: colors.textMuted,
+    fontSize: 8,
+    fontWeight: '900',
+    marginTop: 2,
+  },
   readinessCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
@@ -453,6 +653,9 @@ const styles = StyleSheet.create({
   dotReady: {
     backgroundColor: colors.success,
   },
+  dotWarning: {
+    backgroundColor: colors.warning,
+  },
   dotNotReady: {
     backgroundColor: colors.textMuted,
   },
@@ -471,6 +674,11 @@ const styles = StyleSheet.create({
   },
   readyText: {
     color: colors.success,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  warningText: {
+    color: colors.warning,
     fontSize: 11,
     fontWeight: '900',
   },
