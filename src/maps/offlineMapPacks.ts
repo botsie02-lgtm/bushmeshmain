@@ -25,6 +25,7 @@ export type OfflineMapPack = {
   downloadedBytes: number;
   totalBytes: number | null;
   checksumVerified: boolean;
+  simulated?: boolean;
 };
 
 export type TripMapCoverage = {
@@ -87,6 +88,10 @@ export function coordinateInBounds(
 }
 
 export function isOfflineMapPackReady(pack: OfflineMapPack): boolean {
+  if (pack.simulated) {
+    return false;
+  }
+
   if (validateMapBounds(pack.bounds) !== null) {
     return false;
   }
@@ -112,8 +117,8 @@ export function isOfflineMapPackReady(pack: OfflineMapPack): boolean {
  * Evaluates an intended trip against locally verified map packs.
  *
  * A route is only marked complete when every supplied point is covered by at
- * least one ready, checksum-verified pack. This prevents the UI from claiming
- * "offline ready" merely because some map data happens to be installed.
+ * least one real, ready, checksum-verified pack. Simulation metadata is never
+ * allowed to satisfy driver trip-readiness checks.
  */
 export function getTripMapCoverage(
   packs: OfflineMapPack[],
