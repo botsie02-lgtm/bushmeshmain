@@ -16,6 +16,7 @@ export type PersistedOutboxEntryV1 = {
   priority: BushMeshOutboxPriority;
   description: string;
   identityRef: string | null;
+  expiresAtMs: number | null;
   createdAtMs: number;
   maxAttempts: number;
   attempts: number;
@@ -53,6 +54,10 @@ function finiteNonNegative(value: unknown): value is number {
 
 function validNullableString(value: unknown): value is string | null {
   return value === null || typeof value === 'string';
+}
+
+function validNullableTimestamp(value: unknown): value is number | null {
+  return value === null || finiteNonNegative(value);
 }
 
 function validCanonicalBase64(value: unknown): value is string {
@@ -109,6 +114,9 @@ function validatePersistedEntry(entry: PersistedOutboxEntryV1): void {
   if (!validNullableString(entry.identityRef)) {
     throw new Error(`Persisted outbox entry ${entry.id} has an invalid identity.`);
   }
+  if (!validNullableTimestamp(entry.expiresAtMs)) {
+    throw new Error(`Persisted outbox entry ${entry.id} has an invalid expiry.`);
+  }
   if (
     !finiteNonNegative(entry.createdAtMs) ||
     !finiteNonNegative(entry.nextAttemptAtMs) ||
@@ -147,6 +155,7 @@ export function createOutboxSnapshot(
       priority: entry.priority,
       description: entry.description,
       identityRef: entry.identityRef,
+      expiresAtMs: entry.expiresAtMs,
       createdAtMs: entry.createdAtMs,
       maxAttempts: entry.maxAttempts,
       attempts: entry.attempts,
@@ -202,7 +211,8 @@ export function validateOutboxSnapshot(
  * An entry that was in-flight when the process died is recovered as queued.
  * That intentionally gives Bushmesh at-least-once retry semantics after a crash;
  * application packet clocks/dedupe prevent a repeated position/control packet
- * from being treated as a newer event by a peer.
+ * from being treated as a newer event by a peer. Expiry is retained, so an old
+ * control packet cannot be resurrected into a new transmission window.
  */
 export function restoreOutboxEntry(
   persisted: PersistedOutboxEntryV1,
@@ -232,6 +242,7 @@ export function restoreOutboxEntry(
     priority: persisted.priority,
     description: persisted.description,
     identityRef: persisted.identityRef,
+    expiresAtMs: persisted.expiresAtMs,
     createdAtMs: persisted.createdAtMs,
     maxAttempts: persisted.maxAttempts,
     attempts: persisted.attempts,
