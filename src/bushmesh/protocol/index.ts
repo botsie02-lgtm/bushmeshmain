@@ -23,6 +23,7 @@ export * from './reliabilityController';
 export * from './retransmission';
 export * from './routeAdvertisement';
 export * from './routeFreshness';
+export * from './routedPayload';
 export * from './routing';
 export * from './scheduler';
 export * from './semantic';
