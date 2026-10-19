@@ -1,19 +1,20 @@
 import {BleManager, Device, Subscription} from 'react-native-ble-plx';
 
+import {acceptBushMeshMeshCoreFrame} from '../bushmesh/runtime/BushMeshRuntimeHub';
 import {MESHCORE_BLE} from './meshcoreBle';
 import {
   buildAppStartCommand,
   buildDeviceQueryCommand,
   buildGetBatteryCommand,
   buildGetChannelCommand,
+  buildGetContactsCommand,
   buildGetMessageCommand,
   buildSendChannelMessageCommand,
   getBatteryCommandHex,
   getChannelCommandHex,
+  getContactsCommandHex,
   getMessageCommandHex,
   sendChannelMessageCommandHex,
-  buildGetContactsCommand,
-  getContactsCommandHex,
 } from './meshcoreCommands';
 import {
   base64ToBytes,
@@ -23,9 +24,9 @@ import {
 import {
   ParsedBatteryInfo,
   ParsedChannelMessage,
+  ParsedContactInfo,
   ParsedContactMessage,
   parseMeshCorePacketFields,
-  ParsedContactInfo,
 } from './meshcoreParsers';
 import {
   MeshCoreReassembler,
@@ -92,6 +93,14 @@ export class MeshCoreClient {
     this.reassembler = createIdleReassembler(bytes => {
       const decoded = decodeMeshCoreBytes(bytes);
       const parsed = parseMeshCorePacketFields(bytes);
+
+      void acceptBushMeshMeshCoreFrame(bytes).catch(error => {
+        this.events.onError(
+          error instanceof Error
+            ? `BushMesh runtime ingress failed: ${error.message}`
+            : 'BushMesh runtime ingress failed.',
+        );
+      });
 
       const frameLog: MeshCoreLogItem = {
         label: decoded.label,
@@ -181,75 +190,32 @@ export class MeshCoreClient {
       'PACKET_SELF_INFO',
     );
   }
+
   async syncContacts(since?: number): Promise<ParsedContactInfo[]> {
-  const contacts: ParsedContactInfo[] = [];
+    const contacts: ParsedContactInfo[] = [];
 
-  this.events.onStatus('CMD_GET_CONTACTS sending...');
+    this.events.onStatus('CMD_GET_CONTACTS sending...');
 
-  const firstResponsePromise = this.waitForPacket(
-    'CMD_GET_CONTACTS_START',
-    [0x01, 0x02, 0x03, 0x04],
-    'PACKET_CONTACTS_START_OR_CONTACT_OR_END',
-  );
-
-  this.events.onTxChunk({
-    label: 'RX_WRITE',
-    value: `CMD_GET_CONTACTS: ${getContactsCommandHex(since)}`,
-    detail: 'Command sent. Waiting for contacts sequence.',
-  });
-
-  await this.manager.writeCharacteristicWithResponseForDevice(
-    this.device.id,
-    MESHCORE_BLE.serviceUuid,
-    MESHCORE_BLE.rxCharacteristicUuid,
-    buildGetContactsCommand(since),
-  );
-
-  let result = await firstResponsePromise;
-
-  if (result.label === 'PACKET_ERROR') {
-    throw new Error('CMD_GET_CONTACTS returned PACKET_ERROR.');
-  }
-
-  if (result.contactInfo) {
-    contacts.push(result.contactInfo);
-  }
-
-  if (result.label === 'PACKET_CONTACTS_END') {
-    this.events.onStatus(
-      `Contacts sync complete. Loaded ${contacts.length} contact(s).`,
-    );
-    return contacts;
-  }
-
-  if (result.label === 'PACKET_CONTACTS_START') {
-    const countLine = result.parsedLines?.find(line =>
-      line.startsWith('Contact Count:'),
+    const firstResponsePromise = this.waitForPacket(
+      'CMD_GET_CONTACTS_START',
+      [0x01, 0x02, 0x03, 0x04],
+      'PACKET_CONTACTS_START_OR_CONTACT_OR_END',
     );
 
-    const contactCount = Number(
-      countLine?.replace('Contact Count:', '').trim() ?? '0',
+    this.events.onTxChunk({
+      label: 'RX_WRITE',
+      value: `CMD_GET_CONTACTS: ${getContactsCommandHex(since)}`,
+      detail: 'Command sent. Waiting for contacts sequence.',
+    });
+
+    await this.manager.writeCharacteristicWithResponseForDevice(
+      this.device.id,
+      MESHCORE_BLE.serviceUuid,
+      MESHCORE_BLE.rxCharacteristicUuid,
+      buildGetContactsCommand(since),
     );
 
-    if (contactCount === 0) {
-      this.events.onStatus('Contacts sync complete. Loaded 0 contact(s).');
-      return contacts;
-    }
-  }
-
-  for (let index = 0; index < 500; index += 1) {
-    try {
-      result = await this.waitForPacket(
-        'CMD_GET_CONTACTS_NEXT',
-        [0x01, 0x03, 0x04],
-        'PACKET_CONTACT_OR_END',
-      );
-    } catch (error) {
-      this.events.onStatus(
-        `Contacts sync stopped. Loaded ${contacts.length} contact(s).`,
-      );
-      return contacts;
-    }
+    let result = await firstResponsePromise;
 
     if (result.label === 'PACKET_ERROR') {
       throw new Error('CMD_GET_CONTACTS returned PACKET_ERROR.');
@@ -266,15 +232,60 @@ export class MeshCoreClient {
       return contacts;
     }
 
-    await this.delay(80);
+    if (result.label === 'PACKET_CONTACTS_START') {
+      const countLine = result.parsedLines?.find(line =>
+        line.startsWith('Contact Count:'),
+      );
+
+      const contactCount = Number(
+        countLine?.replace('Contact Count:', '').trim() ?? '0',
+      );
+
+      if (contactCount === 0) {
+        this.events.onStatus('Contacts sync complete. Loaded 0 contact(s).');
+        return contacts;
+      }
+    }
+
+    for (let index = 0; index < 500; index += 1) {
+      try {
+        result = await this.waitForPacket(
+          'CMD_GET_CONTACTS_NEXT',
+          [0x01, 0x03, 0x04],
+          'PACKET_CONTACT_OR_END',
+        );
+      } catch {
+        this.events.onStatus(
+          `Contacts sync stopped. Loaded ${contacts.length} contact(s).`,
+        );
+        return contacts;
+      }
+
+      if (result.label === 'PACKET_ERROR') {
+        throw new Error('CMD_GET_CONTACTS returned PACKET_ERROR.');
+      }
+
+      if (result.contactInfo) {
+        contacts.push(result.contactInfo);
+      }
+
+      if (result.label === 'PACKET_CONTACTS_END') {
+        this.events.onStatus(
+          `Contacts sync complete. Loaded ${contacts.length} contact(s).`,
+        );
+        return contacts;
+      }
+
+      await this.delay(80);
+    }
+
+    this.events.onStatus(
+      `Contacts sync stopped after ${contacts.length} contact(s).`,
+    );
+
+    return contacts;
   }
 
-  this.events.onStatus(
-    `Contacts sync stopped after ${contacts.length} contact(s).`,
-  );
-
-  return contacts;
-}
   async sendDeviceQuery(): Promise<MeshCoreLogItem> {
     return this.writeCommandAndWaitForPacket(
       'CMD_DEVICE_QUERY',
@@ -284,6 +295,7 @@ export class MeshCoreClient {
       'PACKET_DEVICE_INFO',
     );
   }
+
   async getBatteryStatus(): Promise<MeshCoreLogItem> {
     return this.writeCommandAndWaitForPacket(
       'CMD_GET_BATTERY',
@@ -293,6 +305,7 @@ export class MeshCoreClient {
       'PACKET_BATTERY',
     );
   }
+
   async getChannel(channelIndex: number): Promise<MeshCoreLogItem> {
     return this.writeCommandAndWaitForPacket(
       `CMD_GET_CHANNEL_${channelIndex}`,
