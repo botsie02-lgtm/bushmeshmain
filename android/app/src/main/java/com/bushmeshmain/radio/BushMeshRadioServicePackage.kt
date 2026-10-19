@@ -8,7 +8,10 @@ import com.facebook.react.uimanager.ViewManager
 class BushMeshRadioServicePackage : ReactPackage {
   override fun createNativeModules(
     reactContext: ReactApplicationContext,
-  ): List<NativeModule> = listOf(BushMeshRadioServiceModule(reactContext))
+  ): List<NativeModule> = listOf(
+    BushMeshRadioServiceModule(reactContext),
+    BushMeshPersistenceModule(reactContext),
+  )
 
   override fun createViewManagers(
     reactContext: ReactApplicationContext,
