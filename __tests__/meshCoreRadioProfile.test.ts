@@ -22,6 +22,7 @@ function selfInfo(overrides?: Partial<MeshCoreSelfInfo>): MeshCoreSelfInfo {
 describe('MeshCore radio profile', () => {
   test('maps valid SELF_INFO modem parameters for airtime estimation', () => {
     expect(meshCoreSelfInfoToRadioProfile(selfInfo())).toEqual({
+      source: 'meshcore',
       frequencyMhz: 915.5,
       txPower: 20,
       maxTxPower: 22,
