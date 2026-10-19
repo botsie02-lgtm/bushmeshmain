@@ -27,6 +27,7 @@ export * from './routing';
 export * from './scheduler';
 export * from './semantic';
 export * from './semanticText';
+export * from './smallPayloads';
 export * from './syncProtocol';
 export * from './syncSummary';
 export * from './telemetry';
