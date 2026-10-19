@@ -41,14 +41,18 @@ describe('convoy helpers', () => {
 
     expect(distance).toBeGreaterThan(800);
     expect(distance).toBeLessThan(1000);
-    expect(compassDirection(bearingDegrees(
-      {latitude: -37.8136, longitude: 144.9631},
-      {latitude: -37.8136, longitude: 144.9731},
-    ))).toBe('E');
+    expect(
+      compassDirection(
+        bearingDegrees(
+          {latitude: -37.8136, longitude: 144.9631},
+          {latitude: -37.8136, longitude: 144.9731},
+        ),
+      ),
+    ).toBe('E');
     expect(formatDistance(distance)).toMatch(/m$/);
   });
 
-  test('rejects older vehicle updates', () => {
+  test('rejects older vehicle updates and accepts newer ones', () => {
     expect(
       shouldReplaceVehiclePosition(baseVehicle, {
         ...baseVehicle,
@@ -63,5 +67,16 @@ describe('convoy helpers', () => {
         sequence: 11,
       }),
     ).toBe(true);
+  });
+
+  test('rejects an exact duplicate vehicle position', () => {
+    expect(shouldReplaceVehiclePosition(baseVehicle, {...baseVehicle})).toBe(false);
+  });
+
+  test('handles uint16 sequence wrap within the same timestamp second', () => {
+    const current = {...baseVehicle, sequence: 0xffff};
+    const wrapped = {...baseVehicle, sequence: 1};
+
+    expect(shouldReplaceVehiclePosition(current, wrapped)).toBe(true);
   });
 });
