@@ -12,16 +12,18 @@ import {BushMeshProvider} from './src/state/BushMeshContext';
 import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
+import {EmergencyScreen} from './src/screens/EmergencyScreen';
 import {MapScreen} from './src/screens/MapScreen';
 import {colors} from './src/theme/colors';
 
-type TabKey = 'device' | 'channels' | 'contacts' | 'map';
+type TabKey = 'device' | 'channels' | 'contacts' | 'map' | 'emergency';
 
 const tabs: Array<{key: TabKey; label: string}> = [
   {key: 'device', label: 'Device'},
   {key: 'channels', label: 'Channels'},
   {key: 'contacts', label: 'Contacts'},
   {key: 'map', label: 'Map'},
+  {key: 'emergency', label: 'SOS'},
 ];
 
 function AppContent(): React.JSX.Element {
@@ -52,6 +54,10 @@ function AppContent(): React.JSX.Element {
         <View style={[styles.screenWrap, activeTab !== 'map' && styles.hidden]}>
           <MapScreen />
         </View>
+
+        <View style={[styles.screenWrap, activeTab !== 'emergency' && styles.hidden]}>
+          <EmergencyScreen />
+        </View>
       </View>
 
       <View style={styles.tabBar}>
@@ -61,9 +67,20 @@ function AppContent(): React.JSX.Element {
           return (
             <TouchableOpacity
               key={tab.key}
-              style={[styles.tabButton, isActive && styles.tabButtonActive]}
+              style={[
+                styles.tabButton,
+                isActive && styles.tabButtonActive,
+                tab.key === 'emergency' && styles.sosTabButton,
+                tab.key === 'emergency' && isActive && styles.sosTabButtonActive,
+              ]}
               onPress={() => setActiveTab(tab.key)}>
-              <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+              <Text
+                style={[
+                  styles.tabText,
+                  isActive && styles.tabTextActive,
+                  tab.key === 'emergency' && styles.sosTabText,
+                  tab.key === 'emergency' && isActive && styles.sosTabTextActive,
+                ]}>
                 {tab.label}
               </Text>
             </TouchableOpacity>
@@ -129,6 +146,14 @@ const styles = StyleSheet.create({
   tabButtonActive: {
     backgroundColor: colors.accent,
   },
+  sosTabButton: {
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
+  sosTabButtonActive: {
+    backgroundColor: colors.danger,
+    borderColor: colors.danger,
+  },
   tabText: {
     color: colors.textSecondary,
     fontSize: 13,
@@ -136,6 +161,13 @@ const styles = StyleSheet.create({
   },
   tabTextActive: {
     color: colors.background,
+  },
+  sosTabText: {
+    color: colors.danger,
+    fontWeight: '900',
+  },
+  sosTabTextActive: {
+    color: colors.textPrimary,
   },
 });
 
