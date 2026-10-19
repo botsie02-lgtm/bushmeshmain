@@ -36,6 +36,7 @@ export class BushMeshTrackRecorder {
   private startedAtMs: number | null = null;
   private lastRecordedAtMs: number | null = null;
   private lastAcceptedFix: BushMeshLocationFix | null = null;
+  private lastRecordedFix: BushMeshLocationFix | null = null;
 
   constructor(options?: TrackRecorderOptions) {
     this.minDistanceMeters = Math.max(
@@ -54,19 +55,23 @@ export class BushMeshTrackRecorder {
       return false;
     }
 
-    const previous = this.lastAcceptedFix;
     this.lastAcceptedFix = {...fix};
 
-    if (!previous) {
+    if (!this.lastRecordedFix) {
       this.append(fix);
       return true;
     }
 
     const travelled = distanceMeters(
-      {latitude: previous.latitude, longitude: previous.longitude},
+      {
+        latitude: this.lastRecordedFix.latitude,
+        longitude: this.lastRecordedFix.longitude,
+      },
       {latitude: fix.latitude, longitude: fix.longitude},
     );
-    const elapsedMs = fix.timestampMs - (this.lastRecordedAtMs ?? previous.timestampMs);
+    const elapsedMs =
+      fix.timestampMs -
+      (this.lastRecordedAtMs ?? this.lastRecordedFix.timestampMs);
 
     if (
       travelled < this.minDistanceMeters &&
@@ -75,8 +80,6 @@ export class BushMeshTrackRecorder {
       return false;
     }
 
-    // Distance totals follow every accepted GPS transition, even when a point
-    // is later dropped from the bounded display trail.
     this.totalDistanceMeters += travelled;
     this.append(fix);
     return true;
@@ -97,6 +100,7 @@ export class BushMeshTrackRecorder {
     this.startedAtMs = null;
     this.lastRecordedAtMs = null;
     this.lastAcceptedFix = null;
+    this.lastRecordedFix = null;
   }
 
   private append(fix: BushMeshLocationFix): void {
@@ -109,6 +113,7 @@ export class BushMeshTrackRecorder {
       this.startedAtMs = fix.timestampMs;
     }
     this.lastRecordedAtMs = fix.timestampMs;
+    this.lastRecordedFix = {...fix};
     this.points.push(point);
 
     if (this.points.length > this.maxPoints) {
