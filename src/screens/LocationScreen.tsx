@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 
 import {useLocationSession} from '../state/LocationSessionContext';
+import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
 
 function statusLabel(status: ReturnType<typeof useLocationSession>['status']): string {
@@ -36,11 +37,14 @@ export function LocationScreen(): React.JSX.Element {
     startSimulation,
     stop,
   } = useLocationSession();
+  const {snapshot: radioSession} = useRadioSession();
 
   const running = status !== 'stopped';
   const intervalSeconds = lastPlan?.decision
     ? Math.round(lastPlan.decision.intervalMs / 1000)
     : null;
+  const radioProfile = radioSession.radioProfile;
+  const modem = radioProfile?.modem ?? null;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -136,6 +140,35 @@ export function LocationScreen(): React.JSX.Element {
           <Text style={styles.emptyText}>
             A radio identity and active convoy channel are required before fixes are
             evaluated for LoRa transmission.
+          </Text>
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardLabel}>ACTIVE RADIO RF PROFILE</Text>
+        {radioProfile ? (
+          <>
+            <Text style={styles.planValue}>
+              {radioProfile.frequencyMhz == null
+                ? 'Frequency unknown'
+                : `${radioProfile.frequencyMhz.toFixed(3)} MHz`}
+            </Text>
+            <Text style={styles.detailText}>
+              {modem
+                ? `SF${modem.spreadingFactor} · ${modem.bandwidthKhz} kHz · CR 4/${modem.codingRate}`
+                : 'Modem airtime parameters are incomplete; Bushmesh will not guess them.'}
+            </Text>
+            <Text style={styles.detailText}>
+              TX power {radioProfile.txPower == null ? 'unknown' : `${radioProfile.txPower} dBm`}
+              {radioProfile.maxTxPower == null
+                ? ''
+                : ` · advertised max ${radioProfile.maxTxPower} dBm`}
+              {' · '}source {radioProfile.source}
+            </Text>
+          </>
+        ) : (
+          <Text style={styles.emptyText}>
+            Waiting for SELF_INFO from the active radio. No default RF profile is assumed.
           </Text>
         )}
       </View>
