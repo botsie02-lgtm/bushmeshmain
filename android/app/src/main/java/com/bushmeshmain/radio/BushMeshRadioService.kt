@@ -85,7 +85,14 @@ class BushMeshRadioService : Service() {
       "Foreground runtime active for $deviceLabel"
     }
 
-    return Notification.Builder(this, CHANNEL_ID)
+    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      Notification.Builder(this, CHANNEL_ID)
+    } else {
+      @Suppress("DEPRECATION")
+      Notification.Builder(this)
+    }
+
+    return builder
       .setContentTitle("Bushmesh radio")
       .setContentText(detail)
       .setSmallIcon(R.mipmap.ic_launcher)
