@@ -55,7 +55,6 @@ export class BushMeshDistressBeacon {
       {
         ttlHops: options?.ttlHops ?? 6,
         priority: BushMeshPriority.Emergency,
-        ackRequested: options?.destinationNodeId !== undefined,
       },
     );
 
