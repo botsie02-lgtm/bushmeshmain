@@ -62,6 +62,7 @@ export function ContactsScreen(): React.JSX.Element {
     activeChannel,
     canSendBushMeshRoutedMessage,
     sendBushMeshRoutedMessage,
+    refreshBushMeshDiscovery,
     addLocalChannelMessage,
   } = useBushMesh();
 
@@ -71,6 +72,7 @@ export function ContactsScreen(): React.JSX.Element {
     'Select a BushMesh peer to send a routed direct message.',
   );
   const [isSending, setIsSending] = useState(false);
+  const [isDiscovering, setIsDiscovering] = useState(false);
 
   const sortedPeers = useMemo(
     () =>
@@ -90,6 +92,27 @@ export function ContactsScreen(): React.JSX.Element {
     canSendBushMeshRoutedMessage &&
     cleanMessage.length > 0 &&
     !isSending;
+  const canRefreshDiscovery =
+    connectionStatus === 'Connected' &&
+    Number.isInteger(channelIndex) &&
+    !isDiscovering;
+
+  const runDiscoveryRefresh = async () => {
+    try {
+      setIsDiscovering(true);
+      setSendStatus('Broadcasting BushMesh HELLO on the active channel...');
+      await refreshBushMeshDiscovery();
+      setSendStatus(
+        `BushMesh HELLO broadcast on ${activeChannel?.channelName ?? `channel ${channelIndex}`}. Nearby BushMesh nodes should answer with their own periodic HELLO traffic.`,
+      );
+    } catch (error) {
+      setSendStatus(
+        error instanceof Error ? error.message : 'BushMesh discovery refresh failed.',
+      );
+    } finally {
+      setIsDiscovering(false);
+    }
+  };
 
   const sendDirectMessage = async () => {
     if (!selectedPeer) {
@@ -176,10 +199,25 @@ export function ContactsScreen(): React.JSX.Element {
       </View>
 
       <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>BushMesh Peers</Text>
-        <Text style={styles.sectionBody}>
-          Tap a peer to make it the destination for a routed message.
-        </Text>
+        <View style={styles.rowBetween}>
+          <View style={styles.flexOne}>
+            <Text style={styles.sectionTitle}>BushMesh Peers</Text>
+            <Text style={styles.sectionBody}>
+              Tap a peer to make it the destination for a routed message.
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[
+              styles.refreshButton,
+              !canRefreshDiscovery && styles.refreshButtonDisabled,
+            ]}
+            disabled={!canRefreshDiscovery}
+            onPress={runDiscoveryRefresh}>
+            <Text style={styles.refreshButtonText}>
+              {isDiscovering ? 'Sending...' : 'Refresh'}
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         {sortedPeers.length === 0 ? (
           <Text style={styles.emptyText}>
@@ -376,6 +414,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     paddingVertical: 10,
+  },
+  refreshButton: {
+    backgroundColor: colors.accent,
+    borderRadius: 12,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+  refreshButtonDisabled: {
+    opacity: 0.4,
+  },
+  refreshButtonText: {
+    color: colors.background,
+    fontSize: 12,
+    fontWeight: '900',
   },
   peerCard: {
     backgroundColor: colors.background,
