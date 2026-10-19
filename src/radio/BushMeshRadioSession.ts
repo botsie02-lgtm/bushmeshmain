@@ -9,10 +9,15 @@ import {
   BushMeshTransmissionController,
   TransmissionAttemptResult,
 } from './BushMeshTransmissionController';
+import {
+  BushMeshRadioProfile,
+  cloneBushMeshRadioProfile,
+} from './RadioProfile';
 
 export type BushMeshRadioSessionSnapshot = {
   transportReady: boolean;
   identityRef: BushMeshIdentityRef | null;
+  radioProfile: BushMeshRadioProfile | null;
   queuedCount: number;
   inflightCount: number;
   acceptedCount: number;
@@ -53,6 +58,7 @@ export class BushMeshRadioSession {
   private readonly compatibilityOwner: BushMeshTransportOwner = {};
   private transportOwner: BushMeshTransportOwner | null = null;
   private identityRef: BushMeshIdentityRef | null = null;
+  private radioProfile: BushMeshRadioProfile | null = null;
   private lastAttempt: TransmissionAttemptResult | null = null;
   private drainPromise: Promise<TransmissionAttemptResult> | null = null;
 
@@ -72,6 +78,7 @@ export class BushMeshRadioSession {
     return {
       transportReady: this.controller.isTransportReady(),
       identityRef: this.identityRef,
+      radioProfile: cloneBushMeshRadioProfile(this.radioProfile),
       queuedCount: entries.filter(entry => entry.state === 'queued').length,
       inflightCount: entries.filter(entry => entry.state === 'inflight').length,
       acceptedCount: entries.filter(entry => entry.state === 'accepted').length,
@@ -87,6 +94,7 @@ export class BushMeshRadioSession {
   ): void {
     this.transportOwner = owner;
     this.identityRef = null;
+    this.radioProfile = null;
     this.controller.setSender(sender);
     this.emit();
   }
@@ -98,6 +106,7 @@ export class BushMeshRadioSession {
 
     this.transportOwner = null;
     this.identityRef = null;
+    this.radioProfile = null;
     this.controller.setSender(null);
     this.emit();
     return true;
@@ -117,7 +126,20 @@ export class BushMeshRadioSession {
     return true;
   }
 
-  /** @deprecated MeshCoreClient is migrating to claimTransport/releaseTransport. */
+  setRadioProfileForOwner(
+    owner: BushMeshTransportOwner,
+    profile: BushMeshRadioProfile,
+  ): boolean {
+    if (this.transportOwner !== owner) {
+      return false;
+    }
+
+    this.radioProfile = cloneBushMeshRadioProfile(profile);
+    this.emit();
+    return true;
+  }
+
+  /** @deprecated New radio integrations should use claimTransport/releaseTransport. */
   setTransport(sender: BushMeshDatagramSender | null): void {
     if (sender) {
       this.claimTransport(this.compatibilityOwner, sender);
@@ -126,7 +148,7 @@ export class BushMeshRadioSession {
     }
   }
 
-  /** @deprecated MeshCoreClient is migrating to owner-scoped identity updates. */
+  /** @deprecated New radio integrations should use owner-scoped identity updates. */
   setIdentity(identityRef: BushMeshIdentityRef | null): void {
     if (identityRef) {
       this.setIdentityForOwner(this.compatibilityOwner, identityRef);
