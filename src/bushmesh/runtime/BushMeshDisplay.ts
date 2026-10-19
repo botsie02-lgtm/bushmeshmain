@@ -85,6 +85,11 @@ function renderTyped(packet: BushMeshTypedPacket): string | null {
     case 'route':
       return `Route update • destination ${packet.value.destinationNodeId.toString(16).padStart(8, '0')} • ${packet.value.hopCount} hop(s) • quality ${Math.round(packet.value.pathQuality)}%`;
 
+    case 'routed':
+      return packet.value.destinationNodeId === undefined
+        ? `Routed broadcast from ${packet.value.sourceNodeId.toString(16).padStart(8, '0')}`
+        : `Routed packet ${packet.value.sourceNodeId.toString(16).padStart(8, '0')} → ${packet.value.destinationNodeId.toString(16).padStart(8, '0')}`;
+
     case 'command':
       switch (packet.value.command) {
         case BushMeshControlCommand.RequestLocation:
