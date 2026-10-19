@@ -1,8 +1,10 @@
 import {
+  BushMeshFileContentType,
   BushMeshNodeHello,
   BushMeshSyncFrameKind,
   BushMeshTypedPacket,
   CompactLocation,
+  encodeBushMeshFileWire,
   encodeBushMeshNodeHelloWire,
   encodeBushMeshTextCarrier,
 } from '../protocol';
@@ -17,6 +19,11 @@ import {
   BushMeshCommandResponder,
   BushMeshLocationSnapshot,
 } from './BushMeshCommandResponder';
+import {
+  BushMeshFileManagerResult,
+  BushMeshFileTransferManager,
+  BushMeshIncomingFile,
+} from './BushMeshFileTransferManager';
 import {createBushMeshNodeHelloFromPublicKey} from './BushMeshIdentity';
 import {subscribeMeshCorePublicKey} from './BushMeshIdentityHub';
 import {BushMeshPeerRegistry} from './BushMeshPeerRegistry';
@@ -26,11 +33,14 @@ export type BushMeshNodeRuntimeEvents = BushMeshNetworkRuntimeEvents & {
   onPeerHello?: (hello: BushMeshNodeHello) => void;
   onTypedPacket?: (packet: BushMeshTypedPacket, channelIndex: number) => void;
   onAutomaticResponse?: (kind: string, channelIndex: number) => void;
+  onFileProgress?: (result: BushMeshFileManagerResult, channelIndex: number) => void;
+  onFileComplete?: (file: BushMeshIncomingFile, channelIndex: number) => void;
 };
 
 export class BushMeshNodeRuntime {
   readonly network: BushMeshNetworkRuntime;
   readonly sync = new BushMeshSyncManager();
+  readonly files = new BushMeshFileTransferManager();
 
   private peerRegistryState: BushMeshPeerRegistry | null = null;
   private responder: BushMeshCommandResponder | null = null;
@@ -174,6 +184,49 @@ export class BushMeshNodeRuntime {
     await this.sendResponseWire(channelIndex, wireBytes);
   }
 
+  async startFileTransfer(
+    channelIndex: number,
+    data: number[],
+    options?: {
+      transferId?: number;
+      chunkSize?: number;
+      contentType?: BushMeshFileContentType | number;
+      fileName?: string;
+      initialChunkFrames?: number;
+    },
+  ): Promise<number> {
+    const transferId = options?.transferId ?? this.network.nextMessageId();
+    this.files.createOutgoing(transferId, data, {
+      chunkSize: options?.chunkSize,
+      contentType: options?.contentType,
+      fileName: options?.fileName,
+    });
+    await this.sendFileBurst(
+      channelIndex,
+      transferId,
+      options?.initialChunkFrames ?? 8,
+    );
+    return transferId;
+  }
+
+  async sendFileBurst(
+    channelIndex: number,
+    transferId: number,
+    maxChunkFrames = 8,
+  ): Promise<number> {
+    const fileFrames = this.files.outgoingFrames(transferId, maxChunkFrames);
+
+    for (const fileFrame of fileFrames) {
+      const wireBytes = encodeBushMeshFileWire(
+        fileFrame,
+        this.network.nextMessageId(),
+      );
+      await this.sendResponseWire(channelIndex, wireBytes);
+    }
+
+    return fileFrames.length;
+  }
+
   private async handleReceivedMessage(
     message: BushMeshRuntimeReceivedMessage,
   ): Promise<void> {
@@ -192,6 +245,10 @@ export class BushMeshNodeRuntime {
       typed.value.kind === BushMeshSyncFrameKind.Summary
     ) {
       this.sync.acceptRemoteSummary(typed.value);
+    }
+
+    if (typed.kind === 'file') {
+      await this.handleFileFrame(typed.value, channelIndex);
     }
 
     this.events.onTypedPacket?.(typed, channelIndex);
@@ -214,6 +271,34 @@ export class BushMeshNodeRuntime {
             : `BushMesh automatic ${response.kind} response failed.`,
         );
       }
+    }
+  }
+
+  private async handleFileFrame(
+    fileFrame: number[],
+    channelIndex: number,
+  ): Promise<void> {
+    try {
+      const result = this.files.acceptFrame(fileFrame);
+      this.events.onFileProgress?.(result, channelIndex);
+
+      for (const responseFrame of result.responseFrames) {
+        const wireBytes = encodeBushMeshFileWire(
+          responseFrame,
+          this.network.nextMessageId(),
+        );
+        await this.sendResponseWire(channelIndex, wireBytes);
+      }
+
+      if (result.completedFile) {
+        this.events.onFileComplete?.(result.completedFile, channelIndex);
+      }
+    } catch (error) {
+      this.events.onError?.(
+        error instanceof Error
+          ? `BushMesh file transfer failed: ${error.message}`
+          : 'BushMesh file transfer failed.',
+      );
     }
   }
 
