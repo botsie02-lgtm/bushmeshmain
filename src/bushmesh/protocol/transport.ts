@@ -21,6 +21,7 @@ import {
   encodeSemanticMessage,
   renderSemanticMessage,
 } from './semantic';
+import {tryParseSemanticText} from './semanticText';
 import {
   compareDictionaryCompression,
   decodeDictionaryText,
@@ -92,15 +93,29 @@ export function encodeBushMeshTextMessage(
     ackRequested?: boolean;
     storeAndForward?: boolean;
     ttlHops?: number;
+    semantic?: boolean;
   },
 ): EncodedBushMeshTextMessage {
   const compared = compareDictionaryCompression(text);
-  const compression = compared.useDictionary
+  let compression = compared.useDictionary
     ? BushMeshCompressionProfile.TextDictionary
     : BushMeshCompressionProfile.Raw;
-  const payload = compared.useDictionary
+  let payload = compared.useDictionary
     ? compared.dictionaryBytes
     : compared.rawBytes;
+
+  if (options?.semantic !== false) {
+    const semantic = tryParseSemanticText(text);
+
+    if (semantic) {
+      const semanticPayload = encodeSemanticMessage(semantic);
+
+      if (semanticPayload.length < payload.length) {
+        compression = BushMeshCompressionProfile.Semantic;
+        payload = semanticPayload;
+      }
+    }
+  }
 
   const wireBytes = encodeBushMeshWire({
     type: BushMeshPacketType.Message,
