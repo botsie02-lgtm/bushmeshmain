@@ -16,6 +16,7 @@ import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DriveProvider} from './src/state/DriveContext';
 import {RadioSessionProvider} from './src/state/RadioSessionContext';
 import {LocationSessionProvider} from './src/state/LocationSessionContext';
+import {OfflineMapProvider} from './src/state/OfflineMapContext';
 import {DriveScreen} from './src/screens/DriveScreen';
 import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
@@ -106,9 +107,11 @@ function App(): React.JSX.Element {
         <ConvoyProvider>
           <DriveProvider>
             <RadioSessionProvider>
-              <LocationSessionProvider>
-                <AppContent />
-              </LocationSessionProvider>
+              <OfflineMapProvider>
+                <LocationSessionProvider>
+                  <AppContent />
+                </LocationSessionProvider>
+              </OfflineMapProvider>
             </RadioSessionProvider>
           </DriveProvider>
         </ConvoyProvider>
