@@ -10,6 +10,7 @@ import {
   decodeBushMeshMeshCoreFrame,
 } from '../bushmesh/meshcoreBridge';
 import {bushMeshRadioSession} from '../radio/BushMeshRadioSession';
+import {meshCoreSelfInfoToRadioProfile} from '../radio/meshCoreRadioProfile';
 import {MESHCORE_BLE} from './meshcoreBle';
 import {
   buildAppStartCommand,
@@ -517,6 +518,10 @@ export class MeshCoreClient {
       bushMeshRadioSession.setIdentityForOwner(
         this.radioSessionOwner,
         selfInfo.bushMeshIdentityRef,
+      );
+      bushMeshRadioSession.setRadioProfileForOwner(
+        this.radioSessionOwner,
+        meshCoreSelfInfoToRadioProfile(selfInfo),
       );
     }
 
