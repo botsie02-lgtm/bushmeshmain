@@ -25,6 +25,7 @@ import {
   bushMeshRadioSession,
 } from '../radio/BushMeshRadioSession';
 import {TransmissionAttemptResult} from '../radio/BushMeshTransmissionController';
+import {useBushMesh} from './BushMeshContext';
 
 type QueueDriverActionInput = {
   channelIndex: number;
@@ -77,6 +78,7 @@ export function RadioSessionProvider({
 }: {
   children: React.ReactNode;
 }): React.JSX.Element {
+  const {setConnectionStatus} = useBushMesh();
   const [snapshot, setSnapshot] = useState<BushMeshRadioSessionSnapshot>(() =>
     bushMeshRadioSession.getSnapshot(),
   );
@@ -108,6 +110,10 @@ export function RadioSessionProvider({
     refresh();
     return bushMeshRadioSession.subscribe(refresh);
   }, []);
+
+  useEffect(() => {
+    setConnectionStatus(snapshot.transportReady ? 'Connected' : 'Disconnected');
+  }, [snapshot.transportReady, setConnectionStatus]);
 
   useEffect(() => {
     let active = true;
@@ -165,7 +171,7 @@ export function RadioSessionProvider({
 
     const syncNativeRuntime = async () => {
       try {
-        if (snapshot.transportReady) {
+        if (snapshot.runtimeRequested) {
           await nativeRadioService.start(null);
         } else {
           await nativeRadioService.stop();
@@ -194,7 +200,7 @@ export function RadioSessionProvider({
     return () => {
       active = false;
     };
-  }, [snapshot.transportReady]);
+  }, [snapshot.runtimeRequested]);
 
   useEffect(() => {
     if (
