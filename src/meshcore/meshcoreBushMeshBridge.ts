@@ -126,7 +126,7 @@ export function prepareBushMeshWireChannelFrames(
 
   if (options?.allowFragmentation === false) {
     throw new Error(
-      'Bushmesh wire message exceeds MeshCore payload limit and fragmentation is disabled.',
+      'Bushmesh wire message exceeds MeshCore payload limit and peer does not support fragmentation.',
     );
   }
 
