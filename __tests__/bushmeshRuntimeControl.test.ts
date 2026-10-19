@@ -100,6 +100,7 @@ describe('Bushmesh runtime, negotiation and control infrastructure', () => {
       role: BushMeshNodeRole.Handheld,
       protocolMinVersion: 1,
       protocolMaxVersion: 1,
+      dictionaryVersion: 1,
       capabilities:
         BushMeshCapability.DictionaryText |
         BushMeshCapability.SemanticMessages |
@@ -111,6 +112,7 @@ describe('Bushmesh runtime, negotiation and control infrastructure', () => {
       role: BushMeshNodeRole.Vehicle,
       protocolMinVersion: 1,
       protocolMaxVersion: 1,
+      dictionaryVersion: 1,
       capabilities:
         BushMeshCapability.DictionaryText |
         BushMeshCapability.StoreAndForward,
@@ -131,6 +133,12 @@ describe('Bushmesh runtime, negotiation and control infrastructure', () => {
       {storeAndForward: true, ttlHops: 4},
     );
     expect(encoded.compression).toBe(BushMeshCompressionProfile.TextDictionary);
+
+    const mismatched = negotiateBushMeshPeerPolicy(local, {
+      ...remote,
+      dictionaryVersion: 2,
+    });
+    expect(mismatched.allowDictionary).toBe(false);
   });
 
   test('PING and PONG session reports round-trip latency', () => {
