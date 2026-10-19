@@ -6,11 +6,14 @@ import React, {
   useState,
 } from 'react';
 
+import type {BushMeshRuntimeSendResult} from '../bushmesh/runtime/BushMeshNetworkRuntime';
+
 export type BushMeshChannel = {
   channelIndex: string;
   channelName: string;
   secret: string;
 };
+
 export type BushMeshDeviceStatus = {
   batteryMv: number;
   batteryVolts: number;
@@ -18,6 +21,7 @@ export type BushMeshDeviceStatus = {
   totalStorageKb: number | null;
   storagePercent: number | null;
 };
+
 export type BushMeshChannelMessage = {
   id: string;
   channelIndex: string;
@@ -26,7 +30,9 @@ export type BushMeshChannelMessage = {
   direction: 'sent' | 'received';
   status: 'sent' | 'failed' | 'pending';
   createdAt: string;
+  protocol?: 'meshcore-text' | 'bushmesh';
 };
+
 export type BushMeshContact = {
   publicKey: string;
   publicKeyPrefix: string;
@@ -39,12 +45,23 @@ export type BushMeshContact = {
   longitude: number | null;
   lastModified: number | null;
 };
+
+export type BushMeshNetworkStatus = {
+  active: boolean;
+  detail: string;
+};
+
 type BushMeshConnectionStatus = 'Disconnected' | 'Connected';
 
 type SendChannelMessageHandler = (
   channelIndex: number,
   message: string,
 ) => Promise<void>;
+
+type SendBushMeshMessageHandler = (
+  channelIndex: number,
+  message: string,
+) => Promise<BushMeshRuntimeSendResult>;
 
 type BushMeshContextValue = {
   connectionStatus: BushMeshConnectionStatus;
@@ -54,6 +71,8 @@ type BushMeshContextValue = {
   activeChannel: BushMeshChannel | null;
   channelMessages: BushMeshChannelMessage[];
   canSendChannelMessage: boolean;
+  canSendBushMeshMessage: boolean;
+  bushMeshNetworkStatus: BushMeshNetworkStatus;
   deviceStatus: BushMeshDeviceStatus | null;
   contacts: BushMeshContact[];
 
@@ -63,10 +82,18 @@ type BushMeshContextValue = {
   setConnectedDeviceName: (name: string | null) => void;
   setChannels: (channels: BushMeshChannel[]) => void;
   setActiveChannelIndex: (channelIndex: string | null) => void;
+  setBushMeshNetworkStatus: (status: BushMeshNetworkStatus) => void;
   setSendChannelMessageHandler: (
     handler: SendChannelMessageHandler | null,
   ) => void;
+  setSendBushMeshMessageHandler: (
+    handler: SendBushMeshMessageHandler | null,
+  ) => void;
   sendChannelMessage: (channelIndex: number, message: string) => Promise<void>;
+  sendBushMeshMessage: (
+    channelIndex: number,
+    message: string,
+  ) => Promise<BushMeshRuntimeSendResult>;
   addLocalChannelMessage: (
     message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>,
   ) => void;
@@ -83,29 +110,31 @@ export function BushMeshProvider({
   children: React.ReactNode;
 }): React.JSX.Element {
   const [contacts, setContacts] = useState<BushMeshContact[]>([]);
-  const clearContacts = () => {
-    setContacts([]);
-  };
   const [connectionStatus, setConnectionStatus] =
     useState<BushMeshConnectionStatus>('Disconnected');
-
   const [connectedDeviceName, setConnectedDeviceName] = useState<string | null>(
     null,
   );
   const [channels, setChannelsState] = useState<BushMeshChannel[]>([]);
-  
   const [activeChannelIndex, setActiveChannelIndex] = useState<string | null>(
     null,
   );
   const [deviceStatus, setDeviceStatus] = useState<BushMeshDeviceStatus | null>(
-  null,
+    null,
   );
   const [channelMessages, setChannelMessages] = useState<
     BushMeshChannelMessage[]
   >([]);
+  const [bushMeshNetworkStatus, setBushMeshNetworkStatus] =
+    useState<BushMeshNetworkStatus>({
+      active: false,
+      detail: 'BushMesh protocol runtime is not connected.',
+    });
 
   const [sendChannelMessageHandlerState, setSendChannelMessageHandlerState] =
     useState<SendChannelMessageHandler | null>(null);
+  const [sendBushMeshMessageHandlerState, setSendBushMeshMessageHandlerState] =
+    useState<SendBushMeshMessageHandler | null>(null);
 
   const activeChannel =
     channels.find(channel => channel.channelIndex === activeChannelIndex) ??
@@ -136,6 +165,12 @@ export function BushMeshProvider({
     setSendChannelMessageHandlerState(() => handler);
   };
 
+  const setSendBushMeshMessageHandler = (
+    handler: SendBushMeshMessageHandler | null,
+  ) => {
+    setSendBushMeshMessageHandlerState(() => handler);
+  };
+
   const clearChannels = () => {
     setChannelsState([]);
     setActiveChannelIndex(null);
@@ -145,30 +180,48 @@ export function BushMeshProvider({
     setChannelMessages([]);
   };
 
+  const clearContacts = () => {
+    setContacts([]);
+  };
+
   const addLocalChannelMessage = useCallback(
-  (message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>) => {
-    setChannelMessages(currentMessages => [
-      {
-        ...message,
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        createdAt: new Date().toISOString(),
-      },
-      ...currentMessages,
-    ]);
-  },
-  [],
-);
+    (message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>) => {
+      setChannelMessages(currentMessages => [
+        {
+          ...message,
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          createdAt: new Date().toISOString(),
+        },
+        ...currentMessages,
+      ]);
+    },
+    [],
+  );
 
   const sendChannelMessage = useCallback(
-  async (channelIndex: number, message: string): Promise<void> => {
-    if (!sendChannelMessageHandlerState) {
-      throw new Error('No connected MeshCore client is ready for messaging.');
-    }
+    async (channelIndex: number, message: string): Promise<void> => {
+      if (!sendChannelMessageHandlerState) {
+        throw new Error('No connected MeshCore client is ready for messaging.');
+      }
 
-    await sendChannelMessageHandlerState(channelIndex, message);
-  },
-  [sendChannelMessageHandlerState],
-);
+      await sendChannelMessageHandlerState(channelIndex, message);
+    },
+    [sendChannelMessageHandlerState],
+  );
+
+  const sendBushMeshMessage = useCallback(
+    async (
+      channelIndex: number,
+      message: string,
+    ): Promise<BushMeshRuntimeSendResult> => {
+      if (!sendBushMeshMessageHandlerState) {
+        throw new Error('BushMesh protocol runtime is not ready for messaging.');
+      }
+
+      return sendBushMeshMessageHandlerState(channelIndex, message);
+    },
+    [sendBushMeshMessageHandlerState],
+  );
 
   const value = useMemo<BushMeshContextValue>(
     () => ({
@@ -180,16 +233,20 @@ export function BushMeshProvider({
       channelMessages,
       deviceStatus,
       contacts,
+      bushMeshNetworkStatus,
       canSendChannelMessage: sendChannelMessageHandlerState !== null,
+      canSendBushMeshMessage: sendBushMeshMessageHandlerState !== null,
       setDeviceStatus,
-
       setContacts,
       setConnectionStatus,
       setConnectedDeviceName,
       setChannels,
       setActiveChannelIndex,
+      setBushMeshNetworkStatus,
       setSendChannelMessageHandler,
+      setSendBushMeshMessageHandler,
       sendChannelMessage,
+      sendBushMeshMessage,
       addLocalChannelMessage,
       clearChannels,
       clearChannelMessages,
@@ -204,8 +261,11 @@ export function BushMeshProvider({
       channelMessages,
       deviceStatus,
       contacts,
+      bushMeshNetworkStatus,
       sendChannelMessageHandlerState,
+      sendBushMeshMessageHandlerState,
       sendChannelMessage,
+      sendBushMeshMessage,
       addLocalChannelMessage,
     ],
   );
