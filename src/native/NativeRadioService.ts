@@ -2,6 +2,8 @@ import {NativeModules, Platform} from 'react-native';
 
 export type NativeRadioServiceStatus = {
   running: boolean;
+  radioRequested: boolean;
+  locationRequested: boolean;
   deviceLabel: string | null;
   startedAtMs: number;
   ownership: 'react-native-session' | string;
@@ -40,6 +42,8 @@ export const nativeRadioService = {
     if (!this.isSupported() || !module) {
       return {
         running: false,
+        radioRequested: false,
+        locationRequested: false,
         deviceLabel: null,
         startedAtMs: 0,
         ownership: 'unsupported',
