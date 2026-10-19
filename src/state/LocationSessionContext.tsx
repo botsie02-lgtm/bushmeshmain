@@ -20,6 +20,10 @@ import {
   BushMeshTrackPoint,
   BushMeshTrackRecorder,
 } from '../location/TrackRecorder';
+import {
+  buildBushMeshTrackGpx,
+  defaultBushMeshGpxFilename,
+} from '../location/gpx';
 import {requestAndroidPreciseLocationPermission} from '../location/locationPermissions';
 import {
   BushMeshLocationFix,
@@ -27,6 +31,10 @@ import {
   PositionPlanResult,
   validateLocationFix,
 } from '../location/positionPlanner';
+import {
+  NativeExportResult,
+  nativeFileExport,
+} from '../native/NativeFileExport';
 import {useBushMesh} from './BushMeshContext';
 import {useConvoy} from './ConvoyContext';
 import {useRadioSession} from './RadioSessionContext';
@@ -49,9 +57,11 @@ type LocationSessionContextValue = {
   trackPoints: BushMeshTrackPoint[];
   trackDistanceMeters: number;
   trackStartedAtMs: number | null;
+  trackExportSupported: boolean;
   startProvider: (provider: BushMeshLocationProvider) => void;
   startNativeGps: () => Promise<void>;
   startSimulation: () => void;
+  exportTrackGpx: () => Promise<NativeExportResult>;
   clearTrack: () => void;
   stop: () => void;
 };
@@ -99,6 +109,7 @@ export function LocationSessionProvider({
   const drainOnceRef = useRef(drainOnce);
 
   const nativeGpsSupported = androidGpsLocationProvider.isSupported();
+  const trackExportSupported = nativeFileExport.isSupported();
 
   useEffect(() => {
     activeChannelRef.current = activeChannel;
@@ -128,6 +139,22 @@ export function LocationSessionProvider({
     trackRecorderRef.current.clear();
     refreshTrackSnapshot();
   }, [refreshTrackSnapshot]);
+
+  const exportTrackGpx = useCallback(async (): Promise<NativeExportResult> => {
+    const snapshot = trackRecorderRef.current.snapshot();
+    if (snapshot.points.length === 0) {
+      throw new Error('Record at least one breadcrumb before exporting GPX.');
+    }
+
+    const gpx = buildBushMeshTrackGpx(snapshot.points, {
+      name: 'Bushmesh Track',
+      description: `Offline Bushmesh breadcrumb track · ${Math.round(
+        snapshot.totalDistanceMeters,
+      )} m recorded`,
+    });
+    const filename = defaultBushMeshGpxFilename(snapshot.startedAtMs);
+    return nativeFileExport.saveGpx(filename, gpx);
+  }, []);
 
   const stop = useCallback(() => {
     stopProviderRef.current?.();
@@ -315,9 +342,11 @@ export function LocationSessionProvider({
       trackPoints,
       trackDistanceMeters,
       trackStartedAtMs,
+      trackExportSupported,
       startProvider,
       startNativeGps,
       startSimulation,
+      exportTrackGpx,
       clearTrack,
       stop,
     }),
@@ -333,9 +362,11 @@ export function LocationSessionProvider({
       trackPoints,
       trackDistanceMeters,
       trackStartedAtMs,
+      trackExportSupported,
       startProvider,
       startNativeGps,
       startSimulation,
+      exportTrackGpx,
       clearTrack,
       stop,
     ],
