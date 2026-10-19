@@ -75,6 +75,23 @@ describe('Bushmesh outbox snapshots', () => {
     ).toThrow('Unsupported outbox snapshot version');
   });
 
+  test('rejects corrupted persisted binary payloads instead of decoding leniently', () => {
+    const snapshot = createOutboxSnapshot([entry()], 5_000);
+    const corrupted = {
+      ...snapshot,
+      entries: [
+        {
+          ...snapshot.entries[0],
+          payloadBase64: 'not-valid-base64!',
+        },
+      ],
+    };
+
+    expect(() => decodeOutboxSnapshot(JSON.stringify(corrupted))).toThrow(
+      'invalid payload',
+    );
+  });
+
   test('memory adapter copies through the same validated serialization boundary', async () => {
     const persistence = new MemoryBushMeshPersistence();
     const snapshot = createOutboxSnapshot([entry()], 10_000);
