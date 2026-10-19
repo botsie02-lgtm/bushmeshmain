@@ -9,7 +9,9 @@ import React, {
 } from 'react';
 
 import {androidContactPersistence} from '../persistence/AndroidContactPersistence';
+import {androidMessagePersistence} from '../persistence/AndroidMessagePersistence';
 import {createContactSnapshot} from '../persistence/contactSnapshot';
+import {createMessageSnapshot} from '../persistence/messageSnapshot';
 
 export type BushMeshChannel = {
   channelIndex: string;
@@ -50,6 +52,11 @@ export type ContactPersistenceStatus =
   | 'ready'
   | 'unsupported'
   | 'error';
+export type MessagePersistenceStatus =
+  | 'restoring'
+  | 'ready'
+  | 'unsupported'
+  | 'error';
 
 type SendChannelMessageHandler = (
   channelIndex: number,
@@ -70,6 +77,8 @@ type BushMeshContextValue = {
   contacts: BushMeshContact[];
   contactPersistenceStatus: ContactPersistenceStatus;
   contactPersistenceError: string | null;
+  messagePersistenceStatus: MessagePersistenceStatus;
+  messagePersistenceError: string | null;
 
   setContacts: (contacts: BushMeshContact[]) => void;
   setDeviceStatus: (status: BushMeshDeviceStatus | null) => void;
@@ -123,6 +132,18 @@ export function BushMeshProvider({
   const [channelMessages, setChannelMessages] = useState<
     BushMeshChannelMessage[]
   >([]);
+  const [messagePersistenceStatus, setMessagePersistenceStatus] =
+    useState<MessagePersistenceStatus>(() =>
+      androidMessagePersistence.isSupported() ? 'restoring' : 'unsupported',
+    );
+  const [messagePersistenceError, setMessagePersistenceError] = useState<
+    string | null
+  >(null);
+  const messagePersistenceReadyRef = useRef(
+    !androidMessagePersistence.isSupported(),
+  );
+  const messageWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+
   const [sendChannelMessageHandlerState, setSendChannelMessageHandlerState] =
     useState<SendChannelMessageHandler | null>(null);
   const [syncContactsHandlerState, setSyncContactsHandlerState] =
@@ -181,6 +202,93 @@ export function BushMeshProvider({
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const restoreMessageHistory = async () => {
+      if (!androidMessagePersistence.isSupported()) {
+        messagePersistenceReadyRef.current = true;
+        if (active) {
+          setMessagePersistenceStatus('unsupported');
+        }
+        return;
+      }
+
+      try {
+        const snapshot = await androidMessagePersistence.load();
+        if (snapshot && active) {
+          setChannelMessages(snapshot.messages);
+        }
+        messagePersistenceReadyRef.current = true;
+        if (active) {
+          setMessagePersistenceStatus('ready');
+          setMessagePersistenceError(null);
+        }
+      } catch (restoreError) {
+        const restoreMessage =
+          restoreError instanceof Error
+            ? restoreError.message
+            : 'Encrypted Bushmesh message history could not be restored.';
+
+        try {
+          await androidMessagePersistence.resetSecureStorage();
+          messagePersistenceReadyRef.current = true;
+          if (active) {
+            setChannelMessages([]);
+            setMessagePersistenceStatus('ready');
+            setMessagePersistenceError(
+              `The previous encrypted radio history could not be authenticated and was discarded. Secure message storage was re-keyed. ${restoreMessage}`,
+            );
+          }
+        } catch (resetError) {
+          messagePersistenceReadyRef.current = true;
+          if (active) {
+            setMessagePersistenceStatus('error');
+            setMessagePersistenceError(
+              resetError instanceof Error
+                ? `Message restore failed (${restoreMessage}) and secure storage could not be reinitialized: ${resetError.message}`
+                : `Message restore failed (${restoreMessage}) and secure storage could not be reinitialized.`,
+            );
+          }
+        }
+      }
+    };
+
+    restoreMessageHistory().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      messagePersistenceStatus !== 'ready' ||
+      !androidMessagePersistence.isSupported() ||
+      !messagePersistenceReadyRef.current
+    ) {
+      return;
+    }
+
+    const snapshot = createMessageSnapshot(channelMessages, Date.now());
+    messageWriteChainRef.current = messageWriteChainRef.current
+      .then(async () => {
+        if (snapshot.messages.length === 0) {
+          await androidMessagePersistence.clear();
+          return;
+        }
+        await androidMessagePersistence.save(snapshot);
+      })
+      .then(() => setMessagePersistenceError(null))
+      .catch(error => {
+        setMessagePersistenceStatus('error');
+        setMessagePersistenceError(
+          error instanceof Error
+            ? error.message
+            : 'Encrypted Bushmesh message history could not be saved.',
+        );
+      });
+  }, [channelMessages, messagePersistenceStatus]);
 
   const persistContacts = useCallback((nextContacts: BushMeshContact[]) => {
     if (!androidContactPersistence.isSupported()) {
@@ -259,20 +367,25 @@ export function BushMeshProvider({
     setActiveChannelIndex(null);
   };
 
-  const clearChannelMessages = () => {
+  const clearChannelMessages = useCallback(() => {
     setChannelMessages([]);
-  };
+  }, []);
 
   const addLocalChannelMessage = useCallback(
     (message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>) => {
-      setChannelMessages(currentMessages => [
-        {
-          ...message,
-          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          createdAt: new Date().toISOString(),
-        },
-        ...currentMessages,
-      ]);
+      setChannelMessages(currentMessages =>
+        createMessageSnapshot(
+          [
+            {
+              ...message,
+              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              createdAt: new Date().toISOString(),
+            },
+            ...currentMessages,
+          ],
+          Date.now(),
+        ).messages,
+      );
     },
     [],
   );
@@ -310,6 +423,8 @@ export function BushMeshProvider({
       contacts,
       contactPersistenceStatus,
       contactPersistenceError,
+      messagePersistenceStatus,
+      messagePersistenceError,
       canSendChannelMessage: sendChannelMessageHandlerState !== null,
       canSyncContacts: syncContactsHandlerState !== null,
       setDeviceStatus,
@@ -338,12 +453,15 @@ export function BushMeshProvider({
       contacts,
       contactPersistenceStatus,
       contactPersistenceError,
+      messagePersistenceStatus,
+      messagePersistenceError,
       sendChannelMessageHandlerState,
       syncContactsHandlerState,
       setContacts,
       sendChannelMessage,
       syncContacts,
       addLocalChannelMessage,
+      clearChannelMessages,
       clearContacts,
     ],
   );
