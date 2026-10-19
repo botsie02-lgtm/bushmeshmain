@@ -103,6 +103,18 @@ export class BushMeshFileTransferManager {
     return session ? session.receiver.progress() : null;
   }
 
+  activeIncomingTransferIds(): number[] {
+    return Array.from(this.incoming.keys()).sort((a, b) => a - b);
+  }
+
+  activeOutgoingTransferIds(): number[] {
+    return Array.from(this.outgoing.keys()).sort((a, b) => a - b);
+  }
+
+  activeTransferCount(): number {
+    return this.incoming.size + this.outgoing.size;
+  }
+
   acceptFrame(frame: number[]): BushMeshFileManagerResult {
     const frameType = frame[0];
 
