@@ -17,7 +17,10 @@ import {
   OperationalMarker,
   operationalMarkerFromQuickAction,
 } from '../convoy/operationalMarkers';
-import {getQuickActionDefinition} from '../drive/quickActions';
+import {
+  getQuickActionDefinition,
+  getQuickActionTemporalDecision,
+} from '../drive/quickActions';
 
 export type DriveAlertSource =
   | 'radio'
@@ -47,6 +50,7 @@ type DriveContextValue = {
   alerts: DriveAlert[];
   latestAlert: DriveAlert | null;
   operationalMarkers: OperationalMarker[];
+  suppressedInboundCount: number;
   recordLocalQuickAction: (
     action: BushMeshQuickActionCode,
     location: Coordinate | null | undefined,
@@ -64,8 +68,12 @@ type DriveContextValue = {
 
 const DriveContext = createContext<DriveContextValue | null>(null);
 
-function buildAlertId(senderId: string, sequence: number): string {
-  return `${senderId}-${sequence}`;
+function buildAlertId(
+  senderId: string,
+  sequence: number,
+  timestampSeconds: number,
+): string {
+  return `${senderId}-${timestampSeconds}-${sequence}`;
 }
 
 export function DriveProvider({
@@ -74,6 +82,7 @@ export function DriveProvider({
   children: React.ReactNode;
 }): React.JSX.Element {
   const [alerts, setAlerts] = useState<DriveAlert[]>([]);
+  const [suppressedInboundCount, setSuppressedInboundCount] = useState(0);
 
   useEffect(() => {
     return subscribeBushMeshInboundMessages(message => {
@@ -84,9 +93,24 @@ export function DriveProvider({
       const action = message.action;
       const definition = getQuickActionDefinition(action.action);
       const receivedAtMs = Date.now();
-      const ttlSeconds = action.ttlSeconds || definition.defaultTtlSeconds;
+      const temporal = getQuickActionTemporalDecision({
+        action: action.action,
+        packetTimestampSeconds: action.timestampSeconds,
+        ttlSeconds: action.ttlSeconds,
+        nowMs: receivedAtMs,
+      });
+
+      if (temporal.state !== 'active') {
+        setSuppressedInboundCount(count => count + 1);
+        return;
+      }
+
       const alert: DriveAlert = {
-        id: buildAlertId(action.senderId, action.sequence),
+        id: buildAlertId(
+          action.senderId,
+          action.sequence,
+          action.timestampSeconds,
+        ),
         senderId: action.senderId,
         action: action.action,
         label: definition.label,
@@ -96,10 +120,7 @@ export function DriveProvider({
         longitude: action.longitude,
         receivedAtMs,
         packetTimestampSeconds: action.timestampSeconds,
-        expiresAtMs:
-          ttlSeconds > 0
-            ? action.timestampSeconds * 1000 + ttlSeconds * 1000
-            : null,
+        expiresAtMs: temporal.expiresAtMs,
         snrDb: message.snrDb,
         pathLength: message.pathLength,
         source: 'radio',
@@ -192,6 +213,7 @@ export function DriveProvider({
       alerts,
       latestAlert,
       operationalMarkers,
+      suppressedInboundCount,
       recordLocalQuickAction,
       previewQuickAction,
       dismissAlert,
@@ -201,6 +223,7 @@ export function DriveProvider({
       alerts,
       latestAlert,
       operationalMarkers,
+      suppressedInboundCount,
       recordLocalQuickAction,
       previewQuickAction,
       dismissAlert,
