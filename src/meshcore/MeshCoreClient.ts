@@ -61,6 +61,14 @@ import {SerialTaskQueue} from './serialTaskQueue';
 const DEFAULT_COMMAND_TIMEOUT_MS = 5000;
 const FALLBACK_CHANNEL_COUNT = 8;
 const REQUESTED_BLE_MTU = 185;
+const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000] as const;
+const RESYNC_DELAYS_MS = [2_000, 5_000, 10_000, 30_000] as const;
+
+export type MeshCoreConnectionState =
+  | 'connected'
+  | 'disconnected'
+  | 'reconnecting'
+  | 'stopped';
 
 export type MeshCoreLogItem = {
   label: string;
@@ -90,6 +98,7 @@ export type MeshCoreClientEvents = {
   onTxFrame: (log: MeshCoreLogItem) => void;
   onStatus: (message: string) => void;
   onError: (message: string) => void;
+  onConnectionState?: (state: MeshCoreConnectionState, detail: string) => void;
   onMessagesWaiting?: () => void;
   onChannelMessage?: (message: ParsedChannelMessage) => void;
   onContactMessage?: (message: ParsedContactMessage) => void;
@@ -111,11 +120,20 @@ export class MeshCoreClient {
   private device: Device;
   private events: MeshCoreClientEvents;
   private txSubscription: Subscription | null = null;
+  private disconnectSubscription: Subscription | null = null;
   private reassembler: MeshCoreReassembler | null = null;
   private pendingCommand: PendingCommand | null = null;
   private commandQueue = new SerialTaskQueue();
   private mtuPromise: Promise<number | null> | null = null;
   private lastDeviceInfo: MeshCoreDeviceInfo | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private resyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
+  private resyncAttempt = 0;
+  private reconnectInProgress = false;
+  private transportActive = false;
+  private stopped = true;
+  private lifecycleGeneration = 0;
   private readonly radioSessionOwner = {};
 
   constructor(
@@ -129,69 +147,31 @@ export class MeshCoreClient {
   }
 
   start(): void {
-    this.stop();
+    this.prepareFreshStart();
+    this.stopped = false;
+    this.lifecycleGeneration += 1;
+    this.reconnectAttempt = 0;
+    this.resyncAttempt = 0;
+    this.installDisconnectMonitor();
+    this.activateConnectedRuntime('claim');
 
-    this.reassembler = createIdleReassembler(bytes => {
-      this.handleIncomingFrame(bytes);
-    });
-
-    this.txSubscription = this.manager.monitorCharacteristicForDevice(
-      this.device.id,
-      MESHCORE_BLE.serviceUuid,
-      MESHCORE_BLE.txCharacteristicUuid,
-      (error, characteristic) => {
-        if (error) {
-          this.events.onError(`TX notify error: ${error.message}`);
-          return;
-        }
-
-        if (!characteristic?.value) {
-          return;
-        }
-
-        const decodedChunk = decodeMeshCorePacket(characteristic.value);
-        const bytes = base64ToBytes(characteristic.value);
-
-        this.events.onTxChunk({
-          label: decodedChunk.label,
-          value: decodedChunk.hex,
-          rawBytes: bytes,
-          detail: `${decodedChunk.byteLength} byte BLE frame`,
-        });
-
-        this.reassembler?.pushChunk(bytes);
-      },
-    );
-
-    bushMeshRadioSession.claimTransport(
-      this.radioSessionOwner,
-      async (channelIndex, dataType, payload) => {
-        await this.sendChannelData(channelIndex, dataType, payload);
-      },
-    );
-
-    this.events.onStatus('MeshCore client started. Listening for TX packets.');
+    const detail = 'MeshCore client started. Listening for TX packets.';
+    this.events.onStatus(detail);
+    this.events.onConnectionState?.('connected', detail);
   }
 
   stop(): void {
-    this.txSubscription?.remove();
-    this.txSubscription = null;
+    this.stopped = true;
+    this.lifecycleGeneration += 1;
+    this.clearReconnectTimer();
+    this.clearResyncTimer();
+    this.reconnectInProgress = false;
 
-    this.reassembler?.reset();
-    this.reassembler = null;
+    this.disconnectSubscription?.remove();
+    this.disconnectSubscription = null;
 
-    this.commandQueue.cancelPending();
-    this.mtuPromise = null;
-    this.lastDeviceInfo = null;
-
-    bushMeshRadioSession.releaseTransport(this.radioSessionOwner);
-
-    if (this.pendingCommand) {
-      const pending = this.pendingCommand;
-      clearTimeout(pending.timeoutId);
-      this.pendingCommand = null;
-      pending.reject(new Error(`${pending.label} cancelled.`));
-    }
+    this.deactivateConnectedRuntime('MeshCore client stopped.', 'release');
+    this.events.onConnectionState?.('stopped', 'MeshCore client stopped.');
   }
 
   async sendAppStart(appName = 'BushMesh'): Promise<MeshCoreLogItem> {
@@ -487,6 +467,321 @@ export class MeshCoreClient {
     return contacts;
   }
 
+  private prepareFreshStart(): void {
+    this.clearReconnectTimer();
+    this.clearResyncTimer();
+    this.reconnectInProgress = false;
+    this.disconnectSubscription?.remove();
+    this.disconnectSubscription = null;
+    this.deactivateConnectedRuntime('MeshCore client restarting.', 'release');
+  }
+
+  private installDisconnectMonitor(): void {
+    this.disconnectSubscription?.remove();
+    this.disconnectSubscription = this.manager.onDeviceDisconnected(
+      this.device.id,
+      error => {
+        if (this.stopped) {
+          return;
+        }
+
+        const reason = error?.message
+          ? `MeshCore BLE disconnected: ${error.message}`
+          : 'MeshCore BLE disconnected unexpectedly.';
+        this.handleUnexpectedDisconnect(reason);
+      },
+    );
+  }
+
+  private activateConnectedRuntime(mode: 'claim' | 'resume'): boolean {
+    this.reassembler?.reset();
+    this.reassembler = createIdleReassembler(bytes => {
+      this.handleIncomingFrame(bytes);
+    });
+
+    this.txSubscription?.remove();
+    this.txSubscription = this.manager.monitorCharacteristicForDevice(
+      this.device.id,
+      MESHCORE_BLE.serviceUuid,
+      MESHCORE_BLE.txCharacteristicUuid,
+      (error, characteristic) => {
+        if (error) {
+          if (!this.stopped && this.transportActive) {
+            this.handleUnexpectedDisconnect(
+              `MeshCore TX notification stream ended: ${error.message}`,
+            );
+          }
+          return;
+        }
+
+        if (!characteristic?.value) {
+          return;
+        }
+
+        const decodedChunk = decodeMeshCorePacket(characteristic.value);
+        const bytes = base64ToBytes(characteristic.value);
+
+        this.events.onTxChunk({
+          label: decodedChunk.label,
+          value: decodedChunk.hex,
+          rawBytes: bytes,
+          detail: `${decodedChunk.byteLength} byte BLE frame`,
+        });
+
+        this.reassembler?.pushChunk(bytes);
+      },
+    );
+
+    const sender = async (
+      channelIndex: number,
+      dataType: number,
+      payload: Uint8Array,
+    ) => {
+      await this.sendChannelData(channelIndex, dataType, payload);
+    };
+
+    const ownsSession =
+      mode === 'claim'
+        ? (bushMeshRadioSession.claimTransport(this.radioSessionOwner, sender), true)
+        : bushMeshRadioSession.resumeTransportForOwner(
+            this.radioSessionOwner,
+            sender,
+          );
+
+    if (!ownsSession) {
+      this.txSubscription?.remove();
+      this.txSubscription = null;
+      this.reassembler?.reset();
+      this.reassembler = null;
+      this.transportActive = false;
+      return false;
+    }
+
+    this.transportActive = true;
+    return true;
+  }
+
+  private deactivateConnectedRuntime(
+    reason: string,
+    ownership: 'suspend' | 'release',
+  ): void {
+    this.transportActive = false;
+
+    this.txSubscription?.remove();
+    this.txSubscription = null;
+
+    this.reassembler?.reset();
+    this.reassembler = null;
+
+    this.commandQueue.cancelPending();
+    this.mtuPromise = null;
+    this.lastDeviceInfo = null;
+
+    if (ownership === 'release') {
+      bushMeshRadioSession.releaseTransport(this.radioSessionOwner);
+    } else {
+      bushMeshRadioSession.suspendTransportForOwner(this.radioSessionOwner);
+    }
+
+    if (this.pendingCommand) {
+      const pending = this.pendingCommand;
+      clearTimeout(pending.timeoutId);
+      this.pendingCommand = null;
+      pending.reject(new Error(`${pending.label} cancelled: ${reason}`));
+    }
+  }
+
+  private handleUnexpectedDisconnect(reason: string): void {
+    if (this.stopped || !this.transportActive) {
+      return;
+    }
+
+    this.clearResyncTimer();
+    this.deactivateConnectedRuntime(reason, 'suspend');
+
+    const detail = `${reason} Bushmesh traffic is paused while the radio reconnects.`;
+    this.events.onStatus(detail);
+    this.events.onConnectionState?.('disconnected', detail);
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.stopped || this.reconnectTimer || this.reconnectInProgress) {
+      return;
+    }
+
+    const generation = this.lifecycleGeneration;
+    const delayMs = RECONNECT_DELAYS_MS[
+      Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)
+    ];
+    const attemptNumber = this.reconnectAttempt + 1;
+    this.reconnectAttempt += 1;
+
+    const detail = `Reconnecting to MeshCore in ${Math.round(
+      delayMs / 1000,
+    )}s (attempt ${attemptNumber}).`;
+    this.events.onStatus(detail);
+    this.events.onConnectionState?.('reconnecting', detail);
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.attemptReconnect(generation).catch(error => {
+        this.events.onError(
+          this.asError(error, 'Unexpected MeshCore reconnect failure.').message,
+        );
+      });
+    }, delayMs);
+  }
+
+  private async attemptReconnect(generation: number): Promise<void> {
+    if (this.stopped || generation !== this.lifecycleGeneration) {
+      return;
+    }
+
+    this.reconnectInProgress = true;
+    const deviceId = this.device.id;
+    const attemptNumber = this.reconnectAttempt;
+    this.events.onStatus(
+      `MeshCore reconnect attempt ${attemptNumber} connecting to ${deviceId}...`,
+    );
+
+    try {
+      const connected = await this.manager.connectToDevice(deviceId);
+      const readyDevice =
+        await connected.discoverAllServicesAndCharacteristics();
+
+      if (this.stopped || generation !== this.lifecycleGeneration) {
+        await this.manager.cancelDeviceConnection(deviceId).catch(() => undefined);
+        return;
+      }
+
+      this.device = readyDevice;
+      this.mtuPromise = null;
+      this.lastDeviceInfo = null;
+
+      if (!this.activateConnectedRuntime('resume')) {
+        this.stopped = true;
+        this.lifecycleGeneration += 1;
+        this.clearReconnectTimer();
+        this.clearResyncTimer();
+        this.disconnectSubscription?.remove();
+        this.disconnectSubscription = null;
+        await this.manager.cancelDeviceConnection(deviceId).catch(() => undefined);
+        this.events.onStatus(
+          'MeshCore reconnect was abandoned because another radio now owns the Bushmesh session.',
+        );
+        return;
+      }
+
+      this.reconnectAttempt = 0;
+      this.resyncAttempt = 0;
+      const detail =
+        'MeshCore BLE reconnected. Recovering radio identity and capabilities...';
+      this.events.onStatus(detail);
+      this.events.onConnectionState?.('connected', detail);
+
+      await this.resyncAfterReconnect(generation);
+    } catch (error) {
+      if (this.stopped || generation !== this.lifecycleGeneration) {
+        return;
+      }
+
+      const message = this.asError(error, 'MeshCore reconnect failed.').message;
+      this.events.onStatus(`MeshCore reconnect failed: ${message}`);
+      this.events.onConnectionState?.(
+        'reconnecting',
+        `MeshCore reconnect failed: ${message}`,
+      );
+      this.scheduleReconnect();
+    } finally {
+      this.reconnectInProgress = false;
+    }
+  }
+
+  private async resyncAfterReconnect(generation: number): Promise<void> {
+    if (
+      this.stopped ||
+      generation !== this.lifecycleGeneration ||
+      !this.transportActive
+    ) {
+      return;
+    }
+
+    try {
+      await this.sendAppStart('BushMesh');
+      await this.sendDeviceQuery();
+
+      if (
+        this.stopped ||
+        generation !== this.lifecycleGeneration ||
+        !this.transportActive
+      ) {
+        return;
+      }
+
+      this.resyncAttempt = 0;
+      const detail =
+        'MeshCore session recovered. Identity and device capabilities are ready.';
+      this.events.onStatus(detail);
+      this.events.onConnectionState?.('connected', detail);
+    } catch (error) {
+      if (
+        this.stopped ||
+        generation !== this.lifecycleGeneration ||
+        !this.transportActive
+      ) {
+        return;
+      }
+
+      const message = this.asError(error, 'MeshCore session resync failed.').message;
+      this.events.onError(`MeshCore reconnected but session recovery failed: ${message}`);
+      this.scheduleResync(generation);
+    }
+  }
+
+  private scheduleResync(generation: number): void {
+    if (
+      this.stopped ||
+      generation !== this.lifecycleGeneration ||
+      !this.transportActive ||
+      this.resyncTimer
+    ) {
+      return;
+    }
+
+    const delayMs = RESYNC_DELAYS_MS[
+      Math.min(this.resyncAttempt, RESYNC_DELAYS_MS.length - 1)
+    ];
+    this.resyncAttempt += 1;
+    this.events.onStatus(
+      `Retrying MeshCore identity recovery in ${Math.round(delayMs / 1000)}s...`,
+    );
+
+    this.resyncTimer = setTimeout(() => {
+      this.resyncTimer = null;
+      this.resyncAfterReconnect(generation).catch(error => {
+        this.events.onError(
+          this.asError(error, 'Unexpected MeshCore session recovery failure.')
+            .message,
+        );
+      });
+    }, delayMs);
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private clearResyncTimer(): void {
+    if (this.resyncTimer) {
+      clearTimeout(this.resyncTimer);
+      this.resyncTimer = null;
+    }
+  }
+
   private handleIncomingFrame(bytes: number[]): void {
     const decoded = decodeMeshCoreBytes(bytes);
     const parsed = parseMeshCorePacketFields(bytes);
@@ -576,6 +871,9 @@ export class MeshCoreClient {
     task: () => Promise<T>,
   ): Promise<T> {
     return this.commandQueue.enqueue(label, async () => {
+      if (!this.transportActive || this.stopped) {
+        throw new Error(`${label} cannot run while MeshCore is disconnected.`);
+      }
       await this.ensureMtu();
       return task();
     });
