@@ -12,6 +12,7 @@ import {
 } from 'react-native-safe-area-context';
 
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
+import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DriveProvider} from './src/state/DriveContext';
@@ -59,6 +60,7 @@ function AppContent(): React.JSX.Element {
       </View>
 
       {activeTab === 'drive' ? <DriveNavigationBanner /> : null}
+      {activeTab === 'map' ? <MapTrackExportBanner /> : null}
 
       <View style={styles.content}>
         <View style={[styles.screenWrap, activeTab !== 'drive' && styles.hidden]}>
