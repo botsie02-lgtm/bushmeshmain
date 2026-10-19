@@ -41,6 +41,8 @@ export function LocationScreen(): React.JSX.Element {
     snapshot: radioSession,
     nativeRuntime,
     nativeRuntimeError,
+    persistenceStatus,
+    persistenceError,
   } = useRadioSession();
 
   const running = status !== 'stopped';
@@ -198,6 +200,25 @@ export function LocationScreen(): React.JSX.Element {
         ) : null}
         {nativeRuntimeError ? (
           <Text style={styles.runtimeError}>{nativeRuntimeError}</Text>
+        ) : null}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardLabel}>ENCRYPTED OUTBOX PERSISTENCE</Text>
+        <Text
+          style={[
+            styles.planValue,
+            persistenceStatus !== 'ready' && styles.inactiveValue,
+          ]}>
+          {persistenceStatus.toUpperCase()}
+        </Text>
+        <Text style={styles.detailText}>
+          On Android, pending Bushmesh packets are stored in app-private storage
+          with AES-GCM encryption backed by Android Keystore. Radio draining waits
+          for cold-start restore before transmitting recovered traffic.
+        </Text>
+        {persistenceError ? (
+          <Text style={styles.runtimeError}>{persistenceError}</Text>
         ) : null}
       </View>
 
