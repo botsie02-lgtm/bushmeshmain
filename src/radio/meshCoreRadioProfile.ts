@@ -1,12 +1,5 @@
 import {MeshCoreSelfInfo} from '../meshcore/meshcoreSelfInfo';
-import {LoRaModemParams} from './loraAirtime';
-
-export type MeshCoreRadioProfile = {
-  frequencyMhz: number | null;
-  txPower: number;
-  maxTxPower: number;
-  modem: LoRaModemParams | null;
-};
+import {BushMeshRadioProfile} from './RadioProfile';
 
 function supportedCodingRate(value: number | null): value is 5 | 6 | 7 | 8 {
   return value === 5 || value === 6 || value === 7 || value === 8;
@@ -20,7 +13,7 @@ function supportedCodingRate(value: number | null): value is 5 | 6 | 7 | 8 {
  */
 export function meshCoreSelfInfoToRadioProfile(
   selfInfo: MeshCoreSelfInfo,
-): MeshCoreRadioProfile {
+): BushMeshRadioProfile {
   const hasSupportedSpreadingFactor =
     selfInfo.spreadingFactor !== null &&
     Number.isInteger(selfInfo.spreadingFactor) &&
@@ -43,6 +36,7 @@ export function meshCoreSelfInfoToRadioProfile(
       : null;
 
   return {
+    source: 'meshcore',
     frequencyMhz: selfInfo.frequencyMhz,
     txPower: selfInfo.txPower,
     maxTxPower: selfInfo.maxTxPower,
