@@ -37,11 +37,10 @@ class BushMeshRadioServiceModule(
   @ReactMethod
   fun stop(promise: Promise) {
     try {
-      val intent = Intent(reactContext, BushMeshRadioService::class.java).apply {
-        action = BushMeshRadioService.ACTION_STOP
-      }
-      reactContext.startService(intent)
-      promise.resolve(true)
+      val stopped = reactContext.stopService(
+        Intent(reactContext, BushMeshRadioService::class.java),
+      )
+      promise.resolve(stopped)
     } catch (error: Exception) {
       promise.reject("BUSHMESH_RADIO_SERVICE_STOP_FAILED", error.message, error)
     }
