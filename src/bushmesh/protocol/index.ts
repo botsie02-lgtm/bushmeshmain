@@ -8,6 +8,7 @@ export * from './deliveryRuntime';
 export * from './dictionaryLearning';
 export * from './discovery';
 export * from './discoverySession';
+export * from './erasureCoding';
 export * from './fileTransfer';
 export * from './fileTransferSender';
 export * from './forwarding';
