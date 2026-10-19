@@ -67,7 +67,11 @@ export class BushMeshTransmissionController {
   ): BushMeshOutboxEntry {
     const definition = getQuickActionDefinition(action.action);
     const priority: BushMeshOutboxPriority =
-      definition.priority === 'safety' ? 'safety' : 'control';
+      definition.priority === 'safety'
+        ? 'safety'
+        : definition.priority === 'control'
+          ? 'control'
+          : 'message';
 
     return this.enqueue(
       channelIndex,
