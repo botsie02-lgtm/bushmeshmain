@@ -17,6 +17,7 @@ export type BushMeshRadioSessionSnapshot = {
   inflightCount: number;
   acceptedCount: number;
   failedCount: number;
+  cancelledCount: number;
   lastAttempt: TransmissionAttemptResult | null;
 };
 
@@ -35,18 +36,21 @@ export type QueuePositionInput = Omit<BushMeshPosition, 'senderId'> & {
   channelIndex: number;
 };
 
+export type BushMeshTransportOwner = object;
+
 type SessionListener = () => void;
 
 /**
  * Observable single-radio session for the React Native process.
  *
- * The active MeshCore transport will register here. UI/domain code can then
- * queue Bushmesh traffic without importing BLE or MeshCore classes. When the
- * future native foreground service lands, it can implement the same surface.
+ * Transport ownership prevents an old/reconnecting client from clearing a
+ * newer connection. Identity-bound outbox entries also stop radio B from ever
+ * transmitting a packet that was encoded as radio A.
  */
 export class BushMeshRadioSession {
   private readonly controller: BushMeshTransmissionController;
   private readonly listeners = new Set<SessionListener>();
+  private transportOwner: BushMeshTransportOwner | null = null;
   private identityRef: BushMeshIdentityRef | null = null;
   private lastAttempt: TransmissionAttemptResult | null = null;
   private drainPromise: Promise<TransmissionAttemptResult> | null = null;
@@ -71,18 +75,45 @@ export class BushMeshRadioSession {
       inflightCount: entries.filter(entry => entry.state === 'inflight').length,
       acceptedCount: entries.filter(entry => entry.state === 'accepted').length,
       failedCount: entries.filter(entry => entry.state === 'failed').length,
+      cancelledCount: entries.filter(entry => entry.state === 'cancelled').length,
       lastAttempt: this.lastAttempt,
     };
   }
 
-  setTransport(sender: BushMeshDatagramSender | null): void {
+  claimTransport(
+    owner: BushMeshTransportOwner,
+    sender: BushMeshDatagramSender,
+  ): void {
+    this.transportOwner = owner;
+    this.identityRef = null;
     this.controller.setSender(sender);
     this.emit();
   }
 
-  setIdentity(identityRef: BushMeshIdentityRef | null): void {
+  releaseTransport(owner: BushMeshTransportOwner): boolean {
+    if (this.transportOwner !== owner) {
+      return false;
+    }
+
+    this.transportOwner = null;
+    this.identityRef = null;
+    this.controller.setSender(null);
+    this.emit();
+    return true;
+  }
+
+  setIdentityForOwner(
+    owner: BushMeshTransportOwner,
+    identityRef: BushMeshIdentityRef,
+  ): boolean {
+    if (this.transportOwner !== owner) {
+      return false;
+    }
+
+    this.controller.cancelQueuedForOtherIdentities(identityRef);
     this.identityRef = identityRef;
     this.emit();
+    return true;
   }
 
   queueQuickAction(input: QueueQuickActionInput): BushMeshOutboxEntry {
@@ -113,6 +144,10 @@ export class BushMeshRadioSession {
   }
 
   drainOnce(nowMs = Date.now()): Promise<TransmissionAttemptResult> {
+    if (!this.identityRef) {
+      return Promise.resolve({entry: null, outcome: 'idle'});
+    }
+
     if (this.drainPromise) {
       return this.drainPromise;
     }
