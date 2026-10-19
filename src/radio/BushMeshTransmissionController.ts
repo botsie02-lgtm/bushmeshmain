@@ -45,6 +45,10 @@ export class BushMeshTransmissionController {
     return this.sender !== null;
   }
 
+  restoreEntries(entries: BushMeshOutboxEntry[]): void {
+    this.outbox.replaceEntries(entries);
+  }
+
   enqueuePosition(
     channelIndex: number,
     position: BushMeshPosition,
