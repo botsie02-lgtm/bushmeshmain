@@ -11,6 +11,7 @@ import {getConvoyFreshness} from '../convoy/convoy';
 import {activeOperationalMarkers} from '../convoy/operationalMarkers';
 import {useConvoy} from '../state/ConvoyContext';
 import {useDrive} from '../state/DriveContext';
+import {useLocationSession} from '../state/LocationSessionContext';
 import {useOfflineMaps} from '../state/OfflineMapContext';
 import {colors} from '../theme/colors';
 
@@ -29,9 +30,22 @@ function markerLabel(type: string): string {
   }
 }
 
+function formatDistance(meters: number): string {
+  if (meters >= 1_000) {
+    return `${(meters / 1_000).toFixed(meters >= 10_000 ? 0 : 1)} km`;
+  }
+  return `${Math.round(meters)} m`;
+}
+
 export function MapScreen(): React.JSX.Element {
   const {vehicles, localPosition} = useConvoy();
   const {operationalMarkers} = useDrive();
+  const {
+    trackPoints,
+    trackDistanceMeters,
+    trackStartedAtMs,
+    clearTrack,
+  } = useLocationSession();
   const {
     packs,
     coverage,
@@ -44,6 +58,10 @@ export function MapScreen(): React.JSX.Element {
   const activeMarkers = useMemo(
     () => activeOperationalMarkers(operationalMarkers, nowMs),
     [operationalMarkers, nowMs],
+  );
+  const recentTrackPoints = useMemo(
+    () => trackPoints.slice(-5).reverse(),
+    [trackPoints],
   );
 
   return (
@@ -65,9 +83,9 @@ export function MapScreen(): React.JSX.Element {
           </View>
         </View>
         <Text style={styles.body}>
-          This surface is already driven by live Bushmesh domain state. Native
-          MapLibre tiles will replace the diagnostic canvas without changing the
-          convoy, alert or offline-pack contracts.
+          Live Bushmesh state already supplies your position, breadcrumb trail,
+          convoy vehicles, operational markers and verified offline-pack coverage.
+          The native renderer can consume these same contracts directly.
         </Text>
       </View>
 
@@ -80,8 +98,8 @@ export function MapScreen(): React.JSX.Element {
         </Text>
         <Text style={styles.canvasDetail}>
           YOU · {vehicles.length} remote vehicle{vehicles.length === 1 ? '' : 's'} ·{' '}
-          {activeMarkers.length} active operational marker
-          {activeMarkers.length === 1 ? '' : 's'}
+          {activeMarkers.length} active marker{activeMarkers.length === 1 ? '' : 's'} ·{' '}
+          {trackPoints.length} breadcrumb{trackPoints.length === 1 ? '' : 's'}
         </Text>
         <View style={styles.canvasGrid}>
           <View style={styles.canvasMetric}>
@@ -92,10 +110,69 @@ export function MapScreen(): React.JSX.Element {
             <Text style={styles.canvasMetricValue}>
               {coverage.coveredPointCount}/{coverage.totalPointCount}
             </Text>
-            <Text style={styles.canvasMetricLabel}>TRIP POINTS COVERED</Text>
+            <Text style={styles.canvasMetricLabel}>TRIP COVERAGE</Text>
+          </View>
+          <View style={styles.canvasMetric}>
+            <Text style={styles.canvasMetricValue}>
+              {formatDistance(trackDistanceMeters)}
+            </Text>
+            <Text style={styles.canvasMetricLabel}>TRAIL DISTANCE</Text>
           </View>
         </View>
       </View>
+
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Breadcrumb trail</Text>
+        <Text style={styles.sectionMeta}>{trackPoints.length} retained points</Text>
+      </View>
+
+      {trackPoints.length === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>No local trail yet</Text>
+          <Text style={styles.emptyText}>
+            Start Android GPS or the simulator. Accepted fixes are compacted into a
+            bounded trail with GPS jitter suppression.
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.trailCard}>
+          <View style={styles.trailSummaryRow}>
+            <View>
+              <Text style={styles.trailValue}>
+                {formatDistance(trackDistanceMeters)}
+              </Text>
+              <Text style={styles.trailLabel}>RECORDED DISTANCE</Text>
+            </View>
+            <View style={styles.trailStartCopy}>
+              <Text style={styles.trailStartValue}>
+                {trackStartedAtMs
+                  ? new Date(trackStartedAtMs).toLocaleTimeString()
+                  : '—'}
+              </Text>
+              <Text style={styles.trailLabel}>TRAIL START</Text>
+            </View>
+          </View>
+
+          <Text style={styles.trailHint}>
+            Recent polyline points — newest first. The native map renderer will use
+            the full retained trail, not just these five diagnostics rows.
+          </Text>
+          {recentTrackPoints.map(point => (
+            <View key={`${point.recordedAtMs}-${point.latitude}-${point.longitude}`} style={styles.trailPointRow}>
+              <Text style={styles.trailPointCoords}>
+                {point.latitude.toFixed(5)}, {point.longitude.toFixed(5)}
+              </Text>
+              <Text style={styles.trailPointTime}>
+                {new Date(point.recordedAtMs).toLocaleTimeString()}
+              </Text>
+            </View>
+          ))}
+
+          <TouchableOpacity style={styles.clearTrailButton} onPress={clearTrack}>
+            <Text style={styles.clearTrailText}>Clear trail</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Offline map packs</Text>
@@ -151,7 +228,7 @@ export function MapScreen(): React.JSX.Element {
         <TouchableOpacity
           style={[styles.button, styles.secondaryButton]}
           onPress={clearMapState}>
-          <Text style={styles.secondaryButtonText}>Clear</Text>
+          <Text style={styles.secondaryButtonText}>Clear map state</Text>
         </TouchableOpacity>
       </View>
 
@@ -262,16 +339,28 @@ const styles = StyleSheet.create({
   canvasLabel: {color: colors.textMuted, fontSize: 10, fontWeight: '900', letterSpacing: 1},
   canvasTitle: {color: colors.textPrimary, fontSize: 22, fontWeight: '900', marginTop: 8},
   canvasDetail: {color: colors.textSecondary, fontSize: 12, marginTop: 6},
-  canvasGrid: {flexDirection: 'row', gap: 10, marginTop: 18},
-  canvasMetric: {flex: 1, backgroundColor: colors.surface, borderRadius: 14, padding: 12},
-  canvasMetricValue: {color: colors.accent, fontSize: 20, fontWeight: '900'},
-  canvasMetricLabel: {color: colors.textMuted, fontSize: 8, fontWeight: '900', marginTop: 3},
+  canvasGrid: {flexDirection: 'row', gap: 8, marginTop: 18},
+  canvasMetric: {flex: 1, backgroundColor: colors.surface, borderRadius: 14, padding: 10},
+  canvasMetricValue: {color: colors.accent, fontSize: 17, fontWeight: '900'},
+  canvasMetricLabel: {color: colors.textMuted, fontSize: 7, fontWeight: '900', marginTop: 3},
   sectionHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, marginBottom: 9},
   sectionTitle: {color: colors.textPrimary, fontSize: 16, fontWeight: '900'},
   sectionMeta: {color: colors.textMuted, fontSize: 11, fontWeight: '700'},
   emptyCard: {backgroundColor: colors.surface, borderRadius: 16, padding: 14, marginBottom: 14},
   emptyTitle: {color: colors.textPrimary, fontSize: 14, fontWeight: '800'},
   emptyText: {color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 4},
+  trailCard: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 18, padding: 14, marginBottom: 18},
+  trailSummaryRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start'},
+  trailValue: {color: colors.accent, fontSize: 24, fontWeight: '900'},
+  trailStartCopy: {alignItems: 'flex-end'},
+  trailStartValue: {color: colors.textPrimary, fontSize: 16, fontWeight: '900'},
+  trailLabel: {color: colors.textMuted, fontSize: 8, fontWeight: '900', marginTop: 3},
+  trailHint: {color: colors.textSecondary, fontSize: 11, lineHeight: 17, marginTop: 12, marginBottom: 8},
+  trailPointRow: {flexDirection: 'row', justifyContent: 'space-between', gap: 10, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border},
+  trailPointCoords: {color: colors.textPrimary, fontSize: 11, fontWeight: '700'},
+  trailPointTime: {color: colors.textMuted, fontSize: 10},
+  clearTrailButton: {marginTop: 10, borderRadius: 12, borderWidth: 1, borderColor: colors.border, paddingVertical: 10, alignItems: 'center'},
+  clearTrailText: {color: colors.textSecondary, fontSize: 11, fontWeight: '900'},
   packCard: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 16, padding: 14, marginBottom: 10},
   packTopRow: {flexDirection: 'row', justifyContent: 'space-between', gap: 10},
   packCopy: {flex: 1},
