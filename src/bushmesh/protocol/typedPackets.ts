@@ -215,12 +215,19 @@ export function decodeBushMeshTypedPacket(bytes: number[]): BushMeshTypedPacket 
         wire,
         value: decodeDistressPayload(wire.envelope.payload),
       };
-    case BushMeshPacketType.Location:
+    case BushMeshPacketType.Location: {
+      const decoded = decodeLocationPayload(wire.envelope.payload);
       return {
         kind: 'location',
         wire,
-        value: decodeLocationPayload(wire.envelope.payload),
+        value: {
+          latitude: decoded.latitude,
+          longitude: decoded.longitude,
+          precision: decoded.precision,
+          batteryPercent: decoded.batteryPercent ?? undefined,
+        },
       };
+    }
     case BushMeshPacketType.Battery:
       return {
         kind: 'telemetry',
