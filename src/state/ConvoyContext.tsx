@@ -19,8 +19,12 @@ import {
 type ConvoyContextValue = {
   vehicles: ConvoyVehicle[];
   localPosition: Coordinate | null;
+  navigationTargetVehicleId: string | null;
+  navigationTargetVehicle: ConvoyVehicle | null;
   upsertBushMeshMessage: (message: BushMeshInboundMessage) => void;
   setLocalPosition: (position: Coordinate | null) => void;
+  setNavigationTarget: (vehicleId: string) => void;
+  clearNavigationTarget: () => void;
   loadDemoConvoy: () => void;
   clearConvoy: () => void;
 };
@@ -30,6 +34,9 @@ const ConvoyContext = createContext<ConvoyContextValue | null>(null);
 export function ConvoyProvider({children}: {children: React.ReactNode}): React.JSX.Element {
   const [vehicles, setVehicles] = useState<ConvoyVehicle[]>([]);
   const [localPosition, setLocalPosition] = useState<Coordinate | null>(null);
+  const [navigationTargetVehicleId, setNavigationTargetVehicleId] = useState<
+    string | null
+  >(null);
 
   const upsertVehicle = useCallback((incoming: ConvoyVehicle) => {
     setVehicles(current => {
@@ -73,11 +80,20 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
     return subscribeBushMeshInboundMessages(upsertBushMeshMessage);
   }, [upsertBushMeshMessage]);
 
+  const setNavigationTarget = useCallback((vehicleId: string) => {
+    setNavigationTargetVehicleId(vehicleId);
+  }, []);
+
+  const clearNavigationTarget = useCallback(() => {
+    setNavigationTargetVehicleId(null);
+  }, []);
+
   const loadDemoConvoy = useCallback(() => {
     const now = Date.now();
     const nowSeconds = Math.floor(now / 1000);
     const demoOrigin = {latitude: -37.5628, longitude: 146.2504};
 
+    setNavigationTargetVehicleId(null);
     setLocalPosition(demoOrigin);
     setVehicles([
       {
@@ -134,18 +150,41 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
   const clearConvoy = useCallback(() => {
     setVehicles([]);
     setLocalPosition(null);
+    setNavigationTargetVehicleId(null);
   }, []);
+
+  const navigationTargetVehicle = useMemo(
+    () =>
+      navigationTargetVehicleId
+        ? vehicles.find(vehicle => vehicle.id === navigationTargetVehicleId) ?? null
+        : null,
+    [vehicles, navigationTargetVehicleId],
+  );
 
   const value = useMemo<ConvoyContextValue>(
     () => ({
       vehicles,
       localPosition,
+      navigationTargetVehicleId,
+      navigationTargetVehicle,
       upsertBushMeshMessage,
       setLocalPosition,
+      setNavigationTarget,
+      clearNavigationTarget,
       loadDemoConvoy,
       clearConvoy,
     }),
-    [vehicles, localPosition, upsertBushMeshMessage, loadDemoConvoy, clearConvoy],
+    [
+      vehicles,
+      localPosition,
+      navigationTargetVehicleId,
+      navigationTargetVehicle,
+      upsertBushMeshMessage,
+      setNavigationTarget,
+      clearNavigationTarget,
+      loadDemoConvoy,
+      clearConvoy,
+    ],
   );
 
   return <ConvoyContext.Provider value={value}>{children}</ConvoyContext.Provider>;
