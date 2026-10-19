@@ -17,6 +17,8 @@ export enum BushMeshCapability {
   FileTransfer = 1 << 8,
   LinkRouting = 1 << 9,
   VoiceTextPipeline = 1 << 10,
+  SensorDelta = 1 << 11,
+  CompressedBinary = 1 << 12,
 }
 
 export enum BushMeshNodeRole {
@@ -34,7 +36,8 @@ export const BUSHMESH_DEFAULT_CAPABILITIES =
   BushMeshCapability.SelectiveAck |
   BushMeshCapability.StoreAndForward |
   BushMeshCapability.BloomSync |
-  BushMeshCapability.LocationDelta;
+  BushMeshCapability.LocationDelta |
+  BushMeshCapability.SensorDelta;
 
 export type BushMeshNodeHello = {
   nodeId: number;
@@ -43,6 +46,7 @@ export type BushMeshNodeHello = {
   protocolMinVersion: number;
   protocolMaxVersion: number;
   batteryPercent?: number;
+  dictionaryVersion?: number;
 };
 
 export function hasBushMeshCapability(
@@ -77,14 +81,21 @@ export function encodeNodeHello(hello: BushMeshNodeHello): number[] {
   );
 
   const hasBattery = hello.batteryPercent !== undefined;
+  const hasDictionaryVersion = hello.dictionaryVersion !== undefined;
 
   if (hasBattery) {
     assertIntegerInRange(hello.batteryPercent!, 0, 100, 'Battery percentage');
   }
+  if (hasDictionaryVersion) {
+    assertIntegerInRange(hello.dictionaryVersion!, 0, 255, 'Dictionary version');
+  }
 
   const versionByte =
     (hello.protocolMinVersion << 4) | hello.protocolMaxVersion;
-  const roleFlags = (hello.role << 1) | (hasBattery ? 1 : 0);
+  const roleFlags =
+    (hello.role << 1) |
+    (hasBattery ? 0x01 : 0) |
+    (hasDictionaryVersion ? 0x80 : 0);
 
   return [
     versionByte,
@@ -92,6 +103,7 @@ export function encodeNodeHello(hello: BushMeshNodeHello): number[] {
     ...encodeVarUint(hello.nodeId),
     ...encodeVarUint(hello.capabilities),
     ...(hasBattery ? [hello.batteryPercent!] : []),
+    ...(hasDictionaryVersion ? [hello.dictionaryVersion!] : []),
   ];
 }
 
@@ -107,30 +119,39 @@ export function decodeNodeHello(bytes: number[]): BushMeshNodeHello {
   const nodeId = decodeVarUint(bytes, 2);
   const capabilities = decodeVarUint(bytes, nodeId.nextOffset);
   const hasBattery = (roleFlags & 0x01) !== 0;
-  const cursor = capabilities.nextOffset;
+  const hasDictionaryVersion = (roleFlags & 0x80) !== 0;
+  let cursor = capabilities.nextOffset;
   let batteryPercent: number | undefined;
+  let dictionaryVersion: number | undefined;
 
   if (hasBattery) {
     batteryPercent = bytes[cursor];
-
     if (batteryPercent === undefined || batteryPercent > 100) {
       throw new Error('Node hello battery percentage is invalid.');
     }
+    cursor += 1;
   }
 
-  const expectedLength = cursor + (hasBattery ? 1 : 0);
+  if (hasDictionaryVersion) {
+    dictionaryVersion = bytes[cursor];
+    if (dictionaryVersion === undefined) {
+      throw new Error('Node hello dictionary version is missing.');
+    }
+    cursor += 1;
+  }
 
-  if (bytes.length !== expectedLength) {
+  if (bytes.length !== cursor) {
     throw new Error('Unexpected bytes after node hello payload.');
   }
 
   return {
     nodeId: nodeId.value,
     capabilities: capabilities.value,
-    role: roleFlags >> 1,
+    role: (roleFlags >> 1) & 0x0f,
     protocolMinVersion: versionByte >> 4,
     protocolMaxVersion: versionByte & 0x0f,
     batteryPercent,
+    dictionaryVersion,
   };
 }
 
