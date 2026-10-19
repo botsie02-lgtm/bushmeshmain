@@ -115,6 +115,7 @@ export class MeshCoreClient {
   private commandQueue = new SerialTaskQueue();
   private mtuPromise: Promise<number | null> | null = null;
   private lastDeviceInfo: MeshCoreDeviceInfo | null = null;
+  private readonly radioSessionOwner = {};
 
   constructor(
     manager: BleManager,
@@ -161,9 +162,12 @@ export class MeshCoreClient {
       },
     );
 
-    bushMeshRadioSession.setTransport(async (channelIndex, dataType, payload) => {
-      await this.sendChannelData(channelIndex, dataType, payload);
-    });
+    bushMeshRadioSession.claimTransport(
+      this.radioSessionOwner,
+      async (channelIndex, dataType, payload) => {
+        await this.sendChannelData(channelIndex, dataType, payload);
+      },
+    );
 
     this.events.onStatus('MeshCore client started. Listening for TX packets.');
   }
@@ -179,8 +183,7 @@ export class MeshCoreClient {
     this.mtuPromise = null;
     this.lastDeviceInfo = null;
 
-    bushMeshRadioSession.setTransport(null);
-    bushMeshRadioSession.setIdentity(null);
+    bushMeshRadioSession.releaseTransport(this.radioSessionOwner);
 
     if (this.pendingCommand) {
       const pending = this.pendingCommand;
@@ -511,7 +514,10 @@ export class MeshCoreClient {
     }
 
     if (selfInfo) {
-      bushMeshRadioSession.setIdentity(selfInfo.bushMeshIdentityRef);
+      bushMeshRadioSession.setIdentityForOwner(
+        this.radioSessionOwner,
+        selfInfo.bushMeshIdentityRef,
+      );
     }
 
     const frameLog: MeshCoreLogItem = {
