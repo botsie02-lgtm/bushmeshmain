@@ -12,6 +12,7 @@ import {
   BushMeshNetworkRuntime,
   BushMeshRuntimeSendResult,
 } from '../bushmesh/runtime/BushMeshNetworkRuntime';
+import {setActiveBushMeshRuntime} from '../bushmesh/runtime/BushMeshRuntimeHub';
 
 export type BushMeshChannel = {
   channelIndex: string;
@@ -192,6 +193,7 @@ export function BushMeshProvider({
 
       bushMeshRuntimeRef.current?.stop();
       bushMeshRuntimeRef.current = null;
+      setActiveBushMeshRuntime(null);
 
       if (!handler) {
         setSendBushMeshMessageHandlerState(null);
@@ -240,6 +242,7 @@ export function BushMeshProvider({
       );
 
       bushMeshRuntimeRef.current = runtime;
+      setActiveBushMeshRuntime(runtime);
       runtime.start();
       setSendBushMeshMessageHandlerState(
         () =>
@@ -266,6 +269,7 @@ export function BushMeshProvider({
     return () => {
       bushMeshRuntimeRef.current?.stop();
       bushMeshRuntimeRef.current = null;
+      setActiveBushMeshRuntime(null);
     };
   }, []);
 
