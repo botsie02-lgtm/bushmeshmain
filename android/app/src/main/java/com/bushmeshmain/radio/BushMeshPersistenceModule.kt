@@ -1,5 +1,6 @@
 package com.bushmeshmain.radio
 
+import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -24,6 +25,7 @@ class BushMeshPersistenceModule(
     private const val KEY_ALIAS = "bushmesh_outbox_aes_v1"
     private const val ENVELOPE_VERSION = "v1"
     private const val GCM_TAG_BITS = 128
+    private const val GCM_IV_BYTES = 12
   }
 
   override fun getName(): String = "BushMeshPersistence"
@@ -80,7 +82,7 @@ class BushMeshPersistenceModule(
 
   private fun preferences() = reactContext.getSharedPreferences(
     STORE_NAME,
-    ReactApplicationContext.MODE_PRIVATE,
+    Context.MODE_PRIVATE,
   )
 
   private fun getOrCreateKey(): SecretKey {
@@ -107,9 +109,13 @@ class BushMeshPersistenceModule(
     return generator.generateKey()
   }
 
+  private fun envelopeAad(): ByteArray =
+    ENVELOPE_VERSION.toByteArray(StandardCharsets.UTF_8)
+
   private fun encrypt(plainText: String): String {
     val cipher = Cipher.getInstance("AES/GCM/NoPadding")
     cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+    cipher.updateAAD(envelopeAad())
     val encrypted = cipher.doFinal(plainText.toByteArray(StandardCharsets.UTF_8))
     val iv = Base64.encodeToString(cipher.iv, Base64.NO_WRAP)
     val payload = Base64.encodeToString(encrypted, Base64.NO_WRAP)
@@ -124,12 +130,17 @@ class BushMeshPersistenceModule(
 
     val iv = Base64.decode(parts[1], Base64.NO_WRAP)
     val encrypted = Base64.decode(parts[2], Base64.NO_WRAP)
+    if (iv.size != GCM_IV_BYTES || encrypted.isEmpty()) {
+      throw IllegalStateException("Bushmesh secure outbox envelope is malformed.")
+    }
+
     val cipher = Cipher.getInstance("AES/GCM/NoPadding")
     cipher.init(
       Cipher.DECRYPT_MODE,
       getOrCreateKey(),
       GCMParameterSpec(GCM_TAG_BITS, iv),
     )
+    cipher.updateAAD(envelopeAad())
     val plainText = cipher.doFinal(encrypted)
     return String(plainText, StandardCharsets.UTF_8)
   }
