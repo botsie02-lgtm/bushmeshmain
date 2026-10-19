@@ -17,6 +17,7 @@ export * from './frameSafety';
 export * from './linkMetrics';
 export * from './location';
 export * from './locationState';
+export * from './messageAck';
 export * from './messageIdentity';
 export * from './persistence';
 export * from './reliabilityController';
