@@ -15,6 +15,7 @@ import {
 } from './RadioProfile';
 
 export type BushMeshRadioSessionSnapshot = {
+  runtimeRequested: boolean;
   transportReady: boolean;
   identityRef: BushMeshIdentityRef | null;
   radioProfile: BushMeshRadioProfile | null;
@@ -48,9 +49,10 @@ type SessionListener = () => void;
 /**
  * Observable single-radio session for the React Native process.
  *
- * Transport ownership prevents an old/reconnecting client from clearing a
- * newer connection. Identity-bound outbox entries also stop radio B from ever
- * transmitting a packet that was encoded as radio A.
+ * Transport ownership prevents an old/reconnecting client from clearing or
+ * reclaiming a newer connection. A temporarily disconnected owner can suspend
+ * its sender while keeping the foreground runtime requested, then resume only
+ * if no newer client has replaced that owner.
  */
 export class BushMeshRadioSession {
   private readonly controller: BushMeshTransmissionController;
@@ -76,6 +78,7 @@ export class BushMeshRadioSession {
   getSnapshot(): BushMeshRadioSessionSnapshot {
     const entries = this.controller.list();
     return {
+      runtimeRequested: this.transportOwner !== null,
       transportReady: this.controller.isTransportReady(),
       identityRef: this.identityRef,
       radioProfile: cloneBushMeshRadioProfile(this.radioProfile),
@@ -97,6 +100,43 @@ export class BushMeshRadioSession {
     this.radioProfile = null;
     this.controller.setSender(sender);
     this.emit();
+  }
+
+  /**
+   * Temporarily removes the live sender while retaining this owner as the
+   * desired radio session. This keeps the Android foreground runtime alive
+   * during reconnect backoff without allowing the outbox to drain offline.
+   */
+  suspendTransportForOwner(owner: BushMeshTransportOwner): boolean {
+    if (this.transportOwner !== owner) {
+      return false;
+    }
+
+    this.identityRef = null;
+    this.radioProfile = null;
+    this.controller.setSender(null);
+    this.emit();
+    return true;
+  }
+
+  /**
+   * Restores a suspended transport only when the same client still owns the
+   * session. If another radio has since claimed Bushmesh, the stale reconnect
+   * attempt is rejected instead of stealing the active session back.
+   */
+  resumeTransportForOwner(
+    owner: BushMeshTransportOwner,
+    sender: BushMeshDatagramSender,
+  ): boolean {
+    if (this.transportOwner !== owner) {
+      return false;
+    }
+
+    this.identityRef = null;
+    this.radioProfile = null;
+    this.controller.setSender(sender);
+    this.emit();
+    return true;
   }
 
   releaseTransport(owner: BushMeshTransportOwner): boolean {
