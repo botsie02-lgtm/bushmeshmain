@@ -19,6 +19,7 @@ import {
   BushMeshCommandResponder,
   BushMeshLocationSnapshot,
 } from './BushMeshCommandResponder';
+import {renderBushMeshReceivedMessage} from './BushMeshDisplay';
 import {
   BushMeshFileManagerResult,
   BushMeshFileTransferManager,
@@ -249,6 +250,13 @@ export class BushMeshNodeRuntime {
 
     if (typed.kind === 'file') {
       await this.handleFileFrame(typed.value, channelIndex);
+    }
+
+    if (!message.decoded.renderedText) {
+      const rendered = renderBushMeshReceivedMessage(message);
+      if (rendered) {
+        message.decoded.renderedText = rendered;
+      }
     }
 
     this.events.onTypedPacket?.(typed, channelIndex);
