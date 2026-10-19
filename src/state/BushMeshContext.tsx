@@ -45,6 +45,7 @@ type SendChannelMessageHandler = (
   channelIndex: number,
   message: string,
 ) => Promise<void>;
+type SyncContactsHandler = () => Promise<BushMeshContact[]>;
 
 type BushMeshContextValue = {
   connectionStatus: BushMeshConnectionStatus;
@@ -54,6 +55,7 @@ type BushMeshContextValue = {
   activeChannel: BushMeshChannel | null;
   channelMessages: BushMeshChannelMessage[];
   canSendChannelMessage: boolean;
+  canSyncContacts: boolean;
   deviceStatus: BushMeshDeviceStatus | null;
   contacts: BushMeshContact[];
 
@@ -66,7 +68,9 @@ type BushMeshContextValue = {
   setSendChannelMessageHandler: (
     handler: SendChannelMessageHandler | null,
   ) => void;
+  setSyncContactsHandler: (handler: SyncContactsHandler | null) => void;
   sendChannelMessage: (channelIndex: number, message: string) => Promise<void>;
+  syncContacts: () => Promise<BushMeshContact[]>;
   addLocalChannelMessage: (
     message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>,
   ) => void;
@@ -93,12 +97,12 @@ export function BushMeshProvider({
     null,
   );
   const [channels, setChannelsState] = useState<BushMeshChannel[]>([]);
-  
+
   const [activeChannelIndex, setActiveChannelIndex] = useState<string | null>(
     null,
   );
   const [deviceStatus, setDeviceStatus] = useState<BushMeshDeviceStatus | null>(
-  null,
+    null,
   );
   const [channelMessages, setChannelMessages] = useState<
     BushMeshChannelMessage[]
@@ -106,6 +110,8 @@ export function BushMeshProvider({
 
   const [sendChannelMessageHandlerState, setSendChannelMessageHandlerState] =
     useState<SendChannelMessageHandler | null>(null);
+  const [syncContactsHandlerState, setSyncContactsHandlerState] =
+    useState<SyncContactsHandler | null>(null);
 
   const activeChannel =
     channels.find(channel => channel.channelIndex === activeChannelIndex) ??
@@ -136,6 +142,10 @@ export function BushMeshProvider({
     setSendChannelMessageHandlerState(() => handler);
   };
 
+  const setSyncContactsHandler = (handler: SyncContactsHandler | null) => {
+    setSyncContactsHandlerState(() => handler);
+  };
+
   const clearChannels = () => {
     setChannelsState([]);
     setActiveChannelIndex(null);
@@ -146,29 +156,39 @@ export function BushMeshProvider({
   };
 
   const addLocalChannelMessage = useCallback(
-  (message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>) => {
-    setChannelMessages(currentMessages => [
-      {
-        ...message,
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        createdAt: new Date().toISOString(),
-      },
-      ...currentMessages,
-    ]);
-  },
-  [],
-);
+    (message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>) => {
+      setChannelMessages(currentMessages => [
+        {
+          ...message,
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          createdAt: new Date().toISOString(),
+        },
+        ...currentMessages,
+      ]);
+    },
+    [],
+  );
 
   const sendChannelMessage = useCallback(
-  async (channelIndex: number, message: string): Promise<void> => {
-    if (!sendChannelMessageHandlerState) {
-      throw new Error('No connected MeshCore client is ready for messaging.');
+    async (channelIndex: number, message: string): Promise<void> => {
+      if (!sendChannelMessageHandlerState) {
+        throw new Error('No connected MeshCore client is ready for messaging.');
+      }
+
+      await sendChannelMessageHandlerState(channelIndex, message);
+    },
+    [sendChannelMessageHandlerState],
+  );
+
+  const syncContacts = useCallback(async (): Promise<BushMeshContact[]> => {
+    if (!syncContactsHandlerState) {
+      throw new Error('No connected MeshCore client is ready to sync contacts.');
     }
 
-    await sendChannelMessageHandlerState(channelIndex, message);
-  },
-  [sendChannelMessageHandlerState],
-);
+    const nextContacts = await syncContactsHandlerState();
+    setContacts(nextContacts);
+    return nextContacts;
+  }, [syncContactsHandlerState]);
 
   const value = useMemo<BushMeshContextValue>(
     () => ({
@@ -181,15 +201,17 @@ export function BushMeshProvider({
       deviceStatus,
       contacts,
       canSendChannelMessage: sendChannelMessageHandlerState !== null,
+      canSyncContacts: syncContactsHandlerState !== null,
       setDeviceStatus,
-
       setContacts,
       setConnectionStatus,
       setConnectedDeviceName,
       setChannels,
       setActiveChannelIndex,
       setSendChannelMessageHandler,
+      setSyncContactsHandler,
       sendChannelMessage,
+      syncContacts,
       addLocalChannelMessage,
       clearChannels,
       clearChannelMessages,
@@ -205,7 +227,9 @@ export function BushMeshProvider({
       deviceStatus,
       contacts,
       sendChannelMessageHandlerState,
+      syncContactsHandlerState,
       sendChannelMessage,
+      syncContacts,
       addLocalChannelMessage,
     ],
   );
