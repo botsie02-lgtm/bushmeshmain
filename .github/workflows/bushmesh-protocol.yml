@@ -43,4 +43,4 @@ jobs:
         run: npx tsc --noEmit
 
       - name: BushMesh protocol tests
-        run: npm test -- --runInBand --testPathPattern=bushmesh
+        run: npm test -- --runInBand --testRegex='__tests__/bushmesh.*\.test\.ts$'
