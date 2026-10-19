@@ -2,10 +2,12 @@ package com.bushmeshmain.radio
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import com.facebook.react.bridge.Arguments
@@ -56,6 +58,8 @@ class BushMeshLocationModule(
         locationManager.removeUpdates(this)
       }
 
+      requestForegroundRuntime()
+
       val resolvedTimeMs = minTimeMs.toLong().coerceAtLeast(250L)
       val resolvedDistanceMeters = minDistanceMeters.toFloat().coerceAtLeast(0f)
       locationManager.requestLocationUpdates(
@@ -68,6 +72,8 @@ class BushMeshLocationModule(
       tracking = true
       promise.resolve(true)
     } catch (error: Exception) {
+      tracking = false
+      releaseForegroundRuntime()
       promise.reject("BUSHMESH_LOCATION_START_FAILED", error.message, error)
     }
   }
@@ -75,8 +81,7 @@ class BushMeshLocationModule(
   @ReactMethod
   fun stop(promise: Promise) {
     try {
-      locationManager.removeUpdates(this)
-      tracking = false
+      stopTracking()
       promise.resolve(true)
     } catch (error: Exception) {
       promise.reject("BUSHMESH_LOCATION_STOP_FAILED", error.message, error)
@@ -143,8 +148,45 @@ class BushMeshLocationModule(
 
   override fun onProviderDisabled(provider: String) {
     if (provider == LocationManager.GPS_PROVIDER) {
-      tracking = false
+      stopTracking()
       emitError("Android GPS provider was disabled while Bushmesh was tracking.")
+    }
+  }
+
+  override fun invalidate() {
+    if (tracking) {
+      try {
+        stopTracking()
+      } catch (_: Exception) {
+        // React Native is tearing down; do not surface teardown failures.
+      }
+    }
+    super.invalidate()
+  }
+
+  private fun stopTracking() {
+    locationManager.removeUpdates(this)
+    tracking = false
+    releaseForegroundRuntime()
+  }
+
+  private fun requestForegroundRuntime() {
+    dispatchRuntimeAction(BushMeshRadioService.ACTION_REQUEST_LOCATION)
+  }
+
+  private fun releaseForegroundRuntime() {
+    dispatchRuntimeAction(BushMeshRadioService.ACTION_RELEASE_LOCATION)
+  }
+
+  private fun dispatchRuntimeAction(action: String) {
+    val intent = Intent(reactContext, BushMeshRadioService::class.java).apply {
+      this.action = action
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      reactContext.startForegroundService(intent)
+    } else {
+      reactContext.startService(intent)
     }
   }
 
