@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -13,6 +14,11 @@ import {
   NativeRadioServiceStatus,
   nativeRadioService,
 } from '../native/NativeRadioService';
+import {androidBushMeshPersistence} from '../persistence/AndroidBushMeshPersistence';
+import {
+  createOutboxSnapshot,
+  restoreOutboxSnapshot,
+} from '../persistence/outboxSnapshot';
 import {
   BushMeshRadioSessionSnapshot,
   QueuePositionInput,
@@ -30,11 +36,19 @@ type QueueDriverActionInput = {
   flags?: number;
 };
 
+export type OutboxPersistenceStatus =
+  | 'restoring'
+  | 'ready'
+  | 'unsupported'
+  | 'error';
+
 type RadioSessionContextValue = {
   snapshot: BushMeshRadioSessionSnapshot;
   outbox: BushMeshOutboxEntry[];
   nativeRuntime: NativeRadioServiceStatus;
   nativeRuntimeError: string | null;
+  persistenceStatus: OutboxPersistenceStatus;
+  persistenceError: string | null;
   queueDriverAction: (input: QueueDriverActionInput) => BushMeshOutboxEntry;
   queuePosition: (input: QueuePositionInput) => BushMeshOutboxEntry;
   drainOnce: () => Promise<TransmissionAttemptResult>;
@@ -49,6 +63,14 @@ const initialNativeRuntime: NativeRadioServiceStatus = {
   startedAtMs: 0,
   ownership: 'unknown',
 };
+
+function activeEntriesForPersistence(
+  entries: BushMeshOutboxEntry[],
+): BushMeshOutboxEntry[] {
+  return entries.filter(
+    entry => entry.state === 'queued' || entry.state === 'inflight',
+  );
+}
 
 export function RadioSessionProvider({
   children,
@@ -67,6 +89,15 @@ export function RadioSessionProvider({
   const [nativeRuntimeError, setNativeRuntimeError] = useState<string | null>(
     null,
   );
+  const [persistenceStatus, setPersistenceStatus] =
+    useState<OutboxPersistenceStatus>(() =>
+      androidBushMeshPersistence.isSupported() ? 'restoring' : 'unsupported',
+    );
+  const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const persistenceReadyRef = useRef(
+    !androidBushMeshPersistence.isSupported(),
+  );
+  const persistenceWriteChainRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     const refresh = () => {
@@ -76,6 +107,57 @@ export function RadioSessionProvider({
 
     refresh();
     return bushMeshRadioSession.subscribe(refresh);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const restorePersistedOutbox = async () => {
+      if (!androidBushMeshPersistence.isSupported()) {
+        persistenceReadyRef.current = true;
+        if (active) {
+          setPersistenceStatus('unsupported');
+          setPersistenceError(null);
+        }
+        return;
+      }
+
+      try {
+        const snapshotToRestore = await androidBushMeshPersistence.loadOutbox();
+        if (snapshotToRestore) {
+          const restoredEntries = restoreOutboxSnapshot(
+            snapshotToRestore,
+            Date.now(),
+          );
+          bushMeshRadioSession.restoreOutbox(restoredEntries);
+        }
+
+        persistenceReadyRef.current = true;
+        if (active) {
+          setPersistenceStatus('ready');
+          setPersistenceError(null);
+        }
+      } catch (error) {
+        // A corrupt/unreadable queue must not deadlock the live radio forever.
+        // Surface the failure, leave the runtime queue untouched, and permit new
+        // traffic to proceed rather than silently inventing recovered packets.
+        persistenceReadyRef.current = true;
+        if (active) {
+          setPersistenceStatus('error');
+          setPersistenceError(
+            error instanceof Error
+              ? error.message
+              : 'Encrypted Bushmesh outbox could not be restored.',
+          );
+        }
+      }
+    };
+
+    restorePersistedOutbox().catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -115,7 +197,40 @@ export function RadioSessionProvider({
   }, [snapshot.transportReady]);
 
   useEffect(() => {
+    if (
+      persistenceStatus !== 'ready' ||
+      !androidBushMeshPersistence.isSupported()
+    ) {
+      return;
+    }
+
+    const entriesToPersist = activeEntriesForPersistence(outbox);
+    persistenceWriteChainRef.current = persistenceWriteChainRef.current
+      .then(async () => {
+        if (entriesToPersist.length === 0) {
+          await androidBushMeshPersistence.clearOutbox();
+          return;
+        }
+
+        await androidBushMeshPersistence.saveOutbox(
+          createOutboxSnapshot(entriesToPersist, Date.now()),
+        );
+      })
+      .catch(error => {
+        setPersistenceError(
+          error instanceof Error
+            ? error.message
+            : 'Encrypted Bushmesh outbox could not be saved.',
+        );
+      });
+  }, [outbox, persistenceStatus]);
+
+  useEffect(() => {
     const timer = setInterval(() => {
+      if (!persistenceReadyRef.current) {
+        return;
+      }
+
       const current = bushMeshRadioSession.getSnapshot();
       if (!current.transportReady || current.queuedCount === 0) {
         return;
@@ -145,6 +260,9 @@ export function RadioSessionProvider({
   );
 
   const drainOnce = useCallback(async (): Promise<TransmissionAttemptResult> => {
+    if (!persistenceReadyRef.current) {
+      return {entry: null, outcome: 'idle'};
+    }
     return bushMeshRadioSession.drainOnce();
   }, []);
 
@@ -154,6 +272,8 @@ export function RadioSessionProvider({
       outbox,
       nativeRuntime,
       nativeRuntimeError,
+      persistenceStatus,
+      persistenceError,
       queueDriverAction,
       queuePosition,
       drainOnce,
@@ -163,6 +283,8 @@ export function RadioSessionProvider({
       outbox,
       nativeRuntime,
       nativeRuntimeError,
+      persistenceStatus,
+      persistenceError,
       queueDriverAction,
       queuePosition,
       drainOnce,
