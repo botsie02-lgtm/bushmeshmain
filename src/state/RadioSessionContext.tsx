@@ -11,6 +11,7 @@ import {BushMeshOutboxEntry} from '../bushmesh/outbox';
 import {BushMeshQuickActionCode} from '../bushmesh/protocol';
 import {
   BushMeshRadioSessionSnapshot,
+  QueuePositionInput,
   bushMeshRadioSession,
 } from '../radio/BushMeshRadioSession';
 import {TransmissionAttemptResult} from '../radio/BushMeshTransmissionController';
@@ -29,6 +30,7 @@ type RadioSessionContextValue = {
   snapshot: BushMeshRadioSessionSnapshot;
   outbox: BushMeshOutboxEntry[];
   queueDriverAction: (input: QueueDriverActionInput) => BushMeshOutboxEntry;
+  queuePosition: (input: QueuePositionInput) => BushMeshOutboxEntry;
   drainOnce: () => Promise<TransmissionAttemptResult>;
 };
 
@@ -64,7 +66,7 @@ export function RadioSessionProvider({
         return;
       }
 
-      void bushMeshRadioSession.drainOnce();
+      bushMeshRadioSession.drainOnce().catch(() => undefined);
     }, OUTBOX_DRAIN_INTERVAL_MS);
 
     return () => clearInterval(timer);
@@ -80,13 +82,26 @@ export function RadioSessionProvider({
     [],
   );
 
+  const queuePosition = useCallback(
+    (input: QueuePositionInput): BushMeshOutboxEntry => {
+      return bushMeshRadioSession.queuePosition(input);
+    },
+    [],
+  );
+
   const drainOnce = useCallback(async (): Promise<TransmissionAttemptResult> => {
     return bushMeshRadioSession.drainOnce();
   }, []);
 
   const value = useMemo<RadioSessionContextValue>(
-    () => ({snapshot, outbox, queueDriverAction, drainOnce}),
-    [snapshot, outbox, queueDriverAction, drainOnce],
+    () => ({
+      snapshot,
+      outbox,
+      queueDriverAction,
+      queuePosition,
+      drainOnce,
+    }),
+    [snapshot, outbox, queueDriverAction, queuePosition, drainOnce],
   );
 
   return (
