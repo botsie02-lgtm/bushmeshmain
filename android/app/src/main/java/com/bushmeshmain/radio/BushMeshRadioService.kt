@@ -16,10 +16,12 @@ class BushMeshRadioService : Service() {
   companion object {
     const val ACTION_START = "com.bushmeshmain.radio.START"
     const val ACTION_STOP = "com.bushmeshmain.radio.STOP"
+    const val ACTION_REQUEST_LOCATION = "com.bushmeshmain.radio.REQUEST_LOCATION"
+    const val ACTION_RELEASE_LOCATION = "com.bushmeshmain.radio.RELEASE_LOCATION"
     const val EXTRA_DEVICE_LABEL = "deviceLabel"
 
     private const val CHANNEL_ID = "bushmesh_radio_runtime"
-    private const val CHANNEL_NAME = "Bushmesh radio runtime"
+    private const val CHANNEL_NAME = "Bushmesh off-grid runtime"
     private const val NOTIFICATION_ID = 4101
   }
 
@@ -29,18 +31,30 @@ class BushMeshRadioService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    if (intent?.action == ACTION_STOP) {
+    when (intent?.action) {
+      ACTION_START -> {
+        BushMeshRadioServiceState.requestRadio(
+          intent.getStringExtra(EXTRA_DEVICE_LABEL),
+        )
+      }
+
+      ACTION_STOP -> BushMeshRadioServiceState.releaseRadio()
+      ACTION_REQUEST_LOCATION -> BushMeshRadioServiceState.requestLocation()
+      ACTION_RELEASE_LOCATION -> BushMeshRadioServiceState.releaseLocation()
+    }
+
+    if (!BushMeshRadioServiceState.shouldRun()) {
       stopForeground(STOP_FOREGROUND_REMOVE)
-      stopSelf()
+      stopSelf(startId)
       return START_NOT_STICKY
     }
 
-    val deviceLabel = intent?.getStringExtra(EXTRA_DEVICE_LABEL)
-    BushMeshRadioServiceState.markStarted(deviceLabel)
-    startForeground(NOTIFICATION_ID, buildNotification(deviceLabel))
+    BushMeshRadioServiceState.markRunning()
+    startForeground(NOTIFICATION_ID, buildNotification())
 
-    // Until BLE ownership moves into this service, do not resurrect it after the
-    // process is killed. The active React Native radio session starts it again.
+    // BLE is still owned by the active React Native MeshCore session. Until BLE
+    // ownership itself moves into this service, do not resurrect an orphaned
+    // foreground runtime after process death.
     return START_NOT_STICKY
   }
 
@@ -62,13 +76,13 @@ class BushMeshRadioService : Service() {
       CHANNEL_NAME,
       NotificationManager.IMPORTANCE_LOW,
     ).apply {
-      description = "Keeps the active Bushmesh radio runtime in the foreground."
+      description = "Keeps Bushmesh radio and GPS work visible while off-grid."
       setShowBadge(false)
     }
     manager.createNotificationChannel(channel)
   }
 
-  private fun buildNotification(deviceLabel: String?): Notification {
+  private fun buildNotification(): Notification {
     val launchIntent = Intent(this, MainActivity::class.java)
     val pendingIntentFlags =
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -79,10 +93,23 @@ class BushMeshRadioService : Service() {
       pendingIntentFlags,
     )
 
-    val detail = if (deviceLabel.isNullOrBlank()) {
-      "Foreground radio runtime active"
-    } else {
-      "Foreground runtime active for $deviceLabel"
+    val radioRequested = BushMeshRadioServiceState.radioRequested
+    val locationRequested = BushMeshRadioServiceState.locationRequested
+    val deviceLabel = BushMeshRadioServiceState.deviceLabel
+
+    val detail = when {
+      radioRequested && locationRequested && !deviceLabel.isNullOrBlank() ->
+        "Radio $deviceLabel connected · GPS trail active"
+      radioRequested && locationRequested ->
+        "Radio runtime · GPS trail active"
+      radioRequested && !deviceLabel.isNullOrBlank() ->
+        "Radio runtime active for $deviceLabel"
+      radioRequested ->
+        "Radio runtime active"
+      locationRequested ->
+        "GPS trail and convoy position tracking active"
+      else ->
+        "Bushmesh runtime active"
     }
 
     val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -93,7 +120,7 @@ class BushMeshRadioService : Service() {
     }
 
     return builder
-      .setContentTitle("Bushmesh radio")
+      .setContentTitle("Bushmesh off-grid runtime")
       .setContentText(detail)
       .setSmallIcon(R.mipmap.ic_launcher)
       .setContentIntent(pendingIntent)
