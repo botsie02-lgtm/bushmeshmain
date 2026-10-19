@@ -50,7 +50,7 @@ describe('MeshCore SELF_INFO', () => {
     expect(parsed?.bandwidthKhz).toBe(125);
     expect(parsed?.spreadingFactor).toBe(10);
     expect(parsed?.codingRate).toBe(5);
-    expect(parsed?.deviceName).toBe('Bush R');
+    expect(parsed?.deviceName).toBe('Bush Radio');
   });
 
   test('ignores unrelated packet types', () => {
