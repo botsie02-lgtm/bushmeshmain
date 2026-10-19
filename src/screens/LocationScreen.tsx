@@ -34,6 +34,8 @@ export function LocationScreen(): React.JSX.Element {
     transmittedPlanCount,
     rejectedFixCount,
     lastError,
+    nativeGpsSupported,
+    startNativeGps,
     startSimulation,
     stop,
   } = useLocationSession();
@@ -58,9 +60,9 @@ export function LocationScreen(): React.JSX.Element {
         <Text style={styles.eyebrow}>LOCATION ENGINE</Text>
         <Text style={styles.title}>GPS + LoRa position planning</Text>
         <Text style={styles.body}>
-          Bushmesh accepts local fixes continuously, but only selected fixes consume
-          LoRa airtime. This simulator exercises that pipeline without requiring a
-          phone GPS fix or a Heltec on the bench.
+          Bushmesh consumes real Android GPS fixes offline and only selects the
+          fixes that need LoRa airtime. Simulation remains available as an
+          explicit emulator/diagnostic source.
         </Text>
       </View>
 
@@ -75,25 +77,42 @@ export function LocationScreen(): React.JSX.Element {
 
         <View style={styles.buttonRow}>
           <TouchableOpacity
-            style={[styles.button, styles.primaryButton]}
-            onPress={startSimulation}>
-            <Text style={styles.primaryButtonText}>
-              {running ? 'Restart simulation' : 'Start simulation'}
+            style={[
+              styles.button,
+              styles.primaryButton,
+              !nativeGpsSupported && styles.buttonDisabled,
+            ]}
+            onPress={() => {
+              startNativeGps().catch(() => undefined);
+            }}
+            disabled={!nativeGpsSupported}>
+            <Text
+              style={[
+                styles.primaryButtonText,
+                !nativeGpsSupported && styles.disabledPrimaryText,
+              ]}>
+              Start GPS
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.button, styles.secondaryButton]}
-            onPress={stop}
-            disabled={!running}>
-            <Text
-              style={[
-                styles.secondaryButtonText,
-                !running && styles.disabledText,
-              ]}>
-              Stop
-            </Text>
+            onPress={startSimulation}>
+            <Text style={styles.secondaryButtonText}>Simulate</Text>
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          style={[styles.stopButton, !running && styles.buttonDisabled]}
+          onPress={stop}
+          disabled={!running}>
+          <Text
+            style={[
+              styles.stopButtonText,
+              !running && styles.disabledText,
+            ]}>
+            Stop location source
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.metricGrid}>
@@ -308,12 +327,23 @@ const styles = StyleSheet.create({
   },
   primaryButton: {backgroundColor: colors.accent},
   primaryButtonText: {color: colors.background, fontWeight: '900'},
+  disabledPrimaryText: {color: colors.textMuted},
   secondaryButton: {
     backgroundColor: colors.surfaceSoft,
     borderWidth: 1,
     borderColor: colors.border,
   },
   secondaryButtonText: {color: colors.textPrimary, fontWeight: '800'},
+  stopButton: {
+    marginTop: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  stopButtonText: {color: colors.textPrimary, fontWeight: '800'},
+  buttonDisabled: {opacity: 0.45},
   disabledText: {color: colors.textMuted},
   metricGrid: {flexDirection: 'row', gap: 10},
   metricCard: {
