@@ -17,6 +17,11 @@ import {
   encodePing,
 } from './discovery';
 import {
+  CompactLocation,
+  decodeLocationPayload,
+  encodeLocationPayload,
+} from './location';
+import {
   BushMeshRouteAdvertisement,
   decodeRouteAdvertisement,
   encodeRouteAdvertisement,
@@ -46,6 +51,7 @@ import {
 
 export type BushMeshTypedPacket =
   | {kind: 'distress'; wire: DecodedBushMeshWireMessage; value: BushMeshDistress}
+  | {kind: 'location'; wire: DecodedBushMeshWireMessage; value: CompactLocation}
   | {kind: 'telemetry'; wire: DecodedBushMeshWireMessage; value: BushMeshTelemetry}
   | {kind: 'device-info'; wire: DecodedBushMeshWireMessage; value: BushMeshNodeHello}
   | {kind: 'ping'; wire: DecodedBushMeshWireMessage; value: BushMeshPing}
@@ -73,6 +79,21 @@ export function encodeBushMeshDistressWire(
     storeAndForward: true,
     ttlHops: options?.ttlHops ?? 6,
     payload: encodeDistressPayload(distress),
+  });
+}
+
+export function encodeBushMeshLocationWire(
+  location: CompactLocation,
+  messageId: number,
+  options?: {ackRequested?: boolean},
+): number[] {
+  return encodeBushMeshWire({
+    type: BushMeshPacketType.Location,
+    priority: BushMeshPriority.Location,
+    compression: BushMeshCompressionProfile.Gps,
+    messageId,
+    ackRequested: options?.ackRequested ?? false,
+    payload: encodeLocationPayload(location),
   });
 }
 
@@ -193,6 +214,12 @@ export function decodeBushMeshTypedPacket(bytes: number[]): BushMeshTypedPacket 
         kind: 'distress',
         wire,
         value: decodeDistressPayload(wire.envelope.payload),
+      };
+    case BushMeshPacketType.Location:
+      return {
+        kind: 'location',
+        wire,
+        value: decodeLocationPayload(wire.envelope.payload),
       };
     case BushMeshPacketType.Battery:
       return {
