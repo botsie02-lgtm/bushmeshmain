@@ -55,6 +55,31 @@ function validNullableString(value: unknown): value is string | null {
   return value === null || typeof value === 'string';
 }
 
+function validCanonicalBase64(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  if (value === '') {
+    return true;
+  }
+
+  if (value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    return false;
+  }
+
+  const firstPadding = value.indexOf('=');
+  if (firstPadding >= 0 && firstPadding < value.length - 2) {
+    return false;
+  }
+
+  try {
+    return Buffer.from(value, 'base64').toString('base64') === value;
+  } catch {
+    return false;
+  }
+}
+
 function validatePersistedEntry(entry: PersistedOutboxEntryV1): void {
   if (!entry.id || typeof entry.id !== 'string') {
     throw new Error('Persisted outbox entry id is invalid.');
@@ -69,7 +94,7 @@ function validatePersistedEntry(entry: PersistedOutboxEntryV1): void {
   if (!Number.isInteger(entry.dataType) || entry.dataType < 1 || entry.dataType > 0xffff) {
     throw new Error(`Persisted outbox entry ${entry.id} has an invalid data type.`);
   }
-  if (typeof entry.payloadBase64 !== 'string') {
+  if (!validCanonicalBase64(entry.payloadBase64)) {
     throw new Error(`Persisted outbox entry ${entry.id} has an invalid payload.`);
   }
   if (!PRIORITIES.includes(entry.priority)) {
