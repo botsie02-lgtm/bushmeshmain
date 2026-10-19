@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 
 import {distanceMeters, getConvoyFreshness} from '../convoy/convoy';
+import {getConvoyGapDecision} from '../convoy/gapMonitor';
 import {
   BushMeshLocationProvider,
   LocationProviderStop,
@@ -150,23 +151,41 @@ export function LocationSessionProvider({
         return;
       }
 
-      const trustedDistances = vehiclesRef.current
-        .filter(vehicle => {
-          const freshness = getConvoyFreshness(vehicle.receivedAtMs, fix.timestampMs);
-          return freshness === 'live' || freshness === 'recent';
-        })
-        .map(vehicle =>
-          distanceMeters(
-            {latitude: fix.latitude, longitude: fix.longitude},
-            {latitude: vehicle.latitude, longitude: vehicle.longitude},
-          ),
-        );
+      const localCoordinate = {
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+      };
+      const gapDecisions = vehiclesRef.current.map(vehicle => {
+        const freshness = getConvoyFreshness(vehicle.receivedAtMs, fix.timestampMs);
+        const distance = distanceMeters(localCoordinate, {
+          latitude: vehicle.latitude,
+          longitude: vehicle.longitude,
+        });
+        return {
+          freshness,
+          distance,
+          decision: getConvoyGapDecision({
+            distanceMeters: distance,
+            freshness,
+          }),
+        };
+      });
+
+      const trustedDistances = gapDecisions
+        .filter(
+          item => item.freshness === 'live' || item.freshness === 'recent',
+        )
+        .map(item => item.distance);
       const convoyGapMeters =
         trustedDistances.length > 0 ? Math.max(...trustedDistances) : null;
+      const recoveryUrgent = gapDecisions.some(
+        item => item.decision.state === 'lost' || item.decision.state === 'unknown',
+      );
 
       const plan = plannerRef.current.ingest(fix, {
         channelIndex,
         convoyGapMeters,
+        urgent: recoveryUrgent,
       });
       setLastPlan(plan);
       setStatus('tracking');
