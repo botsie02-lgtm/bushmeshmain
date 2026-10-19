@@ -144,15 +144,22 @@ export function decodeNodeHello(bytes: number[]): BushMeshNodeHello {
     throw new Error('Unexpected bytes after node hello payload.');
   }
 
-  return {
+  const decoded: BushMeshNodeHello = {
     nodeId: nodeId.value,
     capabilities: capabilities.value,
     role: (roleFlags >> 1) & 0x0f,
     protocolMinVersion: versionByte >> 4,
     protocolMaxVersion: versionByte & 0x0f,
-    batteryPercent,
-    dictionaryVersion,
   };
+
+  if (batteryPercent !== undefined) {
+    decoded.batteryPercent = batteryPercent;
+  }
+  if (dictionaryVersion !== undefined) {
+    decoded.dictionaryVersion = dictionaryVersion;
+  }
+
+  return decoded;
 }
 
 export type BushMeshPing = {
@@ -206,7 +213,14 @@ export function decodePing(bytes: number[]): BushMeshPing {
     throw new Error('Unexpected bytes after ping payload.');
   }
 
-  return {nonce: nonce.value, senderTimeSeconds, response};
+  const decoded: BushMeshPing = {nonce: nonce.value};
+  if (senderTimeSeconds !== undefined) {
+    decoded.senderTimeSeconds = senderTimeSeconds;
+  }
+  if (response) {
+    decoded.response = true;
+  }
+  return decoded;
 }
 
 export function createPong(
@@ -217,9 +231,12 @@ export function createPong(
     throw new Error('Cannot create a PONG in response to another PONG.');
   }
 
-  return {
+  const pong: BushMeshPing = {
     nonce: ping.nonce,
-    senderTimeSeconds,
     response: true,
   };
+  if (senderTimeSeconds !== undefined) {
+    pong.senderTimeSeconds = senderTimeSeconds;
+  }
+  return pong;
 }
