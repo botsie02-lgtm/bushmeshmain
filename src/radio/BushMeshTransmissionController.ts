@@ -55,6 +55,7 @@ export class BushMeshTransmissionController {
       encodeBushMeshPosition(position),
       'position',
       `Position ${position.sequence} from ${position.senderId}`,
+      position.senderId,
       createdAtMs,
       3,
     );
@@ -78,6 +79,7 @@ export class BushMeshTransmissionController {
       encodeBushMeshQuickAction(action),
       priority,
       `${definition.label} from ${action.senderId}`,
+      action.senderId,
       createdAtMs,
       action.action === BushMeshQuickActionCode.Ok ? 3 : 5,
     );
@@ -85,6 +87,10 @@ export class BushMeshTransmissionController {
 
   list(): BushMeshOutboxEntry[] {
     return this.outbox.list();
+  }
+
+  cancelQueuedForOtherIdentities(identityRef: string): BushMeshOutboxEntry[] {
+    return this.outbox.cancelQueuedForOtherIdentities(identityRef);
   }
 
   async drainOnce(nowMs = Date.now()): Promise<TransmissionAttemptResult> {
@@ -119,6 +125,7 @@ export class BushMeshTransmissionController {
     payload: Uint8Array,
     priority: BushMeshOutboxPriority,
     description: string,
+    identityRef: string | null,
     createdAtMs: number,
     maxAttempts: number,
   ): BushMeshOutboxEntry {
@@ -132,6 +139,7 @@ export class BushMeshTransmissionController {
       payload,
       priority,
       description,
+      identityRef,
       createdAtMs,
       maxAttempts,
     });
