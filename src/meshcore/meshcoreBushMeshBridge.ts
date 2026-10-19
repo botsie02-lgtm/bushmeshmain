@@ -104,6 +104,41 @@ function fragmentToPayloadLimit(
   throw new Error('Unable to fit Bushmesh fragments into MeshCore payload limit.');
 }
 
+export function prepareBushMeshWireChannelFrames(
+  wireBytes: number[],
+  messageId: number,
+  options?: {
+    transport?: BushMeshChannelTransport;
+    priority?: BushMeshPriority;
+    maxPayloadBytes?: number;
+    allowFragmentation?: boolean;
+  },
+): PreparedBushMeshChannelFrame[] {
+  const transport = options?.transport ?? 'text-safe';
+  const priority = options?.priority ?? BushMeshPriority.DirectMessage;
+  const maxPayloadBytes =
+    options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES;
+  const single = wireToTransportFrame(wireBytes, transport, false);
+
+  if (single.payloadBytes.length <= maxPayloadBytes) {
+    return [single];
+  }
+
+  if (options?.allowFragmentation === false) {
+    throw new Error(
+      'Bushmesh wire message exceeds MeshCore payload limit and fragmentation is disabled.',
+    );
+  }
+
+  return fragmentToPayloadLimit(
+    wireBytes,
+    messageId,
+    priority,
+    transport,
+    maxPayloadBytes,
+  );
+}
+
 export function prepareBushMeshTextChannelFrames(
   text: string,
   messageId: number,
@@ -117,23 +152,12 @@ export function prepareBushMeshTextChannelFrames(
     semantic?: boolean;
   },
 ): PreparedBushMeshChannelFrame[] {
-  const transport = options?.transport ?? 'text-safe';
-  const maxPayloadBytes =
-    options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES;
   const encoded = encodeBushMeshTextMessage(text, messageId, options);
-  const single = wireToTransportFrame(encoded.wireBytes, transport, false);
-
-  if (single.payloadBytes.length <= maxPayloadBytes) {
-    return [single];
-  }
-
-  return fragmentToPayloadLimit(
-    encoded.wireBytes,
-    messageId,
-    options?.priority ?? BushMeshPriority.DirectMessage,
-    transport,
-    maxPayloadBytes,
-  );
+  return prepareBushMeshWireChannelFrames(encoded.wireBytes, messageId, {
+    transport: options?.transport,
+    priority: options?.priority,
+    maxPayloadBytes: options?.maxPayloadBytes,
+  });
 }
 
 export function prepareBushMeshPeerTextChannelFrames(
@@ -152,33 +176,13 @@ export function prepareBushMeshPeerTextChannelFrames(
     throw new Error('Cannot prepare Bushmesh frames for an incompatible peer.');
   }
 
-  const maxPayloadBytes =
-    options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES;
-  const priority = options?.priority ?? BushMeshPriority.DirectMessage;
   const encoded = encodeTextForBushMeshPeer(text, messageId, policy, options);
-  const single = wireToTransportFrame(
-    encoded.wireBytes,
-    policy.transport,
-    false,
-  );
-
-  if (single.payloadBytes.length <= maxPayloadBytes) {
-    return [single];
-  }
-
-  if (!policy.allowFragmentation) {
-    throw new Error(
-      'Bushmesh message exceeds MeshCore payload limit and peer does not support fragmentation.',
-    );
-  }
-
-  return fragmentToPayloadLimit(
-    encoded.wireBytes,
-    messageId,
-    priority,
-    policy.transport,
-    maxPayloadBytes,
-  );
+  return prepareBushMeshWireChannelFrames(encoded.wireBytes, messageId, {
+    transport: policy.transport,
+    priority: options?.priority,
+    maxPayloadBytes: options?.maxPayloadBytes,
+    allowFragmentation: policy.allowFragmentation,
+  });
 }
 
 export async function sendBushMeshTextSafeChannelMessage(
