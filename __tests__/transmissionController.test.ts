@@ -80,6 +80,35 @@ describe('BushMeshTransmissionController', () => {
     expect(sentTypes).toEqual([2]);
   });
 
+  test('expired quick actions are cancelled before radio transmission', async () => {
+    const controller = new BushMeshTransmissionController();
+    let sendCount = 0;
+    controller.setSender(async () => {
+      sendCount += 1;
+    });
+
+    const entry = controller.enqueueQuickAction(
+      0,
+      {
+        senderId: '001122334455',
+        sequence: 3,
+        timestampSeconds: 1,
+        action: BushMeshQuickActionCode.Stop,
+        ttlSeconds: 2,
+      },
+      1_000,
+    );
+
+    expect(entry.expiresAtMs).toBe(3_000);
+    expect(await controller.drainOnce(3_000)).toEqual({
+      entry: null,
+      outcome: 'idle',
+    });
+    expect(sendCount).toBe(0);
+    expect(controller.list()[0].state).toBe('cancelled');
+    expect(controller.list()[0].lastError).toContain('Expired');
+  });
+
   test('newer queued positions supersede stale positions for the same radio and channel', async () => {
     const controller = new BushMeshTransmissionController();
     const sentSequences: number[] = [];
