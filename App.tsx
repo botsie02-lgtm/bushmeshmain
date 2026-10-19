@@ -1,16 +1,20 @@
 import React, {useState} from 'react';
 import {
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from 'react-native-safe-area-context';
 
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DriveProvider} from './src/state/DriveContext';
+import {RadioSessionProvider} from './src/state/RadioSessionContext';
 import {DriveScreen} from './src/screens/DriveScreen';
 import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
@@ -32,7 +36,7 @@ function AppContent(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>('drive');
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor={colors.background} />
 
       <View style={styles.header}>
@@ -84,13 +88,17 @@ function AppContent(): React.JSX.Element {
 
 function App(): React.JSX.Element {
   return (
-    <BushMeshProvider>
-      <ConvoyProvider>
-        <DriveProvider>
-          <AppContent />
-        </DriveProvider>
-      </ConvoyProvider>
-    </BushMeshProvider>
+    <SafeAreaProvider>
+      <BushMeshProvider>
+        <ConvoyProvider>
+          <DriveProvider>
+            <RadioSessionProvider>
+              <AppContent />
+            </RadioSessionProvider>
+          </DriveProvider>
+        </ConvoyProvider>
+      </BushMeshProvider>
+    </SafeAreaProvider>
   );
 }
 
