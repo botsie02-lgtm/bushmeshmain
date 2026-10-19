@@ -21,6 +21,10 @@ on:
       - 'package-lock.json'
       - 'tsconfig.json'
 
+concurrency:
+  group: bushmesh-protocol-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   protocol-checks:
     runs-on: ubuntu-latest
