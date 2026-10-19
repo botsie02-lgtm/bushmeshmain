@@ -14,6 +14,7 @@ export enum BushMeshPacketType {
   Fragment = 0x0b,
   Ack = 0x0c,
   Sync = 0x0d,
+  Routed = 0x0e,
 }
 
 export enum BushMeshPriority {
