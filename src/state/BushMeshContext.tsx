@@ -241,13 +241,18 @@ export function BushMeshProvider({
 
       bushMeshRuntimeRef.current = runtime;
       runtime.start();
-      setSendBushMeshMessageHandlerState(() => async (channelIndex, message) =>
-        runtime.sendText(channelIndex, message, {
-          ackRequested: true,
-          storeAndForward: true,
-          ttlHops: 4,
-          semantic: true,
-        }),
+      setSendBushMeshMessageHandlerState(
+        () =>
+          async (
+            channelIndex: number,
+            message: string,
+          ): Promise<BushMeshRuntimeSendResult> =>
+            runtime.sendText(channelIndex, message, {
+              ackRequested: true,
+              storeAndForward: true,
+              ttlHops: 4,
+              semantic: true,
+            }),
       );
       setBushMeshNetworkStatus({
         active: true,
