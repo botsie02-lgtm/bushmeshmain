@@ -137,6 +137,7 @@ export function decodeNodeHello(bytes: number[]): BushMeshNodeHello {
 export type BushMeshPing = {
   nonce: number;
   senderTimeSeconds?: number;
+  response?: boolean;
 };
 
 export function encodePing(ping: BushMeshPing): number[] {
@@ -152,8 +153,10 @@ export function encodePing(ping: BushMeshPing): number[] {
     );
   }
 
+  const flags = (hasTime ? 0x01 : 0) | (ping.response ? 0x02 : 0);
+
   return [
-    hasTime ? 1 : 0,
+    flags,
     ...encodeVarUint(ping.nonce),
     ...(hasTime ? encodeVarUint(ping.senderTimeSeconds!) : []),
   ];
@@ -167,6 +170,7 @@ export function decodePing(bytes: number[]): BushMeshPing {
   }
 
   const hasTime = (bytes[0] & 0x01) !== 0;
+  const response = (bytes[0] & 0x02) !== 0;
   const nonce = decodeVarUint(bytes, 1);
   let cursor = nonce.nextOffset;
   let senderTimeSeconds: number | undefined;
@@ -181,5 +185,20 @@ export function decodePing(bytes: number[]): BushMeshPing {
     throw new Error('Unexpected bytes after ping payload.');
   }
 
-  return {nonce: nonce.value, senderTimeSeconds};
+  return {nonce: nonce.value, senderTimeSeconds, response};
+}
+
+export function createPong(
+  ping: BushMeshPing,
+  senderTimeSeconds?: number,
+): BushMeshPing {
+  if (ping.response) {
+    throw new Error('Cannot create a PONG in response to another PONG.');
+  }
+
+  return {
+    nonce: ping.nonce,
+    senderTimeSeconds,
+    response: true,
+  };
 }
