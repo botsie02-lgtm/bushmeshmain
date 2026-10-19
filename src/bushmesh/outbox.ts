@@ -18,12 +18,14 @@ export type BushMeshOutboxInput = {
   payload: Uint8Array;
   priority: BushMeshOutboxPriority;
   description: string;
+  identityRef?: string | null;
   createdAtMs?: number;
   maxAttempts?: number;
 };
 
-export type BushMeshOutboxEntry = BushMeshOutboxInput & {
+export type BushMeshOutboxEntry = Omit<BushMeshOutboxInput, 'identityRef'> & {
   id: string;
+  identityRef: string | null;
   createdAtMs: number;
   maxAttempts: number;
   attempts: number;
@@ -66,9 +68,13 @@ export class InMemoryBushMeshOutbox {
   enqueue(input: BushMeshOutboxInput): BushMeshOutboxEntry {
     const createdAtMs = input.createdAtMs ?? Date.now();
     const entry: BushMeshOutboxEntry = {
-      ...input,
-      id: `outbox-${this.nextId++}`,
+      channelIndex: input.channelIndex,
+      dataType: input.dataType,
       payload: Uint8Array.from(input.payload),
+      priority: input.priority,
+      description: input.description,
+      identityRef: input.identityRef ?? null,
+      id: `outbox-${this.nextId++}`,
       createdAtMs,
       maxAttempts: Math.max(1, input.maxAttempts ?? 5),
       attempts: 0,
@@ -79,14 +85,11 @@ export class InMemoryBushMeshOutbox {
     };
 
     this.entries.push(entry);
-    return {...entry, payload: Uint8Array.from(entry.payload)};
+    return this.clone(entry);
   }
 
   list(): BushMeshOutboxEntry[] {
-    return this.entries.map(entry => ({
-      ...entry,
-      payload: Uint8Array.from(entry.payload),
-    }));
+    return this.entries.map(entry => this.clone(entry));
   }
 
   nextReady(nowMs = Date.now()): BushMeshOutboxEntry | null {
@@ -103,9 +106,7 @@ export class InMemoryBushMeshOutbox {
         return a.createdAtMs - b.createdAtMs;
       })[0];
 
-    return ready
-      ? {...ready, payload: Uint8Array.from(ready.payload)}
-      : null;
+    return ready ? this.clone(ready) : null;
   }
 
   markAttempt(id: string, nowMs = Date.now()): BushMeshOutboxEntry {
@@ -118,7 +119,7 @@ export class InMemoryBushMeshOutbox {
     entry.state = 'inflight';
     entry.nextAttemptAtMs = nowMs;
     entry.lastError = null;
-    return {...entry, payload: Uint8Array.from(entry.payload)};
+    return this.clone(entry);
   }
 
   markAccepted(id: string, nowMs = Date.now()): BushMeshOutboxEntry {
@@ -130,7 +131,7 @@ export class InMemoryBushMeshOutbox {
     entry.state = 'accepted';
     entry.acceptedAtMs = nowMs;
     entry.lastError = null;
-    return {...entry, payload: Uint8Array.from(entry.payload)};
+    return this.clone(entry);
   }
 
   markFailed(
@@ -153,7 +154,7 @@ export class InMemoryBushMeshOutbox {
       entry.nextAttemptAtMs = nowMs + retryDelayMs(entry.attempts);
     }
 
-    return {...entry, payload: Uint8Array.from(entry.payload)};
+    return this.clone(entry);
   }
 
   cancel(id: string): BushMeshOutboxEntry {
@@ -163,7 +164,30 @@ export class InMemoryBushMeshOutbox {
     }
 
     entry.state = 'cancelled';
-    return {...entry, payload: Uint8Array.from(entry.payload)};
+    return this.clone(entry);
+  }
+
+  /**
+   * Prevents packets encoded with a previous radio identity from being sent by
+   * a newly connected radio. In-flight work is left alone because its transport
+   * call has already begun; queued work is safe to cancel deterministically.
+   */
+  cancelQueuedForOtherIdentities(identityRef: string): BushMeshOutboxEntry[] {
+    const cancelled: BushMeshOutboxEntry[] = [];
+
+    for (const entry of this.entries) {
+      if (
+        entry.state === 'queued' &&
+        entry.identityRef !== null &&
+        entry.identityRef !== identityRef
+      ) {
+        entry.state = 'cancelled';
+        entry.lastError = 'Cancelled because the active radio identity changed.';
+        cancelled.push(this.clone(entry));
+      }
+    }
+
+    return cancelled;
   }
 
   pruneTerminal(): void {
@@ -173,6 +197,10 @@ export class InMemoryBushMeshOutbox {
         entry.state !== 'failed' &&
         entry.state !== 'cancelled',
     );
+  }
+
+  private clone(entry: BushMeshOutboxEntry): BushMeshOutboxEntry {
+    return {...entry, payload: Uint8Array.from(entry.payload)};
   }
 
   private requireEntry(id: string): BushMeshOutboxEntry {
