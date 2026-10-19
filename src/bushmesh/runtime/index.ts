@@ -1,4 +1,5 @@
 export * from './BushMeshCommandResponder';
+export * from './BushMeshDiagnostics';
 export * from './BushMeshDisplay';
 export * from './BushMeshFileTransferManager';
 export * from './BushMeshIdentity';
