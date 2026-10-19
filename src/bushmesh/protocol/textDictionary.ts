@@ -2,6 +2,8 @@ import {Buffer} from 'buffer';
 
 import {assertBytes, decodeVarUint, encodeVarUint} from './codec';
 
+export const BUSHMESH_TEXT_DICTIONARY_VERSION = 1;
+
 // Dictionary IDs are part of the over-the-air protocol. Append new entries, but
 // do not reorder or remove existing entries once devices depend on them.
 export const BUSHMESH_TEXT_DICTIONARY: readonly string[] = [
