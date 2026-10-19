@@ -8,7 +8,10 @@ import {
 } from 'react-native';
 
 import {BushMeshDistressType} from '../bushmesh/protocol';
-import {BushMeshDistressBeacon} from '../bushmesh/runtime/BushMeshDistressBeacon';
+import {
+  BushMeshDistressBeacon,
+  BushMeshDistressBeaconState,
+} from '../bushmesh/runtime/BushMeshDistressBeacon';
 import {getActiveBushMeshRuntime} from '../bushmesh/runtime/BushMeshRuntimeHub';
 import {useBushMesh} from '../state/BushMeshContext';
 import {colors} from '../theme/colors';
@@ -30,6 +33,13 @@ const distressOptions: DistressOption[] = [
   {type: BushMeshDistressType.Flood, label: 'Flood', detail: 'Flood or water crossing danger'},
 ];
 
+const IDLE_BEACON_STATE: BushMeshDistressBeaconState = {
+  active: false,
+  messageId: null,
+  transmissions: 0,
+  remainingRepeats: 0,
+};
+
 export function EmergencyScreen(): React.JSX.Element {
   const {
     connectionStatus,
@@ -42,14 +52,33 @@ export function EmergencyScreen(): React.JSX.Element {
   const [selectedType, setSelectedType] = useState<BushMeshDistressType>(
     BushMeshDistressType.General,
   );
-  const [activeMessageId, setActiveMessageId] = useState<number | null>(null);
+  const [beaconState, setBeaconState] =
+    useState<BushMeshDistressBeaconState>(IDLE_BEACON_STATE);
   const [status, setStatus] = useState(
     'Choose an alert type. BushMesh will send an emergency-priority routed beacon with repeated transmissions.',
   );
   const [isStarting, setIsStarting] = useState(false);
 
   useEffect(() => {
+    const timer = setInterval(() => {
+      const beacon = beaconRef.current;
+      if (!beacon) {
+        return;
+      }
+
+      const next = beacon.state();
+      setBeaconState(next);
+
+      if (!next.active && next.transmissions > 0) {
+        beaconRef.current = null;
+        setStatus(
+          `Emergency beacon sequence complete after ${next.transmissions} transmission(s).`,
+        );
+      }
+    }, 1000);
+
     return () => {
+      clearInterval(timer);
       beaconRef.current?.stop();
       beaconRef.current = null;
     };
@@ -95,14 +124,14 @@ export function EmergencyScreen(): React.JSX.Element {
         },
       );
 
-      setActiveMessageId(messageId);
+      setBeaconState(beacon.state());
       setStatus(
         `Emergency beacon ${messageId} started on ${activeChannel?.channelName ?? `channel ${channelIndex}`}. Initial alert sent; repeats are scheduled at approximately 15, 45 and 90 seconds with collision jitter.`,
       );
     } catch (error) {
       beaconRef.current?.stop();
       beaconRef.current = null;
-      setActiveMessageId(null);
+      setBeaconState(IDLE_BEACON_STATE);
       setStatus(
         error instanceof Error ? error.message : 'Failed to start BushMesh distress beacon.',
       );
@@ -112,13 +141,19 @@ export function EmergencyScreen(): React.JSX.Element {
   };
 
   const cancelBeacon = () => {
+    const transmissions = beaconRef.current?.state().transmissions ?? beaconState.transmissions;
     beaconRef.current?.stop();
     beaconRef.current = null;
-    setActiveMessageId(null);
-    setStatus('Emergency beacon repeats cancelled. Previously transmitted alerts cannot be recalled.');
+    setBeaconState({
+      active: false,
+      messageId: null,
+      transmissions,
+      remainingRepeats: 0,
+    });
+    setStatus(
+      `Emergency beacon repeats cancelled after ${transmissions} transmission(s). Previously transmitted alerts cannot be recalled.`,
+    );
   };
-
-  const currentState = beaconRef.current?.state();
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -179,7 +214,7 @@ export function EmergencyScreen(): React.JSX.Element {
         <Text style={styles.sectionTitle}>Transmit</Text>
         <Text style={styles.sectionBody}>{status}</Text>
 
-        {activeMessageId === null ? (
+        {!beaconState.active ? (
           <TouchableOpacity
             style={[styles.sosButton, (!ready || isStarting) && styles.buttonDisabled]}
             disabled={!ready || isStarting}
@@ -192,9 +227,11 @@ export function EmergencyScreen(): React.JSX.Element {
           <>
             <View style={styles.activeBeaconCard}>
               <Text style={styles.activeBeaconTitle}>Beacon active</Text>
-              <Text style={styles.activeBeaconText}>Message ID {activeMessageId}</Text>
               <Text style={styles.activeBeaconText}>
-                Transmissions {currentState?.transmissions ?? 1} • Remaining repeats {currentState?.remainingRepeats ?? 3}
+                Message ID {beaconState.messageId ?? '--'}
+              </Text>
+              <Text style={styles.activeBeaconText}>
+                Transmissions {beaconState.transmissions} • Remaining repeats {beaconState.remainingRepeats}
               </Text>
             </View>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelBeacon}>
