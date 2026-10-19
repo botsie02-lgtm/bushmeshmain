@@ -53,8 +53,23 @@ describe('Bushmesh text compression and MeshCore transport bridge', () => {
     expect(decoded.renderedText).toBe('heading back to camp');
   });
 
+  test('uses semantic codewords when a recognised intent is smaller than dictionary text', () => {
+    const encoded = encodeBushMeshTextMessage(
+      'heading back to camp in 20 minutes',
+      102,
+    );
+
+    expect(encoded.compression).toBe(BushMeshCompressionProfile.Semantic);
+    expect(encoded.payloadByteLength).toBeLessThan(encoded.originalByteLength);
+
+    const decoded = decodeBushMeshWire(encoded.wireBytes);
+    expect(decoded.renderedText).toBe(
+      'Returning to camp. ETA approximately 20 minutes.',
+    );
+  });
+
   test('text-safe carrier round-trips the binary wire message', () => {
-    const encoded = encodeBushMeshTextMessage('Need water at camp', 102);
+    const encoded = encodeBushMeshTextMessage('Need water at camp', 103);
     const wireBytes = decodeBushMeshTextCarrier(encoded.textSafeCarrier);
     const decoded = decodeBushMeshWire(wireBytes);
 
@@ -63,7 +78,7 @@ describe('Bushmesh text compression and MeshCore transport bridge', () => {
 
   test('fragments long text-safe messages under the MeshCore payload limit and reassembles them', () => {
     const text = 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(8);
-    const frames = prepareBushMeshTextChannelFrames(text, 103, {
+    const frames = prepareBushMeshTextChannelFrames(text, 104, {
       transport: 'text-safe',
       maxPayloadBytes: 133,
     });
@@ -101,7 +116,7 @@ describe('Bushmesh text compression and MeshCore transport bridge', () => {
       fakeClient,
       3,
       'heading back to camp',
-      104,
+      105,
     );
 
     expect(sent.length).toBeGreaterThan(0);
@@ -113,7 +128,7 @@ describe('Bushmesh text compression and MeshCore transport bridge', () => {
     const commands = buildBushMeshBinaryChannelCommands(
       4,
       'heading back to camp',
-      105,
+      106,
       {timestampSeconds: 0x12345678},
     );
 
