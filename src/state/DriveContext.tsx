@@ -19,6 +19,13 @@ import {
 } from '../convoy/operationalMarkers';
 import {getQuickActionDefinition} from '../drive/quickActions';
 
+export type DriveAlertSource =
+  | 'radio'
+  | 'local-preview'
+  | 'local-queued'
+  | 'local-accepted'
+  | 'local-failed';
+
 export type DriveAlert = {
   id: string;
   senderId: string;
@@ -33,13 +40,20 @@ export type DriveAlert = {
   expiresAtMs: number | null;
   snrDb: number | null;
   pathLength: number | null;
-  source: 'radio' | 'local-preview';
+  source: DriveAlertSource;
 };
 
 type DriveContextValue = {
   alerts: DriveAlert[];
   latestAlert: DriveAlert | null;
   operationalMarkers: OperationalMarker[];
+  recordLocalQuickAction: (
+    action: BushMeshQuickActionCode,
+    location: Coordinate | null | undefined,
+    source: Exclude<DriveAlertSource, 'radio'>,
+    senderId?: string,
+    channelIndex?: number | null,
+  ) => DriveAlert;
   previewQuickAction: (
     action: BushMeshQuickActionCode,
     location?: Coordinate | null,
@@ -101,20 +115,23 @@ export function DriveProvider({
     });
   }, []);
 
-  const previewQuickAction = useCallback(
+  const recordLocalQuickAction = useCallback(
     (
       action: BushMeshQuickActionCode,
-      location?: Coordinate | null,
+      location: Coordinate | null | undefined,
+      source: Exclude<DriveAlertSource, 'radio'>,
+      senderId = 'LOCAL',
+      channelIndex: number | null = null,
     ): DriveAlert => {
       const now = Date.now();
       const definition = getQuickActionDefinition(action);
-      const preview: DriveAlert = {
-        id: `preview-${now}-${action}`,
-        senderId: 'LOCAL-PREVIEW',
+      const localAlert: DriveAlert = {
+        id: `${source}-${now}-${action}`,
+        senderId,
         action,
         label: definition.label,
         description: definition.description,
-        channelIndex: null,
+        channelIndex,
         latitude: location?.latitude ?? null,
         longitude: location?.longitude ?? null,
         receivedAtMs: now,
@@ -125,13 +142,22 @@ export function DriveProvider({
             : null,
         snrDb: null,
         pathLength: null,
-        source: 'local-preview',
+        source,
       };
 
-      setAlerts(current => [preview, ...current].slice(0, 50));
-      return preview;
+      setAlerts(current => [localAlert, ...current].slice(0, 50));
+      return localAlert;
     },
     [],
+  );
+
+  const previewQuickAction = useCallback(
+    (
+      action: BushMeshQuickActionCode,
+      location?: Coordinate | null,
+    ): DriveAlert =>
+      recordLocalQuickAction(action, location, 'local-preview', 'LOCAL-PREVIEW'),
+    [recordLocalQuickAction],
   );
 
   const dismissAlert = useCallback((id: string) => {
@@ -166,6 +192,7 @@ export function DriveProvider({
       alerts,
       latestAlert,
       operationalMarkers,
+      recordLocalQuickAction,
       previewQuickAction,
       dismissAlert,
       clearAlerts,
@@ -174,6 +201,7 @@ export function DriveProvider({
       alerts,
       latestAlert,
       operationalMarkers,
+      recordLocalQuickAction,
       previewQuickAction,
       dismissAlert,
       clearAlerts,
