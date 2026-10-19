@@ -673,6 +673,7 @@ export class MeshCoreClient {
         return;
       }
 
+      this.reconnectInProgress = false;
       this.reconnectAttempt = 0;
       this.resyncAttempt = 0;
       const detail =
@@ -686,6 +687,8 @@ export class MeshCoreClient {
         return;
       }
 
+      await this.manager.cancelDeviceConnection(deviceId).catch(() => undefined);
+      this.reconnectInProgress = false;
       const message = this.asError(error, 'MeshCore reconnect failed.').message;
       this.events.onStatus(`MeshCore reconnect failed: ${message}`);
       this.events.onConnectionState?.(
