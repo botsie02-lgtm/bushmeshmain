@@ -1,3 +1,5 @@
+import {isNewerBushMeshPacket} from '../bushmesh/replayGuard';
+
 export type ConvoyFreshness = 'live' | 'recent' | 'stale' | 'lost';
 
 export type ConvoyVehicle = {
@@ -119,9 +121,14 @@ export function shouldReplaceVehiclePosition(
     return true;
   }
 
-  if (incoming.packetTimestampSeconds !== current.packetTimestampSeconds) {
-    return incoming.packetTimestampSeconds > current.packetTimestampSeconds;
-  }
-
-  return incoming.sequence >= current.sequence;
+  return isNewerBushMeshPacket(
+    {
+      timestampSeconds: current.packetTimestampSeconds,
+      sequence: current.sequence,
+    },
+    {
+      timestampSeconds: incoming.packetTimestampSeconds,
+      sequence: incoming.sequence,
+    },
+  );
 }
