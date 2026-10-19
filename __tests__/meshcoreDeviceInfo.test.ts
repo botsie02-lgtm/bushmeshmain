@@ -1,8 +1,15 @@
+import {Buffer} from 'buffer';
+
 import {parseMeshCoreDeviceInfo} from '../src/meshcore/meshcoreDeviceInfo';
 
-function writeText(target: number[], offset: number, length: number, value: string) {
-  const bytes = Array.from(Buffer.from(value, 'utf8')).slice(0, length);
-  for (let index = 0; index < bytes.length; index += 1) {
+function writeText(
+  target: number[],
+  offset: number,
+  length: number,
+  value: string,
+): void {
+  const bytes: number[] = Array.from(Buffer.from(value, 'utf8'));
+  for (let index = 0; index < Math.min(bytes.length, length); index += 1) {
     target[offset + index] = bytes[index];
   }
 }
