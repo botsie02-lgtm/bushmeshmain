@@ -11,6 +11,7 @@ class BushMeshRadioServicePackage : ReactPackage {
   ): List<NativeModule> = listOf(
     BushMeshRadioServiceModule(reactContext),
     BushMeshPersistenceModule(reactContext),
+    BushMeshLocationModule(reactContext),
   )
 
   override fun createViewManagers(
