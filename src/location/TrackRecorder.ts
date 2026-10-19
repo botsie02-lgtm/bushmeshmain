@@ -22,6 +22,29 @@ const DEFAULT_MIN_DISTANCE_METERS = 5;
 const DEFAULT_MAX_SAMPLE_INTERVAL_MS = 30_000;
 const DEFAULT_MAX_POINTS = 2_000;
 
+function validNullableNumber(value: number | null): boolean {
+  return value === null || Number.isFinite(value);
+}
+
+function validRestoredPoint(point: BushMeshTrackPoint): boolean {
+  return (
+    Number.isFinite(point.latitude) &&
+    point.latitude >= -90 &&
+    point.latitude <= 90 &&
+    Number.isFinite(point.longitude) &&
+    point.longitude >= -180 &&
+    point.longitude <= 180 &&
+    Number.isFinite(point.timestampMs) &&
+    point.timestampMs >= 0 &&
+    Number.isFinite(point.recordedAtMs) &&
+    point.recordedAtMs === point.timestampMs &&
+    validNullableNumber(point.altitudeMeters) &&
+    validNullableNumber(point.speedKmh) &&
+    validNullableNumber(point.headingDegrees) &&
+    validNullableNumber(point.accuracyMeters)
+  );
+}
+
 /**
  * Keeps a compact local breadcrumb trail from accepted GPS fixes. Dense GPS
  * jitter is suppressed, but a time-based sample is retained while stationary
@@ -92,6 +115,70 @@ export class BushMeshTrackRecorder {
       startedAtMs: this.startedAtMs,
       lastRecordedAtMs: this.lastRecordedAtMs,
     };
+  }
+
+  /**
+   * Restores a previously validated/persisted trail before live GPS resumes.
+   * Sequence must be strictly monotonic so a corrupted snapshot cannot move
+   * the local trail backwards in time.
+   */
+  restore(snapshot: BushMeshTrackSnapshot): void {
+    if (
+      !Number.isFinite(snapshot.totalDistanceMeters) ||
+      snapshot.totalDistanceMeters < 0
+    ) {
+      throw new Error('Persisted Bushmesh track distance is invalid.');
+    }
+
+    if (
+      !validNullableNumber(snapshot.startedAtMs) ||
+      !validNullableNumber(snapshot.lastRecordedAtMs)
+    ) {
+      throw new Error('Persisted Bushmesh track timestamps are invalid.');
+    }
+
+    let previousTimestamp = -1;
+    for (const point of snapshot.points) {
+      if (!validRestoredPoint(point) || point.recordedAtMs <= previousTimestamp) {
+        throw new Error('Persisted Bushmesh track contains an invalid point sequence.');
+      }
+      previousTimestamp = point.recordedAtMs;
+    }
+
+    if (snapshot.points.length === 0) {
+      if (snapshot.startedAtMs !== null || snapshot.lastRecordedAtMs !== null) {
+        throw new Error('Empty persisted Bushmesh track has inconsistent timestamps.');
+      }
+      this.clear();
+      return;
+    }
+
+    const first = snapshot.points[0];
+    const last = snapshot.points[snapshot.points.length - 1];
+    if (
+      snapshot.startedAtMs === null ||
+      snapshot.lastRecordedAtMs !== last.recordedAtMs ||
+      snapshot.startedAtMs > first.recordedAtMs
+    ) {
+      throw new Error('Persisted Bushmesh track metadata does not match its points.');
+    }
+
+    this.points = snapshot.points
+      .slice(-this.maxPoints)
+      .map(point => ({...point}));
+    this.totalDistanceMeters = snapshot.totalDistanceMeters;
+    this.startedAtMs = snapshot.startedAtMs;
+    this.lastRecordedAtMs = last.recordedAtMs;
+    this.lastAcceptedFix = {
+      latitude: last.latitude,
+      longitude: last.longitude,
+      timestampMs: last.timestampMs,
+      altitudeMeters: last.altitudeMeters,
+      speedKmh: last.speedKmh,
+      headingDegrees: last.headingDegrees,
+      accuracyMeters: last.accuracyMeters,
+    };
+    this.lastRecordedFix = {...this.lastAcceptedFix};
   }
 
   clear(): void {
