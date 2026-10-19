@@ -35,6 +35,8 @@ import {
   NativeExportResult,
   nativeFileExport,
 } from '../native/NativeFileExport';
+import {androidTrackPersistence} from '../persistence/AndroidTrackPersistence';
+import {createTrackSnapshot} from '../persistence/trackSnapshot';
 import {useBushMesh} from './BushMeshContext';
 import {useConvoy} from './ConvoyContext';
 import {useRadioSession} from './RadioSessionContext';
@@ -43,6 +45,12 @@ export type LocationSessionStatus =
   | 'stopped'
   | 'tracking'
   | 'tracking-no-link'
+  | 'error';
+
+export type TrackPersistenceStatus =
+  | 'restoring'
+  | 'ready'
+  | 'unsupported'
   | 'error';
 
 type LocationSessionContextValue = {
@@ -58,6 +66,8 @@ type LocationSessionContextValue = {
   trackDistanceMeters: number;
   trackStartedAtMs: number | null;
   trackExportSupported: boolean;
+  trackPersistenceStatus: TrackPersistenceStatus;
+  trackPersistenceError: string | null;
   startProvider: (provider: BushMeshLocationProvider) => void;
   startNativeGps: () => Promise<void>;
   startSimulation: () => void;
@@ -97,6 +107,13 @@ export function LocationSessionProvider({
   const [trackPoints, setTrackPoints] = useState<BushMeshTrackPoint[]>([]);
   const [trackDistanceMeters, setTrackDistanceMeters] = useState(0);
   const [trackStartedAtMs, setTrackStartedAtMs] = useState<number | null>(null);
+  const [trackPersistenceStatus, setTrackPersistenceStatus] =
+    useState<TrackPersistenceStatus>(() =>
+      androidTrackPersistence.isSupported() ? 'restoring' : 'unsupported',
+    );
+  const [trackPersistenceError, setTrackPersistenceError] = useState<
+    string | null
+  >(null);
 
   const plannerRef = useRef(new BushMeshPositionPlanner());
   const trackRecorderRef = useRef(new BushMeshTrackRecorder());
@@ -107,6 +124,8 @@ export function LocationSessionProvider({
   const radioSessionRef = useRef(radioSession);
   const queuePositionRef = useRef(queuePosition);
   const drainOnceRef = useRef(drainOnce);
+  const trackPersistenceReadyRef = useRef(!androidTrackPersistence.isSupported());
+  const trackWriteChainRef = useRef<Promise<void>>(Promise.resolve());
 
   const nativeGpsSupported = androidGpsLocationProvider.isSupported();
   const trackExportSupported = nativeFileExport.isSupported();
@@ -135,8 +154,106 @@ export function LocationSessionProvider({
     setTrackStartedAtMs(snapshot.startedAtMs);
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    const restoreTrack = async () => {
+      if (!androidTrackPersistence.isSupported()) {
+        trackPersistenceReadyRef.current = true;
+        if (active) {
+          setTrackPersistenceStatus('unsupported');
+          setTrackPersistenceError(null);
+        }
+        return;
+      }
+
+      try {
+        const persisted = await androidTrackPersistence.load();
+        if (persisted) {
+          trackRecorderRef.current.restore(persisted.track);
+          lastAcceptedFixTimestampRef.current = persisted.track.lastRecordedAtMs;
+          refreshTrackSnapshot();
+        }
+
+        trackPersistenceReadyRef.current = true;
+        if (active) {
+          setTrackPersistenceStatus('ready');
+          setTrackPersistenceError(null);
+        }
+      } catch (restoreError) {
+        const restoreMessage =
+          restoreError instanceof Error
+            ? restoreError.message
+            : 'Encrypted Bushmesh breadcrumb trail could not be restored.';
+
+        try {
+          await androidTrackPersistence.resetSecureStorage();
+          trackRecorderRef.current.clear();
+          lastAcceptedFixTimestampRef.current = null;
+          refreshTrackSnapshot();
+          trackPersistenceReadyRef.current = true;
+          if (active) {
+            setTrackPersistenceStatus('ready');
+            setTrackPersistenceError(
+              `The previous encrypted breadcrumb trail could not be authenticated and was discarded. Secure track storage was re-keyed. ${restoreMessage}`,
+            );
+          }
+        } catch (resetError) {
+          trackPersistenceReadyRef.current = true;
+          if (active) {
+            setTrackPersistenceStatus('error');
+            setTrackPersistenceError(
+              resetError instanceof Error
+                ? `Track restore failed (${restoreMessage}) and secure track storage could not be reinitialized: ${resetError.message}`
+                : `Track restore failed (${restoreMessage}) and secure track storage could not be reinitialized.`,
+            );
+          }
+        }
+      }
+    };
+
+    restoreTrack().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [refreshTrackSnapshot]);
+
+  useEffect(() => {
+    if (
+      trackPersistenceStatus !== 'ready' ||
+      !androidTrackPersistence.isSupported() ||
+      !trackPersistenceReadyRef.current
+    ) {
+      return;
+    }
+
+    const snapshot = trackRecorderRef.current.snapshot();
+    trackWriteChainRef.current = trackWriteChainRef.current
+      .then(async () => {
+        if (snapshot.points.length === 0) {
+          await androidTrackPersistence.clear();
+          return;
+        }
+
+        await androidTrackPersistence.save(createTrackSnapshot(snapshot));
+      })
+      .catch(error => {
+        setTrackPersistenceError(
+          error instanceof Error
+            ? error.message
+            : 'Encrypted Bushmesh breadcrumb trail could not be saved.',
+        );
+      });
+  }, [
+    trackPoints,
+    trackDistanceMeters,
+    trackStartedAtMs,
+    trackPersistenceStatus,
+  ]);
+
   const clearTrack = useCallback(() => {
     trackRecorderRef.current.clear();
+    lastAcceptedFixTimestampRef.current = null;
     refreshTrackSnapshot();
   }, [refreshTrackSnapshot]);
 
@@ -160,7 +277,6 @@ export function LocationSessionProvider({
     stopProviderRef.current?.();
     stopProviderRef.current = null;
     plannerRef.current.reset();
-    lastAcceptedFixTimestampRef.current = null;
     setProviderLabel(null);
     setStatus('stopped');
     setLastError(null);
@@ -280,7 +396,8 @@ export function LocationSessionProvider({
     (provider: BushMeshLocationProvider) => {
       stopProviderRef.current?.();
       plannerRef.current.reset();
-      lastAcceptedFixTimestampRef.current = null;
+      lastAcceptedFixTimestampRef.current =
+        trackRecorderRef.current.snapshot().lastRecordedAtMs;
       setProviderLabel(provider.label);
       setLatestFix(null);
       setLastPlan(null);
@@ -343,6 +460,8 @@ export function LocationSessionProvider({
       trackDistanceMeters,
       trackStartedAtMs,
       trackExportSupported,
+      trackPersistenceStatus,
+      trackPersistenceError,
       startProvider,
       startNativeGps,
       startSimulation,
@@ -363,6 +482,8 @@ export function LocationSessionProvider({
       trackDistanceMeters,
       trackStartedAtMs,
       trackExportSupported,
+      trackPersistenceStatus,
+      trackPersistenceError,
       startProvider,
       startNativeGps,
       startSimulation,
