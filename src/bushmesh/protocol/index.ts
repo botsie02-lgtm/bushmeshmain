@@ -3,6 +3,7 @@ export * from './deliveryQueue';
 export * from './fragmentation';
 export * from './location';
 export * from './semantic';
+export * from './semanticText';
 export * from './syncSummary';
 export * from './textDictionary';
 export * from './transport';
