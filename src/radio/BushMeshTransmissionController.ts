@@ -50,6 +50,8 @@ export class BushMeshTransmissionController {
     position: BushMeshPosition,
     createdAtMs = Date.now(),
   ): BushMeshOutboxEntry {
+    this.outbox.cancelQueuedPositions(position.senderId, channelIndex);
+
     return this.enqueue(
       channelIndex,
       encodeBushMeshPosition(position),
