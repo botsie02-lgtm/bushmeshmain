@@ -23,10 +23,12 @@ import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
 import {ConvoyScreen} from './src/screens/ConvoyScreen';
 import {LocationScreen} from './src/screens/LocationScreen';
+import {MapScreen} from './src/screens/MapScreen';
 import {colors} from './src/theme/colors';
 
 type TabKey =
   | 'drive'
+  | 'map'
   | 'channels'
   | 'convoy'
   | 'location'
@@ -35,6 +37,7 @@ type TabKey =
 
 const tabs: Array<{key: TabKey; label: string}> = [
   {key: 'drive', label: 'Drive'},
+  {key: 'map', label: 'Map'},
   {key: 'channels', label: 'Radio'},
   {key: 'convoy', label: 'Convoy'},
   {key: 'location', label: 'GPS'},
@@ -57,6 +60,10 @@ function AppContent(): React.JSX.Element {
       <View style={styles.content}>
         <View style={[styles.screenWrap, activeTab !== 'drive' && styles.hidden]}>
           <DriveScreen />
+        </View>
+
+        <View style={[styles.screenWrap, activeTab !== 'map' && styles.hidden]}>
+          <MapScreen />
         </View>
 
         <View style={[styles.screenWrap, activeTab !== 'channels' && styles.hidden]}>
@@ -153,7 +160,7 @@ const styles = StyleSheet.create({
   },
   tabBar: {
     flexDirection: 'row',
-    paddingHorizontal: 6,
+    paddingHorizontal: 4,
     paddingVertical: 8,
     borderTopWidth: 1,
     borderTopColor: colors.border,
@@ -162,6 +169,7 @@ const styles = StyleSheet.create({
   tabButton: {
     flex: 1,
     paddingVertical: 10,
+    paddingHorizontal: 2,
     borderRadius: 12,
     alignItems: 'center',
   },
@@ -170,7 +178,7 @@ const styles = StyleSheet.create({
   },
   tabText: {
     color: colors.textSecondary,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
   },
   tabTextActive: {
