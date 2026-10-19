@@ -1,6 +1,7 @@
 export * from './codec';
 export * from './deliveryQueue';
 export * from './discovery';
+export * from './fileTransfer';
 export * from './forwarding';
 export * from './fragmentation';
 export * from './linkMetrics';
@@ -8,6 +9,7 @@ export * from './location';
 export * from './messageIdentity';
 export * from './persistence';
 export * from './retransmission';
+export * from './routing';
 export * from './semantic';
 export * from './semanticText';
 export * from './syncSummary';
