@@ -7,7 +7,7 @@ on:
     paths:
       - 'src/bushmesh/**'
       - 'src/meshcore/**'
-      - '__tests__/bushmesh*.test.ts'
+      - '__tests__/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'
@@ -16,7 +16,7 @@ on:
     paths:
       - 'src/bushmesh/**'
       - 'src/meshcore/**'
-      - '__tests__/bushmesh*.test.ts'
+      - '__tests__/**'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'
@@ -42,5 +42,5 @@ jobs:
       - name: TypeScript check
         run: npx tsc --noEmit
 
-      - name: BushMesh protocol tests
-        run: npm test -- --runInBand --testRegex='__tests__/bushmesh.*\.test\.ts$'
+      - name: Full Jest suite
+        run: npm test -- --runInBand
