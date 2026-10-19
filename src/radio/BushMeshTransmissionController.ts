@@ -62,6 +62,7 @@ export class BushMeshTransmissionController {
       'position',
       `Position ${position.sequence} from ${position.senderId}`,
       position.senderId,
+      null,
       createdAtMs,
       3,
     );
@@ -79,6 +80,11 @@ export class BushMeshTransmissionController {
         : definition.priority === 'control'
           ? 'control'
           : 'message';
+    const ttlSeconds =
+      action.ttlSeconds != null && action.ttlSeconds > 0
+        ? action.ttlSeconds
+        : definition.defaultTtlSeconds;
+    const expiresAtMs = action.timestampSeconds * 1000 + ttlSeconds * 1000;
 
     return this.enqueue(
       channelIndex,
@@ -86,6 +92,7 @@ export class BushMeshTransmissionController {
       priority,
       `${definition.label} from ${action.senderId}`,
       action.senderId,
+      expiresAtMs,
       createdAtMs,
       action.action === BushMeshQuickActionCode.Ok ? 3 : 5,
     );
@@ -121,7 +128,10 @@ export class BushMeshTransmissionController {
       const updated = this.outbox.markFailed(next.id, message, nowMs);
       return {
         entry: updated,
-        outcome: updated.state === 'failed' ? 'failed' : 'retrying',
+        outcome:
+          updated.state === 'failed' || updated.state === 'cancelled'
+            ? 'failed'
+            : 'retrying',
       };
     }
   }
@@ -132,6 +142,7 @@ export class BushMeshTransmissionController {
     priority: BushMeshOutboxPriority,
     description: string,
     identityRef: string | null,
+    expiresAtMs: number | null,
     createdAtMs: number,
     maxAttempts: number,
   ): BushMeshOutboxEntry {
@@ -146,6 +157,7 @@ export class BushMeshTransmissionController {
       priority,
       description,
       identityRef,
+      expiresAtMs,
       createdAtMs,
       maxAttempts,
     });
