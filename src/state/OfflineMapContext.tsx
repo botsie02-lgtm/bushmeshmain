@@ -73,6 +73,7 @@ export function OfflineMapProvider({
       downloadedBytes: 250_000_000,
       totalBytes: 250_000_000,
       checksumVerified: true,
+      simulated: true,
     });
 
     setRequiredTripPointsState([
