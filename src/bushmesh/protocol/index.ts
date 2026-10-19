@@ -3,6 +3,7 @@ export * from './codec';
 export * from './deliveryQueue';
 export * from './discovery';
 export * from './fileTransfer';
+export * from './fileTransferSender';
 export * from './forwarding';
 export * from './fragmentation';
 export * from './frameSafety';
