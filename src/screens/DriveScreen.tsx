@@ -54,12 +54,7 @@ function alertSourceLabel(source: DriveAlertSource): string {
 }
 
 export function DriveScreen(): React.JSX.Element {
-  const {
-    connectionStatus,
-    connectedDeviceName,
-    activeChannel,
-    deviceStatus,
-  } = useBushMesh();
+  const {connectionStatus, activeChannel, deviceStatus} = useBushMesh();
   const {vehicles, localPosition} = useConvoy();
   const {
     latestAlert,
@@ -204,6 +199,14 @@ export function DriveScreen(): React.JSX.Element {
     }
   };
 
+  const runQuickAction = (definition: QuickActionDefinition) => {
+    handleQuickAction(definition).catch(error => {
+      setQuickActionStatus(
+        error instanceof Error ? error.message : 'Quick action failed unexpectedly.',
+      );
+    });
+  };
+
   return (
     <ScrollView
       style={styles.screen}
@@ -290,7 +293,7 @@ export function DriveScreen(): React.JSX.Element {
             key={definition.code}
             activeOpacity={0.78}
             style={[styles.actionButton, actionButtonStyle(definition)]}
-            onPress={() => void handleQuickAction(definition)}>
+            onPress={() => runQuickAction(definition)}>
             <Text style={[styles.actionText, actionTextStyle(definition)]}>
               {definition.shortLabel}
             </Text>
