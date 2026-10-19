@@ -144,6 +144,7 @@ type BushMeshContextValue = {
     message: string,
     destinationNodeId?: number,
   ) => Promise<BushMeshRuntimeSendResult>;
+  refreshBushMeshDiscovery: () => Promise<void>;
   addLocalChannelMessage: (
     message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>,
   ) => void;
@@ -404,6 +405,31 @@ export function BushMeshProvider({
   );
 
   useEffect(() => {
+    const runtime = bushMeshNodeRuntimeRef.current;
+
+    if (!runtime) {
+      return;
+    }
+
+    if (activeChannelIndex === null) {
+      runtime.setDiscoveryChannel(null);
+      return;
+    }
+
+    const channelIndex = Number(activeChannelIndex);
+    if (!Number.isInteger(channelIndex) || channelIndex < 0 || channelIndex > 255) {
+      runtime.setDiscoveryChannel(null);
+      return;
+    }
+
+    runtime.setDiscoveryChannel(channelIndex);
+    setBushMeshNetworkStatus({
+      active: true,
+      detail: `BushMesh discovery active on channel ${channelIndex}.`,
+    });
+  }, [activeChannelIndex, sendBushMeshMessageHandlerState]);
+
+  useEffect(() => {
     return () => {
       bushMeshNodeRuntimeRef.current?.stop();
       bushMeshNodeRuntimeRef.current = null;
@@ -468,6 +494,28 @@ export function BushMeshProvider({
     [sendBushMeshRoutedMessageHandlerState],
   );
 
+  const refreshBushMeshDiscovery = useCallback(async (): Promise<void> => {
+    const runtime = bushMeshNodeRuntimeRef.current;
+    if (!runtime) {
+      throw new Error('BushMesh runtime is not ready.');
+    }
+    if (activeChannelIndex === null) {
+      throw new Error('Select an active channel before refreshing discovery.');
+    }
+
+    const channelIndex = Number(activeChannelIndex);
+    if (!Number.isInteger(channelIndex) || channelIndex < 0 || channelIndex > 255) {
+      throw new Error('Active BushMesh discovery channel is invalid.');
+    }
+
+    runtime.setDiscoveryChannel(channelIndex);
+    await runtime.broadcastNodeHello(channelIndex);
+    setBushMeshNetworkStatus({
+      active: true,
+      detail: `BushMesh HELLO broadcast on channel ${channelIndex}.`,
+    });
+  }, [activeChannelIndex]);
+
   const value = useMemo<BushMeshContextValue>(
     () => ({
       connectionStatus,
@@ -501,6 +549,7 @@ export function BushMeshProvider({
       sendChannelMessage,
       sendBushMeshMessage,
       sendBushMeshRoutedMessage,
+      refreshBushMeshDiscovery,
       addLocalChannelMessage,
       clearChannels,
       clearChannelMessages,
@@ -529,6 +578,7 @@ export function BushMeshProvider({
       sendChannelMessage,
       sendBushMeshMessage,
       sendBushMeshRoutedMessage,
+      refreshBushMeshDiscovery,
       addLocalChannelMessage,
     ],
   );
