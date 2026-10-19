@@ -1,5 +1,8 @@
 import {BushMeshNetworkRuntime} from './BushMeshNetworkRuntime';
-import {publishMeshCorePublicKey} from './BushMeshIdentityHub';
+import {
+  clearMeshCorePublicKey,
+  publishMeshCorePublicKey,
+} from './BushMeshIdentityHub';
 
 let activeRuntime: BushMeshNetworkRuntime | null = null;
 
@@ -7,6 +10,10 @@ export function setActiveBushMeshRuntime(
   runtime: BushMeshNetworkRuntime | null,
 ): void {
   activeRuntime = runtime;
+
+  if (!runtime) {
+    clearMeshCorePublicKey();
+  }
 }
 
 export function getActiveBushMeshRuntime(): BushMeshNetworkRuntime | null {
