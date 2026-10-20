@@ -1,6 +1,7 @@
 import {NativeModules, PermissionsAndroid, Platform} from 'react-native';
 
 import {CompactLocation, LocationPrecision} from '../protocol';
+import {publishBushMeshLocalLocation} from './BushMeshLocalLocationHub';
 
 export type BushMeshNativePosition = {
   location: CompactLocation;
@@ -116,8 +117,7 @@ export async function getBushMeshNativePosition(options?: {
   );
   const timestampMs = optionalFinite(result.timestampMs) ?? Date.now();
   const heading = optionalFinite(result.headingDegrees);
-
-  return {
+  const position: BushMeshNativePosition = {
     location: {
       latitude: result.latitude,
       longitude: result.longitude,
@@ -132,6 +132,17 @@ export async function getBushMeshNativePosition(options?: {
         ? heading
         : undefined,
   };
+
+  publishBushMeshLocalLocation({
+    location: position.location,
+    capturedAtMs: position.timestampMs,
+    accuracyMetres: position.accuracyMetres,
+    altitudeMetres: position.altitudeMetres,
+    speedKph: position.speedKph,
+    headingDegrees: position.headingDegrees,
+  });
+
+  return position;
 }
 
 export async function cancelBushMeshNativeLocation(): Promise<void> {
