@@ -20,6 +20,7 @@ export * from './BushMeshFragmentCheckpointRuntime';
 export * from './BushMeshIdentity';
 export * from './BushMeshIdentityHub';
 export * from './BushMeshLiveStateHub';
+export * from './BushMeshLocalLocationHub';
 export * from './BushMeshLocationRuntime';
 export * from './BushMeshMessageDeliveryService';
 export * from './BushMeshNativeLocation';
