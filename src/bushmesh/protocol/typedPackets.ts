@@ -9,6 +9,11 @@ import {
   encodeControlPacket,
 } from './controlPackets';
 import {
+  BushMeshConvoyStatus,
+  decodeConvoyStatus,
+  encodeConvoyStatus,
+} from './convoy';
+import {
   BushMeshNodeHello,
   BushMeshPing,
   decodeNodeHello,
@@ -70,6 +75,7 @@ export type BushMeshTypedPacket =
   | {kind: 'routed'; wire: DecodedBushMeshWireMessage; value: BushMeshRoutedPayload}
   | {kind: 'command'; wire: DecodedBushMeshWireMessage; value: BushMeshControlPacket}
   | {kind: 'sync'; wire: DecodedBushMeshWireMessage; value: BushMeshSyncFrame}
+  | {kind: 'convoy'; wire: DecodedBushMeshWireMessage; value: BushMeshConvoyStatus}
   | {kind: 'file'; wire: DecodedBushMeshWireMessage; value: number[]}
   | {kind: 'other'; wire: DecodedBushMeshWireMessage; value: number[]};
 
@@ -199,6 +205,21 @@ export function encodeBushMeshSyncWire(
   });
 }
 
+export function encodeBushMeshConvoyWire(
+  status: BushMeshConvoyStatus,
+  messageId: number,
+  options?: {ackRequested?: boolean},
+): number[] {
+  return encodeBushMeshWire({
+    type: BushMeshPacketType.Convoy,
+    priority: BushMeshPriority.Location,
+    compression: BushMeshCompressionProfile.Raw,
+    messageId,
+    ackRequested: options?.ackRequested ?? false,
+    payload: encodeConvoyStatus(status),
+  });
+}
+
 export function encodeBushMeshFileWire(
   fileFrame: number[],
   messageId: number,
@@ -287,6 +308,12 @@ export function decodeBushMeshTypedPacket(bytes: number[]): BushMeshTypedPacket 
         kind: 'sync',
         wire,
         value: decodeBushMeshSyncFrame(wire.envelope.payload),
+      };
+    case BushMeshPacketType.Convoy:
+      return {
+        kind: 'convoy',
+        wire,
+        value: decodeConvoyStatus(wire.envelope.payload),
       };
     case BushMeshPacketType.File:
       return {kind: 'file', wire, value: [...wire.envelope.payload]};
