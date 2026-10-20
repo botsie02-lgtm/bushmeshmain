@@ -176,11 +176,16 @@ export class BushMeshSyncManager {
     snapshot: BushMeshSyncManagerSnapshot,
     options?: {replace?: boolean},
   ): {inventories: number; remoteSummaries: number} {
-    if (!snapshot || !Array.isArray(snapshot.inventories) || !Array.isArray(snapshot.remoteSummaries)) {
+    if (
+      !snapshot ||
+      !Array.isArray(snapshot.inventories) ||
+      !Array.isArray(snapshot.remoteSummaries)
+    ) {
       throw new Error('BushMesh sync snapshot has invalid shape.');
     }
 
-    if (options?.replace !== false) {
+    const replace = options?.replace !== false;
+    if (replace) {
       this.inventories.clear();
       this.remoteSummaries.clear();
     }
@@ -197,6 +202,10 @@ export class BushMeshSyncManager {
         saved.generation > 0xffffffff ||
         !Array.isArray(saved.ids)
       ) {
+        continue;
+      }
+
+      if (!replace && this.inventories.has(saved.namespace)) {
         continue;
       }
 
@@ -218,6 +227,10 @@ export class BushMeshSyncManager {
         !Number.isInteger(summary.generation) ||
         !Array.isArray(summary.bloomBytes)
       ) {
+        continue;
+      }
+
+      if (!replace && this.remoteSummaries.has(summary.namespace)) {
         continue;
       }
 
