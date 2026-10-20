@@ -54,6 +54,8 @@ export type BushMeshChannelMessage = {
   status: 'sent' | 'failed' | 'pending';
   createdAt: string;
   protocol?: 'meshcore-text' | 'bushmesh' | 'bushmesh-routed';
+  bushMeshMessageId?: number;
+  deliveryQueueId?: string;
 };
 
 export type BushMeshContact = {
@@ -440,7 +442,53 @@ export function BushMeshProvider({
       runtime.start();
 
       const persistentStore = getBushMeshPersistentStore() ?? undefined;
-      const delivery = new BushMeshMessageDeliveryService(runtime, persistentStore);
+      const delivery = new BushMeshMessageDeliveryService(
+        runtime,
+        persistentStore,
+        {
+          onQueued: (_queueId, messageId) => {
+            updateDeliveryStatus(
+              `Routed message ${messageId} is waiting for transport retry.`,
+            );
+          },
+          onFlush: event => {
+            if (
+              event.sentMessageIds.length > 0 ||
+              event.expiredMessageIds.length > 0
+            ) {
+              const sent = new Set(event.sentMessageIds);
+              const expired = new Set(event.expiredMessageIds);
+              setChannelMessages(currentMessages =>
+                currentMessages.map(message => {
+                  const messageId = message.bushMeshMessageId;
+                  if (messageId === undefined) {
+                    return message;
+                  }
+                  if (sent.has(messageId)) {
+                    return {
+                      ...message,
+                      status: 'sent' as const,
+                      deliveryQueueId: undefined,
+                    };
+                  }
+                  if (expired.has(messageId)) {
+                    return {
+                      ...message,
+                      status: 'failed' as const,
+                      deliveryQueueId: undefined,
+                    };
+                  }
+                  return message;
+                }),
+              );
+            }
+
+            updateDeliveryStatus(
+              `Background delivery: ${event.sentMessageIds.length} sent, ${event.failedMessageIds.length} waiting, ${event.expiredMessageIds.length} expired.`,
+            );
+          },
+        },
+      );
       bushMeshDeliveryRef.current = delivery;
       void delivery
         .start({flushIntervalMs: 5000})
