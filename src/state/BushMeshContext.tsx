@@ -91,6 +91,13 @@ export type BushMeshDeliveryStatus = {
   detail: string;
 };
 
+export type BushMeshFileSendOptions = {
+  fileName?: string;
+  contentType?: number;
+  chunkSize?: number;
+  initialChunkFrames?: number;
+};
+
 type BushMeshConnectionStatus = 'Disconnected' | 'Connected';
 
 type SendChannelMessageHandler = (
@@ -148,6 +155,7 @@ type BushMeshContextValue = {
   canSendChannelMessage: boolean;
   canSendBushMeshMessage: boolean;
   canSendBushMeshRoutedMessage: boolean;
+  canSendBushMeshFile: boolean;
   bushMeshNetworkStatus: BushMeshNetworkStatus;
   deviceStatus: BushMeshDeviceStatus | null;
   contacts: BushMeshContact[];
@@ -176,6 +184,11 @@ type BushMeshContextValue = {
     message: string,
     destinationNodeId?: number,
   ) => Promise<BushMeshMessageDeliveryResult>;
+  sendBushMeshFile: (
+    channelIndex: number,
+    data: number[],
+    options?: BushMeshFileSendOptions,
+  ) => Promise<number>;
   refreshBushMeshDiscovery: () => Promise<void>;
   flushBushMeshQueuedMessages: () => Promise<void>;
   addLocalChannelMessage: (
@@ -649,6 +662,33 @@ export function BushMeshProvider({
     [sendBushMeshRoutedMessageHandlerState],
   );
 
+  const sendBushMeshFile = useCallback(
+    async (
+      channelIndex: number,
+      data: number[],
+      options?: BushMeshFileSendOptions,
+    ): Promise<number> => {
+      const runtime = bushMeshNodeRuntimeRef.current;
+      if (!runtime) {
+        throw new Error('BushMesh file-transfer runtime is not ready.');
+      }
+      if (!Number.isInteger(channelIndex) || channelIndex < 0 || channelIndex > 255) {
+        throw new Error('BushMesh file channel index is invalid.');
+      }
+      if (data.length < 1) {
+        throw new Error('BushMesh file payload is empty.');
+      }
+
+      const transferId = await runtime.startFileTransfer(channelIndex, data, options);
+      setBushMeshNetworkStatus({
+        active: true,
+        detail: `BushMesh file transfer ${transferId} started on channel ${channelIndex}.`,
+      });
+      return transferId;
+    },
+    [],
+  );
+
   const refreshBushMeshDiscovery = useCallback(async (): Promise<void> => {
     const runtime = bushMeshNodeRuntimeRef.current;
     if (!runtime) {
@@ -704,6 +744,8 @@ export function BushMeshProvider({
       canSendBushMeshRoutedMessage:
         sendBushMeshRoutedMessageHandlerState !== null &&
         localBushMeshNodeId !== null,
+      canSendBushMeshFile:
+        sendBushMeshMessageHandlerState !== null && bushMeshNetworkStatus.active,
       setDeviceStatus,
       setContacts,
       setConnectionStatus,
@@ -717,6 +759,7 @@ export function BushMeshProvider({
       sendChannelMessage,
       sendBushMeshMessage,
       sendBushMeshRoutedMessage,
+      sendBushMeshFile,
       refreshBushMeshDiscovery,
       flushBushMeshQueuedMessages,
       addLocalChannelMessage,
@@ -748,6 +791,7 @@ export function BushMeshProvider({
       sendChannelMessage,
       sendBushMeshMessage,
       sendBushMeshRoutedMessage,
+      sendBushMeshFile,
       refreshBushMeshDiscovery,
       flushBushMeshQueuedMessages,
       addLocalChannelMessage,
