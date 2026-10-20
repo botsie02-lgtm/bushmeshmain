@@ -3,10 +3,11 @@ import React, {useEffect, useRef} from 'react';
 import {
   getBushMeshConvoyState,
   nextBushMeshConvoyStatus,
-  updateBushMeshConvoyTelemetry,
 } from '../bushmesh/runtime/BushMeshConvoyHub';
+import {getBushMeshConvoyPersistence} from '../bushmesh/runtime/BushMeshConvoyPersistence';
 import {sendActiveBushMeshConvoyStatus} from '../bushmesh/runtime/BushMeshRuntimeHub';
 import {useBushMesh} from './BushMeshContext';
+import {useBushMeshConvoyState} from './useBushMeshConvoyState';
 
 /**
  * Periodically emits compact convoy heartbeats while the feature is enabled.
@@ -18,20 +19,42 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
     connectionStatus,
     activeChannelIndex,
     localBushMeshNodeId,
-    deviceStatus,
     bushMeshNetworkStatus,
   } = useBushMesh();
+  const convoyState = useBushMeshConvoyState();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sendingRef = useRef(false);
+  const restoredRef = useRef(false);
 
   useEffect(() => {
-    if (deviceStatus?.batteryMv) {
-      // MeshCore currently exposes millivolts rather than battery percent in
-      // this state surface, so do not invent a percentage here. The field can
-      // be populated later when firmware provides a reliable percentage.
-      updateBushMeshConvoyTelemetry({});
+    let cancelled = false;
+
+    void getBushMeshConvoyPersistence()
+      .restore()
+      .catch(() => null)
+      .finally(() => {
+        if (!cancelled) {
+          restoredRef.current = true;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!restoredRef.current) {
+      return;
     }
-  }, [deviceStatus?.batteryMv]);
+
+    void getBushMeshConvoyPersistence().persist().catch(() => undefined);
+  }, [
+    convoyState.config.convoyId,
+    convoyState.config.heartbeatIntervalMs,
+    convoyState.config.orderIndex,
+    convoyState.config.role,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +114,8 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
     bushMeshNetworkStatus.active,
     connectionStatus,
     localBushMeshNodeId,
+    convoyState.config.enabled,
+    convoyState.config.heartbeatIntervalMs,
   ]);
 
   return null;
