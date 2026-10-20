@@ -10,13 +10,14 @@ import {
 
 import {BushMeshDistressType} from '../bushmesh/protocol';
 import {
-  BushMeshDistressBeacon,
-  BushMeshDistressBeaconState,
-} from '../bushmesh/runtime/BushMeshDistressBeacon';
+  BushMeshPersistentDistressBeacon,
+  BushMeshPersistentDistressBeaconState,
+} from '../bushmesh/runtime/BushMeshPersistentDistressBeacon';
 import {
   acknowledgeAllBushMeshDistressAlerts,
   acknowledgeBushMeshDistressAlert,
 } from '../bushmesh/runtime/BushMeshLiveStateHub';
+import {getBushMeshPersistentStore} from '../bushmesh/runtime/BushMeshPersistentStore';
 import {getActiveBushMeshRuntime} from '../bushmesh/runtime/BushMeshRuntimeHub';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useBushMeshLiveState} from '../state/useBushMeshLiveState';
@@ -39,7 +40,7 @@ const distressOptions: DistressOption[] = [
   {type: BushMeshDistressType.Flood, label: 'Flood', detail: 'Flood or water crossing danger'},
 ];
 
-const IDLE_BEACON_STATE: BushMeshDistressBeaconState = {
+const IDLE_BEACON_STATE: BushMeshPersistentDistressBeaconState = {
   active: false,
   messageId: null,
   transmissions: 0,
@@ -78,21 +79,63 @@ export function EmergencyScreen(): React.JSX.Element {
   const {distressAlerts, unacknowledgedDistressCount, hydrated} =
     useBushMeshLiveState();
 
-  const beaconRef = useRef<BushMeshDistressBeacon | null>(null);
+  const beaconRef = useRef<BushMeshPersistentDistressBeacon | null>(null);
   const [selectedType, setSelectedType] = useState<BushMeshDistressType>(
     BushMeshDistressType.General,
   );
   const [beaconState, setBeaconState] =
-    useState<BushMeshDistressBeaconState>(IDLE_BEACON_STATE);
+    useState<BushMeshPersistentDistressBeaconState>(IDLE_BEACON_STATE);
   const [status, setStatus] = useState(
     'Choose an alert type. BushMesh will send an emergency-priority routed beacon with repeated transmissions.',
   );
   const [isStarting, setIsStarting] = useState(false);
 
   useEffect(() => {
+    if (!bushMeshNetworkStatus.active || localBushMeshNodeId === null) {
+      return;
+    }
+
+    const network = getActiveBushMeshRuntime();
+    if (!network) {
+      return;
+    }
+
+    let disposed = false;
+    const beacon = new BushMeshPersistentDistressBeacon(
+      network,
+      () => localBushMeshNodeId,
+      getBushMeshPersistentStore() ?? undefined,
+    );
+    beaconRef.current?.suspend();
+    beaconRef.current = beacon;
+
+    void beacon
+      .initialize()
+      .then(restored => {
+        if (disposed) {
+          return;
+        }
+
+        const next = beacon.state();
+        setBeaconState(next);
+        if (restored && next.active) {
+          setStatus(
+            `Restored emergency beacon ${next.messageId ?? '--'} with ${next.remainingRepeats} repeat(s) remaining.`,
+          );
+        }
+      })
+      .catch(error => {
+        if (!disposed) {
+          setStatus(
+            error instanceof Error
+              ? `Emergency beacon recovery failed: ${error.message}`
+              : 'Emergency beacon recovery failed.',
+          );
+        }
+      });
+
     const timer = setInterval(() => {
-      const beacon = beaconRef.current;
-      if (!beacon) {
+      if (disposed || beaconRef.current !== beacon) {
         return;
       }
 
@@ -100,7 +143,6 @@ export function EmergencyScreen(): React.JSX.Element {
       setBeaconState(next);
 
       if (!next.active && next.transmissions > 0) {
-        beaconRef.current = null;
         setStatus(
           `Emergency beacon sequence complete after ${next.transmissions} transmission(s).`,
         );
@@ -108,11 +150,15 @@ export function EmergencyScreen(): React.JSX.Element {
     }, 1000);
 
     return () => {
+      disposed = true;
       clearInterval(timer);
-      beaconRef.current?.stop();
-      beaconRef.current = null;
+      if (beaconRef.current === beacon) {
+        beacon.suspend();
+        void beacon.flushPersistence();
+        beaconRef.current = null;
+      }
     };
-  }, []);
+  }, [bushMeshNetworkStatus.active, localBushMeshNodeId]);
 
   const channelIndex = activeChannel ? Number(activeChannel.channelIndex) : NaN;
   const ready =
@@ -137,13 +183,17 @@ export function EmergencyScreen(): React.JSX.Element {
 
     try {
       setIsStarting(true);
-      beaconRef.current?.stop();
+      let beacon = beaconRef.current;
 
-      const beacon = new BushMeshDistressBeacon(
-        network,
-        () => localBushMeshNodeId,
-      );
-      beaconRef.current = beacon;
+      if (!beacon) {
+        beacon = new BushMeshPersistentDistressBeacon(
+          network,
+          () => localBushMeshNodeId,
+          getBushMeshPersistentStore() ?? undefined,
+        );
+        beaconRef.current = beacon;
+        await beacon.initialize();
+      }
 
       const messageId = await beacon.start(
         channelIndex,
@@ -156,34 +206,42 @@ export function EmergencyScreen(): React.JSX.Element {
 
       setBeaconState(beacon.state());
       setStatus(
-        `Emergency beacon ${messageId} started on ${activeChannel?.channelName ?? `channel ${channelIndex}`}. Initial alert sent; repeats are scheduled at approximately 15, 45 and 90 seconds with collision jitter.`,
+        `Emergency beacon ${messageId} started on ${activeChannel?.channelName ?? `channel ${channelIndex}`}. Initial alert sent; repeats are scheduled at approximately 15, 45 and 90 seconds with collision jitter and are retained across app restarts.`,
       );
     } catch (error) {
-      beaconRef.current?.stop();
-      beaconRef.current = null;
-      setBeaconState(IDLE_BEACON_STATE);
+      const beacon = beaconRef.current;
+      const next = beacon?.state() ?? IDLE_BEACON_STATE;
+      setBeaconState(next);
       setStatus(
-        error instanceof Error ? error.message : 'Failed to start BushMesh distress beacon.',
+        next.active
+          ? `${error instanceof Error ? error.message : 'Initial emergency transmission failed.'} The emergency schedule remains saved and future repeats can resume.`
+          : error instanceof Error
+            ? error.message
+            : 'Failed to start BushMesh distress beacon.',
       );
     } finally {
       setIsStarting(false);
     }
   };
 
-  const cancelBeacon = () => {
-    const transmissions =
-      beaconRef.current?.state().transmissions ?? beaconState.transmissions;
-    beaconRef.current?.stop();
-    beaconRef.current = null;
-    setBeaconState({
-      active: false,
-      messageId: null,
-      transmissions,
-      remainingRepeats: 0,
-    });
-    setStatus(
-      `Emergency beacon repeats cancelled after ${transmissions} transmission(s). Previously transmitted alerts cannot be recalled.`,
-    );
+  const cancelBeacon = async () => {
+    const beacon = beaconRef.current;
+    const transmissions = beacon?.state().transmissions ?? beaconState.transmissions;
+
+    try {
+      await beacon?.cancel();
+    } finally {
+      beaconRef.current = null;
+      setBeaconState({
+        active: false,
+        messageId: null,
+        transmissions,
+        remainingRepeats: 0,
+      });
+      setStatus(
+        `Emergency beacon repeats cancelled after ${transmissions} transmission(s). Previously transmitted alerts cannot be recalled.`,
+      );
+    }
   };
 
   const markAllSeen = () => {
