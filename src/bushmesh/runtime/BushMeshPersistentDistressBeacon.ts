@@ -186,6 +186,11 @@ export class BushMeshPersistentDistressBeacon {
     await this.clearStoredOnly();
   }
 
+  /** Backwards-compatible explicit cancellation alias. */
+  stop(): void {
+    void this.cancel();
+  }
+
   /** Runtime/app teardown: stop timers but preserve active SOS for restart. */
   suspend(): void {
     this.clearTimers();
