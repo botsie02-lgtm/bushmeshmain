@@ -16,6 +16,7 @@ class BushMeshCarInboxNotifier(
 ) {
   private val notifications = BushMeshCarNotifications(context)
   private val receipts = BushMeshCarNotificationReceiptStore(context)
+  private val channelDirectory = BushMeshCarChannelDirectory(context)
   private var running = false
 
   private val listener = MeshCoreNativeBleRuntime.FrameListener { frame ->
@@ -52,21 +53,20 @@ class BushMeshCarInboxNotifier(
 
     val message = MeshCoreNativeChannelMessageParser.parse(frame) ?: return
 
-    // Permission can be granted later. Do not consume the notification receipt
-    // while notifications are disabled, otherwise a queued replay could never
-    // be surfaced after the user enables Android Auto messages.
+    // Permission can be granted later. Do not record a notification receipt
+    // while notifications are disabled, otherwise a later queued replay could
+    // never be surfaced after the driver enables Android Auto messages.
     if (!notifications.notificationsEnabled()) {
       return
     }
 
-    val firstSighting = try {
-      receipts.claim(frame)
+    val alreadyNotified = try {
+      receipts.hasSeen(frame)
     } catch (_: Exception) {
-      // Persistence failure must fail closed for duplicate suppression: do not
-      // create a potentially repeating driver notification storm.
+      // Receipt persistence failure fails closed to avoid a repeated-alert storm.
       return
     }
-    if (!firstSighting) {
+    if (alreadyNotified) {
       return
     }
 
@@ -81,11 +81,16 @@ class BushMeshCarInboxNotifier(
     try {
       notifications.postIncoming(
         channelIndex = message.channelIndex,
-        channelName = "Channel ${message.channelIndex}",
+        channelName = channelDirectory.nameFor(message.channelIndex),
         senderLabel = null,
         text = message.text,
         timestampMs = timestampMs,
       )
+
+      // Only mark the frame after Android accepted the notification call. If
+      // posting fails because permission/state changes, a later replay remains
+      // eligible instead of being silently lost.
+      receipts.remember(frame)
     } catch (_: Exception) {
       // Notification delivery is supplemental. Never destabilize the GATT
       // runtime or protocol consumers if Android rejects the notification.
