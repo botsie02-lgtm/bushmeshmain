@@ -31,18 +31,50 @@ export type BushMeshRestoredFileTransfer = {
   transfer: PreparedBushMeshFileTransfer;
 };
 
+export type BushMeshFileCheckpointLimits = {
+  maxFileBytes?: number;
+  maxTotalBytes?: number;
+  maxTransfers?: number;
+  maxAgeMs?: number;
+};
+
 const SNAPSHOT_VERSION = 1;
 const DEFAULT_STORE_KEY = 'bushmesh.fileTransfers.v1';
+const DEFAULT_MAX_FILE_BYTES = 64 * 1024;
+const DEFAULT_MAX_TOTAL_BYTES = 256 * 1024;
+const DEFAULT_MAX_TRANSFERS = 8;
+const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class BushMeshFileCheckpointRuntime {
   private readonly checkpoints = new Map<number, BushMeshFileTransferCheckpoint>();
+  private readonly maxFileBytes: number;
+  private readonly maxTotalBytes: number;
+  private readonly maxTransfers: number;
+  private readonly maxAgeMs: number;
 
   constructor(
     private readonly store?: BushMeshFileCheckpointStore,
     private readonly storeKey = DEFAULT_STORE_KEY,
-  ) {}
+    limits?: BushMeshFileCheckpointLimits,
+  ) {
+    this.maxFileBytes = limits?.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+    this.maxTotalBytes = limits?.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES;
+    this.maxTransfers = limits?.maxTransfers ?? DEFAULT_MAX_TRANSFERS;
+    this.maxAgeMs = limits?.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
 
-  async initialize(): Promise<number> {
+    for (const [label, value] of [
+      ['maxFileBytes', this.maxFileBytes],
+      ['maxTotalBytes', this.maxTotalBytes],
+      ['maxTransfers', this.maxTransfers],
+      ['maxAgeMs', this.maxAgeMs],
+    ] as const) {
+      if (!Number.isFinite(value) || value < 1) {
+        throw new Error(`BushMesh file checkpoint ${label} must be positive.`);
+      }
+    }
+  }
+
+  async initialize(now = Date.now()): Promise<number> {
     if (!this.store) {
       return 0;
     }
@@ -77,8 +109,27 @@ export class BushMeshFileCheckpointRuntime {
 
     this.checkpoints.clear();
     for (const checkpoint of snapshot.checkpoints) {
-      this.validate(checkpoint);
+      try {
+        this.validate(checkpoint);
+      } catch {
+        continue;
+      }
+
+      if (now - checkpoint.updatedAt > this.maxAgeMs) {
+        continue;
+      }
+
+      const dataBytes = this.dataByteLength(checkpoint);
+      if (dataBytes > this.maxFileBytes) {
+        continue;
+      }
+
       this.checkpoints.set(checkpoint.transferId, this.clone(checkpoint));
+    }
+
+    const trimmed = this.trimToLimits(now);
+    if (trimmed.length > 0 || this.checkpoints.size !== snapshot.checkpoints.length) {
+      await this.persist();
     }
 
     return this.checkpoints.size;
@@ -94,6 +145,12 @@ export class BushMeshFileCheckpointRuntime {
       now?: number;
     },
   ): Promise<BushMeshRestoredFileTransfer> {
+    if (data.length > this.maxFileBytes) {
+      throw new Error(
+        `BushMesh file checkpoint payload exceeds ${this.maxFileBytes} bytes.`,
+      );
+    }
+
     const transfer = prepareFileTransfer(transferId, data, options);
     const now = options?.now ?? Date.now();
     const checkpoint: BushMeshFileTransferCheckpoint = {
@@ -109,6 +166,14 @@ export class BushMeshFileCheckpointRuntime {
     };
 
     this.checkpoints.set(transferId, checkpoint);
+    this.trimToLimits(now);
+
+    if (!this.checkpoints.has(transferId)) {
+      throw new Error(
+        'BushMesh file checkpoint could not be retained within the configured storage limits.',
+      );
+    }
+
     await this.persist();
     return {checkpoint: this.clone(checkpoint), transfer};
   }
@@ -120,6 +185,10 @@ export class BushMeshFileCheckpointRuntime {
     }
 
     const data = Array.from(Buffer.from(checkpoint.dataBase64, 'base64'));
+    if (data.length > this.maxFileBytes) {
+      return null;
+    }
+
     const transfer = prepareFileTransfer(transferId, data, {
       chunkSize: checkpoint.chunkSize,
       contentType: checkpoint.contentType,
@@ -152,7 +221,7 @@ export class BushMeshFileCheckpointRuntime {
     resumeFrame: number[],
     now = Date.now(),
   ): Promise<void> {
-    const request = decodeFileResumeRequest(resumeFrame);
+    const request = decodeFileResumeRequest(frame);
     const checkpoint = this.require(request.transferId);
     checkpoint.nextMissingChunkIndex = request.nextMissingChunkIndex;
     checkpoint.updatedAt = now;
@@ -214,6 +283,14 @@ export class BushMeshFileCheckpointRuntime {
     };
   }
 
+  async prune(now = Date.now()): Promise<number[]> {
+    const removed = this.trimToLimits(now);
+    if (removed.length > 0) {
+      await this.persist();
+    }
+    return removed;
+  }
+
   async remove(transferId: number): Promise<boolean> {
     const removed = this.checkpoints.delete(transferId);
     if (removed) {
@@ -236,6 +313,10 @@ export class BushMeshFileCheckpointRuntime {
     return checkpoint;
   }
 
+  private dataByteLength(checkpoint: BushMeshFileTransferCheckpoint): number {
+    return Buffer.from(checkpoint.dataBase64, 'base64').length;
+  }
+
   private validate(checkpoint: BushMeshFileTransferCheckpoint): void {
     if (!Number.isInteger(checkpoint.transferId) || checkpoint.transferId < 0) {
       throw new Error('Stored file transfer ID is invalid.');
@@ -246,8 +327,25 @@ export class BushMeshFileCheckpointRuntime {
     if (!Number.isInteger(checkpoint.chunkSize) || checkpoint.chunkSize < 1) {
       throw new Error('Stored file chunk size is invalid.');
     }
+    if (
+      typeof checkpoint.contentType !== 'number' ||
+      !Number.isFinite(checkpoint.contentType)
+    ) {
+      throw new Error('Stored file content type is invalid.');
+    }
+    if (
+      checkpoint.fileName !== undefined &&
+      typeof checkpoint.fileName !== 'string'
+    ) {
+      throw new Error('Stored file name is invalid.');
+    }
     if (!Array.isArray(checkpoint.acknowledgedChunkIndexes)) {
       throw new Error('Stored acknowledged chunk indexes are invalid.');
+    }
+    for (const index of checkpoint.acknowledgedChunkIndexes) {
+      if (!Number.isInteger(index) || index < 0) {
+        throw new Error('Stored acknowledged chunk index is invalid.');
+      }
     }
     if (
       !Number.isInteger(checkpoint.nextMissingChunkIndex) ||
@@ -255,6 +353,72 @@ export class BushMeshFileCheckpointRuntime {
     ) {
       throw new Error('Stored next missing chunk index is invalid.');
     }
+    if (
+      !Number.isFinite(checkpoint.createdAt) ||
+      checkpoint.createdAt < 0 ||
+      !Number.isFinite(checkpoint.updatedAt) ||
+      checkpoint.updatedAt < checkpoint.createdAt
+    ) {
+      throw new Error('Stored file checkpoint timestamps are invalid.');
+    }
+
+    const data = Array.from(Buffer.from(checkpoint.dataBase64, 'base64'));
+    if (data.length > this.maxFileBytes) {
+      throw new Error('Stored file checkpoint exceeds maximum file size.');
+    }
+
+    const transfer = prepareFileTransfer(checkpoint.transferId, data, {
+      chunkSize: checkpoint.chunkSize,
+      contentType: checkpoint.contentType,
+      fileName: checkpoint.fileName,
+    });
+    const chunkCount = transfer.chunkFrames.length;
+
+    for (const index of checkpoint.acknowledgedChunkIndexes) {
+      if (index >= chunkCount) {
+        throw new Error('Stored acknowledged chunk index exceeds transfer size.');
+      }
+    }
+    if (checkpoint.nextMissingChunkIndex > chunkCount) {
+      throw new Error('Stored next missing chunk index exceeds transfer size.');
+    }
+  }
+
+  private trimToLimits(now = Date.now()): number[] {
+    const removed: number[] = [];
+
+    for (const [transferId, checkpoint] of this.checkpoints.entries()) {
+      if (
+        now - checkpoint.updatedAt > this.maxAgeMs ||
+        this.dataByteLength(checkpoint) > this.maxFileBytes
+      ) {
+        this.checkpoints.delete(transferId);
+        removed.push(transferId);
+      }
+    }
+
+    const ordered = Array.from(this.checkpoints.values()).sort(
+      (a, b) => b.updatedAt - a.updatedAt,
+    );
+    let totalBytes = 0;
+
+    for (let index = 0; index < ordered.length; index += 1) {
+      const checkpoint = ordered[index];
+      const bytes = this.dataByteLength(checkpoint);
+      const retain =
+        index < this.maxTransfers && totalBytes + bytes <= this.maxTotalBytes;
+
+      if (retain) {
+        totalBytes += bytes;
+        continue;
+      }
+
+      if (this.checkpoints.delete(checkpoint.transferId)) {
+        removed.push(checkpoint.transferId);
+      }
+    }
+
+    return Array.from(new Set(removed));
   }
 
   private clone(
