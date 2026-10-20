@@ -5,16 +5,19 @@ object BushMeshRadioServiceState {
   @Volatile var radioRequested: Boolean = false
   @Volatile var locationRequested: Boolean = false
   @Volatile var deviceLabel: String? = null
+  @Volatile var deviceAddress: String? = null
   @Volatile var startedAtMs: Long = 0L
 
-  fun requestRadio(label: String?) {
+  fun requestRadio(label: String?, address: String? = null) {
     radioRequested = true
     deviceLabel = label?.takeIf { it.isNotBlank() }
+    deviceAddress = address?.takeIf { it.isNotBlank() }
   }
 
   fun releaseRadio() {
     radioRequested = false
     deviceLabel = null
+    deviceAddress = null
   }
 
   fun requestLocation() {
@@ -39,6 +42,7 @@ object BushMeshRadioServiceState {
     radioRequested = false
     locationRequested = false
     deviceLabel = null
+    deviceAddress = null
     startedAtMs = 0L
   }
 }
