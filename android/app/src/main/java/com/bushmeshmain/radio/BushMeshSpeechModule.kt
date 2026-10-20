@@ -35,9 +35,16 @@ class BushMeshSpeechModule(
     .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
     .build()
-  private val focusChangeListener = AudioManager.OnAudioFocusChangeListener {
-    // Bushmesh requests only transient may-duck focus. The system owns actual
-    // media-volume behavior; visual safety alerts remain primary if focus fails.
+  private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { change ->
+    if (
+      change == AudioManager.AUDIOFOCUS_LOSS ||
+      change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+    ) {
+      mainHandler.post {
+        engine?.stop()
+        abandonSpeechFocus()
+      }
+    }
   }
 
   private var engine: TextToSpeech? = null
