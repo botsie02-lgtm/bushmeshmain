@@ -49,3 +49,4 @@ export * from './BushMeshSyncPlanner';
 export * from './BushMeshTraceBuffer';
 export * from './BushMeshTransportQueue';
 export * from './BushMeshVoicePipeline';
+export * from './BushMeshVoicePreferences';
