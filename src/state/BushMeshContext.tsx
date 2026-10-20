@@ -25,14 +25,27 @@ export type BushMeshDeviceStatus = {
   totalStorageKb: number | null;
   storagePercent: number | null;
 };
+export type BushMeshMessageDeliveryStatus =
+  | 'pending'
+  | 'accepted'
+  | 'confirmed'
+  | 'failed';
 export type BushMeshChannelMessage = {
   id: string;
   channelIndex: string;
   channelName: string;
   text: string;
   direction: 'sent' | 'received';
-  status: 'sent' | 'failed' | 'pending';
+  status: BushMeshMessageDeliveryStatus;
   createdAt: string;
+};
+type BushMeshChannelMessageInput = Omit<
+  BushMeshChannelMessage,
+  'id' | 'createdAt' | 'status'
+> & {
+  // Compatibility with callers from the pre-delivery-state UI. Shared state
+  // immediately migrates this legacy label to "accepted".
+  status: BushMeshMessageDeliveryStatus | 'sent';
 };
 export type BushMeshContact = {
   publicKey: string;
@@ -92,8 +105,10 @@ type BushMeshContextValue = {
   setSyncContactsHandler: (handler: SyncContactsHandler | null) => void;
   sendChannelMessage: (channelIndex: number, message: string) => Promise<void>;
   syncContacts: () => Promise<BushMeshContact[]>;
-  addLocalChannelMessage: (
-    message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>,
+  addLocalChannelMessage: (message: BushMeshChannelMessageInput) => void;
+  updateChannelMessageStatus: (
+    messageId: string,
+    status: BushMeshMessageDeliveryStatus,
   ) => void;
   clearChannels: () => void;
   clearChannelMessages: () => void;
@@ -263,7 +278,8 @@ export function BushMeshProvider({
 
   useEffect(() => {
     if (
-      messagePersistenceStatus !== 'ready' ||
+      messagePersistenceStatus === 'restoring' ||
+      messagePersistenceStatus === 'unsupported' ||
       !androidMessagePersistence.isSupported() ||
       !messagePersistenceReadyRef.current
     ) {
@@ -279,8 +295,13 @@ export function BushMeshProvider({
         }
         await androidMessagePersistence.save(snapshot);
       })
-      .then(() => setMessagePersistenceError(null))
+      .then(() => {
+        setMessagePersistenceStatus('ready');
+        setMessagePersistenceError(null);
+      })
       .catch(error => {
+        // Keep later history changes eligible for another write attempt instead
+        // of permanently disabling persistence after one transient failure.
         setMessagePersistenceStatus('error');
         setMessagePersistenceError(
           error instanceof Error
@@ -372,12 +393,15 @@ export function BushMeshProvider({
   }, []);
 
   const addLocalChannelMessage = useCallback(
-    (message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>) => {
+    (message: BushMeshChannelMessageInput) => {
+      const normalizedStatus: BushMeshMessageDeliveryStatus =
+        message.status === 'sent' ? 'accepted' : message.status;
       setChannelMessages(currentMessages =>
         createMessageSnapshot(
           [
             {
               ...message,
+              status: normalizedStatus,
               id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
               createdAt: new Date().toISOString(),
             },
@@ -385,6 +409,17 @@ export function BushMeshProvider({
           ],
           Date.now(),
         ).messages,
+      );
+    },
+    [],
+  );
+
+  const updateChannelMessageStatus = useCallback(
+    (messageId: string, status: BushMeshMessageDeliveryStatus) => {
+      setChannelMessages(currentMessages =>
+        currentMessages.map(message =>
+          message.id === messageId ? {...message, status} : message,
+        ),
       );
     },
     [],
@@ -438,6 +473,7 @@ export function BushMeshProvider({
       sendChannelMessage,
       syncContacts,
       addLocalChannelMessage,
+      updateChannelMessageStatus,
       clearChannels,
       clearChannelMessages,
       clearContacts,
@@ -461,6 +497,7 @@ export function BushMeshProvider({
       sendChannelMessage,
       syncContacts,
       addLocalChannelMessage,
+      updateChannelMessageStatus,
       clearChannelMessages,
       clearContacts,
     ],
