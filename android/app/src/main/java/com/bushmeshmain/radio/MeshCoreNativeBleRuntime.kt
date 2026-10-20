@@ -110,7 +110,7 @@ class MeshCoreNativeBleRuntime private constructor(
         lastError = null
 
         try {
-          if (!gatt.requestMtu(REQUESTED_MTU)) {
+          if (!gatt.requestMtu(REQUESTED_BLE_MTU)) {
             discoverServices(gatt)
           }
         } catch (error: SecurityException) {
@@ -269,6 +269,43 @@ class MeshCoreNativeBleRuntime private constructor(
       return true
     }
 
+    return connectNow()
+  }
+
+  /**
+   * Starts a new foreground protocol epoch on a fresh GATT connection.
+   *
+   * Background workers intentionally leave received frames in the shared raw
+   * buffer for JS diagnostics. Reusing their GATT could allow a delayed
+   * SELF_INFO/PACKET_OK from the previous command stream to satisfy a new
+   * foreground command. A fresh GATT closes that attribution window before the
+   * bridge reports takeover accepted.
+   */
+  @Synchronized
+  fun beginForegroundProtocolSession(
+    deviceAddress: String,
+    deviceLabel: String?,
+  ): Boolean {
+    val normalizedAddress = deviceAddress.trim().uppercase()
+    if (!BluetoothAdapter.checkBluetoothAddress(normalizedAddress)) {
+      lastError = "Invalid Bluetooth device address."
+      state = "error"
+      return false
+    }
+
+    desiredAddress = normalizedAddress
+    desiredLabel = deviceLabel?.trim()?.takeIf { it.isNotEmpty() }
+    reconnectAttempt = 0
+    cancelReconnect()
+    rxCharacteristic = null
+    txCharacteristic = null
+    writeQueue.clear()
+    writeInFlight = false
+    connectedAtMs = 0L
+    frameBuffer.clear()
+    closeGattWithoutClearingTarget()
+    state = "connecting"
+    lastError = null
     return connectNow()
   }
 
