@@ -202,7 +202,10 @@ export class BushMeshStoreForwardRuntime {
     }
 
     await this.persist();
-    return {sentIds, failedIds, expiredIds, deferredIds};
+
+    return deferredIds.length > 0
+      ? {sentIds, failedIds, expiredIds, deferredIds}
+      : {sentIds, failedIds, expiredIds};
   }
 
   async acknowledge(id: string): Promise<boolean> {
