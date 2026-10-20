@@ -8,7 +8,10 @@ import com.facebook.react.uimanager.ViewManager
 class BushMeshStoragePackage : ReactPackage {
   override fun createNativeModules(
     reactContext: ReactApplicationContext,
-  ): List<NativeModule> = listOf(BushMeshStorageModule(reactContext))
+  ): List<NativeModule> = listOf(
+    BushMeshStorageModule(reactContext),
+    BushMeshVoiceModule(reactContext),
+  )
 
   override fun createViewManagers(
     reactContext: ReactApplicationContext,
