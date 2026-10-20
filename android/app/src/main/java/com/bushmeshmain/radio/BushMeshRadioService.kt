@@ -46,6 +46,10 @@ class BushMeshRadioService : Service() {
     BushMeshNativeInboxCapture(applicationContext, nativeBle)
   }
 
+  private val carInboxNotifier: BushMeshCarInboxNotifier by lazy {
+    BushMeshCarInboxNotifier(applicationContext, nativeBle)
+  }
+
   override fun onCreate() {
     super.onCreate()
     ensureNotificationChannel()
@@ -60,6 +64,7 @@ class BushMeshRadioService : Service() {
       // Any explicit command means a foreground/React process is interacting
       // with the service again. Yield background protocol + inbox writers before
       // processing it so they cannot race the returning foreground session.
+      // The Auto notifier is read-only and may remain attached to native BLE.
       inboxCapture.stop()
       backgroundWorker.stop()
 
@@ -72,6 +77,7 @@ class BushMeshRadioService : Service() {
             BushMeshRadioServiceState.requestRadio(requestedLabel, requestedAddress)
             persistNativeTarget(requestedAddress, requestedLabel)
             nativeBle.connect(requestedAddress, requestedLabel)
+            carInboxNotifier.start()
           } else {
             // Runtime keepalive calls from the React provider must not silently
             // steal ownership from a native BLE session. If a native target was
@@ -86,13 +92,16 @@ class BushMeshRadioService : Service() {
             if (existingAddress != null) {
               BushMeshRadioServiceState.requestRadio(existingLabel, existingAddress)
               nativeBle.connect(existingAddress, existingLabel)
+              carInboxNotifier.start()
             } else {
               BushMeshRadioServiceState.requestRadio(requestedLabel, null)
+              carInboxNotifier.stop()
             }
           }
         }
 
         ACTION_STOP -> {
+          carInboxNotifier.stop()
           BushMeshRadioServiceState.releaseRadio()
           clearPersistedNativeTarget()
           nativeBle.disconnect()
@@ -104,6 +113,7 @@ class BushMeshRadioService : Service() {
     }
 
     if (!BushMeshRadioServiceState.shouldRun()) {
+      carInboxNotifier.stop()
       // Release commands are dispatched through startForegroundService on modern
       // Android. Promote immediately using only the type being released, then
       // stop. This satisfies the foreground-service contract without forcing a
@@ -130,6 +140,7 @@ class BushMeshRadioService : Service() {
   }
 
   override fun onDestroy() {
+    carInboxNotifier.stop()
     inboxCapture.stop()
     backgroundWorker.stop()
     nativeBle.disconnect(clearTarget = false)
@@ -154,6 +165,7 @@ class BushMeshRadioService : Service() {
     val target = readPersistedNativeTarget() ?: return
     BushMeshRadioServiceState.requestRadio(target.second, target.first)
     nativeBle.connect(target.first, target.second)
+    carInboxNotifier.start()
 
     // Sticky restart is the only path that grants native background ownership.
     // The epoch is immediately invalidated if a foreground bridge call returns.
