@@ -1,4 +1,7 @@
 import {
+  BushMeshControlCommand,
+  BushMeshConvoyAction,
+  BushMeshConvoyActionControl,
   BushMeshConvoyRole,
   BushMeshConvoyStatus,
   BushMeshForwardingInput,
@@ -26,11 +29,18 @@ export type BushMeshConvoyLocalTelemetry = {
   hazard?: boolean;
 };
 
+export type BushMeshConvoyCommandEntry = {
+  command: BushMeshConvoyActionControl;
+  receivedAt: number;
+  local: boolean;
+};
+
 export type BushMeshConvoyHubState = {
   revision: number;
   config: BushMeshConvoyLocalConfig;
   telemetry: BushMeshConvoyLocalTelemetry;
   snapshot: BushMeshConvoySnapshot | null;
+  recentCommands: BushMeshConvoyCommandEntry[];
   lastTransmitAt: number | null;
   lastReceiveAt: number | null;
 };
@@ -39,8 +49,10 @@ type Listener = () => void;
 
 const tracker = new BushMeshConvoyTracker();
 const listeners = new Set<Listener>();
+const seenCommandKeys = new Map<string, number>();
 
 let sequence = 1;
+let commandSequence = 1;
 let revision = 0;
 let config: BushMeshConvoyLocalConfig = {
   enabled: false,
@@ -50,6 +62,7 @@ let config: BushMeshConvoyLocalConfig = {
   heartbeatIntervalMs: 10_000,
 };
 let telemetry: BushMeshConvoyLocalTelemetry = {};
+let recentCommands: BushMeshConvoyCommandEntry[] = [];
 let lastTransmitAt: number | null = null;
 let lastReceiveAt: number | null = null;
 
@@ -58,6 +71,41 @@ function notify(): void {
   for (const listener of listeners) {
     listener();
   }
+}
+
+function commandKey(command: BushMeshConvoyActionControl): string {
+  return `${command.convoyId}:${command.originNodeId}:${command.sequence}`;
+}
+
+function rememberCommand(
+  command: BushMeshConvoyActionControl,
+  receivedAt: number,
+  local: boolean,
+): boolean {
+  const key = commandKey(command);
+  if (seenCommandKeys.has(key)) {
+    return false;
+  }
+
+  seenCommandKeys.set(key, receivedAt);
+  recentCommands = [
+    {
+      command: {...command},
+      receivedAt,
+      local,
+    },
+    ...recentCommands,
+  ].slice(0, 30);
+
+  const cutoff = receivedAt - 60 * 60 * 1000;
+  for (const [seenKey, seenAt] of seenCommandKeys.entries()) {
+    if (seenAt < cutoff) {
+      seenCommandKeys.delete(seenKey);
+    }
+  }
+
+  notify();
+  return true;
 }
 
 export function configureBushMeshConvoy(
@@ -78,7 +126,14 @@ export function configureBushMeshConvoy(
     throw new Error('Convoy heartbeat interval must be at least two seconds.');
   }
 
+  const changedConvoy = merged.convoyId !== config.convoyId;
   config = merged;
+  if (changedConvoy) {
+    tracker.clear();
+    recentCommands = [];
+    seenCommandKeys.clear();
+    lastReceiveAt = null;
+  }
   notify();
   return {...config};
 }
@@ -131,6 +186,44 @@ export function nextBushMeshConvoyStatus(
 
   tracker.accept(status, now);
   return status;
+}
+
+export function nextBushMeshConvoyCommand(
+  originNodeId: number,
+  action: BushMeshConvoyAction | number,
+  options?: {targetOrderIndex?: number; etaMinutes?: number; now?: number},
+): BushMeshConvoyActionControl {
+  const command: BushMeshConvoyActionControl = {
+    command: BushMeshControlCommand.ConvoyAction,
+    convoyId: config.convoyId,
+    originNodeId,
+    sequence: commandSequence,
+    action,
+    targetOrderIndex: options?.targetOrderIndex,
+    etaMinutes: options?.etaMinutes,
+  };
+
+  commandSequence = (commandSequence + 1) >>> 0;
+  if (commandSequence === 0) {
+    commandSequence = 1;
+  }
+
+  rememberCommand(command, options?.now ?? Date.now(), true);
+  return command;
+}
+
+export function acceptBushMeshConvoyCommandRemote(
+  command: BushMeshConvoyActionControl,
+  receivedAt = Date.now(),
+): boolean {
+  if (
+    command.command !== BushMeshControlCommand.ConvoyAction ||
+    command.convoyId !== config.convoyId
+  ) {
+    return false;
+  }
+
+  return rememberCommand(command, receivedAt, false);
 }
 
 export function markBushMeshConvoyTransmitted(now = Date.now()): void {
@@ -226,6 +319,10 @@ export function getBushMeshConvoyState(now = Date.now()): BushMeshConvoyHubState
     config: {...config},
     telemetry: bushMeshConvoyTelemetry(),
     snapshot: tracker.snapshot(config.convoyId, now),
+    recentCommands: recentCommands.map(entry => ({
+      ...entry,
+      command: {...entry.command},
+    })),
     lastTransmitAt,
     lastReceiveAt,
   };
@@ -238,6 +335,8 @@ export function subscribeBushMeshConvoy(listener: Listener): () => void {
 
 export function clearBushMeshConvoyRemoteState(): void {
   tracker.clear();
+  recentCommands = [];
+  seenCommandKeys.clear();
   lastReceiveAt = null;
   notify();
 }
