@@ -20,10 +20,18 @@ class BushMeshRadioService : Service() {
     const val ACTION_REQUEST_LOCATION = "com.bushmeshmain.radio.REQUEST_LOCATION"
     const val ACTION_RELEASE_LOCATION = "com.bushmeshmain.radio.RELEASE_LOCATION"
     const val EXTRA_DEVICE_LABEL = "deviceLabel"
+    const val EXTRA_DEVICE_ADDRESS = "deviceAddress"
 
     private const val CHANNEL_ID = "bushmesh_radio_runtime"
     private const val CHANNEL_NAME = "Bushmesh off-grid runtime"
     private const val NOTIFICATION_ID = 4101
+    private const val PREFS_NAME = "bushmesh_radio_service"
+    private const val PREF_NATIVE_ADDRESS = "native_device_address"
+    private const val PREF_NATIVE_LABEL = "native_device_label"
+  }
+
+  private val nativeBle: MeshCoreNativeBleRuntime by lazy {
+    MeshCoreNativeBleRuntime.get(applicationContext)
   }
 
   override fun onCreate() {
@@ -34,16 +42,33 @@ class BushMeshRadioService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val action = intent?.action
 
-    when (action) {
-      ACTION_START -> {
-        BushMeshRadioServiceState.requestRadio(
-          intent.getStringExtra(EXTRA_DEVICE_LABEL),
-        )
-      }
+    if (intent == null) {
+      restoreNativeTargetAfterProcessRestart()
+    } else {
+      when (action) {
+        ACTION_START -> {
+          val label = intent.getStringExtra(EXTRA_DEVICE_LABEL)
+          val address = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
+          BushMeshRadioServiceState.requestRadio(label, address)
 
-      ACTION_STOP -> BushMeshRadioServiceState.releaseRadio()
-      ACTION_REQUEST_LOCATION -> BushMeshRadioServiceState.requestLocation()
-      ACTION_RELEASE_LOCATION -> BushMeshRadioServiceState.releaseLocation()
+          if (!address.isNullOrBlank()) {
+            persistNativeTarget(address, label)
+            nativeBle.connect(address, label)
+          } else {
+            clearPersistedNativeTarget()
+            nativeBle.disconnect()
+          }
+        }
+
+        ACTION_STOP -> {
+          BushMeshRadioServiceState.releaseRadio()
+          clearPersistedNativeTarget()
+          nativeBle.disconnect()
+        }
+
+        ACTION_REQUEST_LOCATION -> BushMeshRadioServiceState.requestLocation()
+        ACTION_RELEASE_LOCATION -> BushMeshRadioServiceState.releaseLocation()
+      }
     }
 
     if (!BushMeshRadioServiceState.shouldRun()) {
@@ -62,18 +87,55 @@ class BushMeshRadioService : Service() {
     BushMeshRadioServiceState.markRunning()
     startForegroundForCurrentState(action)
 
-    // BLE is still owned by the active React Native MeshCore session. Until BLE
-    // ownership itself moves into this service, do not resurrect an orphaned
-    // foreground runtime after process death.
-    return START_NOT_STICKY
+    // A native BLE target is persisted by device address, so Android can
+    // recreate the service and reconnect even when the React Native process was
+    // killed. Legacy RN-owned sessions remain non-sticky until migration ends.
+    return if (BushMeshRadioServiceState.deviceAddress != null) {
+      START_STICKY
+    } else {
+      START_NOT_STICKY
+    }
   }
 
   override fun onDestroy() {
+    nativeBle.disconnect(clearTarget = false)
     BushMeshRadioServiceState.markStopped()
     super.onDestroy()
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
+
+  private fun restoreNativeTargetAfterProcessRestart() {
+    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val address = prefs.getString(PREF_NATIVE_ADDRESS, null)?.takeIf { it.isNotBlank() }
+      ?: return
+    val label = prefs.getString(PREF_NATIVE_LABEL, null)?.takeIf { it.isNotBlank() }
+
+    BushMeshRadioServiceState.requestRadio(label, address)
+    nativeBle.connect(address, label)
+  }
+
+  private fun persistNativeTarget(address: String, label: String?) {
+    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      .edit()
+      .putString(PREF_NATIVE_ADDRESS, address)
+      .apply {
+        if (label.isNullOrBlank()) {
+          remove(PREF_NATIVE_LABEL)
+        } else {
+          putString(PREF_NATIVE_LABEL, label)
+        }
+      }
+      .apply()
+  }
+
+  private fun clearPersistedNativeTarget() {
+    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      .edit()
+      .remove(PREF_NATIVE_ADDRESS)
+      .remove(PREF_NATIVE_LABEL)
+      .apply()
+  }
 
   private fun startForegroundForCurrentState(action: String?) {
     val notification = buildNotification()
@@ -132,8 +194,14 @@ class BushMeshRadioService : Service() {
     val radioRequested = BushMeshRadioServiceState.radioRequested
     val locationRequested = BushMeshRadioServiceState.locationRequested
     val deviceLabel = BushMeshRadioServiceState.deviceLabel
+    val deviceAddress = BushMeshRadioServiceState.deviceAddress
+    val nativeState = if (deviceAddress != null) nativeBle.status().state else null
 
     val detail = when {
+      radioRequested && deviceAddress != null && !deviceLabel.isNullOrBlank() ->
+        "Native radio $deviceLabel · ${nativeState ?: "starting"}"
+      radioRequested && deviceAddress != null ->
+        "Native MeshCore radio · ${nativeState ?: "starting"}"
       radioRequested && locationRequested && !deviceLabel.isNullOrBlank() ->
         "Radio $deviceLabel connected · GPS trail active"
       radioRequested && locationRequested ->
