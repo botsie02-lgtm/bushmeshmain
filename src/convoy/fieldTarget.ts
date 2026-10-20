@@ -28,6 +28,8 @@ export type FieldTargetGuidance = {
   compassDirection: string;
   expiresAtMs: number | null;
   expired: boolean;
+  arrivalRadiusMeters: number;
+  arrived: boolean;
 };
 
 export function fieldTargetLabel(type: OperationalMarkerType): string {
@@ -43,6 +45,21 @@ export function fieldTargetLabel(type: OperationalMarkerType): string {
   }
 }
 
+export function fieldTargetArrivalRadiusMeters(
+  type: OperationalMarkerType,
+): number {
+  switch (type) {
+    case 'help':
+      return 75;
+    case 'regroup':
+      return 50;
+    case 'hazard':
+      return 150;
+    case 'stop':
+      return 50;
+  }
+}
+
 export function getFieldTargetGuidance(
   localPosition: Coordinate | null,
   target: FieldNavigationTarget | null | undefined,
@@ -53,7 +70,9 @@ export function getFieldTargetGuidance(
   }
 
   const bearing = bearingDegrees(localPosition, target);
+  const distance = distanceMeters(localPosition, target);
   const expired = target.expiresAtMs !== null && target.expiresAtMs <= nowMs;
+  const arrivalRadiusMeters = fieldTargetArrivalRadiusMeters(target.type);
 
   return {
     targetId: target.id,
@@ -61,10 +80,12 @@ export function getFieldTargetGuidance(
     type: target.type,
     latitude: target.latitude,
     longitude: target.longitude,
-    distanceMeters: distanceMeters(localPosition, target),
+    distanceMeters: distance,
     bearingDegrees: bearing,
     compassDirection: compassDirection(bearing),
     expiresAtMs: target.expiresAtMs,
     expired,
+    arrivalRadiusMeters,
+    arrived: !expired && distance <= arrivalRadiusMeters,
   };
 }
