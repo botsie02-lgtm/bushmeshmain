@@ -31,6 +31,7 @@ export * from './semantic';
 export * from './semanticText';
 export * from './smallPayloads';
 export * from './syncProtocol';
+export * from './syncRecords';
 export * from './syncSummary';
 export * from './telemetry';
 export * from './textDictionary';
