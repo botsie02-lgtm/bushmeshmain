@@ -1,5 +1,6 @@
 export * from './BushMeshAdaptivePayloadPolicy';
 export * from './BushMeshAirtimeController';
+export * from './BushMeshAirtimeTransport';
 export * from './BushMeshCommandResponder';
 export * from './BushMeshDeliveryTracker';
 export * from './BushMeshDiagnostics';
