@@ -210,12 +210,18 @@ export function encodeBushMeshConvoyWire(
   messageId: number,
   options?: {ackRequested?: boolean},
 ): number[] {
+  const hazard = status.hazard === true;
+
   return encodeBushMeshWire({
     type: BushMeshPacketType.Convoy,
-    priority: BushMeshPriority.Location,
+    priority: hazard
+      ? BushMeshPriority.Emergency
+      : BushMeshPriority.Location,
     compression: BushMeshCompressionProfile.Raw,
     messageId,
-    ackRequested: options?.ackRequested ?? false,
+    // A hazard status should request confirmation where the current transport
+    // can provide it; routine heartbeats stay acknowledgement-free.
+    ackRequested: options?.ackRequested ?? hazard,
     payload: encodeConvoyStatus(status),
   });
 }
