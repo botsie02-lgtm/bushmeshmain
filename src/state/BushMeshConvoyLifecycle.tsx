@@ -3,6 +3,7 @@ import React, {useEffect, useRef} from 'react';
 import {
   getBushMeshConvoyState,
   nextBushMeshConvoyStatus,
+  recommendedBushMeshConvoyHeartbeatMs,
 } from '../bushmesh/runtime/BushMeshConvoyHub';
 import {getBushMeshConvoyPersistence} from '../bushmesh/runtime/BushMeshConvoyPersistence';
 import {sendActiveBushMeshConvoyStatus} from '../bushmesh/runtime/BushMeshRuntimeHub';
@@ -99,8 +100,10 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
         }
       }
 
-      const interval = Math.max(2000, state.config.heartbeatIntervalMs);
-      timerRef.current = setTimeout(run, interval);
+      timerRef.current = setTimeout(
+        run,
+        Math.max(2000, recommendedBushMeshConvoyHeartbeatMs()),
+      );
     };
 
     void run();
@@ -116,6 +119,8 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
     localBushMeshNodeId,
     convoyState.config.enabled,
     convoyState.config.heartbeatIntervalMs,
+    convoyState.telemetry.hazard,
+    convoyState.telemetry.stopped,
   ]);
 
   return null;
