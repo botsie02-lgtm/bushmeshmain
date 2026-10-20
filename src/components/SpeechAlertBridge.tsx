@@ -3,6 +3,7 @@ import React, {useEffect, useMemo, useRef} from 'react';
 import {BushMeshQuickActionCode} from '../bushmesh/protocol';
 import {nativeSpeech} from '../native/NativeSpeech';
 import {DriveAlert, useDrive} from '../state/DriveContext';
+import {useSpeech} from '../state/SpeechContext';
 
 const SPOKEN_ACTIONS = new Set<BushMeshQuickActionCode>([
   BushMeshQuickActionCode.Stop,
@@ -33,6 +34,7 @@ function speechForAlert(alert: DriveAlert): string {
  */
 export function SpeechAlertBridge(): null {
   const {alerts} = useDrive();
+  const {criticalAlertsEnabled, runtimeState} = useSpeech();
   const lastSpokenIdRef = useRef<string | null>(null);
 
   const newestSpeakable = useMemo(
@@ -47,20 +49,21 @@ export function SpeechAlertBridge(): null {
   );
 
   useEffect(() => {
-    if (!newestSpeakable || newestSpeakable.id === lastSpokenIdRef.current) {
+    if (
+      !criticalAlertsEnabled ||
+      runtimeState !== 'ready' ||
+      !newestSpeakable ||
+      newestSpeakable.id === lastSpokenIdRef.current
+    ) {
       return;
     }
 
     lastSpokenIdRef.current = newestSpeakable.id;
-    if (!nativeSpeech.isSupported()) {
-      return;
-    }
-
     nativeSpeech.speak(speechForAlert(newestSpeakable), true).catch(() => {
       // Spoken alerts supplement the visible alert card. A missing or failed
       // Android voice must never suppress the primary visual safety path.
     });
-  }, [newestSpeakable]);
+  }, [criticalAlertsEnabled, newestSpeakable, runtimeState]);
 
   return null;
 }
