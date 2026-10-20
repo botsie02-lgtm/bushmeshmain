@@ -25,6 +25,7 @@ class BushMeshSpeechModule(
     private const val READY_MAX_ATTEMPTS = 30
     private const val PREFS_NAME = "bushmesh_speech"
     private const val PREF_CRITICAL_ALERTS_ENABLED = "critical_alerts_enabled"
+    private const val PREF_RADIO_MESSAGES_ENABLED = "radio_messages_enabled"
   }
 
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -36,7 +37,7 @@ class BushMeshSpeechModule(
     .build()
   private val focusChangeListener = AudioManager.OnAudioFocusChangeListener {
     // Bushmesh requests only transient may-duck focus. The system owns actual
-    // media-volume behavior; spoken safety text remains visible if focus is denied.
+    // media-volume behavior; visual safety alerts remain primary if focus fails.
   }
 
   private var engine: TextToSpeech? = null
@@ -155,6 +156,7 @@ class BushMeshSpeechModule(
         putBoolean("failed", initFailed)
         putString("languageTag", selectedLanguage?.toLanguageTag())
         putBoolean("criticalAlertsEnabled", criticalAlertsEnabled())
+        putBoolean("radioMessagesEnabled", radioMessagesEnabled())
       }
       promise.resolve(status)
     }
@@ -163,8 +165,7 @@ class BushMeshSpeechModule(
   @ReactMethod
   fun setCriticalAlertsEnabled(enabled: Boolean, promise: Promise) {
     try {
-      reactApplicationContext
-        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      preferences()
         .edit()
         .putBoolean(PREF_CRITICAL_ALERTS_ENABLED, enabled)
         .apply()
@@ -190,6 +191,28 @@ class BushMeshSpeechModule(
     }
   }
 
+  @ReactMethod
+  fun setRadioMessagesEnabled(enabled: Boolean, promise: Promise) {
+    try {
+      preferences()
+        .edit()
+        .putBoolean(PREF_RADIO_MESSAGES_ENABLED, enabled)
+        .apply()
+      promise.resolve(enabled)
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_TTS_PREF_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun getRadioMessagesEnabled(promise: Promise) {
+    try {
+      promise.resolve(radioMessagesEnabled())
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_TTS_PREF_FAILED", error.message, error)
+    }
+  }
+
   override fun invalidate() {
     mainHandler.post {
       try {
@@ -206,10 +229,14 @@ class BushMeshSpeechModule(
     super.invalidate()
   }
 
+  private fun preferences() =
+    reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
   private fun criticalAlertsEnabled(): Boolean =
-    reactApplicationContext
-      .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-      .getBoolean(PREF_CRITICAL_ALERTS_ENABLED, true)
+    preferences().getBoolean(PREF_CRITICAL_ALERTS_ENABLED, true)
+
+  private fun radioMessagesEnabled(): Boolean =
+    preferences().getBoolean(PREF_RADIO_MESSAGES_ENABLED, false)
 
   private fun requestSpeechFocus(): Boolean {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
