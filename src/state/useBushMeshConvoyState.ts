@@ -1,4 +1,4 @@
-import {useSyncExternalStore} from 'react';
+import {useEffect, useState} from 'react';
 
 import {
   BushMeshConvoyHubState,
@@ -7,9 +7,15 @@ import {
 } from '../bushmesh/runtime/BushMeshConvoyHub';
 
 export function useBushMeshConvoyState(): BushMeshConvoyHubState {
-  return useSyncExternalStore(
-    subscribeBushMeshConvoy,
-    () => getBushMeshConvoyState(),
-    () => getBushMeshConvoyState(),
+  const [state, setState] = useState<BushMeshConvoyHubState>(() =>
+    getBushMeshConvoyState(),
   );
+
+  useEffect(() => {
+    return subscribeBushMeshConvoy(() => {
+      setState(getBushMeshConvoyState());
+    });
+  }, []);
+
+  return state;
 }
