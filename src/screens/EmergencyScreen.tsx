@@ -13,6 +13,10 @@ import {
   BushMeshDistressBeacon,
   BushMeshDistressBeaconState,
 } from '../bushmesh/runtime/BushMeshDistressBeacon';
+import {
+  acknowledgeAllBushMeshDistressAlerts,
+  acknowledgeBushMeshDistressAlert,
+} from '../bushmesh/runtime/BushMeshLiveStateHub';
 import {getActiveBushMeshRuntime} from '../bushmesh/runtime/BushMeshRuntimeHub';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useBushMeshLiveState} from '../state/useBushMeshLiveState';
@@ -71,7 +75,8 @@ export function EmergencyScreen(): React.JSX.Element {
     activeChannel,
     bushMeshNetworkStatus,
   } = useBushMesh();
-  const {distressAlerts} = useBushMeshLiveState();
+  const {distressAlerts, unacknowledgedDistressCount, hydrated} =
+    useBushMeshLiveState();
 
   const beaconRef = useRef<BushMeshDistressBeacon | null>(null);
   const [selectedType, setSelectedType] = useState<BushMeshDistressType>(
@@ -179,6 +184,23 @@ export function EmergencyScreen(): React.JSX.Element {
     setStatus(
       `Emergency beacon repeats cancelled after ${transmissions} transmission(s). Previously transmitted alerts cannot be recalled.`,
     );
+  };
+
+  const markAllSeen = () => {
+    const marked = acknowledgeAllBushMeshDistressAlerts();
+    setStatus(
+      marked > 0
+        ? `Marked ${marked} received distress alert(s) as seen on this phone.`
+        : 'No unseen distress alerts remain.',
+    );
+  };
+
+  const markSeen = (key: string) => {
+    if (acknowledgeBushMeshDistressAlert(key)) {
+      setStatus(
+        'Alert marked as seen on this phone. This does not transmit an acknowledgement over LoRa.',
+      );
+    }
   };
 
   const openAlertLocation = async (
@@ -307,13 +329,33 @@ export function EmergencyScreen(): React.JSX.Element {
           <View style={styles.flexOne}>
             <Text style={styles.sectionTitle}>Received Distress Alerts</Text>
             <Text style={styles.sectionBody}>
-              Source-attributed routed SOS packets received during this app
-              session. Repeated copies of the same routed message are collapsed.
+              Routed SOS history is retained locally across Android app restarts.
+              “Seen” is only a local phone state and does not send a radio ACK.
             </Text>
           </View>
-          <View style={styles.alertCountBadge}>
-            <Text style={styles.alertCountText}>{distressAlerts.length}</Text>
+          <View
+            style={[
+              styles.alertCountBadge,
+              unacknowledgedDistressCount === 0 && styles.alertCountBadgeQuiet,
+            ]}>
+            <Text style={styles.alertCountText}>
+              {unacknowledgedDistressCount > 0
+                ? unacknowledgedDistressCount
+                : distressAlerts.length}
+            </Text>
           </View>
+        </View>
+
+        <View style={styles.alertSummaryRow}>
+          <Text style={styles.alertSummaryText}>
+            {hydrated ? 'History loaded' : 'Loading history'} • {distressAlerts.length}{' '}
+            total • {unacknowledgedDistressCount} unseen
+          </Text>
+          {unacknowledgedDistressCount > 0 ? (
+            <TouchableOpacity style={styles.markAllButton} onPress={markAllSeen}>
+              <Text style={styles.markAllButtonText}>Mark all seen</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {distressAlerts.length === 0 ? (
@@ -323,14 +365,31 @@ export function EmergencyScreen(): React.JSX.Element {
             const hasLocation =
               typeof alert.latitude === 'number' &&
               typeof alert.longitude === 'number';
+            const isUnseen = alert.acknowledgedAt === undefined;
 
             return (
-              <View key={alert.key} style={styles.receivedAlertCard}>
+              <View
+                key={alert.key}
+                style={[
+                  styles.receivedAlertCard,
+                  isUnseen && styles.receivedAlertCardUnseen,
+                ]}>
                 <View style={styles.rowBetween}>
                   <View style={styles.flexOne}>
-                    <Text style={styles.receivedAlertType}>
-                      {distressLabel(alert.type)}
-                    </Text>
+                    <View style={styles.alertTitleRow}>
+                      <Text style={styles.receivedAlertType}>
+                        {distressLabel(alert.type)}
+                      </Text>
+                      <View
+                        style={[
+                          styles.seenPill,
+                          isUnseen ? styles.unseenPill : styles.seenPillQuiet,
+                        ]}>
+                        <Text style={styles.seenPillText}>
+                          {isUnseen ? 'UNSEEN' : 'SEEN'}
+                        </Text>
+                      </View>
+                    </View>
                     <Text style={styles.receivedAlertNode}>
                       Node {nodeIdLabel(alert.nodeId)} • Channel #{alert.channelIndex}
                     </Text>
@@ -364,6 +423,20 @@ export function EmergencyScreen(): React.JSX.Element {
                 ) : (
                   <Text style={styles.noLocationText}>
                     No location was included with this alert.
+                  </Text>
+                )}
+
+                {isUnseen ? (
+                  <TouchableOpacity
+                    style={styles.markSeenButton}
+                    onPress={() => markSeen(alert.key)}>
+                    <Text style={styles.markSeenButtonText}>Mark seen on this phone</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.seenDetailText}>
+                    Seen {alert.acknowledgedAt
+                      ? new Date(alert.acknowledgedAt).toLocaleString()
+                      : ''}
                   </Text>
                 )}
               </View>
@@ -579,9 +652,38 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
+  alertCountBadgeQuiet: {
+    backgroundColor: colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   alertCountText: {
     color: colors.textPrimary,
     fontSize: 13,
+    fontWeight: '900',
+  },
+  alertSummaryRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  alertSummaryText: {
+    flex: 1,
+    color: colors.textMuted,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  markAllButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    paddingVertical: 7,
+    paddingHorizontal: 9,
+  },
+  markAllButtonText: {
+    color: colors.danger,
+    fontSize: 11,
     fontWeight: '900',
   },
   emptyText: {
@@ -595,12 +697,39 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.danger,
+    borderColor: colors.border,
     padding: 13,
+  },
+  receivedAlertCardUnseen: {
+    borderColor: colors.danger,
+    borderWidth: 2,
+  },
+  alertTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   receivedAlertType: {
     color: colors.danger,
     fontSize: 16,
+    fontWeight: '900',
+  },
+  seenPill: {
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  unseenPill: {
+    backgroundColor: colors.danger,
+  },
+  seenPillQuiet: {
+    backgroundColor: colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  seenPillText: {
+    color: colors.textPrimary,
+    fontSize: 9,
     fontWeight: '900',
   },
   receivedAlertNode: {
@@ -633,6 +762,23 @@ const styles = StyleSheet.create({
   noLocationText: {
     color: colors.textMuted,
     fontSize: 11,
+    marginTop: 9,
+  },
+  markSeenButton: {
+    marginTop: 10,
+    borderRadius: 12,
+    backgroundColor: colors.danger,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  markSeenButtonText: {
+    color: colors.textPrimary,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  seenDetailText: {
+    color: colors.textMuted,
+    fontSize: 10,
     marginTop: 9,
   },
   warningCard: {
