@@ -34,18 +34,23 @@ export function isBushMeshPersistentStoreAvailable(): boolean {
 }
 
 export function bushMeshPersistentStorePlatform(): string {
-  if (nativeModule()) {
-    return Platform.OS === 'android'
-      ? 'Android SharedPreferences'
-      : `${Platform.OS} native storage`;
+  if (!nativeModule()) {
+    return 'Unavailable';
   }
 
-  return 'Unavailable';
+  switch (Platform.OS) {
+    case 'android':
+      return 'Android SharedPreferences';
+    case 'ios':
+      return 'iOS UserDefaults';
+    default:
+      return `${Platform.OS} native storage`;
+  }
 }
 
 /**
  * Returns a durable key/value store backed by the native BushMesh storage
- * module. Android builds register this module using SharedPreferences.
+ * module. Android uses SharedPreferences and iOS uses UserDefaults.
  *
  * A null result is intentional: callers can continue with in-memory behavior
  * on unsupported platforms rather than failing application startup.
