@@ -22,11 +22,13 @@ export type BushMeshLiveDistressAlert = {
   precision?: LocationPrecision | number;
   batteryPercent?: number;
   receivedAt: number;
+  acknowledgedAt?: number;
 };
 
 export type BushMeshLiveStateSnapshot = {
   peerLocations: BushMeshLivePeerLocation[];
   distressAlerts: BushMeshLiveDistressAlert[];
+  unacknowledgedDistressCount: number;
   revision: number;
   hydrated: boolean;
 };
@@ -54,6 +56,7 @@ let hydrationPromise: Promise<void> | null = null;
 let snapshot: BushMeshLiveStateSnapshot = {
   peerLocations: [],
   distressAlerts: [],
+  unacknowledgedDistressCount: 0,
   revision,
   hydrated,
 };
@@ -78,6 +81,13 @@ function validOptionalBattery(value: unknown): boolean {
 
 function validOptionalPrecision(value: unknown): boolean {
   return value === undefined || (typeof value === 'number' && Number.isFinite(value));
+}
+
+function validOptionalTimestamp(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (typeof value === 'number' && Number.isFinite(value) && value >= 0)
+  );
 }
 
 function isValidLocation(value: unknown): value is BushMeshLivePeerLocation {
@@ -135,7 +145,8 @@ function isValidDistress(value: unknown): value is BushMeshLiveDistressAlert {
     (!hasLatitude || isFiniteCoordinate(item.latitude, -90, 90)) &&
     (!hasLongitude || isFiniteCoordinate(item.longitude, -180, 180)) &&
     validOptionalPrecision(item.precision) &&
-    validOptionalBattery(item.batteryPercent)
+    validOptionalBattery(item.batteryPercent) &&
+    validOptionalTimestamp(item.acknowledgedAt)
   );
 }
 
@@ -146,6 +157,9 @@ function rebuildSnapshot(): void {
       .map(location => ({...location}))
       .sort((a, b) => b.receivedAt - a.receivedAt),
     distressAlerts: distressAlerts.map(alert => ({...alert})),
+    unacknowledgedDistressCount: distressAlerts.filter(
+      alert => alert.acknowledgedAt === undefined,
+    ).length,
     revision,
     hydrated,
   };
@@ -312,11 +326,11 @@ export function publishBushMeshDistressAlert(
   if (existingIndex >= 0) {
     distressAlerts = distressAlerts.map((item, index) =>
       index === existingIndex && alert.receivedAt >= item.receivedAt
-        ? {...alert}
+        ? {...alert, acknowledgedAt: item.acknowledgedAt}
         : item,
     );
   } else {
-    distressAlerts = [{...alert}, ...distressAlerts];
+    distressAlerts = [{...alert, acknowledgedAt: undefined}, ...distressAlerts];
   }
 
   distressAlerts = distressAlerts
@@ -324,6 +338,50 @@ export function publishBushMeshDistressAlert(
     .slice(0, Math.max(1, maxAlerts));
   rebuildSnapshot();
   persistLiveStateBestEffort();
+}
+
+export function acknowledgeBushMeshDistressAlert(
+  key: string,
+  acknowledgedAt = Date.now(),
+): boolean {
+  const index = distressAlerts.findIndex(alert => alert.key === key);
+  if (index < 0) {
+    return false;
+  }
+
+  if (distressAlerts[index].acknowledgedAt !== undefined) {
+    return true;
+  }
+
+  mutationEpoch += 1;
+  distressAlerts = distressAlerts.map((alert, alertIndex) =>
+    alertIndex === index ? {...alert, acknowledgedAt} : alert,
+  );
+  rebuildSnapshot();
+  persistLiveStateBestEffort();
+  return true;
+}
+
+export function acknowledgeAllBushMeshDistressAlerts(
+  acknowledgedAt = Date.now(),
+): number {
+  const count = distressAlerts.filter(
+    alert => alert.acknowledgedAt === undefined,
+  ).length;
+
+  if (count === 0) {
+    return 0;
+  }
+
+  mutationEpoch += 1;
+  distressAlerts = distressAlerts.map(alert =>
+    alert.acknowledgedAt === undefined
+      ? {...alert, acknowledgedAt}
+      : alert,
+  );
+  rebuildSnapshot();
+  persistLiveStateBestEffort();
+  return count;
 }
 
 export function getBushMeshLiveStateSnapshot(): BushMeshLiveStateSnapshot {
