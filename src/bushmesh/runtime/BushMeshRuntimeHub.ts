@@ -1,14 +1,19 @@
 import {
+  BushMeshControlCommand,
+  BushMeshConvoyAction,
   BushMeshPacketType,
   BushMeshTypedPacket,
   decodeBushMeshTypedPacket,
+  encodeBushMeshControlWire,
   encodeBushMeshConvoyWire,
 } from '../protocol';
 import {tryDecodeBushMeshChannelFrame} from '../../meshcore/meshcoreBushMeshBridge';
 import {BushMeshNetworkRuntime} from './BushMeshNetworkRuntime';
 import {
+  acceptBushMeshConvoyCommandRemote,
   acceptBushMeshConvoyRemote,
   markBushMeshConvoyTransmitted,
+  nextBushMeshConvoyCommand,
 } from './BushMeshConvoyHub';
 import {
   clearMeshCorePublicKey,
@@ -48,9 +53,14 @@ function inspectMeshCoreIdentity(bytes: number[]): void {
 function inspectBushMeshConvoy(bytes: number[], now: number): void {
   try {
     const channelFrame = tryDecodeBushMeshChannelFrame(bytes);
+    if (!channelFrame) {
+      return;
+    }
+
+    const packetType = channelFrame.decoded.envelope.type;
     if (
-      !channelFrame ||
-      channelFrame.decoded.envelope.type !== BushMeshPacketType.Convoy
+      packetType !== BushMeshPacketType.Convoy &&
+      packetType !== BushMeshPacketType.Command
     ) {
       return;
     }
@@ -60,6 +70,14 @@ function inspectBushMeshConvoy(bytes: number[], now: number): void {
     );
     if (typed.kind === 'convoy') {
       acceptBushMeshConvoyRemote(typed.value, now);
+      return;
+    }
+
+    if (
+      typed.kind === 'command' &&
+      typed.value.command === BushMeshControlCommand.ConvoyAction
+    ) {
+      acceptBushMeshConvoyCommandRemote(typed.value, now);
     }
   } catch {
     // The normal network runtime owns decode-error accounting. Convoy inspection
@@ -83,6 +101,27 @@ export async function sendActiveBushMeshConvoyStatus(
     allowFragmentation: false,
   });
   markBushMeshConvoyTransmitted();
+}
+
+export async function sendActiveBushMeshConvoyCommand(
+  channelIndex: number,
+  originNodeId: number,
+  action: BushMeshConvoyAction | number,
+  options?: {targetOrderIndex?: number; etaMinutes?: number},
+): Promise<ReturnType<typeof nextBushMeshConvoyCommand>> {
+  if (!activeRuntime) {
+    throw new Error('BushMesh networking runtime is not active.');
+  }
+
+  const command = nextBushMeshConvoyCommand(originNodeId, action, options);
+  const wireBytes = encodeBushMeshControlWire(
+    command,
+    activeRuntime.nextMessageId(),
+  );
+  await activeRuntime.sendWire(channelIndex, wireBytes, {
+    allowFragmentation: false,
+  });
+  return command;
 }
 
 export async function acceptBushMeshMeshCoreFrame(
