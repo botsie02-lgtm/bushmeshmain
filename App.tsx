@@ -16,12 +16,14 @@ import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
 import {SpeechAlertBridge} from './src/components/SpeechAlertBridge';
+import {SpeechStatusBanner} from './src/components/SpeechStatusBanner';
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DriveProvider} from './src/state/DriveContext';
 import {RadioSessionProvider} from './src/state/RadioSessionContext';
 import {LocationSessionProvider} from './src/state/LocationSessionContext';
 import {OfflineMapProvider} from './src/state/OfflineMapContext';
+import {SpeechProvider} from './src/state/SpeechContext';
 import {DriveScreen} from './src/screens/DriveScreen';
 import {DeviceHubScreen} from './src/screens/DeviceHubScreen';
 import {RadioScreen} from './src/screens/RadioScreen';
@@ -66,6 +68,7 @@ function AppContent(): React.JSX.Element {
         <>
           <ConvoyLossBanner />
           <DriveNavigationBanner />
+          <SpeechStatusBanner />
         </>
       ) : null}
       {activeTab === 'map' ? <MapTrackExportBanner /> : null}
@@ -132,14 +135,16 @@ function App(): React.JSX.Element {
       <BushMeshProvider>
         <ConvoyProvider>
           <DriveProvider>
-            <SpeechAlertBridge />
-            <RadioSessionProvider>
-              <OfflineMapProvider>
-                <LocationSessionProvider>
-                  <AppContent />
-                </LocationSessionProvider>
-              </OfflineMapProvider>
-            </RadioSessionProvider>
+            <SpeechProvider>
+              <SpeechAlertBridge />
+              <RadioSessionProvider>
+                <OfflineMapProvider>
+                  <LocationSessionProvider>
+                    <AppContent />
+                  </LocationSessionProvider>
+                </OfflineMapProvider>
+              </RadioSessionProvider>
+            </SpeechProvider>
           </DriveProvider>
         </ConvoyProvider>
       </BushMeshProvider>
