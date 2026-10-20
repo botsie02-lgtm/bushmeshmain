@@ -152,15 +152,15 @@ function longitudeEnvelope(longitudes: number[]): {
   };
 }
 
-function focusBoundsForPoints(
-  points: OperationalPicturePoint[],
+export function operationalBoundsForCoordinates(
+  coordinates: Coordinate[],
 ): OperationalPictureBounds | null {
-  if (points.length === 0) {
+  if (coordinates.length === 0) {
     return null;
   }
 
-  const latitudes = points.map(point => point.latitude);
-  const envelope = longitudeEnvelope(points.map(point => point.longitude));
+  const latitudes = coordinates.map(point => point.latitude);
+  const envelope = longitudeEnvelope(coordinates.map(point => point.longitude));
   const south = Math.min(...latitudes);
   const north = Math.max(...latitudes);
 
@@ -315,7 +315,7 @@ export function buildOperationalPicture(
   return {
     points,
     polylines,
-    focusBounds: focusBoundsForPoints(points),
+    focusBounds: operationalBoundsForCoordinates(points),
     summary: {
       liveVehicleCount,
       recentVehicleCount,
