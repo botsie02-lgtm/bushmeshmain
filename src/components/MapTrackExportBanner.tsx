@@ -1,11 +1,13 @@
 import React, {useState} from 'react';
-import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {formatDistance} from '../convoy/convoy';
 import {useLocationSession} from '../state/LocationSessionContext';
+import {useOfflineMaps} from '../state/OfflineMapContext';
 import {colors} from '../theme/colors';
+import {MapPackCatalogPanel} from './MapPackCatalogPanel';
 
-export function MapTrackExportBanner(): React.JSX.Element | null {
+export function MapTrackExportBanner(): React.JSX.Element {
   const {
     trackPoints,
     trackDistanceMeters,
@@ -14,15 +16,13 @@ export function MapTrackExportBanner(): React.JSX.Element | null {
     trackPersistenceError,
     exportTrackGpx,
   } = useLocationSession();
+  const {packCatalog, packs, mapPersistenceStatus} = useOfflineMaps();
   const [exporting, setExporting] = useState(false);
+  const [packsOpen, setPacksOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  if (trackPoints.length === 0) {
-    return null;
-  }
-
   const runExport = async () => {
-    if (!trackExportSupported || exporting) {
+    if (!trackExportSupported || exporting || trackPoints.length === 0) {
       return;
     }
 
@@ -42,67 +42,122 @@ export function MapTrackExportBanner(): React.JSX.Element | null {
 
   const durabilityLabel =
     trackPersistenceStatus === 'ready'
-      ? 'ENCRYPTED + DURABLE'
+      ? 'TRAIL DURABLE'
       : trackPersistenceStatus === 'restoring'
         ? 'RESTORING TRAIL'
         : trackPersistenceStatus === 'unsupported'
-          ? 'MEMORY ONLY'
-          : 'PERSISTENCE ERROR';
+          ? 'TRAIL MEMORY ONLY'
+          : 'TRAIL STORAGE ERROR';
+  const packStorageLabel =
+    mapPersistenceStatus === 'ready'
+      ? 'PACKS DURABLE'
+      : mapPersistenceStatus === 'restoring'
+        ? 'RESTORING PACKS'
+        : mapPersistenceStatus === 'unsupported'
+          ? 'PACKS MEMORY ONLY'
+          : 'PACK STORAGE ERROR';
+  const verifiedPackCount = packs.filter(
+    pack => !pack.simulated && pack.state === 'ready' && pack.checksumVerified,
+  ).length;
 
   return (
-    <View style={styles.wrap}>
-      <View style={styles.copy}>
-        <View style={styles.eyebrowRow}>
-          <Text style={styles.eyebrow}>RECORDED TRAIL</Text>
-          <Text
-            style={
-              trackPersistenceStatus === 'ready'
-                ? styles.persistenceReady
-                : styles.persistenceWarning
-            }>
-            {durabilityLabel}
+    <View style={styles.container}>
+      <View style={styles.wrap}>
+        <View style={styles.copy}>
+          <View style={styles.eyebrowRow}>
+            <Text style={styles.eyebrow}>MAP TOOLS</Text>
+            <Text
+              style={
+                trackPersistenceStatus === 'ready'
+                  ? styles.persistenceReady
+                  : styles.persistenceWarning
+              }>
+              {durabilityLabel}
+            </Text>
+            <Text
+              style={
+                mapPersistenceStatus === 'ready'
+                  ? styles.persistenceReady
+                  : styles.persistenceWarning
+              }>
+              {packStorageLabel}
+            </Text>
+          </View>
+          <Text style={styles.summary}>
+            {trackPoints.length > 0
+              ? `${trackPoints.length} trail points · ${formatDistance(trackDistanceMeters)}`
+              : 'No trail recorded'}
+            {' · '}
+            {verifiedPackCount}/{packCatalog.length} real packs verified
           </Text>
+          {trackPersistenceError ? (
+            <Text style={styles.warningMessage}>{trackPersistenceError}</Text>
+          ) : null}
+          {message ? <Text style={styles.message}>{message}</Text> : null}
         </View>
-        <Text style={styles.summary}>
-          {trackPoints.length} points · {formatDistance(trackDistanceMeters)}
-        </Text>
-        {trackPersistenceError ? (
-          <Text style={styles.warningMessage}>{trackPersistenceError}</Text>
-        ) : null}
-        {message ? <Text style={styles.message}>{message}</Text> : null}
+
+        <View style={styles.actions}>
+          <TouchableOpacity
+            style={[
+              styles.secondaryButton,
+              packsOpen && styles.secondaryButtonActive,
+            ]}
+            onPress={() => setPacksOpen(current => !current)}>
+            <Text
+              style={[
+                styles.secondaryButtonText,
+                packsOpen && styles.secondaryButtonTextActive,
+              ]}>
+              {packsOpen ? 'CLOSE PACKS' : 'PACKS'}
+            </Text>
+          </TouchableOpacity>
+
+          {trackPoints.length > 0 ? (
+            <TouchableOpacity
+              style={[
+                styles.button,
+                (!trackExportSupported || exporting) && styles.buttonDisabled,
+              ]}
+              disabled={!trackExportSupported || exporting}
+              onPress={() => {
+                runExport().catch(() => undefined);
+              }}>
+              <Text style={styles.buttonText}>
+                {exporting
+                  ? 'EXPORTING…'
+                  : trackExportSupported
+                    ? 'EXPORT GPX'
+                    : 'GPX UNAVAILABLE'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
 
-      <TouchableOpacity
-        style={[
-          styles.button,
-          (!trackExportSupported || exporting) && styles.buttonDisabled,
-        ]}
-        disabled={!trackExportSupported || exporting}
-        onPress={() => {
-          runExport().catch(() => undefined);
-        }}>
-        <Text style={styles.buttonText}>
-          {exporting
-            ? 'EXPORTING…'
-            : trackExportSupported
-              ? 'EXPORT GPX'
-              : 'GPX UNAVAILABLE'}
-        </Text>
-      </TouchableOpacity>
+      {packsOpen ? (
+        <ScrollView
+          style={styles.packDrawer}
+          contentContainerStyle={styles.packDrawerContent}
+          nestedScrollEnabled>
+          <MapPackCatalogPanel />
+        </ScrollView>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
   wrap: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
   },
   copy: {flex: 1},
   eyebrowRow: {
@@ -129,7 +184,7 @@ const styles = StyleSheet.create({
   },
   summary: {
     color: colors.textPrimary,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '900',
     marginTop: 2,
   },
@@ -145,18 +200,54 @@ const styles = StyleSheet.create({
     lineHeight: 13,
     marginTop: 3,
   },
+  actions: {
+    alignItems: 'stretch',
+    gap: 6,
+  },
   button: {
-    minWidth: 104,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    minWidth: 92,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     alignItems: 'center',
     backgroundColor: colors.accent,
   },
   buttonDisabled: {opacity: 0.45},
   buttonText: {
     color: colors.background,
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '900',
+  },
+  secondaryButton: {
+    minWidth: 92,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSoft,
+  },
+  secondaryButtonActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accent,
+  },
+  secondaryButtonText: {
+    color: colors.textPrimary,
+    fontSize: 8,
+    fontWeight: '900',
+  },
+  secondaryButtonTextActive: {
+    color: colors.background,
+  },
+  packDrawer: {
+    maxHeight: 420,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  packDrawerContent: {
+    padding: 12,
+    paddingBottom: 0,
   },
 });
