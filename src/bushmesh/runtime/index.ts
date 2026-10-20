@@ -22,6 +22,7 @@ export * from './BushMeshIdentityHub';
 export * from './BushMeshLiveStateHub';
 export * from './BushMeshLocationRuntime';
 export * from './BushMeshMessageDeliveryService';
+export * from './BushMeshNativeVoice';
 export * from './BushMeshNetworkRuntime';
 export * from './BushMeshNodeRuntime';
 export * from './BushMeshOutbox';
