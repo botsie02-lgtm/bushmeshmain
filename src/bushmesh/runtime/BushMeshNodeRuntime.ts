@@ -1,5 +1,5 @@
 import {
-  BushMeshControlledFloodForwarder,
+  BushMeshControlCommand,
   BushMeshFileContentType,
   BushMeshNodeHello,
   BushMeshPriority,
@@ -8,6 +8,7 @@ import {
   CompactLocation,
   decodeBushMeshTypedPacket,
   decodeBushMeshWire,
+  encodeBushMeshControlWire,
   encodeBushMeshFileWire,
   encodeBushMeshNodeHelloWire,
   encodeBushMeshRoutedWire,
@@ -36,8 +37,10 @@ import {
   publishBushMeshDistressAlert,
   publishBushMeshPeerLocation,
 } from './BushMeshLiveStateHub';
+import {BushMeshLocationReceiver} from './BushMeshLocationRuntime';
 import {BushMeshPeerRegistry} from './BushMeshPeerRegistry';
 import {BushMeshPersistentFileTransferManager} from './BushMeshPersistentFileTransferManager';
+import {BushMeshPersistentForwarder} from './BushMeshPersistentForwarder';
 import {getBushMeshPersistentStore} from './BushMeshPersistentStore';
 import {getBushMeshSyncManager} from './BushMeshSyncHub';
 
@@ -69,7 +72,8 @@ export class BushMeshNodeRuntime {
   private localHelloState: BushMeshNodeHello | null = null;
   private latestLocation: BushMeshLocationSnapshot | null = null;
   private identityUnsubscribe: (() => void) | null = null;
-  private forwarder = new BushMeshControlledFloodForwarder();
+  private readonly forwarder: BushMeshPersistentForwarder;
+  private readonly locationReceiver = new BushMeshLocationReceiver();
   private readonly forwardTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly resumedFileTransfers = new Set<number>();
   private fileResumeInProgress = false;
@@ -89,9 +93,9 @@ export class BushMeshNodeRuntime {
     },
   ) {
     this.allowExperimentalBinary = options?.allowExperimentalBinary ?? false;
-    this.files = new BushMeshPersistentFileTransferManager(
-      getBushMeshPersistentStore() ?? undefined,
-    );
+    const persistentStore = getBushMeshPersistentStore() ?? undefined;
+    this.files = new BushMeshPersistentFileTransferManager(persistentStore);
+    this.forwarder = new BushMeshPersistentForwarder(persistentStore);
     this.network = new BushMeshNetworkRuntime(
       transport,
       {
@@ -121,6 +125,22 @@ export class BushMeshNodeRuntime {
     }
 
     this.network.start();
+    void this.forwarder
+      .initialize()
+      .then(restored => {
+        if (restored > 0) {
+          this.events.onStatus?.(
+            `BushMesh restored ${restored} recent forwarding identity record(s).`,
+          );
+        }
+      })
+      .catch(error => {
+        this.events.onError?.(
+          error instanceof Error
+            ? `BushMesh forwarding history recovery failed: ${error.message}`
+            : 'BushMesh forwarding history recovery failed.',
+        );
+      });
     void this.files
       .initialize()
       .then(({outgoingTransferIds, incomingTransferIds}) => {
@@ -150,6 +170,7 @@ export class BushMeshNodeRuntime {
     this.identityUnsubscribe = null;
     this.clearDiscoveryTimer();
     void this.files.flushPersistence().catch(() => undefined);
+    void this.forwarder.flushPersistence().catch(() => undefined);
 
     for (const timer of this.forwardTimers) {
       clearTimeout(timer);
@@ -176,7 +197,6 @@ export class BushMeshNodeRuntime {
     this.peerRegistryState = new BushMeshPeerRegistry(hello, {
       allowExperimentalBinary: this.allowExperimentalBinary,
     });
-    this.forwarder = new BushMeshControlledFloodForwarder();
     this.responder = new BushMeshCommandResponder({
       localHello: () => ({...this.requireLocalHello()}),
       currentLocation: () =>
@@ -480,16 +500,15 @@ export class BushMeshNodeRuntime {
       }
     }
 
-    if (routedContext && typed.kind === 'location') {
-      publishBushMeshPeerLocation({
-        nodeId: routedContext.replyNodeId,
+    if (
+      routedContext &&
+      (typed.kind === 'location' || typed.kind === 'location-delta')
+    ) {
+      await this.handlePeerLocation(
+        routedContext.replyNodeId,
         channelIndex,
-        latitude: typed.value.latitude,
-        longitude: typed.value.longitude,
-        precision: typed.value.precision,
-        batteryPercent: typed.value.batteryPercent,
-        receivedAt: Date.now(),
-      });
+        typed,
+      );
     }
 
     if (routedContext && typed.kind === 'distress') {
@@ -553,6 +572,34 @@ export class BushMeshNodeRuntime {
         );
       }
     }
+  }
+
+  private async handlePeerLocation(
+    sourceNodeId: number,
+    channelIndex: number,
+    packet: Extract<BushMeshTypedPacket, {kind: 'location' | 'location-delta'}>,
+  ): Promise<void> {
+    const received = this.locationReceiver.accept(sourceNodeId, packet.wire);
+
+    if (!received.accepted) {
+      const requestWire = encodeBushMeshControlWire(
+        {command: BushMeshControlCommand.RequestAbsoluteLocation},
+        this.network.nextMessageId(),
+      );
+      await this.sendAutomaticWire(channelIndex, requestWire, sourceNodeId);
+      this.events.onAutomaticResponse?.('location-anchor-request', channelIndex);
+      return;
+    }
+
+    publishBushMeshPeerLocation({
+      nodeId: sourceNodeId,
+      channelIndex,
+      latitude: received.location.latitude,
+      longitude: received.location.longitude,
+      precision: received.location.precision,
+      batteryPercent: received.location.batteryPercent,
+      receivedAt: Date.now(),
+    });
   }
 
   private async handleFileFrame(
