@@ -229,7 +229,8 @@ class MeshCoreNativeBleRuntime private constructor(
 
       writeInFlight = false
       if (status != BluetoothGatt.GATT_SUCCESS) {
-        lastError = "MeshCore BLE write failed with GATT status $status."
+        failAndReconnect("MeshCore BLE write failed with GATT status $status.")
+        return
       }
       processNextWrite()
     }
@@ -296,6 +297,21 @@ class MeshCoreNativeBleRuntime private constructor(
       }
     }
     state = "disconnected"
+  }
+
+  /**
+   * Drops the current GATT session while preserving the desired radio target.
+   * Protocol workers use this after an ambiguous timeout so a delayed response
+   * from the old command cannot be attributed to a later command.
+   */
+  @Synchronized
+  fun forceReconnect(reason: String) {
+    if (desiredAddress == null) {
+      lastError = reason
+      state = "disconnected"
+      return
+    }
+    failAndReconnect(reason)
   }
 
   @Synchronized
@@ -415,14 +431,14 @@ class MeshCoreNativeBleRuntime private constructor(
       @Suppress("DEPRECATION")
       val started = gatt.writeCharacteristic(characteristic)
       if (!started) {
-        lastError = "Android rejected a MeshCore BLE write before transmission."
-        processNextWrite()
+        failAndReconnect("Android rejected a MeshCore BLE write before transmission.")
         return
       }
       writeInFlight = true
     } catch (error: SecurityException) {
-      lastError = "Bluetooth permission was revoked during MeshCore BLE write: ${error.message}"
-      failAndReconnect(lastError ?: "MeshCore BLE write failed.")
+      failAndReconnect(
+        "Bluetooth permission was revoked during MeshCore BLE write: ${error.message}",
+      )
     }
   }
 
