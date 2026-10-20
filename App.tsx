@@ -16,6 +16,7 @@ import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
 import {SpeechAlertBridge} from './src/components/SpeechAlertBridge';
+import {SpeechPttPanel} from './src/components/SpeechPttPanel';
 import {SpeechStatusBanner} from './src/components/SpeechStatusBanner';
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
@@ -73,7 +74,10 @@ function AppContent(): React.JSX.Element {
       ) : null}
       {activeTab === 'map' ? <MapTrackExportBanner /> : null}
       {activeTab === 'channels' ? (
-        <SecureDataStatusBanner kind="messages" />
+        <>
+          <SecureDataStatusBanner kind="messages" />
+          <SpeechPttPanel />
+        </>
       ) : null}
       {activeTab === 'contacts' ? (
         <SecureDataStatusBanner kind="contacts" />
