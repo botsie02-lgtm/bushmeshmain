@@ -5,7 +5,7 @@ export type BushMeshLivePeerLocation = {
   channelIndex: number;
   latitude: number;
   longitude: number;
-  precision: LocationPrecision | number;
+  precision?: LocationPrecision | number;
   batteryPercent?: number;
   receivedAt: number;
 };
