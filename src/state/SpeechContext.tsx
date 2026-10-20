@@ -19,10 +19,12 @@ export type SpeechRuntimeState =
 type SpeechContextValue = {
   supported: boolean;
   criticalAlertsEnabled: boolean;
+  radioMessagesEnabled: boolean;
   runtimeState: SpeechRuntimeState;
   languageTag: string | null;
   errorMessage: string | null;
   setCriticalAlertsEnabled: (enabled: boolean) => Promise<void>;
+  setRadioMessagesEnabled: (enabled: boolean) => Promise<void>;
   refresh: () => Promise<void>;
 };
 
@@ -40,7 +42,8 @@ function runtimeStateFromStatus(status: NativeSpeechStatus): SpeechRuntimeState 
 
 export function SpeechProvider({children}: {children: React.ReactNode}): React.JSX.Element {
   const supported = nativeSpeech.isSupported();
-  const [criticalAlertsEnabled, setEnabledState] = useState(false);
+  const [criticalAlertsEnabled, setCriticalEnabledState] = useState(false);
+  const [radioMessagesEnabled, setRadioMessagesEnabledState] = useState(false);
   const [runtimeState, setRuntimeState] =
     useState<SpeechRuntimeState>(supported ? 'loading' : 'unavailable');
   const [languageTag, setLanguageTag] = useState<string | null>(null);
@@ -48,7 +51,8 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
 
   const refresh = useCallback(async () => {
     if (!supported) {
-      setEnabledState(false);
+      setCriticalEnabledState(false);
+      setRadioMessagesEnabledState(false);
       setRuntimeState('unavailable');
       setLanguageTag(null);
       setErrorMessage(null);
@@ -57,7 +61,8 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
 
     try {
       const status = await nativeSpeech.getStatus();
-      setEnabledState(status.criticalAlertsEnabled);
+      setCriticalEnabledState(status.criticalAlertsEnabled);
+      setRadioMessagesEnabledState(status.radioMessagesEnabled);
       setRuntimeState(runtimeStateFromStatus(status));
       setLanguageTag(status.languageTag);
       setErrorMessage(null);
@@ -76,13 +81,13 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
   const setCriticalAlertsEnabled = useCallback(
     async (enabled: boolean) => {
       if (!supported) {
-        setEnabledState(false);
+        setCriticalEnabledState(false);
         return;
       }
 
       try {
         const persisted = await nativeSpeech.setCriticalAlertsEnabled(enabled);
-        setEnabledState(persisted);
+        setCriticalEnabledState(persisted);
         setErrorMessage(null);
         if (!persisted) {
           await nativeSpeech.stop();
@@ -100,23 +105,51 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
     [refresh, supported],
   );
 
+  const setRadioMessagesEnabled = useCallback(
+    async (enabled: boolean) => {
+      if (!supported) {
+        setRadioMessagesEnabledState(false);
+        return;
+      }
+
+      try {
+        const persisted = await nativeSpeech.setRadioMessagesEnabled(enabled);
+        setRadioMessagesEnabledState(persisted);
+        setErrorMessage(null);
+        await refresh();
+      } catch (error) {
+        setRuntimeState('error');
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : 'Could not update radio read-aloud preference.',
+        );
+      }
+    },
+    [refresh, supported],
+  );
+
   const value = useMemo<SpeechContextValue>(
     () => ({
       supported,
       criticalAlertsEnabled,
+      radioMessagesEnabled,
       runtimeState,
       languageTag,
       errorMessage,
       setCriticalAlertsEnabled,
+      setRadioMessagesEnabled,
       refresh,
     }),
     [
       supported,
       criticalAlertsEnabled,
+      radioMessagesEnabled,
       runtimeState,
       languageTag,
       errorMessage,
       setCriticalAlertsEnabled,
+      setRadioMessagesEnabled,
       refresh,
     ],
   );
