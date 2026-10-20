@@ -9,12 +9,14 @@ import {
 } from 'react-native';
 
 import {BushMeshProvider} from './src/state/BushMeshContext';
+import {BushMeshConvoyLifecycle} from './src/state/BushMeshConvoyLifecycle';
 import {BushMeshRuntimeLifecycle} from './src/state/BushMeshRuntimeLifecycle';
 import {BushMeshSyncInventoryBridge} from './src/state/BushMeshSyncInventoryBridge';
 import {useBushMeshLiveState} from './src/state/useBushMeshLiveState';
-import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
+import {ConvoyScreen} from './src/screens/ConvoyScreen';
+import {DeviceScreen} from './src/screens/DeviceScreen';
 import {DiagnosticsScreen} from './src/screens/DiagnosticsScreen';
 import {EmergencyScreen} from './src/screens/EmergencyScreen';
 import {MapScreen} from './src/screens/MapScreen';
@@ -25,6 +27,7 @@ type TabKey =
   | 'channels'
   | 'contacts'
   | 'map'
+  | 'convoy'
   | 'diagnostics'
   | 'emergency';
 
@@ -33,6 +36,7 @@ const tabs: Array<{key: TabKey; label: string}> = [
   {key: 'channels', label: 'Channels'},
   {key: 'contacts', label: 'Contacts'},
   {key: 'map', label: 'Map'},
+  {key: 'convoy', label: 'Convoy'},
   {key: 'diagnostics', label: 'Diag'},
   {key: 'emergency', label: 'SOS'},
 ];
@@ -65,6 +69,10 @@ function AppContent(): React.JSX.Element {
 
         <View style={[styles.screenWrap, activeTab !== 'map' && styles.hidden]}>
           <MapScreen />
+        </View>
+
+        <View style={[styles.screenWrap, activeTab !== 'convoy' && styles.hidden]}>
+          <ConvoyScreen />
         </View>
 
         <View
@@ -129,6 +137,7 @@ function App(): React.JSX.Element {
   return (
     <BushMeshProvider>
       <BushMeshRuntimeLifecycle />
+      <BushMeshConvoyLifecycle />
       <BushMeshSyncInventoryBridge />
       <AppContent />
     </BushMeshProvider>
@@ -205,7 +214,7 @@ const styles = StyleSheet.create({
   },
   tabText: {
     color: colors.textSecondary,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
   },
   tabTextActive: {
