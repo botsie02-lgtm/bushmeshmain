@@ -33,20 +33,21 @@ function validCoordinate(value: number | null, min: number, max: number): value 
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
 }
 
-function formatAge(timestampMs: number, prefix: string): string {
+function formatAge(timestampMs: number, prefix = ''): string {
   const ageMs = Math.max(0, Date.now() - timestampMs);
+  let age: string;
 
   if (ageMs < 60_000) {
-    return `${prefix} just now`;
-  }
-  if (ageMs < 60 * 60_000) {
-    return `${prefix} ${Math.floor(ageMs / 60_000)} min ago`;
-  }
-  if (ageMs < 24 * 60 * 60_000) {
-    return `${prefix} ${Math.floor(ageMs / (60 * 60_000))} hr ago`;
+    age = 'just now';
+  } else if (ageMs < 60 * 60_000) {
+    age = `${Math.floor(ageMs / 60_000)} min ago`;
+  } else if (ageMs < 24 * 60 * 60_000) {
+    age = `${Math.floor(ageMs / (60 * 60_000))} hr ago`;
+  } else {
+    age = `${Math.floor(ageMs / (24 * 60 * 60_000))} day(s) ago`;
   }
 
-  return `${prefix} ${Math.floor(ageMs / (24 * 60 * 60_000))} day(s) ago`;
+  return prefix ? `${prefix} ${age}` : age;
 }
 
 function formatAdvertAge(lastAdvert: number | null): string {
@@ -279,8 +280,7 @@ export function MapScreen(): React.JSX.Element {
                           {point.latitude.toFixed(5)}, {point.longitude.toFixed(5)}
                         </Text>
                         <Text style={styles.trailAge}>
-                          {formatAge(point.receivedAt, '')}
-                            .replace(/^\s+/, '')
+                          {formatAge(point.receivedAt)}
                         </Text>
                       </TouchableOpacity>
                     ))}
