@@ -95,6 +95,17 @@ export class BushMeshFileSender {
       throw new Error('FILE_RESUME_REQUEST belongs to a different transfer.');
     }
 
+    // A resume request is authoritative. The receiver may have restarted and
+    // lost chunks that were acknowledged in an earlier process lifetime, so
+    // invalidate sender-side acknowledgement state from the requested point.
+    for (
+      let index = request.nextMissingChunkIndex;
+      index < this.transfer.chunkFrames.length;
+      index += 1
+    ) {
+      this.acknowledged.delete(index);
+    }
+
     const frames: Array<{chunkIndex: number; frame: number[]}> = [];
 
     for (
@@ -102,10 +113,6 @@ export class BushMeshFileSender {
       index < this.transfer.chunkFrames.length;
       index += 1
     ) {
-      if (this.acknowledged.has(index)) {
-        continue;
-      }
-
       frames.push({chunkIndex: index, frame: [...this.transfer.chunkFrames[index]]});
 
       if (maxFrames !== undefined && frames.length >= maxFrames) {
