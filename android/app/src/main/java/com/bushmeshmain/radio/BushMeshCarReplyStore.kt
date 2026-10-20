@@ -17,9 +17,9 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * Durable encrypted queue for Android Auto voice replies.
  *
- * A car reply is not removed until the foreground MeshCore session reports that
- * the companion radio accepted the channel message. This keeps Auto replies
- * truthful across radio outages and process death.
+ * Radio acceptance is persisted as its own terminal state before an entry is
+ * deleted. If the app dies after MeshCore accepts a reply but before cleanup,
+ * the recovered entry remains accepted and is never transmitted twice.
  */
 class BushMeshCarReplyStore(context: Context) {
   data class Entry(
@@ -37,6 +37,7 @@ class BushMeshCarReplyStore(context: Context) {
   companion object {
     const val STATE_QUEUED = "queued"
     const val STATE_BLOCKED = "blocked"
+    const val STATE_ACCEPTED = "accepted"
 
     private const val PREFS_NAME = "bushmesh_car_replies_v1"
     private const val STORE_KEY = "encrypted_replies"
@@ -113,14 +114,14 @@ class BushMeshCarReplyStore(context: Context) {
   fun markAttempt(id: String, error: String? = null): Boolean {
     val entries = loadMutable()
     val index = entries.indexOfFirst { it.id == id }
-    if (index < 0) {
+    if (index < 0 || entries[index].state != STATE_QUEUED) {
       return false
     }
     val current = entries[index]
     entries[index] = current.copy(
       attempts = current.attempts + 1,
       lastAttemptAtMs = System.currentTimeMillis(),
-      lastError = error,
+      lastError = error?.trim()?.takeIf { it.isNotEmpty() }?.take(240),
     )
     save(entries)
     return true
@@ -130,7 +131,7 @@ class BushMeshCarReplyStore(context: Context) {
   fun markBlocked(id: String, reason: String): Boolean {
     val entries = loadMutable()
     val index = entries.indexOfFirst { it.id == id }
-    if (index < 0) {
+    if (index < 0 || entries[index].state == STATE_ACCEPTED) {
       return false
     }
     val current = entries[index]
@@ -144,14 +145,35 @@ class BushMeshCarReplyStore(context: Context) {
   }
 
   @Synchronized
-  fun acknowledge(id: String): Boolean {
+  fun markAccepted(id: String): Boolean {
     val entries = loadMutable()
-    val changed = entries.removeAll { it.id == id }
-    if (!changed) {
+    val index = entries.indexOfFirst { it.id == id }
+    if (index < 0) {
       return false
     }
+    val current = entries[index]
+    entries[index] = current.copy(
+      state = STATE_ACCEPTED,
+      lastAttemptAtMs = System.currentTimeMillis(),
+      lastError = null,
+    )
+    save(entries)
+    return true
+  }
+
+  @Synchronized
+  fun acknowledge(id: String): Boolean {
+    val entries = loadMutable()
+    val index = entries.indexOfFirst { it.id == id }
+    if (index < 0 || entries[index].state != STATE_ACCEPTED) {
+      return false
+    }
+    entries.removeAt(index)
     if (entries.isEmpty()) {
-      preferences.edit().remove(STORE_KEY).commit()
+      val committed = preferences.edit().remove(STORE_KEY).commit()
+      if (!committed) {
+        throw IllegalStateException("Bushmesh accepted car reply could not be cleared.")
+      }
     } else {
       save(entries)
     }
@@ -163,6 +185,9 @@ class BushMeshCarReplyStore(context: Context) {
 
   @Synchronized
   fun blockedCount(): Int = loadMutable().count { it.state == STATE_BLOCKED }
+
+  @Synchronized
+  fun acceptedCount(): Int = loadMutable().count { it.state == STATE_ACCEPTED }
 
   private fun loadMutable(): MutableList<Entry> {
     val envelope = preferences.getString(STORE_KEY, null) ?: return mutableListOf()
@@ -193,7 +218,11 @@ class BushMeshCarReplyStore(context: Context) {
           item.optString("lastError", "").takeIf { it.isNotBlank() }
         }
         val state = item.optString("state", STATE_QUEUED)
-          .takeIf { it == STATE_QUEUED || it == STATE_BLOCKED }
+          .takeIf {
+            it == STATE_QUEUED ||
+              it == STATE_BLOCKED ||
+              it == STATE_ACCEPTED
+          }
           ?: STATE_BLOCKED
 
         if (
