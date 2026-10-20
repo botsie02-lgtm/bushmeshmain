@@ -81,7 +81,7 @@ export class BushMeshReliableSender {
     },
   ): Promise<BushMeshStoreForwardFlushResult> {
     if (this.flushInProgress) {
-      return {sentIds: [], failedIds: [], expiredIds: [], deferredIds: []};
+      return {sentIds: [], failedIds: [], expiredIds: []};
     }
 
     this.flushInProgress = true;
