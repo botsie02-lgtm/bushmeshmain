@@ -36,3 +36,4 @@ export * from './telemetry';
 export * from './textDictionary';
 export * from './transport';
 export * from './typedPackets';
+export * from './versioning';
