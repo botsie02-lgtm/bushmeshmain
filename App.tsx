@@ -15,6 +15,7 @@ import {ConvoyLossBanner} from './src/components/ConvoyLossBanner';
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
+import {SpeechAlertBridge} from './src/components/SpeechAlertBridge';
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DriveProvider} from './src/state/DriveContext';
@@ -131,6 +132,7 @@ function App(): React.JSX.Element {
       <BushMeshProvider>
         <ConvoyProvider>
           <DriveProvider>
+            <SpeechAlertBridge />
             <RadioSessionProvider>
               <OfflineMapProvider>
                 <LocationSessionProvider>
