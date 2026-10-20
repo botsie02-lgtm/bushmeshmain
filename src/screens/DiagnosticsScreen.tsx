@@ -18,6 +18,7 @@ import {useBushMesh} from '../state/BushMeshContext';
 import {useBushMeshFileInbox} from '../state/useBushMeshFileInbox';
 import {useBushMeshLiveState} from '../state/useBushMeshLiveState';
 import {colors} from '../theme/colors';
+import {BushMeshFileSendPanel} from './BushMeshFileSendPanel';
 
 function nodeIdLabel(nodeId: number | null): string {
   return nodeId === null
@@ -206,6 +207,8 @@ export function DiagnosticsScreen(): React.JSX.Element {
           <Metric label="Storage loaded" value={liveState.hydrated ? 'Yes' : 'Loading'} />
         </View>
       </View>
+
+      <BushMeshFileSendPanel />
 
       <View style={styles.sectionCard}>
         <View style={styles.rowBetween}>
