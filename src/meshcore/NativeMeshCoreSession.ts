@@ -10,6 +10,7 @@ import {
   buildDeviceQueryCommand,
   buildGetBatteryCommand,
   buildGetChannelCommand,
+  buildGetContactsCommand,
   buildGetMessageCommand,
   buildSendChannelDataFloodCommand,
   buildSendChannelMessageCommand,
@@ -25,6 +26,7 @@ import {
 import {MeshCoreFrameTransport} from './MeshCoreFrameTransport';
 import {decodeMeshCoreBytes} from './meshcorePackets';
 import {
+  ParsedContactInfo,
   ParsedMeshCorePacket,
   parseMeshCorePacketFields,
 } from './meshcoreParsers';
@@ -36,6 +38,7 @@ import {SerialTaskQueue} from './serialTaskQueue';
 
 const COMMAND_TIMEOUT_MS = 5_000;
 const MAX_CHANNEL_MESSAGE_CHARS = 133;
+const MAX_CONTACT_RECORDS_PER_SYNC = 500;
 
 export type NativeMeshCoreResponse = {
   packetType: number | null;
@@ -67,9 +70,10 @@ type PendingCommand = {
  * Core MeshCore companion session running over the Android-owned BLE transport.
  *
  * It covers the protocol surface needed for a native-radio handoff: startup,
- * identity/capabilities, battery/channel reads, channel text, queued-message
- * sync and binary Bushmesh datagrams. It shares Bushmesh owner-scoped session
- * rules so a stale native session cannot transmit after another radio wins.
+ * identity/capabilities, battery/channel reads, contacts, channel text,
+ * queued-message sync and binary Bushmesh datagrams. It shares Bushmesh
+ * owner-scoped session rules so a stale native session cannot transmit after
+ * another radio wins.
  */
 export class NativeMeshCoreSession {
   private readonly owner = {};
@@ -177,6 +181,12 @@ export class NativeMeshCoreSession {
     return responses;
   }
 
+  async syncContacts(since?: number): Promise<ParsedContactInfo[]> {
+    return this.enqueueCommand('CMD_GET_CONTACTS', () =>
+      this.syncContactsInternal(since),
+    );
+  }
+
   async sendChannelMessage(
     channelIndex: number,
     message: string,
@@ -253,6 +263,68 @@ export class NativeMeshCoreSession {
       BUSHMESH_MESHCORE_DEV_DATA_TYPE,
       payload,
     );
+  }
+
+  private async syncContactsInternal(
+    since?: number,
+  ): Promise<ParsedContactInfo[]> {
+    const contacts: ParsedContactInfo[] = [];
+    this.events.onStatus?.('CMD_GET_CONTACTS sending over native BLE…');
+
+    let response = await this.executeCommand(
+      'CMD_GET_CONTACTS_START',
+      buildGetContactsCommand(since),
+      [0x02, 0x03, 0x04],
+    );
+
+    if (response.parsed?.contactInfo) {
+      contacts.push(response.parsed.contactInfo);
+    }
+
+    if (response.packetType === 0x04) {
+      this.events.onStatus?.(
+        `Native contacts sync complete. Loaded ${contacts.length} contact(s).`,
+      );
+      return contacts;
+    }
+
+    if (
+      response.packetType === 0x02 &&
+      (response.parsed?.contactsStartCount ?? 0) === 0
+    ) {
+      this.events.onStatus?.('Native contacts sync complete. Loaded 0 contacts.');
+      return contacts;
+    }
+
+    for (let index = 0; index < MAX_CONTACT_RECORDS_PER_SYNC; index += 1) {
+      try {
+        response = await this.waitForPacket(
+          'CMD_GET_CONTACTS_NEXT',
+          [0x03, 0x04],
+        );
+      } catch (error) {
+        this.events.onStatus?.(
+          `Native contacts sync stopped after ${contacts.length} contact(s).`,
+        );
+        throw error;
+      }
+
+      if (response.parsed?.contactInfo) {
+        contacts.push(response.parsed.contactInfo);
+      }
+
+      if (response.packetType === 0x04) {
+        this.events.onStatus?.(
+          `Native contacts sync complete. Loaded ${contacts.length} contact(s).`,
+        );
+        return contacts;
+      }
+    }
+
+    this.events.onStatus?.(
+      `Native contacts sync stopped after ${contacts.length} contact(s); safety limit reached.`,
+    );
+    return contacts;
   }
 
   private enqueueCommand<T>(label: string, task: () => Promise<T>): Promise<T> {
