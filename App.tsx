@@ -19,6 +19,7 @@ import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
 import {NativeChannelMessageBridge} from './src/components/NativeChannelMessageBridge';
 import {RadioMessageSpeechBridge} from './src/components/RadioMessageSpeechBridge';
 import {RadioSpeechStatusBanner} from './src/components/RadioSpeechStatusBanner';
+import {RouteGuidanceBanner} from './src/components/RouteGuidanceBanner';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
 import {SpeechAlertBridge} from './src/components/SpeechAlertBridge';
 import {SpeechPttPanel} from './src/components/SpeechPttPanel';
@@ -75,6 +76,7 @@ function AppContent(): React.JSX.Element {
       {activeTab === 'drive' ? (
         <>
           <ConvoyLossBanner />
+          <RouteGuidanceBanner />
           <DriveNavigationBanner />
           <FieldNavigationPrompt />
           <SpeechStatusBanner />
