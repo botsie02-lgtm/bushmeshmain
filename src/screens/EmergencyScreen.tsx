@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +15,7 @@ import {
 } from '../bushmesh/runtime/BushMeshDistressBeacon';
 import {getActiveBushMeshRuntime} from '../bushmesh/runtime/BushMeshRuntimeHub';
 import {useBushMesh} from '../state/BushMeshContext';
+import {useBushMeshLiveState} from '../state/useBushMeshLiveState';
 import {colors} from '../theme/colors';
 
 type DistressOption = {
@@ -40,6 +42,28 @@ const IDLE_BEACON_STATE: BushMeshDistressBeaconState = {
   remainingRepeats: 0,
 };
 
+function distressLabel(type: number): string {
+  return distressOptions.find(option => option.type === type)?.label ?? `Alert ${type}`;
+}
+
+function nodeIdLabel(nodeId: number): string {
+  return nodeId.toString(16).padStart(8, '0').toUpperCase();
+}
+
+function receivedAge(receivedAt: number): string {
+  const ageMs = Math.max(0, Date.now() - receivedAt);
+  if (ageMs < 60_000) {
+    return 'just now';
+  }
+  if (ageMs < 60 * 60_000) {
+    return `${Math.floor(ageMs / 60_000)} min ago`;
+  }
+  if (ageMs < 24 * 60 * 60_000) {
+    return `${Math.floor(ageMs / (60 * 60_000))} hr ago`;
+  }
+  return `${Math.floor(ageMs / (24 * 60 * 60_000))} day(s) ago`;
+}
+
 export function EmergencyScreen(): React.JSX.Element {
   const {
     connectionStatus,
@@ -47,6 +71,7 @@ export function EmergencyScreen(): React.JSX.Element {
     activeChannel,
     bushMeshNetworkStatus,
   } = useBushMesh();
+  const {distressAlerts} = useBushMeshLiveState();
 
   const beaconRef = useRef<BushMeshDistressBeacon | null>(null);
   const [selectedType, setSelectedType] = useState<BushMeshDistressType>(
@@ -141,7 +166,8 @@ export function EmergencyScreen(): React.JSX.Element {
   };
 
   const cancelBeacon = () => {
-    const transmissions = beaconRef.current?.state().transmissions ?? beaconState.transmissions;
+    const transmissions =
+      beaconRef.current?.state().transmissions ?? beaconState.transmissions;
     beaconRef.current?.stop();
     beaconRef.current = null;
     setBeaconState({
@@ -153,6 +179,31 @@ export function EmergencyScreen(): React.JSX.Element {
     setStatus(
       `Emergency beacon repeats cancelled after ${transmissions} transmission(s). Previously transmitted alerts cannot be recalled.`,
     );
+  };
+
+  const openAlertLocation = async (
+    nodeId: number,
+    latitude: number,
+    longitude: number,
+  ) => {
+    const label = encodeURIComponent(`BushMesh SOS ${nodeIdLabel(nodeId)}`);
+    const candidates = [
+      `geo:${latitude},${longitude}?q=${latitude},${longitude}(${label})`,
+      `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`,
+    ];
+
+    for (const url of candidates) {
+      try {
+        if (await Linking.canOpenURL(url)) {
+          await Linking.openURL(url);
+          return;
+        }
+      } catch {
+        // Try the next map URL if this handler fails.
+      }
+    }
+
+    setStatus('No compatible mapping app was available for the distress location.');
   };
 
   return (
@@ -178,7 +229,9 @@ export function EmergencyScreen(): React.JSX.Element {
           <View style={styles.channelBox}>
             <Text style={styles.channelLabel}>Channel</Text>
             <Text style={styles.channelValue}>
-              {activeChannel ? `${activeChannel.channelName} #${activeChannel.channelIndex}` : 'None'}
+              {activeChannel
+                ? `${activeChannel.channelName} #${activeChannel.channelIndex}`
+                : 'None'}
             </Text>
           </View>
         </View>
@@ -200,7 +253,11 @@ export function EmergencyScreen(): React.JSX.Element {
                 key={option.type}
                 style={[styles.optionCard, selected && styles.optionCardSelected]}
                 onPress={() => setSelectedType(option.type)}>
-                <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>
+                <Text
+                  style={[
+                    styles.optionLabel,
+                    selected && styles.optionLabelSelected,
+                  ]}>
                   {option.label}
                 </Text>
                 <Text style={styles.optionDetail}>{option.detail}</Text>
@@ -216,7 +273,10 @@ export function EmergencyScreen(): React.JSX.Element {
 
         {!beaconState.active ? (
           <TouchableOpacity
-            style={[styles.sosButton, (!ready || isStarting) && styles.buttonDisabled]}
+            style={[
+              styles.sosButton,
+              (!ready || isStarting) && styles.buttonDisabled,
+            ]}
             disabled={!ready || isStarting}
             onPress={startBeacon}>
             <Text style={styles.sosButtonText}>
@@ -231,13 +291,84 @@ export function EmergencyScreen(): React.JSX.Element {
                 Message ID {beaconState.messageId ?? '--'}
               </Text>
               <Text style={styles.activeBeaconText}>
-                Transmissions {beaconState.transmissions} • Remaining repeats {beaconState.remainingRepeats}
+                Transmissions {beaconState.transmissions} • Remaining repeats{' '}
+                {beaconState.remainingRepeats}
               </Text>
             </View>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelBeacon}>
               <Text style={styles.cancelButtonText}>Cancel future repeats</Text>
             </TouchableOpacity>
           </>
+        )}
+      </View>
+
+      <View style={styles.sectionCard}>
+        <View style={styles.rowBetween}>
+          <View style={styles.flexOne}>
+            <Text style={styles.sectionTitle}>Received Distress Alerts</Text>
+            <Text style={styles.sectionBody}>
+              Source-attributed routed SOS packets received during this app
+              session. Repeated copies of the same routed message are collapsed.
+            </Text>
+          </View>
+          <View style={styles.alertCountBadge}>
+            <Text style={styles.alertCountText}>{distressAlerts.length}</Text>
+          </View>
+        </View>
+
+        {distressAlerts.length === 0 ? (
+          <Text style={styles.emptyText}>No BushMesh distress alerts received.</Text>
+        ) : (
+          distressAlerts.map(alert => {
+            const hasLocation =
+              typeof alert.latitude === 'number' &&
+              typeof alert.longitude === 'number';
+
+            return (
+              <View key={alert.key} style={styles.receivedAlertCard}>
+                <View style={styles.rowBetween}>
+                  <View style={styles.flexOne}>
+                    <Text style={styles.receivedAlertType}>
+                      {distressLabel(alert.type)}
+                    </Text>
+                    <Text style={styles.receivedAlertNode}>
+                      Node {nodeIdLabel(alert.nodeId)} • Channel #{alert.channelIndex}
+                    </Text>
+                  </View>
+                  <Text style={styles.receivedAlertAge}>
+                    {receivedAge(alert.receivedAt)}
+                  </Text>
+                </View>
+
+                <Text style={styles.receivedAlertMeta}>
+                  Message {alert.messageId}
+                  {alert.batteryPercent === undefined
+                    ? ''
+                    : ` • Battery ${alert.batteryPercent}%`}
+                </Text>
+
+                {hasLocation ? (
+                  <TouchableOpacity
+                    style={styles.locationButton}
+                    onPress={() =>
+                      openAlertLocation(
+                        alert.nodeId,
+                        alert.latitude as number,
+                        alert.longitude as number,
+                      )
+                    }>
+                    <Text style={styles.locationButtonText}>
+                      Open {alert.latitude?.toFixed(6)}, {alert.longitude?.toFixed(6)} in maps
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.noLocationText}>
+                    No location was included with this alert.
+                  </Text>
+                )}
+              </View>
+            );
+          })
         )}
       </View>
 
@@ -438,6 +569,71 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 13,
     fontWeight: '900',
+  },
+  alertCountBadge: {
+    minWidth: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  alertCountText: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  emptyText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 14,
+  },
+  receivedAlertCard: {
+    marginTop: 12,
+    backgroundColor: colors.background,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    padding: 13,
+  },
+  receivedAlertType: {
+    color: colors.danger,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  receivedAlertNode: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    marginTop: 4,
+  },
+  receivedAlertAge: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  receivedAlertMeta: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 9,
+  },
+  locationButton: {
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    padding: 10,
+  },
+  locationButtonText: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  noLocationText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 9,
   },
   warningCard: {
     marginTop: 18,
