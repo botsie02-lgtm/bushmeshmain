@@ -1,3 +1,4 @@
+import {compareBushMeshPacketClock} from '../bushmesh/replayGuard';
 import {ConvoyVehicle, distanceMeters} from './convoy';
 
 export type BuddyTailPoint = {
@@ -39,10 +40,18 @@ export function appendBuddyTailPoint(
   };
 
   if (last) {
-    const samePacket =
-      last.sequence === point.sequence &&
-      last.packetTimestampSeconds === point.packetTimestampSeconds;
-    if (samePacket) {
+    const order = compareBushMeshPacketClock(
+      {
+        timestampSeconds: last.packetTimestampSeconds,
+        sequence: last.sequence,
+      },
+      {
+        timestampSeconds: point.packetTimestampSeconds,
+        sequence: point.sequence,
+      },
+    );
+
+    if (order !== 'newer') {
       return {vehicleId: vehicle.id, points: retained};
     }
 
