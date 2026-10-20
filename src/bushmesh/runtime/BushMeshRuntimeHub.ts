@@ -1,4 +1,15 @@
+import {
+  BushMeshPacketType,
+  BushMeshTypedPacket,
+  decodeBushMeshTypedPacket,
+  encodeBushMeshConvoyWire,
+} from '../protocol';
+import {tryDecodeBushMeshChannelFrame} from '../../meshcore/meshcoreBushMeshBridge';
 import {BushMeshNetworkRuntime} from './BushMeshNetworkRuntime';
+import {
+  acceptBushMeshConvoyRemote,
+  markBushMeshConvoyTransmitted,
+} from './BushMeshConvoyHub';
 import {
   clearMeshCorePublicKey,
   publishMeshCorePublicKey,
@@ -34,11 +45,52 @@ function inspectMeshCoreIdentity(bytes: number[]): void {
   publishMeshCorePublicKey(publicKey);
 }
 
+function inspectBushMeshConvoy(bytes: number[], now: number): void {
+  try {
+    const channelFrame = tryDecodeBushMeshChannelFrame(bytes);
+    if (
+      !channelFrame ||
+      channelFrame.decoded.envelope.type !== BushMeshPacketType.Convoy
+    ) {
+      return;
+    }
+
+    const typed: BushMeshTypedPacket = decodeBushMeshTypedPacket(
+      channelFrame.decoded.wireBytes,
+    );
+    if (typed.kind === 'convoy') {
+      acceptBushMeshConvoyRemote(typed.value, now);
+    }
+  } catch {
+    // The normal network runtime owns decode-error accounting. Convoy inspection
+    // is intentionally side-effect-free when a frame is malformed.
+  }
+}
+
+export async function sendActiveBushMeshConvoyStatus(
+  channelIndex: number,
+  status: Parameters<typeof encodeBushMeshConvoyWire>[0],
+): Promise<void> {
+  if (!activeRuntime) {
+    throw new Error('BushMesh networking runtime is not active.');
+  }
+
+  const wireBytes = encodeBushMeshConvoyWire(
+    status,
+    activeRuntime.nextMessageId(),
+  );
+  await activeRuntime.sendWire(channelIndex, wireBytes, {
+    allowFragmentation: false,
+  });
+  markBushMeshConvoyTransmitted();
+}
+
 export async function acceptBushMeshMeshCoreFrame(
   bytes: number[],
   now = Date.now(),
 ): Promise<boolean> {
   inspectMeshCoreIdentity(bytes);
+  inspectBushMeshConvoy(bytes, now);
 
   if (!activeRuntime) {
     return false;
