@@ -1,5 +1,6 @@
 import UIKit
 import AVFoundation
+import CoreLocation
 import Speech
 import React
 import React_RCTAppDelegate
@@ -127,7 +128,9 @@ class BushMeshVoice: NSObject, RCTBridgeModule, AVSpeechSynthesizerDelegate {
 
     DispatchQueue.main.async {
       let utterance = AVSpeechUtterance(string: clean)
-      utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier)
+      utterance.voice = AVSpeechSynthesisVoice(
+        language: Locale.preferredLanguages.first ?? "en-US"
+      )
       utterance.rate = AVSpeechUtteranceDefaultSpeechRate
       self.synthesizer.stopSpeaking(at: .immediate)
       self.synthesizer.speak(utterance)
@@ -298,6 +301,201 @@ class BushMeshVoice: NSObject, RCTBridgeModule, AVSpeechSynthesizerDelegate {
     } catch {
       // Cleanup should never turn a completed transcript into an application error.
     }
+  }
+}
+
+@objc(BushMeshLocation)
+class BushMeshLocation: NSObject, RCTBridgeModule, CLLocationManagerDelegate {
+  private let manager = CLLocationManager()
+  private var resolveBlock: RCTPromiseResolveBlock?
+  private var rejectBlock: RCTPromiseRejectBlock?
+  private var maxAgeMs: Double = 15_000
+  private var timeoutWorkItem: DispatchWorkItem?
+
+  override init() {
+    super.init()
+    manager.delegate = self
+    manager.desiredAccuracy = kCLLocationAccuracyBest
+  }
+
+  static func moduleName() -> String! {
+    return "BushMeshLocation"
+  }
+
+  static func requiresMainQueueSetup() -> Bool {
+    return true
+  }
+
+  @objc(getCurrentLocation:timeoutMs:resolver:rejecter:)
+  func getCurrentLocation(
+    _ requestedMaxAgeMs: Double,
+    timeoutMs requestedTimeoutMs: Double,
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    DispatchQueue.main.async {
+      guard self.resolveBlock == nil else {
+        reject("LOCATION_BUSY", "A BushMesh location request is already active.", nil)
+        return
+      }
+
+      self.resolveBlock = resolve
+      self.rejectBlock = reject
+      self.maxAgeMs = min(max(requestedMaxAgeMs, 0), 10 * 60 * 1000)
+      self.armTimeout(min(max(requestedTimeoutMs, 1000), 60_000))
+
+      switch self.manager.authorizationStatus {
+      case .authorizedAlways, .authorizedWhenInUse:
+        self.requestLocationOrUseCache()
+      case .notDetermined:
+        self.manager.requestWhenInUseAuthorization()
+      case .denied, .restricted:
+        self.fail(
+          code: "LOCATION_PERMISSION",
+          message: "Location permission is required for convoy position updates."
+        )
+      @unknown default:
+        self.fail(
+          code: "LOCATION_UNAVAILABLE",
+          message: "Location authorization is unavailable."
+        )
+      }
+    }
+  }
+
+  @objc(cancel:rejecter:)
+  func cancel(
+    _ resolve: RCTPromiseResolveBlock,
+    rejecter reject: RCTPromiseRejectBlock
+  ) {
+    DispatchQueue.main.async {
+      if self.resolveBlock != nil {
+        self.fail(
+          code: "LOCATION_CANCELLED",
+          message: "Location request was cancelled."
+        )
+      } else {
+        self.cleanup()
+      }
+      resolve(nil)
+    }
+  }
+
+  func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    guard resolveBlock != nil else {
+      return
+    }
+
+    switch manager.authorizationStatus {
+    case .authorizedAlways, .authorizedWhenInUse:
+      requestLocationOrUseCache()
+    case .denied, .restricted:
+      fail(
+        code: "LOCATION_PERMISSION",
+        message: "Location permission is required for convoy position updates."
+      )
+    case .notDetermined:
+      break
+    @unknown default:
+      fail(
+        code: "LOCATION_UNAVAILABLE",
+        message: "Location authorization is unavailable."
+      )
+    }
+  }
+
+  func locationManager(
+    _ manager: CLLocationManager,
+    didUpdateLocations locations: [CLLocation]
+  ) {
+    guard let location = locations
+      .filter({ $0.horizontalAccuracy >= 0 })
+      .max(by: { $0.timestamp < $1.timestamp }) else {
+      return
+    }
+
+    finish(location)
+  }
+
+  func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    fail(
+      code: "LOCATION_ERROR",
+      message: error.localizedDescription,
+      underlyingError: error
+    )
+  }
+
+  private func requestLocationOrUseCache() {
+    if let cached = manager.location,
+       cached.horizontalAccuracy >= 0,
+       Date().timeIntervalSince(cached.timestamp) * 1000 <= maxAgeMs {
+      finish(cached)
+      return
+    }
+
+    manager.requestLocation()
+  }
+
+  private func locationPayload(_ location: CLLocation) -> [String: Any] {
+    var payload: [String: Any] = [
+      "latitude": location.coordinate.latitude,
+      "longitude": location.coordinate.longitude,
+      "accuracyMetres": location.horizontalAccuracy,
+      "timestampMs": location.timestamp.timeIntervalSince1970 * 1000,
+    ]
+
+    if location.verticalAccuracy >= 0 {
+      payload["altitudeMetres"] = location.altitude
+    }
+    if location.speed >= 0 {
+      payload["speedKph"] = location.speed * 3.6
+    }
+    if location.course >= 0 {
+      payload["headingDegrees"] = location.course
+    }
+
+    return payload
+  }
+
+  private func finish(_ location: CLLocation) {
+    let resolve = resolveBlock
+    resolveBlock = nil
+    rejectBlock = nil
+    cleanup()
+    resolve?(locationPayload(location))
+  }
+
+  private func fail(
+    code: String,
+    message: String,
+    underlyingError: Error? = nil
+  ) {
+    let reject = rejectBlock
+    resolveBlock = nil
+    rejectBlock = nil
+    cleanup()
+    reject?(code, message, underlyingError)
+  }
+
+  private func armTimeout(_ timeoutMs: Double) {
+    timeoutWorkItem?.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      self?.fail(
+        code: "LOCATION_TIMEOUT",
+        message: "Timed out waiting for a current location."
+      )
+    }
+    timeoutWorkItem = work
+    DispatchQueue.main.asyncAfter(
+      deadline: .now() + timeoutMs / 1000,
+      execute: work
+    )
+  }
+
+  private func cleanup() {
+    timeoutWorkItem?.cancel()
+    timeoutWorkItem = nil
+    manager.stopUpdatingLocation()
   }
 }
 
