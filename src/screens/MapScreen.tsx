@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 
 import {useBushMesh} from '../state/BushMeshContext';
+import {useBushMeshLiveState} from '../state/useBushMeshLiveState';
 import {colors} from '../theme/colors';
 
 type LocatedContact = {
@@ -20,8 +21,30 @@ type LocatedContact = {
   lastAdvert: number | null;
 };
 
+type OpenableLocation = {
+  name: string;
+  latitude: number;
+  longitude: number;
+};
+
 function validCoordinate(value: number | null, min: number, max: number): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+}
+
+function formatAge(timestampMs: number, prefix: string): string {
+  const ageMs = Math.max(0, Date.now() - timestampMs);
+
+  if (ageMs < 60_000) {
+    return `${prefix} just now`;
+  }
+  if (ageMs < 60 * 60_000) {
+    return `${prefix} ${Math.floor(ageMs / 60_000)} min ago`;
+  }
+  if (ageMs < 24 * 60 * 60_000) {
+    return `${prefix} ${Math.floor(ageMs / (60 * 60_000))} hr ago`;
+  }
+
+  return `${prefix} ${Math.floor(ageMs / (24 * 60 * 60_000))} day(s) ago`;
 }
 
 function formatAdvertAge(lastAdvert: number | null): string {
@@ -30,25 +53,18 @@ function formatAdvertAge(lastAdvert: number | null): string {
   }
 
   const timestampMs = lastAdvert > 10_000_000_000 ? lastAdvert : lastAdvert * 1000;
-  const ageMs = Math.max(0, Date.now() - timestampMs);
+  return formatAge(timestampMs, 'Advertised');
+}
 
-  if (ageMs < 60_000) {
-    return 'Advertised just now';
-  }
-  if (ageMs < 60 * 60_000) {
-    return `Advertised ${Math.floor(ageMs / 60_000)} min ago`;
-  }
-  if (ageMs < 24 * 60 * 60_000) {
-    return `Advertised ${Math.floor(ageMs / (60 * 60_000))} hr ago`;
-  }
-
-  return `Advertised ${Math.floor(ageMs / (24 * 60 * 60_000))} day(s) ago`;
+function nodeIdLabel(nodeId: number): string {
+  return nodeId.toString(16).padStart(8, '0').toUpperCase();
 }
 
 export function MapScreen(): React.JSX.Element {
   const {contacts, knownBushMeshPeers, connectionStatus} = useBushMesh();
+  const {peerLocations} = useBushMeshLiveState();
   const [status, setStatus] = useState(
-    'Tap a located contact to open it in your phone mapping app.',
+    'Tap a location to open it in your phone mapping app.',
   );
 
   const locatedContacts = useMemo<LocatedContact[]>(
@@ -70,21 +86,37 @@ export function MapScreen(): React.JSX.Element {
     [contacts],
   );
 
+  const allLocations = useMemo<OpenableLocation[]>(
+    () => [
+      ...peerLocations.map(location => ({
+        name: `BushMesh ${nodeIdLabel(location.nodeId)}`,
+        latitude: location.latitude,
+        longitude: location.longitude,
+      })),
+      ...locatedContacts.map(contact => ({
+        name: contact.name,
+        latitude: contact.latitude,
+        longitude: contact.longitude,
+      })),
+    ],
+    [locatedContacts, peerLocations],
+  );
+
   const bounds = useMemo(() => {
-    if (locatedContacts.length === 0) {
+    if (allLocations.length === 0) {
       return null;
     }
 
-    let minLat = locatedContacts[0].latitude;
-    let maxLat = locatedContacts[0].latitude;
-    let minLon = locatedContacts[0].longitude;
-    let maxLon = locatedContacts[0].longitude;
+    let minLat = allLocations[0].latitude;
+    let maxLat = allLocations[0].latitude;
+    let minLon = allLocations[0].longitude;
+    let maxLon = allLocations[0].longitude;
 
-    for (const contact of locatedContacts.slice(1)) {
-      minLat = Math.min(minLat, contact.latitude);
-      maxLat = Math.max(maxLat, contact.latitude);
-      minLon = Math.min(minLon, contact.longitude);
-      maxLon = Math.max(maxLon, contact.longitude);
+    for (const location of allLocations.slice(1)) {
+      minLat = Math.min(minLat, location.latitude);
+      maxLat = Math.max(maxLat, location.latitude);
+      minLon = Math.min(minLon, location.longitude);
+      maxLon = Math.max(maxLon, location.longitude);
     }
 
     return {
@@ -95,20 +127,20 @@ export function MapScreen(): React.JSX.Element {
       centreLat: (minLat + maxLat) / 2,
       centreLon: (minLon + maxLon) / 2,
     };
-  }, [locatedContacts]);
+  }, [allLocations]);
 
-  const openLocation = async (contact: LocatedContact) => {
-    const label = encodeURIComponent(contact.name);
+  const openLocation = async (location: OpenableLocation) => {
+    const label = encodeURIComponent(location.name);
     const candidates = [
-      `geo:${contact.latitude},${contact.longitude}?q=${contact.latitude},${contact.longitude}(${label})`,
-      `https://www.google.com/maps/search/?api=1&query=${contact.latitude},${contact.longitude}`,
+      `geo:${location.latitude},${location.longitude}?q=${location.latitude},${location.longitude}(${label})`,
+      `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`,
     ];
 
     try {
       for (const url of candidates) {
         if (await Linking.canOpenURL(url)) {
           await Linking.openURL(url);
-          setStatus(`Opened ${contact.name} in maps.`);
+          setStatus(`Opened ${location.name} in maps.`);
           return;
         }
       }
@@ -127,9 +159,8 @@ export function MapScreen(): React.JSX.Element {
         <Text style={styles.eyebrow}>Map</Text>
         <Text style={styles.title}>Convoy Locations</Text>
         <Text style={styles.body}>
-          BushMesh can already surface coordinates advertised by MeshCore
-          contacts. This screen keeps the data useful before a full offline map
-          renderer is added.
+          Combines coordinates advertised by MeshCore contacts with live compact
+          location replies received directly through BushMesh routed packets.
         </Text>
       </View>
 
@@ -145,16 +176,16 @@ export function MapScreen(): React.JSX.Element {
           </Text>
         </View>
         <View style={styles.metricBox}>
-          <Text style={styles.metricLabel}>Located contacts</Text>
-          <Text style={styles.metricValue}>{locatedContacts.length}</Text>
+          <Text style={styles.metricLabel}>Live peer positions</Text>
+          <Text style={styles.metricValue}>{peerLocations.length}</Text>
         </View>
         <View style={styles.metricBox}>
           <Text style={styles.metricLabel}>BushMesh peers</Text>
           <Text style={styles.metricValue}>{knownBushMeshPeers.length}</Text>
         </View>
         <View style={styles.metricBox}>
-          <Text style={styles.metricLabel}>Synced contacts</Text>
-          <Text style={styles.metricValue}>{contacts.length}</Text>
+          <Text style={styles.metricLabel}>Located contacts</Text>
+          <Text style={styles.metricValue}>{locatedContacts.length}</Text>
         </View>
       </View>
 
@@ -174,7 +205,59 @@ export function MapScreen(): React.JSX.Element {
       ) : null}
 
       <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Map-ready Contacts</Text>
+        <Text style={styles.sectionTitle}>Live BushMesh Positions</Text>
+        <Text style={styles.sectionBody}>
+          These are source-attributed locations received inside routed BushMesh
+          packets. A newer location from the same node replaces its older fix.
+        </Text>
+
+        {peerLocations.length === 0 ? (
+          <Text style={styles.emptyText}>
+            No routed BushMesh location replies have been received in this app
+            session yet. Request a peer location from the Contacts tab.
+          </Text>
+        ) : (
+          peerLocations.map(location => {
+            const peer = knownBushMeshPeers.find(item => item.nodeId === location.nodeId);
+            const name = `BushMesh ${nodeIdLabel(location.nodeId)}`;
+
+            return (
+              <TouchableOpacity
+                key={location.nodeId}
+                style={styles.liveLocationCard}
+                onPress={() => openLocation({
+                  name,
+                  latitude: location.latitude,
+                  longitude: location.longitude,
+                })}>
+                <View style={styles.rowBetween}>
+                  <View style={styles.flexOne}>
+                    <Text style={styles.contactName}>{nodeIdLabel(location.nodeId)}</Text>
+                    <Text style={styles.contactKey}>
+                      Channel #{location.channelIndex}
+                      {peer ? ` • Role ${peer.role}` : ''}
+                    </Text>
+                  </View>
+                  <Text style={styles.openText}>Open map</Text>
+                </View>
+
+                <Text style={styles.coordinateText}>
+                  {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+                </Text>
+                <Text style={styles.advertText}>
+                  {formatAge(location.receivedAt, 'Received')}
+                  {location.batteryPercent === undefined
+                    ? ''
+                    : ` • Battery ${location.batteryPercent}%`}
+                </Text>
+              </TouchableOpacity>
+            );
+          })
+        )}
+      </View>
+
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>Map-ready MeshCore Contacts</Text>
         <Text style={styles.sectionBody}>{status}</Text>
 
         {locatedContacts.length === 0 ? (
@@ -210,10 +293,9 @@ export function MapScreen(): React.JSX.Element {
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Offline Map Path</Text>
         <Text style={styles.sectionBody}>
-          The next map layer can consume the same contact and BushMesh location
-          state without changing the radio protocol: cached offline tiles,
-          convoy trails, route markers and peer positions can be rendered here
-          once a map renderer is selected.
+          Live BushMesh positions are now retained independently of the map UI,
+          so a future offline renderer can draw convoy trails and peer markers
+          without changing the radio protocol or receive pipeline.
         </Text>
       </View>
     </ScrollView>
@@ -321,6 +403,14 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     borderWidth: 1,
     borderColor: colors.border,
+    padding: 13,
+    marginTop: 12,
+  },
+  liveLocationCard: {
+    backgroundColor: colors.surfaceSoft,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: colors.accent,
     padding: 13,
     marginTop: 12,
   },
