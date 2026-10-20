@@ -29,12 +29,13 @@ class BushMeshRadioServiceModule(
     BushMeshNativeInboxStore(reactContext.applicationContext)
   }
 
+  private val nativeChannelInbox: BushMeshNativeChannelInboxStore by lazy {
+    BushMeshNativeChannelInboxStore(reactContext.applicationContext)
+  }
+
   @ReactMethod
   fun start(deviceLabel: String?, promise: Promise) {
     try {
-      // Claim synchronously before dispatching the service intent. This closes
-      // the gap where JS could restore the encrypted outbox while a resurrected
-      // native worker was still between service-loop ticks.
       outboxLease.claimForeground()
       dispatch(BushMeshRadioService.ACTION_START, deviceLabel, null)
       promise.resolve(true)
@@ -110,6 +111,28 @@ class BushMeshRadioServiceModule(
   }
 
   @ReactMethod
+  fun drainBackgroundChannelInbox(maxFrames: Double, promise: Promise) {
+    try {
+      val frames = nativeChannelInbox.drain(maxFrames.toInt().coerceIn(0, 128))
+      val result = Arguments.createArray()
+      frames.forEach { entry ->
+        val item = Arguments.createMap().apply {
+          putDouble("receivedAtMs", entry.receivedAtMs.toDouble())
+          putString("frameBase64", Base64.encodeToString(entry.frame, Base64.NO_WRAP))
+        }
+        result.pushMap(item)
+      }
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject(
+        "BUSHMESH_NATIVE_CHANNEL_INBOX_DRAIN_FAILED",
+        error.message,
+        error,
+      )
+    }
+  }
+
+  @ReactMethod
   fun getStatus(promise: Promise) {
     val nativeStatus = nativeBle.status()
     val nativeOwnership = BushMeshRadioServiceState.deviceAddress != null
@@ -132,6 +155,7 @@ class BushMeshRadioServiceModule(
       putDouble("nativeBleQueuedWrites", nativeStatus.queuedWrites.toDouble())
       putDouble("nativeBleBufferedFrames", nativeStatus.bufferedFrames.toDouble())
       putDouble("nativeBackgroundInboxCount", nativeInbox.size().toDouble())
+      putDouble("nativeBackgroundChannelInboxCount", nativeChannelInbox.size().toDouble())
       putString("outboxLeaseOwner", lease.owner)
       putDouble("outboxLeaseEpoch", lease.epoch.toDouble())
     }
