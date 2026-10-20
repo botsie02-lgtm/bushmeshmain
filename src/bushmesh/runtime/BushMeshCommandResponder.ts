@@ -15,6 +15,7 @@ import {
   encodeBushMeshWire,
   encodeLocationPayload,
 } from '../protocol';
+import {getBushMeshLocalLocation} from './BushMeshLocalLocationHub';
 import {BushMeshSyncManager} from './BushMeshSyncManager';
 
 export type BushMeshLocationSnapshot = {
@@ -115,7 +116,8 @@ export class BushMeshCommandResponder {
     maxAgeSeconds: number | undefined,
     now: number,
   ): BushMeshCommandResponse[] {
-    const snapshot = this.dependencies.currentLocation?.();
+    const snapshot =
+      this.dependencies.currentLocation?.() ?? getBushMeshLocalLocation();
 
     if (!snapshot) {
       return [];
