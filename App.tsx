@@ -14,6 +14,7 @@ import {
 import {CarMessagingStatusBanner} from './src/components/CarMessagingStatusBanner';
 import {ConvoyLossBanner} from './src/components/ConvoyLossBanner';
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
+import {FieldNavigationPrompt} from './src/components/FieldNavigationPrompt';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
 import {NativeChannelMessageBridge} from './src/components/NativeChannelMessageBridge';
 import {RadioMessageSpeechBridge} from './src/components/RadioMessageSpeechBridge';
@@ -74,6 +75,7 @@ function AppContent(): React.JSX.Element {
         <>
           <ConvoyLossBanner />
           <DriveNavigationBanner />
+          <FieldNavigationPrompt />
           <SpeechStatusBanner />
         </>
       ) : null}
