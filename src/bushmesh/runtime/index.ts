@@ -27,6 +27,7 @@ export * from './BushMeshPersistentFileCoordinator';
 export * from './BushMeshPersistentFileTransferManager';
 export * from './BushMeshPersistentForwarder';
 export * from './BushMeshPersistentStore';
+export * from './BushMeshPersistentSync';
 export * from './BushMeshReliableSender';
 export * from './BushMeshRouteDecisionEngine';
 export * from './BushMeshRuntimeHub';
