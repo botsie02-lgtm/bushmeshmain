@@ -34,6 +34,7 @@ export type NativeRadioServiceStatus = {
   nativeBleQueuedWrites?: number;
   nativeBleBufferedFrames?: number;
   nativeBackgroundInboxCount?: number;
+  nativeBackgroundChannelInboxCount?: number;
   outboxLeaseOwner?: 'foreground' | 'background' | string;
   outboxLeaseEpoch?: number;
 };
@@ -48,6 +49,9 @@ type NativeRadioServiceModule = {
   enqueueNativeBleWrite: (base64Frame: string) => Promise<boolean>;
   drainNativeBleFrames: (maxFrames: number) => Promise<string[]>;
   drainBackgroundInbox: (maxFrames: number) => Promise<NativeBackgroundInboxFrame[]>;
+  drainBackgroundChannelInbox: (
+    maxFrames: number,
+  ) => Promise<NativeBackgroundInboxFrame[]>;
   getStatus: () => Promise<NativeRadioServiceStatus>;
 };
 
@@ -72,9 +76,22 @@ const unsupportedStatus: NativeRadioServiceStatus = {
   nativeBleQueuedWrites: 0,
   nativeBleBufferedFrames: 0,
   nativeBackgroundInboxCount: 0,
+  nativeBackgroundChannelInboxCount: 0,
   outboxLeaseOwner: 'foreground',
   outboxLeaseEpoch: 0,
 };
+
+function validBackgroundFrames(
+  frames: NativeBackgroundInboxFrame[],
+): NativeBackgroundInboxFrame[] {
+  return frames.filter(
+    frame =>
+      Number.isFinite(frame.receivedAtMs) &&
+      frame.receivedAtMs >= 0 &&
+      typeof frame.frameBase64 === 'string' &&
+      frame.frameBase64.length > 0,
+  );
+}
 
 export const nativeRadioService = {
   isSupported(): boolean {
@@ -134,13 +151,20 @@ export const nativeRadioService = {
       return [];
     }
     const boundedMax = Math.max(0, Math.min(128, Math.floor(maxFrames)));
-    const frames = await module.drainBackgroundInbox(boundedMax);
-    return frames.filter(
-      frame =>
-        Number.isFinite(frame.receivedAtMs) &&
-        frame.receivedAtMs >= 0 &&
-        typeof frame.frameBase64 === 'string' &&
-        frame.frameBase64.length > 0,
+    return validBackgroundFrames(
+      await module.drainBackgroundInbox(boundedMax),
+    );
+  },
+
+  async drainBackgroundChannelInbox(
+    maxFrames = 128,
+  ): Promise<NativeBackgroundInboxFrame[]> {
+    if (!this.isSupported() || !module) {
+      return [];
+    }
+    const boundedMax = Math.max(0, Math.min(128, Math.floor(maxFrames)));
+    return validBackgroundFrames(
+      await module.drainBackgroundChannelInbox(boundedMax),
     );
   },
 
