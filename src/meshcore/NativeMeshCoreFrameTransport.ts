@@ -1,3 +1,5 @@
+import {Buffer} from 'buffer';
+
 import {
   NativeRadioServiceStatus,
   nativeRadioService,
@@ -174,12 +176,7 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
           return;
         }
         try {
-          const bytes = Array.from(
-            Uint8Array.from(globalThis.atob(encoded), character =>
-              character.charCodeAt(0),
-            ),
-          );
-          this.handlers?.onFrame(bytes);
+          this.handlers?.onFrame(Array.from(Buffer.from(encoded, 'base64')));
         } catch (error) {
           this.handlers?.onError?.(
             error instanceof Error
