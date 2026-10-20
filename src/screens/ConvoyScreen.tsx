@@ -9,7 +9,10 @@ import {
   View,
 } from 'react-native';
 
-import {BushMeshConvoyRole} from '../bushmesh/protocol';
+import {
+  BushMeshConvoyAction,
+  BushMeshConvoyRole,
+} from '../bushmesh/protocol';
 import {
   clearBushMeshConvoyRemoteState,
   configureBushMeshConvoy,
@@ -20,7 +23,10 @@ import {
   getBushMeshNativePosition,
   isBushMeshNativeLocationAvailable,
 } from '../bushmesh/runtime/BushMeshNativeLocation';
-import {sendActiveBushMeshConvoyStatus} from '../bushmesh/runtime/BushMeshRuntimeHub';
+import {
+  sendActiveBushMeshConvoyCommand,
+  sendActiveBushMeshConvoyStatus,
+} from '../bushmesh/runtime/BushMeshRuntimeHub';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useBushMeshConvoyState} from '../state/useBushMeshConvoyState';
 import {colors} from '../theme/colors';
@@ -39,6 +45,29 @@ function roleLabel(role: number): string {
       return 'Support';
     default:
       return `Role ${role}`;
+  }
+}
+
+function actionLabel(action: number): string {
+  switch (action) {
+    case BushMeshConvoyAction.Hold:
+      return 'HOLD';
+    case BushMeshConvoyAction.Proceed:
+      return 'PROCEED';
+    case BushMeshConvoyAction.Regroup:
+      return 'REGROUP';
+    case BushMeshConvoyAction.TurnAround:
+      return 'TURN AROUND';
+    case BushMeshConvoyAction.Obstacle:
+      return 'OBSTACLE';
+    case BushMeshConvoyAction.Recovery:
+      return 'RECOVERY';
+    case BushMeshConvoyAction.FuelStop:
+      return 'FUEL STOP';
+    case BushMeshConvoyAction.CheckIn:
+      return 'CHECK IN';
+    default:
+      return `ACTION ${action}`;
   }
 }
 
@@ -77,6 +106,7 @@ export function ConvoyScreen(): React.JSX.Element {
   const [orderText, setOrderText] = useState(String(convoy.config.orderIndex));
   const [status, setStatus] = useState('Convoy mode is idle.');
   const [sending, setSending] = useState(false);
+  const [sendingCommand, setSendingCommand] = useState<number | null>(null);
 
   const channelIndex =
     activeChannelIndex === null ? null : Number(activeChannelIndex);
@@ -102,7 +132,23 @@ export function ConvoyScreen(): React.JSX.Element {
     ],
     [],
   );
-  const heartbeatOptions = useMemo(() => [5000, 10_000, 20_000, 30_000, 60_000], []);
+  const heartbeatOptions = useMemo(
+    () => [5000, 10_000, 20_000, 30_000, 60_000],
+    [],
+  );
+  const commandOptions = useMemo(
+    () => [
+      BushMeshConvoyAction.Hold,
+      BushMeshConvoyAction.Proceed,
+      BushMeshConvoyAction.Regroup,
+      BushMeshConvoyAction.TurnAround,
+      BushMeshConvoyAction.Obstacle,
+      BushMeshConvoyAction.Recovery,
+      BushMeshConvoyAction.FuelStop,
+      BushMeshConvoyAction.CheckIn,
+    ],
+    [],
+  );
 
   const commitNumbers = () => {
     const convoyId = Number(convoyIdText);
@@ -164,6 +210,33 @@ export function ConvoyScreen(): React.JSX.Element {
       );
     } finally {
       setSending(false);
+    }
+  };
+
+  const sendCommand = async (action: BushMeshConvoyAction) => {
+    if (!commitNumbers()) {
+      return;
+    }
+    if (!canTransmit || channelIndex === null || localBushMeshNodeId === null) {
+      setStatus('Connect a node, select a channel and enable convoy mode first.');
+      return;
+    }
+
+    try {
+      setSendingCommand(action);
+      setStatus(`Sending convoy command ${actionLabel(action)}...`);
+      await sendActiveBushMeshConvoyCommand(
+        channelIndex,
+        localBushMeshNodeId,
+        action,
+      );
+      setStatus(`Convoy command sent: ${actionLabel(action)}.`);
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? error.message : 'Convoy command failed.',
+      );
+    } finally {
+      setSendingCommand(null);
     }
   };
 
@@ -346,6 +419,77 @@ export function ConvoyScreen(): React.JSX.Element {
           Active channel: {channelReady ? `#${channelIndex}` : 'None'} • Local node:{' '}
           {localBushMeshNodeId === null ? 'Unknown' : nodeLabel(localBushMeshNodeId)}
         </Text>
+      </View>
+
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>Quick convoy commands</Text>
+        <Text style={styles.sectionBody}>
+          These are compact command codes, not free-text messages. They are
+          sequence-numbered and duplicate-suppressed on receiving BushMesh apps.
+        </Text>
+        <View style={styles.commandGrid}>
+          {commandOptions.map(action => {
+            const busy = sendingCommand === action;
+            const warning =
+              action === BushMeshConvoyAction.Hold ||
+              action === BushMeshConvoyAction.Obstacle ||
+              action === BushMeshConvoyAction.Recovery ||
+              action === BushMeshConvoyAction.TurnAround;
+            return (
+              <TouchableOpacity
+                key={action}
+                style={[
+                  styles.commandButton,
+                  warning && styles.commandButtonWarning,
+                  (!canTransmit || sendingCommand !== null) && styles.disabled,
+                ]}
+                disabled={!canTransmit || sendingCommand !== null}
+                onPress={() => void sendCommand(action)}>
+                <Text
+                  style={[
+                    styles.commandButtonText,
+                    warning && styles.commandButtonTextWarning,
+                  ]}>
+                  {busy ? 'SENDING…' : actionLabel(action)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>Recent convoy commands</Text>
+        {convoy.recentCommands.length > 0 ? (
+          convoy.recentCommands.slice(0, 12).map(entry => (
+            <View
+              key={`${entry.command.originNodeId}-${entry.command.sequence}`}
+              style={styles.commandHistoryCard}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.commandHistoryAction}>
+                  {actionLabel(entry.command.action)}
+                </Text>
+                <Text style={styles.commandHistoryDirection}>
+                  {entry.local ? 'Sent' : 'Received'}
+                </Text>
+              </View>
+              <Text style={styles.memberMeta}>
+                From {nodeLabel(entry.command.originNodeId)}
+                {entry.command.targetOrderIndex === undefined
+                  ? ''
+                  : ` • Position ${entry.command.targetOrderIndex}`}
+                {entry.command.etaMinutes === undefined
+                  ? ''
+                  : ` • ETA ${entry.command.etaMinutes} min`}
+              </Text>
+              <Text style={styles.memberMeta}>
+                {new Date(entry.receivedAt).toLocaleTimeString()}
+              </Text>
+            </View>
+          ))
+        ) : (
+          <Text style={styles.emptyText}>No convoy commands sent or received yet.</Text>
+        )}
       </View>
 
       <View style={styles.sectionCard}>
@@ -536,6 +680,31 @@ const styles = StyleSheet.create({
   disabled: {opacity: 0.4},
   statusText: {color: colors.accent, fontSize: 12, lineHeight: 18, marginTop: 10},
   metaText: {color: colors.textMuted, fontSize: 11, lineHeight: 17, marginTop: 6},
+  commandGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12},
+  commandButton: {
+    width: '48%',
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  commandButtonWarning: {borderColor: colors.warning},
+  commandButtonText: {color: colors.accent, fontSize: 11, fontWeight: '900'},
+  commandButtonTextWarning: {color: colors.warning},
+  commandHistoryCard: {
+    marginTop: 10,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 11,
+  },
+  commandHistoryAction: {flex: 1, color: colors.textPrimary, fontSize: 13, fontWeight: '900'},
+  commandHistoryDirection: {color: colors.accent, fontSize: 10, fontWeight: '900'},
   metricGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12},
   metricBox: {
     minWidth: '45%',
