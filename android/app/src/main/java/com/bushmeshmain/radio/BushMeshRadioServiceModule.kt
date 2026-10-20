@@ -10,6 +10,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.WritableNativeMap
+import org.json.JSONArray
 
 class BushMeshRadioServiceModule(
   private val reactContext: ReactApplicationContext,
@@ -111,12 +112,13 @@ class BushMeshRadioServiceModule(
   }
 
   @ReactMethod
-  fun drainBackgroundChannelInbox(maxFrames: Double, promise: Promise) {
+  fun listBackgroundChannelInbox(maxFrames: Double, promise: Promise) {
     try {
-      val frames = nativeChannelInbox.drain(maxFrames.toInt().coerceIn(0, 128))
+      val frames = nativeChannelInbox.list(maxFrames.toInt().coerceIn(0, 128))
       val result = Arguments.createArray()
       frames.forEach { entry ->
         val item = Arguments.createMap().apply {
+          putString("id", entry.id)
           putDouble("receivedAtMs", entry.receivedAtMs.toDouble())
           putString("frameBase64", Base64.encodeToString(entry.frame, Base64.NO_WRAP))
         }
@@ -125,7 +127,28 @@ class BushMeshRadioServiceModule(
       promise.resolve(result)
     } catch (error: Exception) {
       promise.reject(
-        "BUSHMESH_NATIVE_CHANNEL_INBOX_DRAIN_FAILED",
+        "BUSHMESH_NATIVE_CHANNEL_INBOX_LIST_FAILED",
+        error.message,
+        error,
+      )
+    }
+  }
+
+  @ReactMethod
+  fun acknowledgeBackgroundChannelInboxJson(idsJson: String, promise: Promise) {
+    try {
+      val array = JSONArray(idsJson)
+      val ids = mutableListOf<String>()
+      for (index in 0 until array.length()) {
+        val id = array.optString(index, "").trim()
+        if (id.isNotEmpty()) {
+          ids.add(id)
+        }
+      }
+      promise.resolve(nativeChannelInbox.acknowledge(ids).toDouble())
+    } catch (error: Exception) {
+      promise.reject(
+        "BUSHMESH_NATIVE_CHANNEL_INBOX_ACK_FAILED",
         error.message,
         error,
       )
