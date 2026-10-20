@@ -85,19 +85,23 @@ export function DriveProvider({
   const [suppressedInboundCount, setSuppressedInboundCount] = useState(0);
 
   useEffect(() => {
-    return subscribeBushMeshInboundMessages(message => {
+    return subscribeBushMeshInboundMessages((message, metadata) => {
       if (message.type !== BushMeshMessageType.QuickAction) {
         return;
       }
 
       const action = message.action;
       const definition = getQuickActionDefinition(action.action);
-      const receivedAtMs = Date.now();
+      const receivedAtMs = metadata.receivedAtMs;
+
+      // Temporal validity is evaluated against the current clock, not replay
+      // time. A STOP/HAZARD that expired while JS was absent must remain expired
+      // when Android replays the frame into the foreground domain.
       const temporal = getQuickActionTemporalDecision({
         action: action.action,
         packetTimestampSeconds: action.timestampSeconds,
         ttlSeconds: action.ttlSeconds,
-        nowMs: receivedAtMs,
+        nowMs: Date.now(),
       });
 
       if (temporal.state !== 'active') {
