@@ -25,7 +25,10 @@ import {
   TripMapCoverage,
   getTripMapCoverage,
 } from '../maps/offlineMapPacks';
-import {nativeMapPacks} from '../native/NativeMapPacks';
+import {
+  BushMeshMapPackProgress,
+  nativeMapPacks,
+} from '../native/NativeMapPacks';
 import {androidMapStatePersistence} from '../persistence/AndroidMapStatePersistence';
 import {createMapStateSnapshot} from '../persistence/mapStateSnapshot';
 
@@ -38,6 +41,7 @@ export type MapPersistenceStatus =
 type OfflineMapContextValue = {
   packs: OfflineMapPack[];
   packCatalog: BushMeshMapPackCatalogEntry[];
+  packProgressById: Record<string, BushMeshMapPackProgress>;
   requiredTripPoints: MapCoordinate[];
   coverage: TripMapCoverage;
   mapPersistenceStatus: MapPersistenceStatus;
@@ -46,6 +50,7 @@ type OfflineMapContextValue = {
   installOrUpdatePack: (pack: OfflineMapPack) => void;
   registerMapPackManifest: (manifest: BushMeshMapPackManifestV1) => void;
   installMapPack: (packId: string) => Promise<void>;
+  cancelMapPackInstall: (packId: string) => Promise<boolean>;
   verifyMapPack: (packId: string) => Promise<boolean>;
   removePack: (id: string) => Promise<void>;
   setRequiredTripPoints: (points: MapCoordinate[]) => void;
@@ -68,6 +73,14 @@ function errorMessage(error: unknown, fallback: string): string {
     : fallback;
 }
 
+function errorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
+    return null;
+  }
+  const code = (error as {code?: unknown}).code;
+  return typeof code === 'string' ? code : null;
+}
+
 export function OfflineMapProvider({
   children,
 }: {
@@ -76,6 +89,9 @@ export function OfflineMapProvider({
   const [packCatalog, setPackCatalog] = useState<BushMeshMapPackCatalogEntry[]>(
     [],
   );
+  const [packProgressById, setPackProgressById] = useState<
+    Record<string, BushMeshMapPackProgress>
+  >({});
   const [simulatedPacks, setSimulatedPacks] = useState<OfflineMapPack[]>([]);
   const [requiredTripPoints, setRequiredTripPointsState] = useState<
     MapCoordinate[]
@@ -98,6 +114,25 @@ export function OfflineMapProvider({
     ],
     [packCatalog, simulatedPacks],
   );
+
+  useEffect(() => {
+    if (!mapPackInstallSupported) {
+      return;
+    }
+
+    return nativeMapPacks.subscribeProgress(progress => {
+      setPackProgressById(current => ({
+        ...current,
+        [progress.packId]: progress,
+      }));
+
+      if (progress.state === 'cancelled') {
+        setPackCatalog(current =>
+          markMapPackNotInstalled(current, progress.packId),
+        );
+      }
+    });
+  }, [mapPackInstallSupported]);
 
   useEffect(() => {
     let active = true;
@@ -138,6 +173,7 @@ export function OfflineMapProvider({
           persistenceReadyRef.current = true;
           if (active) {
             setPackCatalog([]);
+            setPackProgressById({});
             setSimulatedPacks([]);
             setRequiredTripPointsState([]);
             setMapPersistenceStatus('ready');
@@ -149,6 +185,7 @@ export function OfflineMapProvider({
           persistenceReadyRef.current = true;
           if (active) {
             setPackCatalog([]);
+            setPackProgressById({});
             setSimulatedPacks([]);
             setRequiredTripPointsState([]);
             setMapPersistenceStatus('error');
@@ -226,6 +263,11 @@ export function OfflineMapProvider({
   const registerMapPackManifest = useCallback(
     (manifest: BushMeshMapPackManifestV1) => {
       setPackCatalog(current => registerCatalogManifest(current, manifest));
+      setPackProgressById(current => {
+        const next = {...current};
+        delete next[manifest.id];
+        return next;
+      });
       setSimulatedPacks(current =>
         current.filter(pack => pack.id !== manifest.id),
       );
@@ -247,6 +289,17 @@ export function OfflineMapProvider({
       }
 
       setPackCatalog(current => markMapPackInstalling(current, packId));
+      setPackProgressById(current => ({
+        ...current,
+        [packId]: {
+          packId,
+          downloadedBytes: 0,
+          expectedBytes: entry.manifest.expectedBytes,
+          fraction: 0,
+          state: 'downloading',
+        },
+      }));
+
       try {
         const artifact = await nativeMapPacks.download(entry.manifest);
         setPackCatalog(current =>
@@ -254,12 +307,41 @@ export function OfflineMapProvider({
         );
         setMapPersistenceError(null);
       } catch (error) {
-        const message = errorMessage(error, 'Map-pack installation failed.');
-        setPackCatalog(current => markMapPackInvalid(current, packId, message));
+        if (errorCode(error) === 'BUSHMESH_MAP_PACK_CANCELLED') {
+          setPackCatalog(current => markMapPackNotInstalled(current, packId));
+        } else {
+          const message = errorMessage(error, 'Map-pack installation failed.');
+          setPackCatalog(current => markMapPackInvalid(current, packId, message));
+        }
         throw error;
       }
     },
     [mapPackInstallSupported, packCatalog],
+  );
+
+  const cancelMapPackInstall = useCallback(
+    async (packId: string): Promise<boolean> => {
+      if (!mapPackInstallSupported) {
+        return false;
+      }
+
+      const cancelled = await nativeMapPacks.cancel(packId);
+      if (cancelled) {
+        setPackCatalog(current => markMapPackNotInstalled(current, packId));
+        setPackProgressById(current => ({
+          ...current,
+          [packId]: {
+            packId,
+            downloadedBytes: current[packId]?.downloadedBytes ?? 0,
+            expectedBytes: current[packId]?.expectedBytes ?? null,
+            fraction: current[packId]?.fraction ?? null,
+            state: 'cancelled',
+          },
+        }));
+      }
+      return cancelled;
+    },
+    [mapPackInstallSupported],
   );
 
   const verifyMapPack = useCallback(
@@ -298,6 +380,11 @@ export function OfflineMapProvider({
         await nativeMapPacks.remove(id);
       }
       setPackCatalog(current => removeMapPackCatalogEntry(current, id));
+      setPackProgressById(current => {
+        const next = {...current};
+        delete next[id];
+        return next;
+      });
       setSimulatedPacks(current => current.filter(pack => pack.id !== id));
     },
     [mapPackInstallSupported, packCatalog],
@@ -335,6 +422,7 @@ export function OfflineMapProvider({
   const clearMapState = useCallback(() => {
     const realPackIds = packCatalog.map(entry => entry.manifest.id);
     setPackCatalog([]);
+    setPackProgressById({});
     setSimulatedPacks([]);
     setRequiredTripPointsState([]);
 
@@ -359,6 +447,7 @@ export function OfflineMapProvider({
     () => ({
       packs,
       packCatalog,
+      packProgressById,
       requiredTripPoints,
       coverage,
       mapPersistenceStatus,
@@ -367,6 +456,7 @@ export function OfflineMapProvider({
       installOrUpdatePack,
       registerMapPackManifest,
       installMapPack,
+      cancelMapPackInstall,
       verifyMapPack,
       removePack,
       setRequiredTripPoints,
@@ -376,6 +466,7 @@ export function OfflineMapProvider({
     [
       packs,
       packCatalog,
+      packProgressById,
       requiredTripPoints,
       coverage,
       mapPersistenceStatus,
@@ -384,6 +475,7 @@ export function OfflineMapProvider({
       installOrUpdatePack,
       registerMapPackManifest,
       installMapPack,
+      cancelMapPackInstall,
       verifyMapPack,
       removePack,
       setRequiredTripPoints,
