@@ -48,6 +48,7 @@ export function CarMessagingProvider({
   children: React.ReactNode;
 }): React.JSX.Element {
   const {
+    channels,
     canSendChannelMessage,
     sendChannelMessage,
     addLocalChannelMessage,
@@ -78,11 +79,7 @@ export function CarMessagingProvider({
   }, [supported]);
 
   const drainReplies = useCallback(async () => {
-    if (
-      !supported ||
-      !canSendChannelMessage ||
-      drainActiveRef.current
-    ) {
+    if (!supported || !canSendChannelMessage || drainActiveRef.current) {
       return;
     }
 
@@ -191,6 +188,20 @@ export function CarMessagingProvider({
   useEffect(() => {
     refresh().catch(() => undefined);
   }, [refresh]);
+
+  useEffect(() => {
+    if (!supported) {
+      return;
+    }
+
+    nativeCarMessaging.setChannelDirectory(channels).catch(error => {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : 'Android Auto channel names could not be updated.',
+      );
+    });
+  }, [channels, supported]);
 
   useEffect(() => {
     if (!supported) {
