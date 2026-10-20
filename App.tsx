@@ -15,6 +15,7 @@ import {CarMessagingStatusBanner} from './src/components/CarMessagingStatusBanne
 import {ConvoyLossBanner} from './src/components/ConvoyLossBanner';
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
+import {NativeChannelMessageBridge} from './src/components/NativeChannelMessageBridge';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
 import {SpeechAlertBridge} from './src/components/SpeechAlertBridge';
 import {SpeechPttPanel} from './src/components/SpeechPttPanel';
@@ -140,6 +141,7 @@ function App(): React.JSX.Element {
   return (
     <SafeAreaProvider>
       <BushMeshProvider>
+        <NativeChannelMessageBridge />
         <CarMessagingProvider>
           <ConvoyProvider>
             <DriveProvider>
