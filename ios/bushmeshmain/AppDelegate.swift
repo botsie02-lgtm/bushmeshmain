@@ -3,6 +3,54 @@ import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
 
+@objc(BushMeshStorage)
+class BushMeshStorage: NSObject, RCTBridgeModule {
+  private let defaults = UserDefaults.standard
+  private let keyPrefix = "bushmesh.storage."
+
+  static func moduleName() -> String! {
+    return "BushMeshStorage"
+  }
+
+  static func requiresMainQueueSetup() -> Bool {
+    return false
+  }
+
+  private func namespacedKey(_ key: String) -> String {
+    return keyPrefix + key
+  }
+
+  @objc(getItem:resolver:rejecter:)
+  func getItem(
+    _ key: String,
+    resolver resolve: RCTPromiseResolveBlock,
+    rejecter reject: RCTPromiseRejectBlock
+  ) {
+    resolve(defaults.string(forKey: namespacedKey(key)))
+  }
+
+  @objc(setItem:value:resolver:rejecter:)
+  func setItem(
+    _ key: String,
+    value: String,
+    resolver resolve: RCTPromiseResolveBlock,
+    rejecter reject: RCTPromiseRejectBlock
+  ) {
+    defaults.set(value, forKey: namespacedKey(key))
+    resolve(nil)
+  }
+
+  @objc(removeItem:resolver:rejecter:)
+  func removeItem(
+    _ key: String,
+    resolver resolve: RCTPromiseResolveBlock,
+    rejecter reject: RCTPromiseRejectBlock
+  ) {
+    defaults.removeObject(forKey: namespacedKey(key))
+    resolve(nil)
+  }
+}
+
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
   var window: UIWindow?
