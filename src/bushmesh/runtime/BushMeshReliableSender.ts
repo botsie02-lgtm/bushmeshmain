@@ -5,6 +5,7 @@ import {
 } from './BushMeshNetworkRuntime';
 import {
   BushMeshStoreForwardFlushResult,
+  BushMeshStoreForwardItem,
   BushMeshStoreForwardRuntime,
 } from './BushMeshStoreForwardRuntime';
 
@@ -76,10 +77,11 @@ export class BushMeshReliableSender {
       maxMessages?: number;
       baseRetryDelayMs?: number;
       maxRetryDelayMs?: number;
+      canSend?: (item: BushMeshStoreForwardItem) => boolean | Promise<boolean>;
     },
   ): Promise<BushMeshStoreForwardFlushResult> {
     if (this.flushInProgress) {
-      return {sentIds: [], failedIds: [], expiredIds: []};
+      return {sentIds: [], failedIds: [], expiredIds: [], deferredIds: []};
     }
 
     this.flushInProgress = true;
