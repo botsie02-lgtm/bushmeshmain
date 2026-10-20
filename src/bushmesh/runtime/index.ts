@@ -24,6 +24,7 @@ export * from './BushMeshPeerActions';
 export * from './BushMeshPeerMaintenance';
 export * from './BushMeshPeerRegistry';
 export * from './BushMeshPersistentDedup';
+export * from './BushMeshPersistentDistressBeacon';
 export * from './BushMeshPersistentFileCoordinator';
 export * from './BushMeshPersistentFileTransferManager';
 export * from './BushMeshPersistentForwarder';
