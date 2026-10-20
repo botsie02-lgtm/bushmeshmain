@@ -1,6 +1,7 @@
 import {
   BushMeshConvoyRole,
   BushMeshConvoyStatus,
+  BushMeshForwardingInput,
   CompactLocation,
 } from '../protocol';
 import {
@@ -141,12 +142,82 @@ export function acceptBushMeshConvoyRemote(
   status: BushMeshConvoyStatus,
   receivedAt = Date.now(),
 ): boolean {
+  // A different convoy shares the physical channel but must not influence this
+  // convoy's forwarding corridor or health state.
+  if (status.convoyId !== config.convoyId) {
+    return false;
+  }
+
   const accepted = tracker.accept(status, receivedAt);
   if (accepted) {
     lastReceiveAt = receivedAt;
     notify();
   }
   return accepted;
+}
+
+/**
+ * Returns true/false only when the local convoy has enough topology knowledge
+ * to make a safe corridor decision. null means "unknown", which deliberately
+ * falls back to normal controlled flooding rather than risking packet loss.
+ */
+export function bushMeshConvoyForwardingPermission(
+  input: BushMeshForwardingInput,
+  now = Date.now(),
+): boolean | null {
+  if (!config.enabled || input.destinationNodeId === undefined) {
+    return null;
+  }
+
+  const snapshot = tracker.snapshot(config.convoyId, now);
+  const local = snapshot.members.find(
+    member => member.status.nodeId === input.localNodeId,
+  );
+  const source = snapshot.members.find(
+    member => member.status.nodeId === input.sourceNodeId,
+  );
+  const destination = snapshot.members.find(
+    member => member.status.nodeId === input.destinationNodeId,
+  );
+
+  if (!local || !source || !destination) {
+    return null;
+  }
+
+  if (local.health !== 'active') {
+    return false;
+  }
+
+  if (input.previousHopNodeId !== undefined) {
+    const previous = snapshot.members.find(
+      member => member.status.nodeId === input.previousHopNodeId,
+    );
+    if (!previous) {
+      return null;
+    }
+
+    const relays = tracker.relayCandidates(
+      config.convoyId,
+      input.previousHopNodeId,
+      input.destinationNodeId,
+      now,
+    );
+    return relays[0] === input.localNodeId;
+  }
+
+  const low = Math.min(source.status.orderIndex, destination.status.orderIndex);
+  const high = Math.max(source.status.orderIndex, destination.status.orderIndex);
+  return local.status.orderIndex > low && local.status.orderIndex < high;
+}
+
+export function recommendedBushMeshConvoyHeartbeatMs(): number {
+  if (telemetry.hazard) {
+    return Math.min(config.heartbeatIntervalMs, 3_000);
+  }
+  if (telemetry.stopped) {
+    return Math.max(config.heartbeatIntervalMs, 20_000);
+  }
+  return config.heartbeatIntervalMs;
 }
 
 export function getBushMeshConvoyState(now = Date.now()): BushMeshConvoyHubState {
