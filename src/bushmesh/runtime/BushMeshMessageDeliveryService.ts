@@ -6,6 +6,8 @@ import {
   encodeTextForBushMeshPeer,
 } from '../protocol';
 import {BushMeshNodeRuntime} from './BushMeshNodeRuntime';
+import {BushMeshOutboundPlanner} from './BushMeshOutboundPlanner';
+import {BushMeshRouteDecisionEngine} from './BushMeshRouteDecisionEngine';
 import {
   BushMeshReliableSendResult,
   BushMeshReliableSender,
@@ -187,14 +189,46 @@ export class BushMeshMessageDeliveryService {
       },
     );
 
-    const delivery = await this.sender.sendWireOrQueue(
-      channelIndex,
-      routedWireBytes,
-      {
-        queueTtlMs: options?.queueTtlMs,
-        maxQueueAttempts: options?.maxQueueAttempts,
-      },
-    );
+    let delivery: BushMeshReliableSendResult;
+    const peers = this.node.peers();
+
+    if (peers) {
+      const planner = new BushMeshOutboundPlanner(
+        new BushMeshRouteDecisionEngine(peers),
+      );
+      const plan = planner.plan({
+        kind: 'text',
+        payloadBytes: routedWireBytes.length,
+        peerPolicy,
+        destinationNodeId,
+        priority,
+        ttlHops: options?.ttlHops ?? 4,
+        storeAndForward: true,
+      });
+
+      if (!plan.payload.supported) {
+        throw new Error(plan.payload.reason);
+      }
+
+      delivery = plan.shouldQueue
+        ? await this.sender.queueWire(channelIndex, routedWireBytes, {
+            queueTtlMs: options?.queueTtlMs,
+            maxQueueAttempts: options?.maxQueueAttempts,
+          })
+        : await this.sender.sendWireOrQueue(channelIndex, routedWireBytes, {
+            queueTtlMs: options?.queueTtlMs,
+            maxQueueAttempts: options?.maxQueueAttempts,
+          });
+    } else {
+      delivery = await this.sender.sendWireOrQueue(
+        channelIndex,
+        routedWireBytes,
+        {
+          queueTtlMs: options?.queueTtlMs,
+          maxQueueAttempts: options?.maxQueueAttempts,
+        },
+      );
+    }
 
     if (delivery.state === 'queued') {
       this.queueMessageIds.set(delivery.queuedId, messageId);
