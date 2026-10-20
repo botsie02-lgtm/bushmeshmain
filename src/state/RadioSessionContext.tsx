@@ -73,6 +73,24 @@ function activeEntriesForPersistence(
   );
 }
 
+/**
+ * A sticky Android radio service may be draining the encrypted outbox after JS
+ * process death. An explicit start without a new address tells the service that
+ * the foreground process is back; Android preserves native GATT ownership but
+ * stops its recovery worker before JS reads or writes the same outbox.
+ */
+async function yieldNativeRecoveryToForeground(): Promise<NativeRadioServiceStatus> {
+  const current = await nativeRadioService.getStatus();
+  if (
+    current.ownership === 'native-service' &&
+    current.radioRequested === true
+  ) {
+    await nativeRadioService.start(current.deviceLabel ?? null);
+    return nativeRadioService.getStatus();
+  }
+  return current;
+}
+
 export function RadioSessionProvider({
   children,
 }: {
@@ -129,6 +147,16 @@ export function RadioSessionProvider({
       }
 
       try {
+        // Establish foreground ownership of persistence before loading. This is
+        // a no-op unless Android had resurrected a native radio session and was
+        // actively draining the same encrypted queue.
+        if (nativeRadioService.isSupported()) {
+          const status = await yieldNativeRecoveryToForeground();
+          if (active) {
+            setNativeRuntime(status);
+          }
+        }
+
         const snapshotToRestore = await androidBushMeshPersistence.loadOutbox();
         if (snapshotToRestore) {
           const restoredEntries = restoreOutboxSnapshot(
@@ -184,13 +212,28 @@ export function RadioSessionProvider({
 
     const syncNativeRuntime = async () => {
       try {
+        let status: NativeRadioServiceStatus;
+
         if (snapshot.runtimeRequested) {
           await nativeRadioService.start(null);
+          status = await nativeRadioService.getStatus();
         } else {
-          await nativeRadioService.stop();
+          const existing = await nativeRadioService.getStatus();
+          if (
+            existing.ownership === 'native-service' &&
+            existing.radioRequested === true
+          ) {
+            // Native ownership can legitimately outlive the JS session. Preserve
+            // the Android GATT target instead of interpreting an empty JS owner
+            // set as a request to disconnect the radio.
+            await nativeRadioService.start(existing.deviceLabel ?? null);
+            status = await nativeRadioService.getStatus();
+          } else {
+            await nativeRadioService.stop();
+            status = await nativeRadioService.getStatus();
+          }
         }
 
-        const status = await nativeRadioService.getStatus();
         if (active) {
           setNativeRuntime(status);
           setNativeRuntimeError(null);
