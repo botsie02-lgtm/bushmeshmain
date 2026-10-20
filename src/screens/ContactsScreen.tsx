@@ -8,10 +8,11 @@ import {
   View,
 } from 'react-native';
 
-import {BushMeshNodeRole} from '../bushmesh/protocol';
+import {BushMeshNodeRole, BushMeshSyncNamespace} from '../bushmesh/protocol';
 import {
   requestBushMeshPeerLocation,
   requestBushMeshPeerNodeInfo,
+  requestBushMeshPeerSync,
 } from '../bushmesh/runtime';
 import {useBushMesh} from '../state/BushMeshContext';
 import {colors} from '../theme/colors';
@@ -77,7 +78,14 @@ export function ContactsScreen(): React.JSX.Element {
     'Select a BushMesh peer for direct messages or control requests.',
   );
   const [busy, setBusy] = useState<
-    'message' | 'discovery' | 'info' | 'location' | 'flush' | null
+    | 'message'
+    | 'discovery'
+    | 'info'
+    | 'location'
+    | 'syncMessages'
+    | 'syncContacts'
+    | 'flush'
+    | null
   >(null);
 
   const peers = useMemo(
@@ -156,6 +164,35 @@ export function ContactsScreen(): React.JSX.Element {
     }
   };
 
+  const requestSync = async (
+    namespace: BushMeshSyncNamespace,
+    nextBusy: 'syncMessages' | 'syncContacts',
+    label: string,
+  ) => {
+    if (!actionsReady || !selectedPeer || localBushMeshNodeId === null) {
+      return;
+    }
+
+    try {
+      setBusy(nextBusy);
+      const result = await requestBushMeshPeerSync(
+        channelIndex,
+        localBushMeshNodeId,
+        selectedPeer.nodeId,
+        namespace,
+      );
+      setStatus(
+        `${label} sync request ${result.routedMessageId} sent to ${nodeIdLabel(selectedPeer.nodeId)}. The peer will answer with its compact inventory summary.`,
+      );
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? error.message : `${label} sync request failed.`,
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const sendDirect = async () => {
     if (!actionsReady || !selectedPeer || !activeChannel || !cleanMessage) {
       return;
@@ -214,8 +251,8 @@ export function ContactsScreen(): React.JSX.Element {
         <Text style={styles.eyebrow}>Contacts</Text>
         <Text style={styles.title}>BushMesh Peers</Text>
         <Text style={styles.body}>
-          Discover BushMesh nodes, send routed direct messages, and request peer
-          node information or a current location fix.
+          Discover BushMesh nodes, send routed direct messages, request peer
+          state, and exchange compact sync inventories.
         </Text>
       </View>
 
@@ -307,6 +344,34 @@ export function ContactsScreen(): React.JSX.Element {
             onPress={requestLocation}>
             <Text style={styles.actionText}>
               {busy === 'location' ? 'Requesting...' : 'Location'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, !actionsReady && styles.disabled]}
+            disabled={!actionsReady}
+            onPress={() =>
+              requestSync(
+                BushMeshSyncNamespace.Messages,
+                'syncMessages',
+                'Message',
+              )
+            }>
+            <Text style={styles.actionText}>
+              {busy === 'syncMessages' ? 'Syncing...' : 'Message sync'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, !actionsReady && styles.disabled]}
+            disabled={!actionsReady}
+            onPress={() =>
+              requestSync(
+                BushMeshSyncNamespace.Contacts,
+                'syncContacts',
+                'Contact',
+              )
+            }>
+            <Text style={styles.actionText}>
+              {busy === 'syncContacts' ? 'Syncing...' : 'Contact sync'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -434,8 +499,8 @@ const styles = StyleSheet.create({
   peerRole: {color: colors.accent, fontSize: 11, fontWeight: '800', marginTop: 3},
   rightText: {alignItems: 'flex-end'},
   capabilities: {color: colors.textMuted, fontSize: 10, marginTop: 8},
-  actionRow: {flexDirection: 'row', gap: 10, marginTop: 10},
-  actionButton: {flex: 1, borderRadius: 12, borderWidth: 1, borderColor: colors.accent, paddingVertical: 11, alignItems: 'center'},
+  actionRow: {flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10},
+  actionButton: {width: '47%', flexGrow: 1, borderRadius: 12, borderWidth: 1, borderColor: colors.accent, paddingVertical: 11, alignItems: 'center'},
   actionText: {color: colors.accent, fontSize: 11, fontWeight: '900'},
   input: {minHeight: 90, backgroundColor: colors.background, borderRadius: 14, borderWidth: 1, borderColor: colors.border, padding: 12, color: colors.textPrimary, fontSize: 15, textAlignVertical: 'top'},
   primaryButton: {marginTop: 12, backgroundColor: colors.accent, borderRadius: 14, paddingVertical: 13, alignItems: 'center'},
