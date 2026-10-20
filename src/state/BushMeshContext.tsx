@@ -18,7 +18,16 @@ import {
   deriveBushMeshNodeId,
 } from '../bushmesh/runtime/BushMeshIdentity';
 import {subscribeMeshCorePublicKey} from '../bushmesh/runtime/BushMeshIdentityHub';
+import {
+  BushMeshMessageDeliveryResult,
+  BushMeshMessageDeliveryService,
+} from '../bushmesh/runtime/BushMeshMessageDeliveryService';
 import {BushMeshNodeRuntime} from '../bushmesh/runtime/BushMeshNodeRuntime';
+import {
+  bushMeshPersistentStorePlatform,
+  getBushMeshPersistentStore,
+  isBushMeshPersistentStoreAvailable,
+} from '../bushmesh/runtime/BushMeshPersistentStore';
 import {setActiveBushMeshRuntime} from '../bushmesh/runtime/BushMeshRuntimeHub';
 
 export type BushMeshChannel = {
@@ -72,6 +81,13 @@ export type BushMeshNetworkStatus = {
   detail: string;
 };
 
+export type BushMeshDeliveryStatus = {
+  persistentStorageAvailable: boolean;
+  storageLabel: string;
+  queuedMessages: number;
+  detail: string;
+};
+
 type BushMeshConnectionStatus = 'Disconnected' | 'Connected';
 
 type SendChannelMessageHandler = (
@@ -88,7 +104,7 @@ type SendBushMeshRoutedMessageHandler = (
   channelIndex: number,
   message: string,
   destinationNodeId?: number,
-) => Promise<BushMeshRuntimeSendResult>;
+) => Promise<BushMeshMessageDeliveryResult>;
 
 const EMPTY_RUNTIME_STATS: BushMeshRuntimeStats = {
   sentMessages: 0,
@@ -102,6 +118,18 @@ const EMPTY_RUNTIME_STATS: BushMeshRuntimeStats = {
   decodeErrors: 0,
 };
 
+function initialDeliveryStatus(): BushMeshDeliveryStatus {
+  const available = isBushMeshPersistentStoreAvailable();
+  return {
+    persistentStorageAvailable: available,
+    storageLabel: bushMeshPersistentStorePlatform(),
+    queuedMessages: 0,
+    detail: available
+      ? 'Persistent BushMesh delivery storage is available.'
+      : 'Persistent storage is unavailable; delayed messages will only survive this app session.',
+  };
+}
+
 type BushMeshContextValue = {
   connectionStatus: BushMeshConnectionStatus;
   connectedDeviceName: string | null;
@@ -109,6 +137,7 @@ type BushMeshContextValue = {
   localBushMeshNodeId: number | null;
   knownBushMeshPeers: BushMeshPeerSummary[];
   bushMeshRuntimeStats: BushMeshRuntimeStats;
+  bushMeshDeliveryStatus: BushMeshDeliveryStatus;
   channels: BushMeshChannel[];
   activeChannelIndex: string | null;
   activeChannel: BushMeshChannel | null;
@@ -143,8 +172,9 @@ type BushMeshContextValue = {
     channelIndex: number,
     message: string,
     destinationNodeId?: number,
-  ) => Promise<BushMeshRuntimeSendResult>;
+  ) => Promise<BushMeshMessageDeliveryResult>;
   refreshBushMeshDiscovery: () => Promise<void>;
+  flushBushMeshQueuedMessages: () => Promise<void>;
   addLocalChannelMessage: (
     message: Omit<BushMeshChannelMessage, 'id' | 'createdAt'>,
   ) => void;
@@ -174,6 +204,8 @@ export function BushMeshProvider({
   >([]);
   const [bushMeshRuntimeStats, setBushMeshRuntimeStats] =
     useState<BushMeshRuntimeStats>(EMPTY_RUNTIME_STATS);
+  const [bushMeshDeliveryStatus, setBushMeshDeliveryStatus] =
+    useState<BushMeshDeliveryStatus>(() => initialDeliveryStatus());
   const [channels, setChannelsState] = useState<BushMeshChannel[]>([]);
   const [activeChannelIndex, setActiveChannelIndex] = useState<string | null>(
     null,
@@ -197,6 +229,7 @@ export function BushMeshProvider({
   const [sendBushMeshRoutedMessageHandlerState, setSendBushMeshRoutedMessageHandlerState] =
     useState<SendBushMeshRoutedMessageHandler | null>(null);
   const bushMeshNodeRuntimeRef = useRef<BushMeshNodeRuntime | null>(null);
+  const bushMeshDeliveryRef = useRef<BushMeshMessageDeliveryService | null>(null);
   const meshCorePublicKeyRef = useRef<string | null>(null);
 
   const activeChannel =
@@ -265,10 +298,27 @@ export function BushMeshProvider({
     });
   }, [configureNodeIdentity]);
 
+  const updateDeliveryStatus = useCallback((detail?: string) => {
+    const delivery = bushMeshDeliveryRef.current;
+    const available = isBushMeshPersistentStoreAvailable();
+    setBushMeshDeliveryStatus({
+      persistentStorageAvailable: available,
+      storageLabel: bushMeshPersistentStorePlatform(),
+      queuedMessages: delivery?.snapshot().queuedMessages ?? 0,
+      detail:
+        detail ??
+        (available
+          ? 'Persistent routed delivery is active.'
+          : 'Routed delivery queue is memory-only on this platform/build.'),
+    });
+  }, []);
+
   const setSendChannelMessageHandler = useCallback(
     (handler: SendChannelMessageHandler | null) => {
       setSendChannelMessageHandlerState(() => handler);
 
+      bushMeshDeliveryRef.current?.stop();
+      bushMeshDeliveryRef.current = null;
       bushMeshNodeRuntimeRef.current?.stop();
       bushMeshNodeRuntimeRef.current = null;
       setActiveBushMeshRuntime(null);
@@ -284,6 +334,7 @@ export function BushMeshProvider({
           active: false,
           detail: 'BushMesh protocol runtime is not connected.',
         });
+        updateDeliveryStatus('BushMesh delivery runtime is disconnected.');
         return;
       }
 
@@ -377,6 +428,29 @@ export function BushMeshProvider({
       }
 
       runtime.start();
+
+      const persistentStore = getBushMeshPersistentStore() ?? undefined;
+      const delivery = new BushMeshMessageDeliveryService(runtime, persistentStore);
+      bushMeshDeliveryRef.current = delivery;
+      void delivery
+        .start({flushIntervalMs: 5000})
+        .then(restored => {
+          updateDeliveryStatus(
+            restored > 0
+              ? `Restored ${restored} queued routed message(s); automatic retry is active.`
+              : persistentStore
+                ? 'Persistent routed delivery is active; no queued messages were restored.'
+                : 'Routed delivery is active with an in-memory retry queue.',
+          );
+        })
+        .catch(error => {
+          updateDeliveryStatus(
+            error instanceof Error
+              ? `Persistent delivery initialization failed: ${error.message}`
+              : 'Persistent delivery initialization failed.',
+          );
+        });
+
       setSendBushMeshMessageHandlerState(
         () =>
           async (
@@ -391,8 +465,19 @@ export function BushMeshProvider({
             channelIndex: number,
             message: string,
             destinationNodeId?: number,
-          ): Promise<BushMeshRuntimeSendResult> =>
-            runtime.sendRoutedText(channelIndex, destinationNodeId, message),
+          ): Promise<BushMeshMessageDeliveryResult> => {
+            const result = await delivery.sendRoutedText(
+              channelIndex,
+              message,
+              destinationNodeId,
+            );
+            updateDeliveryStatus(
+              result.state === 'queued'
+                ? `Routed message ${result.messageId} saved for retry as ${result.queueId}.`
+                : `Routed message ${result.messageId} transmitted.`,
+            );
+            return result;
+          },
       );
       setBushMeshNetworkStatus({
         active: true,
@@ -401,8 +486,18 @@ export function BushMeshProvider({
           : 'BushMesh transport ready; waiting for MeshCore node identity.',
       });
     },
-    [],
+    [updateDeliveryStatus],
   );
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (bushMeshDeliveryRef.current) {
+        updateDeliveryStatus();
+      }
+    }, 2000);
+
+    return () => clearInterval(timer);
+  }, [updateDeliveryStatus]);
 
   useEffect(() => {
     const runtime = bushMeshNodeRuntimeRef.current;
@@ -431,6 +526,8 @@ export function BushMeshProvider({
 
   useEffect(() => {
     return () => {
+      bushMeshDeliveryRef.current?.stop();
+      bushMeshDeliveryRef.current = null;
       bushMeshNodeRuntimeRef.current?.stop();
       bushMeshNodeRuntimeRef.current = null;
       setActiveBushMeshRuntime(null);
@@ -480,7 +577,7 @@ export function BushMeshProvider({
       channelIndex: number,
       message: string,
       destinationNodeId?: number,
-    ): Promise<BushMeshRuntimeSendResult> => {
+    ): Promise<BushMeshMessageDeliveryResult> => {
       if (!sendBushMeshRoutedMessageHandlerState) {
         throw new Error('BushMesh routed mesh runtime is not ready for messaging.');
       }
@@ -516,6 +613,18 @@ export function BushMeshProvider({
     });
   }, [activeChannelIndex]);
 
+  const flushBushMeshQueuedMessages = useCallback(async (): Promise<void> => {
+    const delivery = bushMeshDeliveryRef.current;
+    if (!delivery) {
+      throw new Error('BushMesh delivery runtime is not ready.');
+    }
+
+    const result = await delivery.flush();
+    updateDeliveryStatus(
+      `Queue flush: ${result.sentIds.length} sent, ${result.failedIds.length} still waiting, ${result.expiredIds.length} expired.`,
+    );
+  }, [updateDeliveryStatus]);
+
   const value = useMemo<BushMeshContextValue>(
     () => ({
       connectionStatus,
@@ -524,6 +633,7 @@ export function BushMeshProvider({
       localBushMeshNodeId,
       knownBushMeshPeers,
       bushMeshRuntimeStats,
+      bushMeshDeliveryStatus,
       channels,
       activeChannelIndex,
       activeChannel,
@@ -550,6 +660,7 @@ export function BushMeshProvider({
       sendBushMeshMessage,
       sendBushMeshRoutedMessage,
       refreshBushMeshDiscovery,
+      flushBushMeshQueuedMessages,
       addLocalChannelMessage,
       clearChannels,
       clearChannelMessages,
@@ -562,6 +673,7 @@ export function BushMeshProvider({
       localBushMeshNodeId,
       knownBushMeshPeers,
       bushMeshRuntimeStats,
+      bushMeshDeliveryStatus,
       channels,
       activeChannelIndex,
       activeChannel,
@@ -579,6 +691,7 @@ export function BushMeshProvider({
       sendBushMeshMessage,
       sendBushMeshRoutedMessage,
       refreshBushMeshDiscovery,
+      flushBushMeshQueuedMessages,
       addLocalChannelMessage,
     ],
   );
