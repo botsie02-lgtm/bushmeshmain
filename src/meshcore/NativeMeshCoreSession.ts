@@ -10,7 +10,9 @@ import {
   buildDeviceQueryCommand,
   buildGetBatteryCommand,
   buildGetChannelCommand,
+  buildGetMessageCommand,
   buildSendChannelDataFloodCommand,
+  buildSendChannelMessageCommand,
 } from './meshcoreCommands';
 import {
   MeshCoreChannelDataFrame,
@@ -33,6 +35,7 @@ import {
 import {SerialTaskQueue} from './serialTaskQueue';
 
 const COMMAND_TIMEOUT_MS = 5_000;
+const MAX_CHANNEL_MESSAGE_CHARS = 133;
 
 export type NativeMeshCoreResponse = {
   packetType: number | null;
@@ -63,11 +66,10 @@ type PendingCommand = {
 /**
  * Core MeshCore companion session running over the Android-owned BLE transport.
  *
- * This is intentionally focused on the protocol surface Bushmesh needs for the
- * native handoff: startup identity/capabilities, radio status/channel reads and
- * binary Bushmesh datagrams. It shares the global Bushmesh radio-session owner
- * rules, so a stale native session cannot transmit after another radio claims
- * ownership.
+ * It covers the protocol surface needed for a native-radio handoff: startup,
+ * identity/capabilities, battery/channel reads, channel text, queued-message
+ * sync and binary Bushmesh datagrams. It shares Bushmesh owner-scoped session
+ * rules so a stale native session cannot transmit after another radio wins.
  */
 export class NativeMeshCoreSession {
   private readonly owner = {};
@@ -172,6 +174,59 @@ export class NativeMeshCoreSession {
     for (let index = 0; index < count; index += 1) {
       responses.push(await this.getChannel(index));
     }
+    return responses;
+  }
+
+  async sendChannelMessage(
+    channelIndex: number,
+    message: string,
+  ): Promise<NativeMeshCoreResponse> {
+    const cleanMessage = message.trim();
+    if (!cleanMessage) {
+      throw new Error('Message is empty.');
+    }
+    if (cleanMessage.length > MAX_CHANNEL_MESSAGE_CHARS) {
+      throw new Error(
+        `Message is too long. Keep it under ${MAX_CHANNEL_MESSAGE_CHARS} characters.`,
+      );
+    }
+
+    const timestampSeconds = Math.floor(Date.now() / 1000);
+    return this.enqueueCommand(`CMD_SEND_CHANNEL_MESSAGE_${channelIndex}`, () =>
+      this.executeCommand(
+        `CMD_SEND_CHANNEL_MESSAGE_${channelIndex}`,
+        buildSendChannelMessageCommand(
+          channelIndex,
+          cleanMessage,
+          timestampSeconds,
+        ),
+        [0x06],
+      ),
+    );
+  }
+
+  async syncNextMessage(): Promise<NativeMeshCoreResponse> {
+    return this.enqueueCommand('CMD_SYNC_NEXT_MESSAGE', () =>
+      this.executeCommand(
+        'CMD_SYNC_NEXT_MESSAGE',
+        buildGetMessageCommand(),
+        [0x07, 0x08, 0x0a, 0x10, 0x11, 0x1b],
+      ),
+    );
+  }
+
+  async syncQueuedMessages(maxMessages = 20): Promise<NativeMeshCoreResponse[]> {
+    const responses: NativeMeshCoreResponse[] = [];
+    const limit = Math.max(1, Math.min(100, Math.floor(maxMessages)));
+
+    for (let index = 0; index < limit; index += 1) {
+      const response = await this.syncNextMessage();
+      if (response.packetType === 0x0a) {
+        break;
+      }
+      responses.push(response);
+    }
+
     return responses;
   }
 
