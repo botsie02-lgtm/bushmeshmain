@@ -1,4 +1,4 @@
-import {NativeModules, Platform} from 'react-native';
+import {NativeEventEmitter, NativeModules, Platform} from 'react-native';
 
 import {
   BushMeshInstalledMapArtifact,
@@ -6,6 +6,23 @@ import {
   installedArtifactMatchesManifest,
   validateMapPackManifest,
 } from '../maps/mapPackManifest';
+
+const MAP_PACK_PROGRESS_EVENT = 'BushMeshMapPackProgress';
+
+export type BushMeshMapPackProgressState =
+  | 'downloading'
+  | 'verifying'
+  | 'ready'
+  | 'cancelled'
+  | 'failed';
+
+export type BushMeshMapPackProgress = {
+  packId: string;
+  downloadedBytes: number;
+  expectedBytes: number | null;
+  fraction: number | null;
+  state: BushMeshMapPackProgressState;
+};
 
 type NativeMapPackArtifact = {
   packId?: unknown;
@@ -17,6 +34,14 @@ type NativeMapPackArtifact = {
   verifiedAtMs?: unknown;
 };
 
+type NativeMapPackProgress = {
+  packId?: unknown;
+  downloadedBytes?: unknown;
+  expectedBytes?: unknown;
+  fraction?: unknown;
+  state?: unknown;
+};
+
 type NativeMapPackModule = {
   downloadPack: (
     packId: string,
@@ -26,6 +51,7 @@ type NativeMapPackModule = {
     expectedSha256: string,
     format: string,
   ) => Promise<NativeMapPackArtifact>;
+  cancelDownload: (packId: string) => Promise<boolean>;
   verifyPack: (
     packId: string,
     manifestVersion: string,
@@ -34,9 +60,15 @@ type NativeMapPackModule = {
     format: string,
   ) => Promise<NativeMapPackArtifact | null>;
   removePack: (packId: string) => Promise<boolean>;
+  addListener: (eventName: string) => void;
+  removeListeners: (count: number) => void;
 };
 
 const module = NativeModules.BushMeshMapPacks as NativeMapPackModule | undefined;
+const eventEmitter =
+  Platform.OS === 'android' && module !== undefined
+    ? new NativeEventEmitter(NativeModules.BushMeshMapPacks)
+    : null;
 
 function normalizeFileUri(value: string): string {
   if (value.startsWith('file://')) {
@@ -82,6 +114,49 @@ function artifactFromNative(
   };
 }
 
+function progressFromNative(value: NativeMapPackProgress): BushMeshMapPackProgress {
+  const validState =
+    value.state === 'downloading' ||
+    value.state === 'verifying' ||
+    value.state === 'ready' ||
+    value.state === 'cancelled' ||
+    value.state === 'failed';
+
+  if (
+    typeof value.packId !== 'string' ||
+    value.packId.trim() === '' ||
+    typeof value.downloadedBytes !== 'number' ||
+    !Number.isFinite(value.downloadedBytes) ||
+    value.downloadedBytes < 0 ||
+    (value.expectedBytes !== null &&
+      (typeof value.expectedBytes !== 'number' ||
+        !Number.isFinite(value.expectedBytes) ||
+        value.expectedBytes <= 0)) ||
+    (value.fraction !== null &&
+      (typeof value.fraction !== 'number' ||
+        !Number.isFinite(value.fraction) ||
+        value.fraction < 0 ||
+        value.fraction > 1)) ||
+    !validState
+  ) {
+    throw new Error('Android returned invalid Bushmesh map-pack progress.');
+  }
+
+  return {
+    packId: value.packId,
+    downloadedBytes: value.downloadedBytes,
+    expectedBytes: value.expectedBytes,
+    fraction: value.fraction,
+    state: value.state,
+  };
+}
+
+function assertPackId(packId: string): void {
+  if (!/^[a-z0-9][a-z0-9._-]{2,127}$/i.test(packId)) {
+    throw new Error('Invalid Bushmesh map-pack ID.');
+  }
+}
+
 function assertArtifactMatchesManifest(
   manifest: BushMeshMapPackManifestV1,
   artifact: BushMeshInstalledMapArtifact,
@@ -96,6 +171,26 @@ function assertArtifactMatchesManifest(
 export const nativeMapPacks = {
   isSupported(): boolean {
     return Platform.OS === 'android' && module !== undefined;
+  },
+
+  subscribeProgress(
+    listener: (progress: BushMeshMapPackProgress) => void,
+  ): () => void {
+    if (!this.isSupported() || eventEmitter === null) {
+      return () => undefined;
+    }
+
+    const subscription = eventEmitter.addListener(
+      MAP_PACK_PROGRESS_EVENT,
+      (value: NativeMapPackProgress) => {
+        try {
+          listener(progressFromNative(value));
+        } catch {
+          // Malformed native events are ignored rather than poisoning map state.
+        }
+      },
+    );
+    return () => subscription.remove();
   },
 
   async download(
@@ -120,6 +215,14 @@ export const nativeMapPacks = {
     const artifact = artifactFromNative(nativeArtifact);
     assertArtifactMatchesManifest(manifest, artifact);
     return artifact;
+  },
+
+  async cancel(packId: string): Promise<boolean> {
+    assertPackId(packId);
+    if (!this.isSupported() || !module) {
+      return false;
+    }
+    return module.cancelDownload(packId);
   },
 
   async verify(
@@ -147,11 +250,9 @@ export const nativeMapPacks = {
   },
 
   async remove(packId: string): Promise<void> {
+    assertPackId(packId);
     if (!this.isSupported() || !module) {
       return;
-    }
-    if (!/^[a-z0-9][a-z0-9._-]{2,127}$/i.test(packId)) {
-      throw new Error('Invalid Bushmesh map-pack ID.');
     }
 
     const removed = await module.removePack(packId);
