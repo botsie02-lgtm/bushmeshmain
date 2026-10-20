@@ -17,6 +17,10 @@ export type NativeBackgroundInboxFrame = {
   frameBase64: string;
 };
 
+export type NativeBackgroundChannelInboxFrame = NativeBackgroundInboxFrame & {
+  id: string;
+};
+
 export type NativeRadioServiceStatus = {
   running: boolean;
   radioRequested?: boolean;
@@ -49,9 +53,10 @@ type NativeRadioServiceModule = {
   enqueueNativeBleWrite: (base64Frame: string) => Promise<boolean>;
   drainNativeBleFrames: (maxFrames: number) => Promise<string[]>;
   drainBackgroundInbox: (maxFrames: number) => Promise<NativeBackgroundInboxFrame[]>;
-  drainBackgroundChannelInbox: (
+  listBackgroundChannelInbox: (
     maxFrames: number,
-  ) => Promise<NativeBackgroundInboxFrame[]>;
+  ) => Promise<NativeBackgroundChannelInboxFrame[]>;
+  acknowledgeBackgroundChannelInboxJson: (idsJson: string) => Promise<number>;
   getStatus: () => Promise<NativeRadioServiceStatus>;
 };
 
@@ -86,6 +91,19 @@ function validBackgroundFrames(
 ): NativeBackgroundInboxFrame[] {
   return frames.filter(
     frame =>
+      Number.isFinite(frame.receivedAtMs) &&
+      frame.receivedAtMs >= 0 &&
+      typeof frame.frameBase64 === 'string' &&
+      frame.frameBase64.length > 0,
+  );
+}
+
+function validChannelInboxFrames(
+  frames: NativeBackgroundChannelInboxFrame[],
+): NativeBackgroundChannelInboxFrame[] {
+  return frames.filter(
+    frame =>
+      /^[0-9a-f]{64}$/i.test(frame.id) &&
       Number.isFinite(frame.receivedAtMs) &&
       frame.receivedAtMs >= 0 &&
       typeof frame.frameBase64 === 'string' &&
@@ -156,15 +174,34 @@ export const nativeRadioService = {
     );
   },
 
-  async drainBackgroundChannelInbox(
+  async listBackgroundChannelInbox(
     maxFrames = 128,
-  ): Promise<NativeBackgroundInboxFrame[]> {
+  ): Promise<NativeBackgroundChannelInboxFrame[]> {
     if (!this.isSupported() || !module) {
       return [];
     }
     const boundedMax = Math.max(0, Math.min(128, Math.floor(maxFrames)));
-    return validBackgroundFrames(
-      await module.drainBackgroundChannelInbox(boundedMax),
+    return validChannelInboxFrames(
+      await module.listBackgroundChannelInbox(boundedMax),
+    );
+  },
+
+  async acknowledgeBackgroundChannelInbox(ids: string[]): Promise<number> {
+    if (!this.isSupported() || !module) {
+      return 0;
+    }
+    const normalized = Array.from(
+      new Set(
+        ids
+          .map(id => id.trim().toLowerCase())
+          .filter(id => /^[0-9a-f]{64}$/.test(id)),
+      ),
+    );
+    if (normalized.length === 0) {
+      return 0;
+    }
+    return module.acknowledgeBackgroundChannelInboxJson(
+      JSON.stringify(normalized),
     );
   },
 
