@@ -42,6 +42,10 @@ class BushMeshRadioService : Service() {
     MeshCoreNativeBackgroundWorker(applicationContext, nativeBle)
   }
 
+  private val inboxCapture: BushMeshNativeInboxCapture by lazy {
+    BushMeshNativeInboxCapture(applicationContext, nativeBle)
+  }
+
   override fun onCreate() {
     super.onCreate()
     ensureNotificationChannel()
@@ -54,8 +58,9 @@ class BushMeshRadioService : Service() {
       restoreNativeTargetAfterProcessRestart()
     } else {
       // Any explicit command means a foreground/React process is interacting
-      // with the service again. Yield the recovery worker before processing it
-      // so native background command correlation cannot race the live session.
+      // with the service again. Yield background protocol + inbox writers before
+      // processing it so they cannot race the returning foreground session.
+      inboxCapture.stop()
       backgroundWorker.stop()
 
       when (action) {
@@ -125,6 +130,7 @@ class BushMeshRadioService : Service() {
   }
 
   override fun onDestroy() {
+    inboxCapture.stop()
     backgroundWorker.stop()
     nativeBle.disconnect(clearTarget = false)
     BushMeshRadioServiceState.markStopped()
@@ -152,6 +158,7 @@ class BushMeshRadioService : Service() {
     // Sticky restart is the only path that grants native background ownership.
     // The epoch is immediately invalidated if a foreground bridge call returns.
     val recoveryLease = outboxLease.claimBackground()
+    inboxCapture.start(recoveryLease)
     backgroundWorker.start(recoveryLease)
   }
 
