@@ -8,8 +8,10 @@ import {
   View,
 } from 'react-native';
 
+import {clearBushMeshPeerTracks} from '../bushmesh/runtime/BushMeshPeerTrackHub';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useBushMeshLiveState} from '../state/useBushMeshLiveState';
+import {useBushMeshPeerTracks} from '../state/useBushMeshPeerTracks';
 import {colors} from '../theme/colors';
 
 type LocatedContact = {
@@ -63,6 +65,7 @@ function nodeIdLabel(nodeId: number): string {
 export function MapScreen(): React.JSX.Element {
   const {contacts, knownBushMeshPeers, connectionStatus} = useBushMesh();
   const {peerLocations} = useBushMeshLiveState();
+  const peerTracks = useBushMeshPeerTracks();
   const [status, setStatus] = useState(
     'Tap a location to open it in your phone mapping app.',
   );
@@ -161,6 +164,7 @@ export function MapScreen(): React.JSX.Element {
         <Text style={styles.body}>
           Combines coordinates advertised by MeshCore contacts with live compact
           location replies received directly through BushMesh routed packets.
+          Recent BushMesh movement fixes are retained as a bounded convoy trail.
         </Text>
       </View>
 
@@ -178,6 +182,10 @@ export function MapScreen(): React.JSX.Element {
         <View style={styles.metricBox}>
           <Text style={styles.metricLabel}>Live peer positions</Text>
           <Text style={styles.metricValue}>{peerLocations.length}</Text>
+        </View>
+        <View style={styles.metricBox}>
+          <Text style={styles.metricLabel}>Trail points</Text>
+          <Text style={styles.metricValue}>{peerTracks.totalPoints}</Text>
         </View>
         <View style={styles.metricBox}>
           <Text style={styles.metricLabel}>BushMesh peers</Text>
@@ -208,53 +216,103 @@ export function MapScreen(): React.JSX.Element {
         <Text style={styles.sectionTitle}>Live BushMesh Positions</Text>
         <Text style={styles.sectionBody}>
           These are source-attributed locations received inside routed BushMesh
-          packets. A newer location from the same node replaces its older fix.
+          packets. The newest fix drives the live marker; recent movement is kept
+          separately as a durable trail.
         </Text>
 
         {peerLocations.length === 0 ? (
           <Text style={styles.emptyText}>
-            No routed BushMesh location replies have been received in this app
-            session yet. Request a peer location from the Contacts tab.
+            No routed BushMesh location replies have been received yet. Request
+            a peer location from the Contacts tab.
           </Text>
         ) : (
           peerLocations.map(location => {
             const peer = knownBushMeshPeers.find(item => item.nodeId === location.nodeId);
             const name = `BushMesh ${nodeIdLabel(location.nodeId)}`;
+            const track = peerTracks.tracks.find(item => item.nodeId === location.nodeId);
+            const recentTrack = track?.points.slice(-5).reverse() ?? [];
 
             return (
-              <TouchableOpacity
-                key={location.nodeId}
-                style={styles.liveLocationCard}
-                onPress={() => openLocation({
-                  name,
-                  latitude: location.latitude,
-                  longitude: location.longitude,
-                })}>
-                <View style={styles.rowBetween}>
-                  <View style={styles.flexOne}>
-                    <Text style={styles.contactName}>{nodeIdLabel(location.nodeId)}</Text>
-                    <Text style={styles.contactKey}>
-                      Channel #{location.channelIndex}
-                      {peer ? ` • Role ${peer.role}` : ''}
-                    </Text>
+              <View key={location.nodeId} style={styles.liveLocationCard}>
+                <TouchableOpacity
+                  onPress={() => openLocation({
+                    name,
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                  })}>
+                  <View style={styles.rowBetween}>
+                    <View style={styles.flexOne}>
+                      <Text style={styles.contactName}>{nodeIdLabel(location.nodeId)}</Text>
+                      <Text style={styles.contactKey}>
+                        Channel #{location.channelIndex}
+                        {peer ? ` • Role ${peer.role}` : ''}
+                        {track ? ` • ${track.points.length} trail points` : ''}
+                      </Text>
+                    </View>
+                    <Text style={styles.openText}>Open map</Text>
                   </View>
-                  <Text style={styles.openText}>Open map</Text>
-                </View>
 
-                <Text style={styles.coordinateText}>
-                  {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
-                </Text>
-                <Text style={styles.advertText}>
-                  {formatAge(location.receivedAt, 'Received')}
-                  {location.batteryPercent === undefined
-                    ? ''
-                    : ` • Battery ${location.batteryPercent}%`}
-                </Text>
-              </TouchableOpacity>
+                  <Text style={styles.coordinateText}>
+                    {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+                  </Text>
+                  <Text style={styles.advertText}>
+                    {formatAge(location.receivedAt, 'Received')}
+                    {location.batteryPercent === undefined
+                      ? ''
+                      : ` • Battery ${location.batteryPercent}%`}
+                  </Text>
+                </TouchableOpacity>
+
+                {recentTrack.length > 1 ? (
+                  <View style={styles.trailWrap}>
+                    <Text style={styles.trailTitle}>Recent movement</Text>
+                    {recentTrack.map((point, index) => (
+                      <TouchableOpacity
+                        key={`${point.receivedAt}-${index}`}
+                        style={styles.trailRow}
+                        onPress={() => openLocation({
+                          name: `${name} trail point`,
+                          latitude: point.latitude,
+                          longitude: point.longitude,
+                        })}>
+                        <Text style={styles.trailCoordinate}>
+                          {point.latitude.toFixed(5)}, {point.longitude.toFixed(5)}
+                        </Text>
+                        <Text style={styles.trailAge}>
+                          {formatAge(point.receivedAt, '')}
+                            .replace(/^\s+/, '')
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
             );
           })
         )}
       </View>
+
+      {peerTracks.totalPoints > 0 ? (
+        <View style={styles.sectionCard}>
+          <View style={styles.rowBetween}>
+            <View style={styles.flexOne}>
+              <Text style={styles.sectionTitle}>Convoy Trail Cache</Text>
+              <Text style={styles.sectionBody}>
+                {peerTracks.totalPoints} recent point(s) across {peerTracks.tracks.length}{' '}
+                node(s). Trails are capped and expire automatically after seven days.
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.clearTrailButton}
+              onPress={() => {
+                clearBushMeshPeerTracks();
+                setStatus('BushMesh convoy trail history cleared.');
+              }}>
+              <Text style={styles.clearTrailText}>Clear</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Map-ready MeshCore Contacts</Text>
@@ -293,9 +351,9 @@ export function MapScreen(): React.JSX.Element {
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Offline Map Path</Text>
         <Text style={styles.sectionBody}>
-          Live BushMesh positions are now retained independently of the map UI,
-          so a future offline renderer can draw convoy trails and peer markers
-          without changing the radio protocol or receive pipeline.
+          BushMesh now retains latest peer fixes and bounded movement trails
+          independently of the map UI. A future offline tile renderer can draw
+          convoy tracks without changing the radio protocol or receive pipeline.
         </Text>
       </View>
     </ScrollView>
@@ -447,5 +505,45 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 11,
     marginTop: 5,
+  },
+  trailWrap: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  trailTitle: {
+    color: colors.textPrimary,
+    fontSize: 11,
+    fontWeight: '900',
+    marginBottom: 5,
+  },
+  trailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  trailCoordinate: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  trailAge: {
+    color: colors.textMuted,
+    fontSize: 10,
+  },
+  clearTrailButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    paddingVertical: 7,
+    paddingHorizontal: 9,
+  },
+  clearTrailText: {
+    color: colors.warning,
+    fontSize: 11,
+    fontWeight: '900',
   },
 });
