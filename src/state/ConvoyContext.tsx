@@ -19,6 +19,7 @@ import {
   Coordinate,
   shouldReplaceVehiclePosition,
 } from '../convoy/convoy';
+import {FieldNavigationTarget} from '../convoy/fieldTarget';
 import {useBushMesh} from './BushMeshContext';
 
 type ConvoyContextValue = {
@@ -27,10 +28,12 @@ type ConvoyContextValue = {
   localPosition: Coordinate | null;
   navigationTargetVehicleId: string | null;
   navigationTargetVehicle: ConvoyVehicle | null;
+  navigationFieldTarget: FieldNavigationTarget | null;
   getBuddyTail: (vehicleId: string) => BuddyTail | null;
   upsertBushMeshMessage: (message: BushMeshInboundMessage) => void;
   setLocalPosition: (position: Coordinate | null) => void;
   setNavigationTarget: (vehicleId: string) => void;
+  setNavigationFieldTarget: (target: FieldNavigationTarget) => void;
   clearNavigationTarget: () => void;
   loadDemoConvoy: () => void;
   clearConvoy: () => void;
@@ -38,13 +41,20 @@ type ConvoyContextValue = {
 
 const ConvoyContext = createContext<ConvoyContextValue | null>(null);
 
-export function ConvoyProvider({children}: {children: React.ReactNode}): React.JSX.Element {
+export function ConvoyProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}): React.JSX.Element {
   const {contacts} = useBushMesh();
   const [vehicles, setVehicles] = useState<ConvoyVehicle[]>([]);
   const [buddyTailMap, setBuddyTailMap] = useState<Record<string, BuddyTail>>({});
   const [localPosition, setLocalPosition] = useState<Coordinate | null>(null);
   const [navigationTargetVehicleId, setNavigationTargetVehicleId] = useState<
     string | null
+  >(null);
+  const [navigationFieldTarget, setNavigationFieldTargetState] = useState<
+    FieldNavigationTarget | null
   >(null);
 
   const contactNames = useMemo(() => {
@@ -153,11 +163,21 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
   }, [contactNames]);
 
   const setNavigationTarget = useCallback((vehicleId: string) => {
+    setNavigationFieldTargetState(null);
     setNavigationTargetVehicleId(vehicleId);
   }, []);
 
+  const setNavigationFieldTarget = useCallback(
+    (target: FieldNavigationTarget) => {
+      setNavigationTargetVehicleId(null);
+      setNavigationFieldTargetState({...target});
+    },
+    [],
+  );
+
   const clearNavigationTarget = useCallback(() => {
     setNavigationTargetVehicleId(null);
+    setNavigationFieldTargetState(null);
   }, []);
 
   const loadDemoConvoy = useCallback(() => {
@@ -220,18 +240,18 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
       demoTails[vehicle.id] = appendBuddyTailPoint(undefined, vehicle, now);
     });
 
-    setNavigationTargetVehicleId(null);
+    clearNavigationTarget();
     setLocalPosition(demoOrigin);
     setVehicles(demoVehicles);
     setBuddyTailMap(demoTails);
-  }, []);
+  }, [clearNavigationTarget]);
 
   const clearConvoy = useCallback(() => {
     setVehicles([]);
     setBuddyTailMap({});
     setLocalPosition(null);
-    setNavigationTargetVehicleId(null);
-  }, []);
+    clearNavigationTarget();
+  }, [clearNavigationTarget]);
 
   const navigationTargetVehicle = useMemo(
     () =>
@@ -255,10 +275,12 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
       localPosition,
       navigationTargetVehicleId,
       navigationTargetVehicle,
+      navigationFieldTarget,
       getBuddyTail,
       upsertBushMeshMessage,
       setLocalPosition,
       setNavigationTarget,
+      setNavigationFieldTarget,
       clearNavigationTarget,
       loadDemoConvoy,
       clearConvoy,
@@ -269,9 +291,11 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
       localPosition,
       navigationTargetVehicleId,
       navigationTargetVehicle,
+      navigationFieldTarget,
       getBuddyTail,
       upsertBushMeshMessage,
       setNavigationTarget,
+      setNavigationFieldTarget,
       clearNavigationTarget,
       loadDemoConvoy,
       clearConvoy,
