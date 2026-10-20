@@ -40,12 +40,12 @@ export class BushMeshRuntimeServices {
       traceCapacity?: number;
     },
   ) {
-    const persistentStore =
-      options?.store ?? getBushMeshPersistentStore() ?? undefined;
+    const nativePersistentStore = getBushMeshPersistentStore() ?? undefined;
+    const runtimeStore = options?.store ?? nativePersistentStore;
 
     this.storeForward = new BushMeshStoreForwardRuntime(
       node.network,
-      persistentStore,
+      runtimeStore,
     );
     this.reliableSender = new BushMeshReliableSender(
       node.network,
@@ -60,11 +60,15 @@ export class BushMeshRuntimeServices {
         }
         return local.nodeId;
       },
-      persistentStore,
+      runtimeStore,
     );
     this.trace = new BushMeshTraceBuffer(options?.traceCapacity ?? 250);
     this.convoy = new BushMeshConvoyCoordinator(node);
-    this.peerPersistence = new BushMeshPersistentPeerRegistry(persistentStore);
+    // Peer topology uses the native durable store because its corruption
+    // recovery path needs removeItem to be guaranteed rather than optional.
+    this.peerPersistence = new BushMeshPersistentPeerRegistry(
+      nativePersistentStore,
+    );
   }
 
   async start(options?: {
