@@ -31,6 +31,10 @@ export function scoreBushMeshRoute(
   return Math.round((route.linkScore - hopPenalty - agePenalty) * 10) / 10;
 }
 
+function cloneRoute(route: BushMeshRouteCandidate): BushMeshRouteCandidate {
+  return {...route};
+}
+
 export class BushMeshRoutingTable {
   private readonly routes = new Map<number, Map<number, BushMeshRouteCandidate>>();
 
@@ -72,7 +76,7 @@ export class BushMeshRoutingTable {
     }
 
     candidates.set(update.nextHopNodeId, route);
-    return {...route};
+    return cloneRoute(route);
   }
 
   bestRoute(
@@ -104,14 +108,87 @@ export class BushMeshRoutingTable {
         return b.learnedAt - a.learnedAt;
       });
 
-    return ranked[0] ? {...ranked[0]} : null;
+    return ranked[0] ? cloneRoute(ranked[0]) : null;
   }
 
   candidates(destinationNodeId: number, now = Date.now()): BushMeshRouteCandidate[] {
     this.prune(now);
     return Array.from(this.routes.get(destinationNodeId)?.values() ?? []).map(
-      route => ({...route}),
+      cloneRoute,
     );
+  }
+
+  /**
+   * Returns every currently usable route. This is intentionally a plain-data
+   * snapshot so it can be persisted by the application without exposing the
+   * table's internal maps.
+   */
+  snapshot(now = Date.now()): BushMeshRouteCandidate[] {
+    this.prune(now);
+    const snapshot: BushMeshRouteCandidate[] = [];
+
+    for (const candidates of this.routes.values()) {
+      for (const route of candidates.values()) {
+        snapshot.push(cloneRoute(route));
+      }
+    }
+
+    return snapshot.sort(
+      (a, b) =>
+        a.destinationNodeId - b.destinationNodeId ||
+        a.nextHopNodeId - b.nextHopNodeId,
+    );
+  }
+
+  /**
+   * Restores non-expired routes using their remaining lifetime rather than
+   * extending stale topology information for a fresh full TTL after restart.
+   */
+  restore(
+    snapshot: BushMeshRouteCandidate[],
+    options?: {now?: number; replace?: boolean},
+  ): number {
+    const now = options?.now ?? Date.now();
+
+    if (options?.replace !== false) {
+      this.routes.clear();
+    }
+
+    let restored = 0;
+
+    for (const route of snapshot) {
+      if (
+        !route ||
+        !Number.isInteger(route.destinationNodeId) ||
+        route.destinationNodeId < 0 ||
+        route.destinationNodeId > 0xffffffff ||
+        !Number.isInteger(route.nextHopNodeId) ||
+        route.nextHopNodeId < 0 ||
+        route.nextHopNodeId > 0xffffffff ||
+        !Number.isInteger(route.hopCount) ||
+        route.hopCount < 1 ||
+        route.hopCount > 255 ||
+        !Number.isFinite(route.linkScore) ||
+        !Number.isFinite(route.learnedAt) ||
+        !Number.isFinite(route.expiresAt) ||
+        route.expiresAt <= now ||
+        route.expiresAt < route.learnedAt
+      ) {
+        continue;
+      }
+
+      this.learn({
+        destinationNodeId: route.destinationNodeId,
+        nextHopNodeId: route.nextHopNodeId,
+        hopCount: route.hopCount,
+        linkScore: route.linkScore,
+        now,
+        ttlMs: route.expiresAt - now,
+      });
+      restored += 1;
+    }
+
+    return restored;
   }
 
   removeVia(nextHopNodeId: number): number {
