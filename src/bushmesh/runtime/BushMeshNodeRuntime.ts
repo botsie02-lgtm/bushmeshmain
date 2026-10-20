@@ -33,6 +33,10 @@ import {
 } from './BushMeshFileTransferManager';
 import {createBushMeshNodeHelloFromPublicKey} from './BushMeshIdentity';
 import {subscribeMeshCorePublicKey} from './BushMeshIdentityHub';
+import {
+  publishBushMeshDistressAlert,
+  publishBushMeshPeerLocation,
+} from './BushMeshLiveStateHub';
 import {BushMeshPeerRegistry} from './BushMeshPeerRegistry';
 import {BushMeshSyncManager} from './BushMeshSyncManager';
 
@@ -434,6 +438,33 @@ export class BushMeshNodeRuntime {
         this.peerRegistryState.upsertHello(typed.value);
         this.events.onPeerHello?.({...typed.value});
       }
+    }
+
+    if (routedContext && typed.kind === 'location') {
+      publishBushMeshPeerLocation({
+        nodeId: routedContext.replyNodeId,
+        channelIndex,
+        latitude: typed.value.latitude,
+        longitude: typed.value.longitude,
+        precision: typed.value.precision,
+        batteryPercent: typed.value.batteryPercent,
+        receivedAt: Date.now(),
+      });
+    }
+
+    if (routedContext && typed.kind === 'distress') {
+      publishBushMeshDistressAlert({
+        key: `${routedContext.replyNodeId}:${message.decoded.envelope.messageId}`,
+        nodeId: routedContext.replyNodeId,
+        channelIndex,
+        messageId: message.decoded.envelope.messageId,
+        type: typed.value.type,
+        latitude: typed.value.location?.latitude,
+        longitude: typed.value.location?.longitude,
+        precision: typed.value.location?.precision,
+        batteryPercent: typed.value.batteryPercent,
+        receivedAt: Date.now(),
+      });
     }
 
     if (
