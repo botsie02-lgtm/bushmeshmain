@@ -1,7 +1,7 @@
 import {NativeModules, Platform} from 'react-native';
 
 import {
-  BushMeshMapStateSnapshotV1,
+  BushMeshMapStateSnapshotV2,
   decodeMapStateSnapshot,
   encodeMapStateSnapshot,
 } from './mapStateSnapshot';
@@ -22,7 +22,7 @@ export class AndroidMapStatePersistence {
     return Platform.OS === 'android' && module !== undefined;
   }
 
-  async load(): Promise<BushMeshMapStateSnapshotV1 | null> {
+  async load(): Promise<BushMeshMapStateSnapshotV2 | null> {
     if (!this.isSupported() || !module) {
       return null;
     }
@@ -31,7 +31,7 @@ export class AndroidMapStatePersistence {
     return serialized === null ? null : decodeMapStateSnapshot(serialized);
   }
 
-  async save(snapshot: BushMeshMapStateSnapshotV1): Promise<void> {
+  async save(snapshot: BushMeshMapStateSnapshotV2): Promise<void> {
     if (!this.isSupported() || !module) {
       return;
     }
