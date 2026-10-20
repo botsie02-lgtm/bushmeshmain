@@ -21,8 +21,8 @@ import com.facebook.react.bridge.ReactMethod
  * Android Auto messaging-notification bridge for Bushmesh channel traffic.
  *
  * Posting a notification never changes MeshCore delivery state. Auto voice
- * replies are exposed as durable pending entries and move to accepted only
- * after the foreground radio client receives PACKET_MSG_SENT.
+ * replies move through durable queued/inflight/accepted states so a process
+ * death cannot silently duplicate a reply whose radio outcome is unknown.
  */
 class BushMeshCarMessagingModule(
   private val reactContext: ReactApplicationContext,
@@ -187,11 +187,22 @@ class BushMeshCarMessagingModule(
   }
 
   @ReactMethod
-  fun markReplyAttempt(id: String, errorMessage: String?, promise: Promise) {
+  fun markReplyAttempt(id: String, promise: Promise) {
     try {
-      promise.resolve(replyStore.markAttempt(id.trim(), errorMessage?.trim()))
+      promise.resolve(replyStore.markAttempt(id.trim()))
     } catch (error: Exception) {
       promise.reject("BUSHMESH_CAR_REPLY_ATTEMPT_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun requeueReplyAfterFailure(id: String, errorMessage: String, promise: Promise) {
+    try {
+      promise.resolve(
+        replyStore.requeueAfterFailure(id.trim(), errorMessage.trim()),
+      )
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_CAR_REPLY_REQUEUE_FAILED", error.message, error)
     }
   }
 
@@ -232,6 +243,7 @@ class BushMeshCarMessagingModule(
           NotificationManagerCompat.from(reactContext).areNotificationsEnabled(),
         )
         putDouble("queuedReplies", replyStore.queuedCount().toDouble())
+        putDouble("inflightReplies", replyStore.inflightCount().toDouble())
         putDouble("blockedReplies", replyStore.blockedCount().toDouble())
         putDouble("acceptedReplies", replyStore.acceptedCount().toDouble())
       }
