@@ -1,6 +1,11 @@
 import {Buffer} from 'buffer';
 
-import {BushMeshFileContentType} from '../protocol';
+import {
+  BushMeshFileContentType,
+  decodeConfigBundle,
+  decodeContactCard,
+  decodeRoutePoints,
+} from '../protocol';
 import {getBushMeshPersistentStore} from './BushMeshPersistentStore';
 
 export type BushMeshInboxFile = {
@@ -297,23 +302,71 @@ export function subscribeBushMeshFileInbox(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
+function truncatePreview(text: string, maxCharacters: number): string {
+  return text.length > maxCharacters
+    ? `${text.slice(0, maxCharacters)}…`
+    : text;
+}
+
 export function bushMeshInboxFilePreview(
   file: BushMeshInboxFile,
   maxCharacters = 600,
 ): string | null {
-  if (
-    file.contentType !== BushMeshFileContentType.Text &&
-    file.contentType !== BushMeshFileContentType.Json &&
-    file.contentType !== BushMeshFileContentType.Configuration &&
-    file.contentType !== BushMeshFileContentType.ContactCard
-  ) {
-    return null;
+  try {
+    if (
+      file.contentType === BushMeshFileContentType.Text ||
+      file.contentType === BushMeshFileContentType.Json
+    ) {
+      return truncatePreview(
+        Buffer.from(file.data).toString('utf8'),
+        maxCharacters,
+      );
+    }
+
+    if (file.contentType === BushMeshFileContentType.ContactCard) {
+      const card = decodeContactCard(file.data);
+      const location = card.location
+        ? `\nLocation: ${card.location.latitude.toFixed(6)}, ${card.location.longitude.toFixed(6)}`
+        : '';
+      return truncatePreview(
+        `Contact: ${card.name}\nNode: ${card.nodeId.toString(16).padStart(8, '0').toUpperCase()}\nRole: ${card.role}${location}`,
+        maxCharacters,
+      );
+    }
+
+    if (file.contentType === BushMeshFileContentType.Configuration) {
+      const entries = decodeConfigBundle(file.data);
+      const lines = entries.map(entry =>
+        `Key ${entry.key}: ${entry.value
+          .map(byte => byte.toString(16).padStart(2, '0').toUpperCase())
+          .join(' ') || '(empty)'}`,
+      );
+      return truncatePreview(
+        `Configuration bundle (${entries.length} entries)\n${lines.join('\n')}`,
+        maxCharacters,
+      );
+    }
+
+    if (file.contentType === BushMeshFileContentType.GpsRoute) {
+      const points = decodeRoutePoints(file.data);
+      const visible = points.slice(0, 8).map(
+        (point, index) =>
+          `${index + 1}. ${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`,
+      );
+      const suffix = points.length > visible.length
+        ? `\n… ${points.length - visible.length} more point(s)`
+        : '';
+      return truncatePreview(
+        `GPS route (${points.length} points)\n${visible.join('\n')}${suffix}`,
+        maxCharacters,
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'decode failed';
+    return truncatePreview(`Structured BushMesh payload could not be decoded: ${message}`, maxCharacters);
   }
 
-  const text = Buffer.from(file.data).toString('utf8');
-  return text.length > maxCharacters
-    ? `${text.slice(0, maxCharacters)}…`
-    : text;
+  return null;
 }
 
 void hydrateBushMeshFileInbox();
