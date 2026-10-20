@@ -28,6 +28,7 @@ type NativeCarMessagingModule = {
     text: string,
     timestampMs: number,
   ) => Promise<boolean>;
+  setChannelDirectoryJson: (json: string) => Promise<boolean>;
   getPendingReplies: (maxEntries: number) => Promise<NativeCarReply[]>;
   acknowledgeReply: (id: string) => Promise<boolean>;
   markReplyAttempt: (id: string) => Promise<boolean>;
@@ -74,6 +75,31 @@ export const nativeCarMessaging = {
       input.text,
       input.timestampMs ?? Date.now(),
     );
+  },
+
+  async setChannelDirectory(
+    channels: Array<{channelIndex: string; channelName: string}>,
+  ): Promise<boolean> {
+    if (!this.isSupported() || !module) {
+      return false;
+    }
+
+    const directory: Record<string, string> = {};
+    channels.forEach(channel => {
+      const index = Number(channel.channelIndex);
+      const name = channel.channelName.trim();
+      if (
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index <= 7 &&
+        name.length > 0 &&
+        name.toLowerCase() !== 'empty'
+      ) {
+        directory[String(index)] = name;
+      }
+    });
+
+    return module.setChannelDirectoryJson(JSON.stringify(directory));
   },
 
   async getPendingReplies(maxEntries = 8): Promise<NativeCarReply[]> {
