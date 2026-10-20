@@ -21,8 +21,8 @@ import com.facebook.react.bridge.ReactMethod
  * Android Auto messaging-notification bridge for Bushmesh channel traffic.
  *
  * Posting a notification never changes MeshCore delivery state. Auto voice
- * replies are exposed as durable pending entries and are acknowledged only
- * after the foreground radio client reports PACKET_MSG_SENT.
+ * replies are exposed as durable pending entries and move to accepted only
+ * after the foreground radio client receives PACKET_MSG_SENT.
  */
 class BushMeshCarMessagingModule(
   private val reactContext: ReactApplicationContext,
@@ -187,15 +187,6 @@ class BushMeshCarMessagingModule(
   }
 
   @ReactMethod
-  fun acknowledgeReply(id: String, promise: Promise) {
-    try {
-      promise.resolve(replyStore.acknowledge(id.trim()))
-    } catch (error: Exception) {
-      promise.reject("BUSHMESH_CAR_REPLY_ACK_FAILED", error.message, error)
-    }
-  }
-
-  @ReactMethod
   fun markReplyAttempt(id: String, errorMessage: String?, promise: Promise) {
     try {
       promise.resolve(replyStore.markAttempt(id.trim(), errorMessage?.trim()))
@@ -214,6 +205,24 @@ class BushMeshCarMessagingModule(
   }
 
   @ReactMethod
+  fun markReplyAccepted(id: String, promise: Promise) {
+    try {
+      promise.resolve(replyStore.markAccepted(id.trim()))
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_CAR_REPLY_ACCEPT_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun acknowledgeReply(id: String, promise: Promise) {
+    try {
+      promise.resolve(replyStore.acknowledge(id.trim()))
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_CAR_REPLY_ACK_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
   fun getStatus(promise: Promise) {
     try {
       ensureNotificationChannel()
@@ -224,6 +233,7 @@ class BushMeshCarMessagingModule(
         )
         putDouble("queuedReplies", replyStore.queuedCount().toDouble())
         putDouble("blockedReplies", replyStore.blockedCount().toDouble())
+        putDouble("acceptedReplies", replyStore.acceptedCount().toDouble())
       }
       promise.resolve(result)
     } catch (error: Exception) {
