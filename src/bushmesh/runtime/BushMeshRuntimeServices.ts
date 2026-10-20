@@ -1,5 +1,6 @@
 import {BushMeshNodeRuntime} from './BushMeshNodeRuntime';
-import {BushMeshDistressBeacon} from './BushMeshDistressBeacon';
+import {BushMeshPersistentDistressBeacon} from './BushMeshPersistentDistressBeacon';
+import {getBushMeshPersistentStore} from './BushMeshPersistentStore';
 import {BushMeshReliableSender} from './BushMeshReliableSender';
 import {
   BushMeshStoreForwardRuntime,
@@ -10,7 +11,7 @@ import {BushMeshTraceBuffer} from './BushMeshTraceBuffer';
 export type BushMeshRuntimeServicesSnapshot = {
   running: boolean;
   queuedStoreForwardMessages: number;
-  distress: ReturnType<BushMeshDistressBeacon['state']>;
+  distress: ReturnType<BushMeshPersistentDistressBeacon['state']>;
   traceEntries: number;
   knownPeers: number;
 };
@@ -18,7 +19,7 @@ export type BushMeshRuntimeServicesSnapshot = {
 export class BushMeshRuntimeServices {
   readonly storeForward: BushMeshStoreForwardRuntime;
   readonly reliableSender: BushMeshReliableSender;
-  readonly distress: BushMeshDistressBeacon;
+  readonly distress: BushMeshPersistentDistressBeacon;
   readonly trace: BushMeshTraceBuffer;
 
   private maintenanceTimer: ReturnType<typeof setInterval> | null = null;
@@ -31,21 +32,28 @@ export class BushMeshRuntimeServices {
       traceCapacity?: number;
     },
   ) {
+    const persistentStore =
+      options?.store ?? getBushMeshPersistentStore() ?? undefined;
+
     this.storeForward = new BushMeshStoreForwardRuntime(
       node.network,
-      options?.store,
+      persistentStore,
     );
     this.reliableSender = new BushMeshReliableSender(
       node.network,
       this.storeForward,
     );
-    this.distress = new BushMeshDistressBeacon(node.network, () => {
-      const local = node.localHello();
-      if (!local) {
-        throw new Error('BushMesh distress cannot start before node identity is known.');
-      }
-      return local.nodeId;
-    });
+    this.distress = new BushMeshPersistentDistressBeacon(
+      node.network,
+      () => {
+        const local = node.localHello();
+        if (!local) {
+          throw new Error('BushMesh distress cannot start before node identity is known.');
+        }
+        return local.nodeId;
+      },
+      persistentStore,
+    );
     this.trace = new BushMeshTraceBuffer(options?.traceCapacity ?? 250);
   }
 
@@ -58,7 +66,9 @@ export class BushMeshRuntimeServices {
       return this.storeForward.size();
     }
 
-    const restored = await this.storeForward.initialize(options?.now);
+    const now = options?.now ?? Date.now();
+    const restored = await this.storeForward.initialize(now);
+    const restoredDistress = await this.distress.initialize(now);
     this.running = true;
     this.reliableSender.startAutoFlush(options?.storeForwardFlushMs ?? 5000);
 
@@ -81,7 +91,9 @@ export class BushMeshRuntimeServices {
 
     this.trace.recordEvent(
       'Runtime services started',
-      `Restored ${restored} delayed message(s).`,
+      `Restored ${restored} delayed message(s)${
+        restoredDistress ? ' and an active distress schedule' : ''
+      }.`,
     );
     return restored;
   }
@@ -89,7 +101,8 @@ export class BushMeshRuntimeServices {
   stop(): void {
     this.running = false;
     this.reliableSender.stop();
-    this.distress.stop();
+    this.distress.suspend();
+    void this.distress.flushPersistence().catch(() => undefined);
 
     if (this.maintenanceTimer) {
       clearInterval(this.maintenanceTimer);
