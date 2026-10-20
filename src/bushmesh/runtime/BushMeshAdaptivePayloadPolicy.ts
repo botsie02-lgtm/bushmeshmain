@@ -15,6 +15,7 @@ export type BushMeshPayloadKind =
 
 export type BushMeshAdaptivePayloadDecision = {
   kind: BushMeshPayloadKind;
+  supported: boolean;
   transport: 'text-safe' | 'binary';
   compression: BushMeshCompressionProfile;
   allowFragmentation: boolean;
@@ -50,11 +51,14 @@ export class BushMeshAdaptivePayloadPolicy {
 
     const priority = this.priorityFor(kind);
     let compression = BushMeshCompressionProfile.Raw;
+    let supported = compatible || peer == null;
     let reason = compatible
       ? 'Using mutually supported peer capabilities.'
-      : 'Peer capabilities are unknown or incompatible; using conservative fallback.';
+      : peer == null
+        ? 'Peer capabilities are unknown; using conservative compatibility settings.'
+        : 'Peer protocol version is incompatible.';
 
-    if (compatible) {
+    if (compatible && peer) {
       if (
         kind === 'text' &&
         options?.preferSemanticText !== false &&
@@ -69,29 +73,42 @@ export class BushMeshAdaptivePayloadPolicy {
         peer.allowLocationDelta
       ) {
         compression = BushMeshCompressionProfile.Gps;
-      } else if (kind === 'telemetry') {
+      } else if (kind === 'telemetry' && peer.allowSensorDelta) {
         compression = BushMeshCompressionProfile.SensorDelta;
       } else if (kind === 'command') {
         compression = BushMeshCompressionProfile.Command;
-      } else if (kind === 'file' || kind === 'sync') {
+      } else if (
+        (kind === 'file' || kind === 'sync') &&
+        peer.allowCompressedBinary
+      ) {
         compression = BushMeshCompressionProfile.CompressedBinary;
+      }
+
+      if (kind === 'file' && !peer.allowFileTransfer) {
+        supported = false;
+        reason = 'Peer does not advertise BushMesh file-transfer support.';
       }
     }
 
     if (kind === 'distress') {
+      // Distress retains a deterministic compact schema and never depends on an
+      // optional compression profile. Unknown peers still receive it through
+      // the compatibility transport path.
       compression = BushMeshCompressionProfile.Raw;
+      supported = peer?.compatible !== false;
       reason = 'Distress traffic uses deterministic raw schema and emergency priority.';
     }
 
     return {
       kind,
+      supported,
       transport,
       compression,
-      allowFragmentation: compatible ? peer.allowFragmentation : false,
-      allowSelectiveAck: compatible ? peer.allowSelectiveAck : false,
+      allowFragmentation: compatible && peer ? peer.allowFragmentation : false,
+      allowSelectiveAck: compatible && peer ? peer.allowSelectiveAck : false,
       allowStoreAndForward:
         options?.storeAndForward !== false &&
-        (compatible ? peer.allowStoreAndForward : kind === 'distress'),
+        (compatible && peer ? peer.allowStoreAndForward : kind === 'distress'),
       priority,
       reason,
     };
