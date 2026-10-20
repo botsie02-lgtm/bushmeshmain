@@ -38,7 +38,7 @@ import {
   publishBushMeshPeerLocation,
 } from './BushMeshLiveStateHub';
 import {BushMeshPeerRegistry} from './BushMeshPeerRegistry';
-import {BushMeshSyncManager} from './BushMeshSyncManager';
+import {getBushMeshSyncManager} from './BushMeshSyncHub';
 
 export type BushMeshNodeRuntimeEvents = BushMeshNetworkRuntimeEvents & {
   onPeerHello?: (hello: BushMeshNodeHello) => void;
@@ -60,7 +60,7 @@ type RoutedDeliveryContext = {
 
 export class BushMeshNodeRuntime {
   readonly network: BushMeshNetworkRuntime;
-  readonly sync = new BushMeshSyncManager();
+  readonly sync = getBushMeshSyncManager();
   readonly files = new BushMeshFileTransferManager();
 
   private peerRegistryState: BushMeshPeerRegistry | null = null;
