@@ -2,6 +2,7 @@ package com.bushmeshmain.radio
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
@@ -21,15 +22,19 @@ import kotlin.math.min
 /**
  * Native Android owner for the MeshCore Nordic UART BLE transport.
  *
- * The React Native client still remains the default transport while migration is
- * in progress. This runtime is deliberately transport-only: it owns GATT,
- * reconnect, MTU, notifications and serialized writes, but it does not interpret
- * MeshCore command responses. Received BLE notifications are buffered so JS can
- * attach/detach without losing the most recent companion frames.
+ * The React Native client still remains available during migration. This
+ * runtime owns GATT, reconnect, MTU, notifications and serialized writes.
+ * Every TX notification is both buffered for a later JS consumer and fanned
+ * out to native frame listeners, so background protocol workers do not have to
+ * steal frames from the foreground app.
  */
 class MeshCoreNativeBleRuntime private constructor(
   private val appContext: Context,
 ) {
+  fun interface FrameListener {
+    fun onFrame(frame: ByteArray)
+  }
+
   data class Status(
     val state: String,
     val deviceAddress: String?,
@@ -70,6 +75,7 @@ class MeshCoreNativeBleRuntime private constructor(
 
   private val handler = Handler(Looper.getMainLooper())
   private val frameBuffer = ArrayDeque<ByteArray>()
+  private val frameListeners = LinkedHashSet<FrameListener>()
   private val writeQueue = ArrayDeque<ByteArray>()
 
   private var desiredAddress: String? = null
@@ -202,7 +208,7 @@ class MeshCoreNativeBleRuntime private constructor(
       if (gatt !== bluetoothGatt || characteristic.uuid != TX_UUID) {
         return
       }
-      bufferFrame(characteristic.value ?: return)
+      publishFrame(characteristic.value ?: return)
     }
 
     override fun onCharacteristicChanged(
@@ -213,7 +219,7 @@ class MeshCoreNativeBleRuntime private constructor(
       if (gatt !== bluetoothGatt || characteristic.uuid != TX_UUID) {
         return
       }
-      bufferFrame(value)
+      publishFrame(value)
     }
 
     override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
@@ -227,6 +233,16 @@ class MeshCoreNativeBleRuntime private constructor(
       }
       processNextWrite()
     }
+  }
+
+  @Synchronized
+  fun addFrameListener(listener: FrameListener) {
+    frameListeners.add(listener)
+  }
+
+  @Synchronized
+  fun removeFrameListener(listener: FrameListener) {
+    frameListeners.remove(listener)
   }
 
   @Synchronized
@@ -353,7 +369,7 @@ class MeshCoreNativeBleRuntime private constructor(
     return try {
       val device = adapter.getRemoteDevice(address)
       bluetoothGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        device.connectGatt(appContext, false, callback, BluetoothDeviceTransport.LE)
+        device.connectGatt(appContext, false, callback, BluetoothDevice.TRANSPORT_LE)
       } else {
         @Suppress("DEPRECATION")
         device.connectGatt(appContext, false, callback)
@@ -365,10 +381,6 @@ class MeshCoreNativeBleRuntime private constructor(
       scheduleReconnect()
       false
     }
-  }
-
-  private object BluetoothDeviceTransport {
-    const val LE = 2
   }
 
   @Synchronized
@@ -414,12 +426,26 @@ class MeshCoreNativeBleRuntime private constructor(
     }
   }
 
-  @Synchronized
-  private fun bufferFrame(value: ByteArray) {
-    if (frameBuffer.size >= MAX_BUFFERED_FRAMES) {
-      frameBuffer.removeFirst()
+  private fun publishFrame(value: ByteArray) {
+    val frame = value.copyOf()
+    val listeners: List<FrameListener>
+
+    synchronized(this) {
+      if (frameBuffer.size >= MAX_BUFFERED_FRAMES) {
+        frameBuffer.removeFirst()
+      }
+      frameBuffer.addLast(frame.copyOf())
+      listeners = frameListeners.toList()
     }
-    frameBuffer.addLast(value.copyOf())
+
+    listeners.forEach { listener ->
+      try {
+        listener.onFrame(frame.copyOf())
+      } catch (_: Exception) {
+        // One protocol consumer must never break BLE notification delivery to
+        // the frame buffer or other listeners.
+      }
+    }
   }
 
   @Synchronized
