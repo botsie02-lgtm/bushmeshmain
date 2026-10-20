@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
+import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -17,12 +18,13 @@ import javax.crypto.spec.GCMParameterSpec
  * Bounded encrypted inbox for ordinary MeshCore channel-text frames received
  * while React Native is absent.
  *
- * Raw frames are retained so the JS foreground can use the same parser and the
- * same persistent receipt registry as live traffic. Exact replayed frames are
- * deduped before storage to preserve the bounded queue for genuinely new text.
+ * Entries use a stable SHA-256 frame ID and are listed non-destructively. The
+ * foreground acknowledges IDs only after encrypted message history confirms a
+ * durable insert, closing the process-death gap of a destructive drain.
  */
 class BushMeshNativeChannelInboxStore(context: Context) {
   data class Entry(
+    val id: String,
     val receivedAtMs: Long,
     val frame: ByteArray,
   )
@@ -49,12 +51,13 @@ class BushMeshNativeChannelInboxStore(context: Context) {
       return
     }
 
+    val id = fingerprint(frame)
     val entries = loadMutable()
-    if (entries.any { it.frame.contentEquals(frame) }) {
+    if (entries.any { it.id == id }) {
       return
     }
 
-    entries.add(Entry(receivedAtMs, frame.copyOf()))
+    entries.add(Entry(id, receivedAtMs, frame.copyOf()))
     while (entries.size > MAX_ENTRIES) {
       entries.removeAt(0)
     }
@@ -62,25 +65,46 @@ class BushMeshNativeChannelInboxStore(context: Context) {
   }
 
   @Synchronized
-  fun drain(maxEntries: Int = MAX_ENTRIES): List<Entry> {
+  fun list(maxEntries: Int = MAX_ENTRIES): List<Entry> {
     val entries = loadMutable()
-    if (entries.isEmpty()) {
-      return emptyList()
+    val count = maxEntries.coerceIn(0, MAX_ENTRIES).coerceAtMost(entries.size)
+    return entries
+      .take(count)
+      .map { Entry(it.id, it.receivedAtMs, it.frame.copyOf()) }
+  }
+
+  @Synchronized
+  fun acknowledge(ids: Collection<String>): Int {
+    if (ids.isEmpty()) {
+      return 0
     }
 
-    val count = maxEntries.coerceIn(0, MAX_ENTRIES).coerceAtMost(entries.size)
-    val result = entries.take(count).map { Entry(it.receivedAtMs, it.frame.copyOf()) }
-    val remaining = entries.drop(count)
+    val acceptedIds = ids
+      .asSequence()
+      .map { it.trim().lowercase() }
+      .filter { it.matches(Regex("^[0-9a-f]{64}$")) }
+      .toSet()
+    if (acceptedIds.isEmpty()) {
+      return 0
+    }
 
-    if (remaining.isEmpty()) {
+    val entries = loadMutable()
+    val originalSize = entries.size
+    entries.removeAll { acceptedIds.contains(it.id) }
+    val removed = originalSize - entries.size
+    if (removed == 0) {
+      return 0
+    }
+
+    if (entries.isEmpty()) {
       val committed = preferences.edit().remove(INBOX_KEY).commit()
       if (!committed) {
         throw IllegalStateException("Bushmesh native channel inbox could not be cleared.")
       }
     } else {
-      save(remaining)
+      save(entries)
     }
-    return result
+    return removed
   }
 
   @Synchronized
@@ -112,8 +136,17 @@ class BushMeshNativeChannelInboxStore(context: Context) {
         if (decoded.isEmpty() || decoded.size > MAX_FRAME_BYTES) {
           continue
         }
-        if (result.none { it.frame.contentEquals(decoded) }) {
-          result.add(Entry(receivedAtMs, decoded))
+
+        // Older v1 entries did not persist an ID. Deriving it from the raw
+        // frame migrates them in place without losing queued channel text.
+        val derivedId = fingerprint(decoded)
+        val storedId = item.optString("id", "").trim().lowercase()
+        val id = storedId.takeIf {
+          it.matches(Regex("^[0-9a-f]{64}$")) && it == derivedId
+        } ?: derivedId
+
+        if (result.none { it.id == id }) {
+          result.add(Entry(id, receivedAtMs, decoded))
         }
       }
       result.takeLast(MAX_ENTRIES).toMutableList()
@@ -128,6 +161,7 @@ class BushMeshNativeChannelInboxStore(context: Context) {
     entries.takeLast(MAX_ENTRIES).forEach { entry ->
       array.put(
         JSONObject()
+          .put("id", entry.id)
           .put("receivedAtMs", entry.receivedAtMs)
           .put("frameBase64", Base64.encodeToString(entry.frame, Base64.NO_WRAP)),
       )
@@ -143,6 +177,12 @@ class BushMeshNativeChannelInboxStore(context: Context) {
       throw IllegalStateException("Bushmesh native channel inbox could not be persisted.")
     }
   }
+
+  private fun fingerprint(frame: ByteArray): String =
+    MessageDigest
+      .getInstance("SHA-256")
+      .digest(frame)
+      .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
   private fun keyStore(): KeyStore =
     KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
