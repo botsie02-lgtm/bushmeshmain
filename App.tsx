@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 
 import {BushMeshProvider} from './src/state/BushMeshContext';
+import {BushMeshRuntimeLifecycle} from './src/state/BushMeshRuntimeLifecycle';
 import {BushMeshSyncInventoryBridge} from './src/state/BushMeshSyncInventoryBridge';
 import {useBushMeshLiveState} from './src/state/useBushMeshLiveState';
 import {DeviceScreen} from './src/screens/DeviceScreen';
@@ -127,6 +128,7 @@ function AppContent(): React.JSX.Element {
 function App(): React.JSX.Element {
   return (
     <BushMeshProvider>
+      <BushMeshRuntimeLifecycle />
       <BushMeshSyncInventoryBridge />
       <AppContent />
     </BushMeshProvider>
