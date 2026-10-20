@@ -5,27 +5,36 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class BushMeshMapPackModule(
   private val reactContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactContext) {
 
   companion object {
+    const val EVENT_PROGRESS = "BushMeshMapPackProgress"
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 30_000
     private const val MAX_REDIRECTS = 5
     private const val BUFFER_BYTES = 64 * 1024
+    private const val PROGRESS_EMIT_BYTES = 1024 * 1024L
     private val PACK_ID_REGEX = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
     private val SHA256_REGEX = Regex("^[0-9A-Fa-f]{64}$")
   }
 
+  private class MapPackCancelledException : Exception("Map-pack download cancelled.")
+
   private val executor = Executors.newSingleThreadExecutor()
+  private val activeDownloads = ConcurrentHashMap<String, AtomicBoolean>()
+  private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
 
   override fun getName(): String = "BushMeshMapPacks"
 
@@ -39,6 +48,20 @@ class BushMeshMapPackModule(
     format: String,
     promise: Promise,
   ) {
+    if (!PACK_ID_REGEX.matches(packId)) {
+      promise.reject("BUSHMESH_MAP_PACK_DOWNLOAD_FAILED", "Invalid Bushmesh map-pack ID.")
+      return
+    }
+
+    val cancellation = AtomicBoolean(false)
+    if (activeDownloads.putIfAbsent(packId, cancellation) != null) {
+      promise.reject(
+        "BUSHMESH_MAP_PACK_BUSY",
+        "A download for this Bushmesh map pack is already active.",
+      )
+      return
+    }
+
     executor.execute {
       try {
         val expectedBytes = validateExpectedBytes(expectedBytesValue)
@@ -59,8 +82,12 @@ class BushMeshMapPackModule(
 
         val digest = MessageDigest.getInstance("SHA-256")
         var totalBytes = 0L
+        var lastProgressBytes = -PROGRESS_EMIT_BYTES
+        throwIfCancelled(cancellation)
         val connection = openHttpsConnection(source)
+        activeConnections[packId] = connection
         try {
+          throwIfCancelled(cancellation)
           val declaredLength = connection.contentLengthLong
           if (declaredLength > 0 && declaredLength != expectedBytes) {
             throw IllegalStateException(
@@ -68,11 +95,14 @@ class BushMeshMapPackModule(
             )
           }
 
+          emitProgress(packId, totalBytes, expectedBytes, "downloading")
           connection.inputStream.use { input ->
             FileOutputStream(partial).use { output ->
               val buffer = ByteArray(BUFFER_BYTES)
               while (true) {
+                throwIfCancelled(cancellation)
                 val count = input.read(buffer)
+                throwIfCancelled(cancellation)
                 if (count < 0) {
                   break
                 }
@@ -89,26 +119,43 @@ class BushMeshMapPackModule(
 
                 digest.update(buffer, 0, count)
                 output.write(buffer, 0, count)
+                if (
+                  totalBytes - lastProgressBytes >= PROGRESS_EMIT_BYTES ||
+                  totalBytes == expectedBytes
+                ) {
+                  emitProgress(packId, totalBytes, expectedBytes, "downloading")
+                  lastProgressBytes = totalBytes
+                }
               }
               output.fd.sync()
             }
           }
+        } catch (error: Exception) {
+          if (cancellation.get()) {
+            throw MapPackCancelledException()
+          }
+          throw error
         } finally {
+          activeConnections.remove(packId, connection)
           connection.disconnect()
         }
 
+        throwIfCancelled(cancellation)
         if (totalBytes != expectedBytes) {
           throw IllegalStateException(
             "Map-pack download length $totalBytes does not match manifest length $expectedBytes.",
           )
         }
 
+        emitProgress(packId, totalBytes, expectedBytes, "verifying")
         val actualSha256 = digest.digest().toHex()
         if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
           throw IllegalStateException("Map-pack SHA-256 verification failed.")
         }
 
+        throwIfCancelled(cancellation)
         promoteVerifiedFile(partial, target)
+        emitProgress(packId, totalBytes, expectedBytes, "ready")
         promise.resolve(
           artifactResult(
             packId = packId,
@@ -120,16 +167,36 @@ class BushMeshMapPackModule(
             verifiedAtMs = System.currentTimeMillis(),
           ),
         )
+      } catch (error: MapPackCancelledException) {
+        cleanupPartialFiles(packId)
+        emitProgress(packId, 0L, 0L, "cancelled")
+        promise.reject("BUSHMESH_MAP_PACK_CANCELLED", error.message, error)
       } catch (error: Exception) {
-        try {
-          packDirectory(packId).listFiles()
-            ?.filter { file -> file.name.endsWith(".part") }
-            ?.forEach { file -> file.delete() }
-        } catch (_: Exception) {
-          // Preserve the primary download/verification failure.
-        }
+        cleanupPartialFiles(packId)
+        emitProgress(packId, 0L, 0L, "failed")
         promise.reject("BUSHMESH_MAP_PACK_DOWNLOAD_FAILED", error.message, error)
+      } finally {
+        activeConnections.remove(packId)?.disconnect()
+        activeDownloads.remove(packId, cancellation)
       }
+    }
+  }
+
+  @ReactMethod
+  fun cancelDownload(packId: String, promise: Promise) {
+    try {
+      require(PACK_ID_REGEX.matches(packId)) { "Invalid Bushmesh map-pack ID." }
+      val cancellation = activeDownloads[packId]
+      if (cancellation == null) {
+        promise.resolve(false)
+        return
+      }
+
+      cancellation.set(true)
+      activeConnections.remove(packId)?.disconnect()
+      promise.resolve(true)
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_MAP_PACK_CANCEL_FAILED", error.message, error)
     }
   }
 
@@ -156,12 +223,14 @@ class BushMeshMapPackModule(
           return@execute
         }
 
+        emitProgress(packId, file.length(), expectedBytes, "verifying")
         val actualSha256 = sha256(file)
         if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
           promise.resolve(null)
           return@execute
         }
 
+        emitProgress(packId, file.length(), expectedBytes, "ready")
         promise.resolve(
           artifactResult(
             packId = packId,
@@ -181,6 +250,10 @@ class BushMeshMapPackModule(
 
   @ReactMethod
   fun removePack(packId: String, promise: Promise) {
+    val cancellation = activeDownloads[packId]
+    cancellation?.set(true)
+    activeConnections.remove(packId)?.disconnect()
+
     executor.execute {
       try {
         require(PACK_ID_REGEX.matches(packId)) { "Invalid Bushmesh map-pack ID." }
@@ -196,7 +269,20 @@ class BushMeshMapPackModule(
     }
   }
 
+  @ReactMethod
+  fun addListener(eventName: String) {
+    // Required by React Native NativeEventEmitter subscription bookkeeping.
+  }
+
+  @ReactMethod
+  fun removeListeners(count: Double) {
+    // Required by React Native NativeEventEmitter subscription bookkeeping.
+  }
+
   override fun invalidate() {
+    activeDownloads.values.forEach { cancellation -> cancellation.set(true) }
+    activeConnections.values.forEach { connection -> connection.disconnect() }
+    activeConnections.clear()
     executor.shutdownNow()
     super.invalidate()
   }
@@ -283,6 +369,49 @@ class BushMeshMapPackModule(
     }
 
     backup.delete()
+  }
+
+  private fun cleanupPartialFiles(packId: String) {
+    try {
+      packDirectory(packId).listFiles()
+        ?.filter { file -> file.name.endsWith(".part") }
+        ?.forEach { file -> file.delete() }
+    } catch (_: Exception) {
+      // Preserve the primary download/cancellation failure.
+    }
+  }
+
+  private fun throwIfCancelled(cancellation: AtomicBoolean) {
+    if (cancellation.get()) {
+      throw MapPackCancelledException()
+    }
+  }
+
+  private fun emitProgress(
+    packId: String,
+    downloadedBytes: Long,
+    expectedBytes: Long,
+    state: String,
+  ) {
+    if (!reactContext.hasActiveReactInstance()) {
+      return
+    }
+
+    val payload = Arguments.createMap().apply {
+      putString("packId", packId)
+      putDouble("downloadedBytes", downloadedBytes.toDouble())
+      if (expectedBytes > 0) {
+        putDouble("expectedBytes", expectedBytes.toDouble())
+        putDouble("fraction", downloadedBytes.toDouble() / expectedBytes.toDouble())
+      } else {
+        putNull("expectedBytes")
+        putNull("fraction")
+      }
+      putString("state", state)
+    }
+    reactContext
+      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+      .emit(EVENT_PROGRESS, payload)
   }
 
   private fun sha256(file: File): String {
