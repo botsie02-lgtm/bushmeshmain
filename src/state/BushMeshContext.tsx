@@ -278,8 +278,6 @@ export function BushMeshProvider({
 
   useEffect(() => {
     if (
-      messagePersistenceStatus === 'restoring' ||
-      messagePersistenceStatus === 'unsupported' ||
       !androidMessagePersistence.isSupported() ||
       !messagePersistenceReadyRef.current
     ) {
@@ -300,8 +298,9 @@ export function BushMeshProvider({
         setMessagePersistenceError(null);
       })
       .catch(error => {
-        // Keep later history changes eligible for another write attempt instead
-        // of permanently disabling persistence after one transient failure.
+        // A failed write is retried when history changes again. Do not key this
+        // effect to the error/status state or a permanent storage fault would
+        // create an immediate retry loop.
         setMessagePersistenceStatus('error');
         setMessagePersistenceError(
           error instanceof Error
@@ -309,7 +308,7 @@ export function BushMeshProvider({
             : 'Encrypted Bushmesh message history could not be saved.',
         );
       });
-  }, [channelMessages, messagePersistenceStatus]);
+  }, [channelMessages]);
 
   const persistContacts = useCallback((nextContacts: BushMeshContact[]) => {
     if (!androidContactPersistence.isSupported()) {
