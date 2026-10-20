@@ -19,6 +19,8 @@ import {
   prepareBushMeshWireChannelFrames,
   tryDecodeBushMeshChannelFrame,
 } from '../../meshcore/meshcoreBushMeshBridge';
+import {BushMeshFragmentCheckpointRuntime} from './BushMeshFragmentCheckpointRuntime';
+import {getBushMeshPersistentStore} from './BushMeshPersistentStore';
 import {
   BushMeshTransportQueue,
   BushMeshTransportQueueSnapshot,
@@ -76,6 +78,7 @@ type OutboundFragmentedMessage = {
 export class BushMeshNetworkRuntime {
   private readonly messageIds: BushMeshMessageIdGenerator;
   private readonly reliability: BushMeshReliabilityController;
+  private readonly fragmentRecovery: BushMeshFragmentCheckpointRuntime;
   private readonly transportQueue = new BushMeshTransportQueue();
   private readonly outboundFragmented = new Map<
     number,
@@ -110,6 +113,9 @@ export class BushMeshNetworkRuntime {
     this.reliability = new BushMeshReliabilityController({
       reassemblyTimeoutMs: options?.reassemblyTimeoutMs,
     });
+    this.fragmentRecovery = new BushMeshFragmentCheckpointRuntime(
+      getBushMeshPersistentStore() ?? undefined,
+    );
     this.retryPollMs = options?.retryPollMs ?? 1000;
     this.autoAckFragments = options?.autoAckFragments ?? true;
   }
@@ -123,6 +129,36 @@ export class BushMeshNetworkRuntime {
     }
 
     this.running = true;
+    void this.fragmentRecovery
+      .initialize(this.reliability)
+      .then(restored => {
+        for (const checkpoint of restored) {
+          if (this.reliability.retransmissions.isComplete(checkpoint.messageId)) {
+            void this.fragmentRecovery.remove(checkpoint.messageId);
+            continue;
+          }
+
+          this.outboundFragmented.set(checkpoint.messageId, {
+            channelIndex: checkpoint.channelIndex,
+            transport: checkpoint.transport,
+          });
+        }
+
+        if (restored.length > 0) {
+          this.events.onStatus?.(
+            `BushMesh restored ${restored.length} fragmented message recovery job(s).`,
+          );
+          void this.flushDueRetransmissions();
+        }
+      })
+      .catch(error => {
+        this.events.onError?.(
+          error instanceof Error
+            ? `BushMesh fragmented-message recovery failed: ${error.message}`
+            : 'BushMesh fragmented-message recovery failed.',
+        );
+      });
+
     this.retryTimer = setInterval(() => {
       void this.flushDueRetransmissions();
     }, this.retryPollMs);
@@ -137,6 +173,7 @@ export class BushMeshNetworkRuntime {
       this.retryTimer = null;
     }
 
+    void this.fragmentRecovery.flush().catch(() => undefined);
     this.transportQueue.cancelPending(
       new Error('BushMesh networking runtime stopped.'),
     );
@@ -245,6 +282,20 @@ export class BushMeshNetworkRuntime {
           channelFrame.decoded.wireBytes,
         );
         this.statsState.ackFramesReceived += 1;
+
+        void this.fragmentRecovery
+          .applyAcknowledgement(
+            ack.messageId,
+            ack.receivedFragments,
+            ack.missingFragments,
+          )
+          .catch(error => {
+            this.events.onError?.(
+              error instanceof Error
+                ? `BushMesh fragment checkpoint update failed: ${error.message}`
+                : 'BushMesh fragment checkpoint update failed.',
+            );
+          });
 
         if (this.reliability.retransmissions.isComplete(ack.messageId)) {
           this.outboundFragmented.delete(ack.messageId);
@@ -355,6 +406,7 @@ export class BushMeshNetworkRuntime {
 
   cancelMessage(messageId: number): boolean {
     this.outboundFragmented.delete(messageId);
+    void this.fragmentRecovery.remove(messageId);
     return this.reliability.cancel(messageId);
   }
 
@@ -367,14 +419,30 @@ export class BushMeshNetworkRuntime {
     const fragmented = frames.some(frame => frame.fragmented);
 
     if (fragmented) {
+      const transport = frames[0]?.transport ?? 'text-safe';
       this.reliability.registerOutgoingFragments(
         messageId,
         frames.map(frame => frame.wireBytes),
       );
       this.outboundFragmented.set(messageId, {
         channelIndex,
-        transport: frames[0]?.transport ?? 'text-safe',
+        transport,
       });
+
+      try {
+        await this.fragmentRecovery.register(
+          messageId,
+          channelIndex,
+          transport,
+          frames.map(frame => frame.wireBytes),
+        );
+      } catch (error) {
+        this.events.onError?.(
+          error instanceof Error
+            ? `BushMesh fragment checkpoint save failed: ${error.message}`
+            : 'BushMesh fragment checkpoint save failed.',
+        );
+      }
     }
 
     for (let index = 0; index < frames.length; index += 1) {
