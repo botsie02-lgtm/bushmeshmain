@@ -18,9 +18,16 @@ function formatAge(ageSeconds: number): string {
   return `${Math.floor(ageSeconds / 3_600)}h`;
 }
 
-function fixedTargetEyebrow(type: string, expired: boolean): string {
+function fixedTargetEyebrow(
+  type: string,
+  expired: boolean,
+  arrived: boolean,
+): string {
   if (expired) {
     return 'TARGET EXPIRED · HOLD';
+  }
+  if (arrived) {
+    return 'ARRIVED';
   }
 
   switch (type) {
@@ -81,36 +88,64 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
       fixedGuidance?.expired ??
       (navigationFieldTarget.expiresAtMs !== null &&
         navigationFieldTarget.expiresAtMs <= nowMs);
+    const arrived = fixedGuidance?.arrived ?? false;
 
     return (
       <View
         style={[
           styles.banner,
-          expired ? styles.bannerHold : styles.bannerFixed,
+          expired
+            ? styles.bannerHold
+            : arrived
+              ? styles.bannerArrived
+              : styles.bannerFixed,
         ]}>
         <View style={styles.targetCopy}>
           <Text style={styles.eyebrow}>
-            {fixedTargetEyebrow(navigationFieldTarget.type, expired)}
+            {fixedTargetEyebrow(navigationFieldTarget.type, expired, arrived)}
           </Text>
           <Text style={styles.targetName} numberOfLines={1}>
             {navigationFieldTarget.label}
           </Text>
-          <Text style={expired ? styles.tailText : styles.fixedText}>
-            FIXED POINT · sender {navigationFieldTarget.senderId.slice(-6)}
+          <Text
+            style={
+              expired
+                ? styles.tailText
+                : arrived
+                  ? styles.arrivedText
+                  : styles.fixedText
+            }>
+            {arrived
+              ? `WITHIN ${fixedGuidance?.arrivalRadiusMeters ?? 0} M · sender ${navigationFieldTarget.senderId.slice(-6)}`
+              : `FIXED POINT · sender ${navigationFieldTarget.senderId.slice(-6)}`}
           </Text>
         </View>
 
         {fixedGuidance ? (
           <View style={styles.guidance}>
-            <Text style={styles.bearing}>
-              {fixedGuidance.compassDirection}{' '}
-              {Math.round(fixedGuidance.bearingDegrees)}°
+            <Text style={arrived ? styles.arrivedBearing : styles.bearing}>
+              {arrived
+                ? 'ON SCENE'
+                : `${fixedGuidance.compassDirection} ${Math.round(
+                    fixedGuidance.bearingDegrees,
+                  )}°`}
             </Text>
             <Text style={styles.distance}>
               {formatDistance(fixedGuidance.distanceMeters)}
             </Text>
-            <Text style={expired ? styles.freshnessHold : styles.freshnessFixed}>
-              {expired ? 'EXPIRED · DO NOT RELY' : 'FIXED LOCATION'}
+            <Text
+              style={
+                expired
+                  ? styles.freshnessHold
+                  : arrived
+                    ? styles.freshnessArrived
+                    : styles.freshnessFixed
+              }>
+              {expired
+                ? 'EXPIRED · DO NOT RELY'
+                : arrived
+                  ? 'ARRIVAL RADIUS'
+                  : 'FIXED LOCATION'}
             </Text>
           </View>
         ) : (
@@ -190,6 +225,7 @@ const styles = StyleSheet.create({
   },
   bannerLive: {borderBottomColor: colors.success},
   bannerFixed: {borderBottomColor: colors.accent},
+  bannerArrived: {borderBottomColor: colors.success},
   bannerHold: {borderBottomColor: colors.warning},
   targetCopy: {flex: 1, minWidth: 0},
   eyebrow: {
@@ -216,8 +252,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 3,
   },
+  arrivedText: {
+    color: colors.success,
+    fontSize: 8,
+    fontWeight: '900',
+    marginTop: 3,
+  },
   guidance: {alignItems: 'flex-end', marginLeft: 10},
   bearing: {color: colors.accent, fontSize: 18, fontWeight: '900'},
+  arrivedBearing: {color: colors.success, fontSize: 15, fontWeight: '900'},
   distance: {
     color: colors.textPrimary,
     fontSize: 13,
@@ -232,6 +275,12 @@ const styles = StyleSheet.create({
   },
   freshnessFixed: {
     color: colors.accent,
+    fontSize: 8,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  freshnessArrived: {
+    color: colors.success,
     fontSize: 8,
     fontWeight: '900',
     marginTop: 2,
