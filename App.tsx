@@ -13,6 +13,7 @@ import {
 
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
+import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DriveProvider} from './src/state/DriveContext';
@@ -61,6 +62,12 @@ function AppContent(): React.JSX.Element {
 
       {activeTab === 'drive' ? <DriveNavigationBanner /> : null}
       {activeTab === 'map' ? <MapTrackExportBanner /> : null}
+      {activeTab === 'channels' ? (
+        <SecureDataStatusBanner kind="messages" />
+      ) : null}
+      {activeTab === 'contacts' ? (
+        <SecureDataStatusBanner kind="contacts" />
+      ) : null}
 
       <View style={styles.content}>
         <View style={[styles.screenWrap, activeTab !== 'drive' && styles.hidden]}>
