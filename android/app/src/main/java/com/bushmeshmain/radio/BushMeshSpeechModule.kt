@@ -1,5 +1,6 @@
 package com.bushmeshmain.radio
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -17,6 +18,8 @@ class BushMeshSpeechModule(
   companion object {
     private const val READY_POLL_MS = 100L
     private const val READY_MAX_ATTEMPTS = 30
+    private const val PREFS_NAME = "bushmesh_speech"
+    private const val PREF_CRITICAL_ALERTS_ENABLED = "critical_alerts_enabled"
   }
 
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -74,6 +77,11 @@ class BushMeshSpeechModule(
       return
     }
 
+    if (!criticalAlertsEnabled()) {
+      promise.resolve(false)
+      return
+    }
+
     withReady(promise) { tts ->
       val queueMode =
         if (interrupt) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
@@ -107,8 +115,36 @@ class BushMeshSpeechModule(
         putBoolean("initializing", !initComplete)
         putBoolean("failed", initFailed)
         putString("languageTag", selectedLanguage?.toLanguageTag())
+        putBoolean("criticalAlertsEnabled", criticalAlertsEnabled())
       }
       promise.resolve(status)
+    }
+  }
+
+  @ReactMethod
+  fun setCriticalAlertsEnabled(enabled: Boolean, promise: Promise) {
+    try {
+      reactApplicationContext
+        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(PREF_CRITICAL_ALERTS_ENABLED, enabled)
+        .apply()
+
+      if (!enabled) {
+        mainHandler.post { engine?.stop() }
+      }
+      promise.resolve(enabled)
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_TTS_PREF_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun getCriticalAlertsEnabled(promise: Promise) {
+    try {
+      promise.resolve(criticalAlertsEnabled())
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_TTS_PREF_FAILED", error.message, error)
     }
   }
 
@@ -126,6 +162,11 @@ class BushMeshSpeechModule(
     }
     super.invalidate()
   }
+
+  private fun criticalAlertsEnabled(): Boolean =
+    reactApplicationContext
+      .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      .getBoolean(PREF_CRITICAL_ALERTS_ENABLED, true)
 
   private fun withReady(
     promise: Promise,
