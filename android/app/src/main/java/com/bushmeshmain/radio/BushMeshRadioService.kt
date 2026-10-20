@@ -34,6 +34,10 @@ class BushMeshRadioService : Service() {
     MeshCoreNativeBleRuntime.get(applicationContext)
   }
 
+  private val backgroundWorker: MeshCoreNativeBackgroundWorker by lazy {
+    MeshCoreNativeBackgroundWorker(applicationContext, nativeBle)
+  }
+
   override fun onCreate() {
     super.onCreate()
     ensureNotificationChannel()
@@ -45,6 +49,11 @@ class BushMeshRadioService : Service() {
     if (intent == null) {
       restoreNativeTargetAfterProcessRestart()
     } else {
+      // Any explicit command means a foreground/React process is interacting
+      // with the service again. Yield the recovery worker before processing it
+      // so native background command correlation cannot race the live session.
+      backgroundWorker.stop()
+
       when (action) {
         ACTION_START -> {
           val requestedLabel = intent.getStringExtra(EXTRA_DEVICE_LABEL)
@@ -112,12 +121,16 @@ class BushMeshRadioService : Service() {
   }
 
   override fun onDestroy() {
+    backgroundWorker.stop()
     nativeBle.disconnect(clearTarget = false)
     BushMeshRadioServiceState.markStopped()
     super.onDestroy()
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
+
+  fun backgroundStatus(): MeshCoreNativeBackgroundWorker.Status =
+    backgroundWorker.status()
 
   private fun readPersistedNativeTarget(): Pair<String, String?>? {
     val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -131,6 +144,7 @@ class BushMeshRadioService : Service() {
     val target = readPersistedNativeTarget() ?: return
     BushMeshRadioServiceState.requestRadio(target.second, target.first)
     nativeBle.connect(target.first, target.second)
+    backgroundWorker.start()
   }
 
   private fun persistNativeTarget(address: String, label: String?) {
@@ -214,8 +228,13 @@ class BushMeshRadioService : Service() {
     val deviceLabel = BushMeshRadioServiceState.deviceLabel
     val deviceAddress = BushMeshRadioServiceState.deviceAddress
     val nativeState = if (deviceAddress != null) nativeBle.status().state else null
+    val recovery = backgroundWorker.status()
 
     val detail = when {
+      recovery.running && recovery.identityRef != null ->
+        "Background radio recovery · ${recovery.phase} · ${recovery.identityRef}"
+      recovery.running ->
+        "Background radio recovery · ${recovery.phase}"
       radioRequested && deviceAddress != null && !deviceLabel.isNullOrBlank() ->
         "Native radio $deviceLabel · ${nativeState ?: "starting"}"
       radioRequested && deviceAddress != null ->
