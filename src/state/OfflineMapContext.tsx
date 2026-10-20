@@ -2,7 +2,9 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -12,11 +14,21 @@ import {
   TripMapCoverage,
   getTripMapCoverage,
 } from '../maps/offlineMapPacks';
+import {androidMapStatePersistence} from '../persistence/AndroidMapStatePersistence';
+import {createMapStateSnapshot} from '../persistence/mapStateSnapshot';
+
+export type MapPersistenceStatus =
+  | 'restoring'
+  | 'ready'
+  | 'unsupported'
+  | 'error';
 
 type OfflineMapContextValue = {
   packs: OfflineMapPack[];
   requiredTripPoints: MapCoordinate[];
   coverage: TripMapCoverage;
+  mapPersistenceStatus: MapPersistenceStatus;
+  mapPersistenceError: string | null;
   installOrUpdatePack: (pack: OfflineMapPack) => void;
   removePack: (id: string) => void;
   setRequiredTripPoints: (points: MapCoordinate[]) => void;
@@ -42,6 +54,108 @@ export function OfflineMapProvider({
   const [requiredTripPoints, setRequiredTripPointsState] = useState<
     MapCoordinate[]
   >([]);
+  const [mapPersistenceStatus, setMapPersistenceStatus] =
+    useState<MapPersistenceStatus>(() =>
+      androidMapStatePersistence.isSupported() ? 'restoring' : 'unsupported',
+    );
+  const [mapPersistenceError, setMapPersistenceError] = useState<string | null>(
+    null,
+  );
+  const persistenceReadyRef = useRef(!androidMapStatePersistence.isSupported());
+  const writeChainRef = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    let active = true;
+
+    const restore = async () => {
+      if (!androidMapStatePersistence.isSupported()) {
+        persistenceReadyRef.current = true;
+        if (active) {
+          setMapPersistenceStatus('unsupported');
+          setMapPersistenceError(null);
+        }
+        return;
+      }
+
+      try {
+        const persisted = await androidMapStatePersistence.load();
+        if (persisted && active) {
+          setPacks(persisted.packs.map(clonePack));
+          setRequiredTripPointsState(
+            persisted.requiredTripPoints.map(point => ({...point})),
+          );
+        }
+
+        persistenceReadyRef.current = true;
+        if (active) {
+          setMapPersistenceStatus('ready');
+          setMapPersistenceError(null);
+        }
+      } catch (restoreError) {
+        const restoreMessage =
+          restoreError instanceof Error
+            ? restoreError.message
+            : 'Encrypted Bushmesh map metadata could not be restored.';
+
+        try {
+          await androidMapStatePersistence.resetSecureStorage();
+          persistenceReadyRef.current = true;
+          if (active) {
+            setPacks([]);
+            setRequiredTripPointsState([]);
+            setMapPersistenceStatus('ready');
+            setMapPersistenceError(
+              `The previous encrypted map metadata could not be authenticated and was discarded. Secure map storage was re-keyed. ${restoreMessage}`,
+            );
+          }
+        } catch (resetError) {
+          persistenceReadyRef.current = true;
+          if (active) {
+            setPacks([]);
+            setRequiredTripPointsState([]);
+            setMapPersistenceStatus('error');
+            setMapPersistenceError(
+              resetError instanceof Error
+                ? `Map restore failed (${restoreMessage}) and secure map storage could not be reinitialized: ${resetError.message}`
+                : `Map restore failed (${restoreMessage}) and secure map storage could not be reinitialized.`,
+            );
+          }
+        }
+      }
+    };
+
+    restore().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      mapPersistenceStatus !== 'ready' ||
+      !androidMapStatePersistence.isSupported() ||
+      !persistenceReadyRef.current
+    ) {
+      return;
+    }
+
+    const snapshot = createMapStateSnapshot(packs, requiredTripPoints);
+    writeChainRef.current = writeChainRef.current
+      .then(async () => {
+        if (snapshot.packs.length === 0 && snapshot.requiredTripPoints.length === 0) {
+          await androidMapStatePersistence.clear();
+          return;
+        }
+        await androidMapStatePersistence.save(snapshot);
+      })
+      .catch(error => {
+        setMapPersistenceError(
+          error instanceof Error
+            ? error.message
+            : 'Encrypted Bushmesh map metadata could not be saved.',
+        );
+      });
+  }, [packs, requiredTripPoints, mapPersistenceStatus]);
 
   const installOrUpdatePack = useCallback((pack: OfflineMapPack) => {
     setPacks(current => {
@@ -98,6 +212,8 @@ export function OfflineMapProvider({
       packs,
       requiredTripPoints,
       coverage,
+      mapPersistenceStatus,
+      mapPersistenceError,
       installOrUpdatePack,
       removePack,
       setRequiredTripPoints,
@@ -108,6 +224,8 @@ export function OfflineMapProvider({
       packs,
       requiredTripPoints,
       coverage,
+      mapPersistenceStatus,
+      mapPersistenceError,
       installOrUpdatePack,
       removePack,
       setRequiredTripPoints,
