@@ -1,6 +1,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
+import {buddyTailDistanceMeters} from '../convoy/buddyTails';
 import {formatDistance} from '../convoy/convoy';
 import {getMovingTargetGuidance} from '../convoy/movingTarget';
 import {useConvoy} from '../state/ConvoyContext';
@@ -21,6 +22,7 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
     localPosition,
     navigationTargetVehicleId,
     navigationTargetVehicle,
+    getBuddyTail,
     clearNavigationTarget,
   } = useConvoy();
   const [nowMs, setNowMs] = useState(Date.now());
@@ -34,12 +36,21 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
     () => getMovingTargetGuidance(localPosition, navigationTargetVehicle, nowMs),
     [localPosition, navigationTargetVehicle, nowMs],
   );
+  const buddyTail = useMemo(
+    () =>
+      navigationTargetVehicleId
+        ? getBuddyTail(navigationTargetVehicleId)
+        : null,
+    [getBuddyTail, navigationTargetVehicleId],
+  );
+  const tailDistanceMeters = buddyTail ? buddyTailDistanceMeters(buddyTail) : 0;
 
   if (!navigationTargetVehicleId) {
     return null;
   }
 
   const safeToFollow = guidance?.safeToFollow ?? false;
+  const hasUsefulTail = (buddyTail?.points.length ?? 0) > 1;
 
   return (
     <View
@@ -54,6 +65,12 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
         <Text style={styles.targetName} numberOfLines={1}>
           {navigationTargetVehicle?.name ?? 'Target unavailable'}
         </Text>
+        {!safeToFollow && hasUsefulTail ? (
+          <Text style={styles.tailText}>
+            BUDDY TAIL · {buddyTail?.points.length ?? 0} fixes ·{' '}
+            {formatDistance(tailDistanceMeters)} retained path
+          </Text>
+        ) : null}
       </View>
 
       {guidance ? (
@@ -93,14 +110,59 @@ const styles = StyleSheet.create({
   bannerLive: {borderBottomColor: colors.success},
   bannerHold: {borderBottomColor: colors.warning},
   targetCopy: {flex: 1, minWidth: 0},
-  eyebrow: {color: colors.textMuted, fontSize: 9, fontWeight: '900', letterSpacing: 1},
-  targetName: {color: colors.textPrimary, fontSize: 16, fontWeight: '900', marginTop: 3},
+  eyebrow: {
+    color: colors.textMuted,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  targetName: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '900',
+    marginTop: 3,
+  },
+  tailText: {
+    color: colors.warning,
+    fontSize: 8,
+    fontWeight: '800',
+    marginTop: 3,
+  },
   guidance: {alignItems: 'flex-end', marginLeft: 10},
   bearing: {color: colors.accent, fontSize: 18, fontWeight: '900'},
-  distance: {color: colors.textPrimary, fontSize: 13, fontWeight: '900', marginTop: 1},
-  freshnessLive: {color: colors.success, fontSize: 8, fontWeight: '900', marginTop: 2},
-  freshnessHold: {color: colors.warning, fontSize: 8, fontWeight: '900', marginTop: 2},
+  distance: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '900',
+    marginTop: 1,
+  },
+  freshnessLive: {
+    color: colors.success,
+    fontSize: 8,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  freshnessHold: {
+    color: colors.warning,
+    fontSize: 8,
+    fontWeight: '900',
+    marginTop: 2,
+  },
   waiting: {color: colors.warning, fontSize: 10, fontWeight: '900'},
-  stopButton: {width: 36, height: 36, marginLeft: 10, borderRadius: 18, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center'},
-  stopText: {color: colors.textSecondary, fontSize: 24, lineHeight: 25, fontWeight: '700'},
+  stopButton: {
+    width: 36,
+    height: 36,
+    marginLeft: 10,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stopText: {
+    color: colors.textSecondary,
+    fontSize: 24,
+    lineHeight: 25,
+    fontWeight: '700',
+  },
 });
