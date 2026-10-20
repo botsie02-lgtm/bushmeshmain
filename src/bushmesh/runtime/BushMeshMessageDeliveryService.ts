@@ -1,5 +1,6 @@
 import {
   BushMeshPriority,
+  decodeBushMeshWire,
   encodeBushMeshRoutedWire,
   encodeBushMeshTextMessage,
   encodeTextForBushMeshPeer,
@@ -28,15 +29,30 @@ export type BushMeshMessageDeliverySnapshot = {
   queuedMessages: number;
 };
 
+export type BushMeshMessageDeliveryFlushEvent = {
+  sentMessageIds: number[];
+  failedMessageIds: number[];
+  expiredMessageIds: number[];
+  raw: BushMeshStoreForwardFlushResult;
+};
+
+export type BushMeshMessageDeliveryEvents = {
+  onQueued?: (queueId: string, messageId: number) => void;
+  onFlush?: (event: BushMeshMessageDeliveryFlushEvent) => void;
+};
+
 export class BushMeshMessageDeliveryService {
   readonly storeForward: BushMeshStoreForwardRuntime;
   readonly sender: BushMeshReliableSender;
 
   private running = false;
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly queueMessageIds = new Map<string, number>();
 
   constructor(
     readonly node: BushMeshNodeRuntime,
     store?: BushMeshStoreForwardStore,
+    private readonly events: BushMeshMessageDeliveryEvents = {},
   ) {
     this.storeForward = new BushMeshStoreForwardRuntime(
       node.network,
@@ -55,13 +71,18 @@ export class BushMeshMessageDeliveryService {
     }
 
     const restored = await this.storeForward.initialize(options?.now);
-    this.sender.startAutoFlush(options?.flushIntervalMs ?? 5000);
+    this.rebuildQueueIndex();
+    this.startAutoFlush(options?.flushIntervalMs ?? 5000);
     this.running = true;
     return restored;
   }
 
   stop(): void {
     this.running = false;
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
     this.sender.stop();
   }
 
@@ -77,7 +98,34 @@ export class BushMeshMessageDeliveryService {
   }
 
   async flush(): Promise<BushMeshStoreForwardFlushResult> {
-    return this.sender.flush();
+    const queueMap = new Map(this.queueMessageIds);
+    const result = await this.sender.flush();
+    const event: BushMeshMessageDeliveryFlushEvent = {
+      sentMessageIds: result.sentIds
+        .map(id => queueMap.get(id))
+        .filter((id): id is number => id !== undefined),
+      failedMessageIds: result.failedIds
+        .map(id => queueMap.get(id))
+        .filter((id): id is number => id !== undefined),
+      expiredMessageIds: result.expiredIds
+        .map(id => queueMap.get(id))
+        .filter((id): id is number => id !== undefined),
+      raw: result,
+    };
+
+    for (const id of [...result.sentIds, ...result.expiredIds]) {
+      this.queueMessageIds.delete(id);
+    }
+
+    if (
+      event.sentMessageIds.length > 0 ||
+      event.failedMessageIds.length > 0 ||
+      event.expiredMessageIds.length > 0
+    ) {
+      this.events.onFlush?.(event);
+    }
+
+    return result;
   }
 
   async sendRoutedText(
@@ -148,7 +196,43 @@ export class BushMeshMessageDeliveryService {
       },
     );
 
+    if (delivery.state === 'queued') {
+      this.queueMessageIds.set(delivery.queuedId, messageId);
+      this.events.onQueued?.(delivery.queuedId, messageId);
+    }
+
     return this.toResult(delivery, messageId, innerMessageId);
+  }
+
+  private startAutoFlush(intervalMs: number): void {
+    if (!Number.isFinite(intervalMs) || intervalMs < 1000) {
+      throw new Error('Delivery flush interval must be at least one second.');
+    }
+
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+    }
+
+    this.flushTimer = setInterval(() => {
+      if (!this.node.network.isRunning()) {
+        return;
+      }
+      void this.flush();
+    }, intervalMs);
+  }
+
+  private rebuildQueueIndex(): void {
+    this.queueMessageIds.clear();
+
+    for (const item of this.storeForward.snapshot()) {
+      try {
+        const decoded = decodeBushMeshWire(item.wireBytes);
+        this.queueMessageIds.set(item.id, decoded.envelope.messageId);
+      } catch {
+        // The store-forward runtime already validates restored packets. Ignore a
+        // mapping failure rather than making the whole delivery service unusable.
+      }
+    }
   }
 
   private toResult(
