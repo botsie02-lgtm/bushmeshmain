@@ -12,11 +12,13 @@ import {
 export type NativeMeshCoreFrameTransportOptions = {
   pollIntervalMs?: number;
   maxFramesPerPoll?: number;
+  readyTimeoutMs?: number;
   onNativeStatus?: (status: NativeRadioServiceStatus) => void;
 };
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_MAX_FRAMES_PER_POLL = 32;
+const DEFAULT_READY_TIMEOUT_MS = 15_000;
 
 /**
  * MeshCore raw-frame transport backed by the Android foreground BLE runtime.
@@ -31,6 +33,7 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
 
   private readonly pollIntervalMs: number;
   private readonly maxFramesPerPoll: number;
+  private readonly readyTimeoutMs: number;
   private readonly onNativeStatus?: (status: NativeRadioServiceStatus) => void;
   private handlers: MeshCoreFrameTransportHandlers | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -54,6 +57,10 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
         128,
         Math.floor(options.maxFramesPerPoll ?? DEFAULT_MAX_FRAMES_PER_POLL),
       ),
+    );
+    this.readyTimeoutMs = Math.max(
+      1_000,
+      Math.floor(options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS),
     );
     this.onNativeStatus = options.onNativeStatus;
   }
@@ -111,19 +118,51 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
   }
 
   async ensureReady(): Promise<number | null> {
-    const status = await nativeRadioService.getStatus();
-    this.onNativeStatus?.(status);
-
-    if (status.nativeBleState !== 'ready') {
-      throw new Error(
-        status.nativeBleLastError ??
-          `Native MeshCore BLE transport is ${status.nativeBleState ?? 'not ready'}.`,
-      );
+    if (!this.started) {
+      throw new Error('Native MeshCore BLE transport has not been started.');
     }
 
-    return typeof status.nativeBleMtu === 'number' && status.nativeBleMtu > 0
-      ? status.nativeBleMtu
-      : null;
+    const generation = this.generation;
+    const deadline = Date.now() + this.readyTimeoutMs;
+    let lastStatus: NativeRadioServiceStatus | null = null;
+
+    while (this.started && generation === this.generation) {
+      const status = await nativeRadioService.getStatus();
+      lastStatus = status;
+      this.onNativeStatus?.(status);
+
+      if (status.nativeBleState === 'ready') {
+        return typeof status.nativeBleMtu === 'number' && status.nativeBleMtu > 0
+          ? status.nativeBleMtu
+          : null;
+      }
+
+      if (status.nativeBleState === 'error') {
+        throw new Error(
+          status.nativeBleLastError ?? 'Native MeshCore BLE transport entered an error state.',
+        );
+      }
+
+      if (Date.now() >= deadline) {
+        break;
+      }
+
+      await this.delay(this.pollIntervalMs);
+    }
+
+    if (!this.started || generation !== this.generation) {
+      throw new Error('Native MeshCore BLE readiness wait was cancelled.');
+    }
+
+    const state = lastStatus?.nativeBleState ?? 'unknown';
+    const detail = lastStatus?.nativeBleLastError
+      ? ` ${lastStatus.nativeBleLastError}`
+      : '';
+    throw new Error(
+      `Native MeshCore BLE transport did not become ready within ${Math.round(
+        this.readyTimeoutMs / 1000,
+      )} seconds (state: ${state}).${detail}`,
+    );
   }
 
   async getStatus(): Promise<NativeRadioServiceStatus> {
@@ -191,6 +230,10 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
         this.schedulePoll(this.pollIntervalMs, generation);
       }
     }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   private clearPollTimer(): void {
