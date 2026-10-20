@@ -2,6 +2,7 @@ export * from './airtime';
 export * from './capabilityPolicy';
 export * from './codec';
 export * from './controlPackets';
+export * from './convoy';
 export * from './debug';
 export * from './deliveryQueue';
 export * from './deliveryRuntime';
