@@ -13,6 +13,7 @@ class BushMeshRadioServicePackage : ReactPackage {
     BushMeshPersistenceModule(reactContext),
     BushMeshLocationModule(reactContext),
     BushMeshExportModule(reactContext),
+    BushMeshSpeechModule(reactContext),
   )
 
   override fun createViewManagers(
