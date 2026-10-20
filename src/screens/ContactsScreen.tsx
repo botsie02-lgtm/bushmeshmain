@@ -214,6 +214,8 @@ export function ContactsScreen(): React.JSX.Element {
         direction: 'sent',
         status: result.state === 'sent' ? 'sent' : 'pending',
         protocol: 'bushmesh-routed',
+        bushMeshMessageId: result.messageId,
+        deliveryQueueId: result.queueId ?? undefined,
       });
 
       if (result.state === 'queued') {
