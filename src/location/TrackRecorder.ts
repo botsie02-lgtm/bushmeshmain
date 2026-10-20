@@ -22,8 +22,8 @@ const DEFAULT_MIN_DISTANCE_METERS = 5;
 const DEFAULT_MAX_SAMPLE_INTERVAL_MS = 30_000;
 const DEFAULT_MAX_POINTS = 2_000;
 
-function validNullableNumber(value: number | null): boolean {
-  return value === null || Number.isFinite(value);
+function validNullableNumber(value: number | null | undefined): boolean {
+  return value == null || Number.isFinite(value);
 }
 
 function validRestoredPoint(point: BushMeshTrackPoint): boolean {
