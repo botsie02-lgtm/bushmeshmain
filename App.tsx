@@ -21,6 +21,7 @@ import {DeviceScreen} from './src/screens/DeviceScreen';
 import {DiagnosticsScreen} from './src/screens/DiagnosticsScreen';
 import {EmergencyScreen} from './src/screens/EmergencyScreen';
 import {MapScreen} from './src/screens/MapScreen';
+import {VoiceScreen} from './src/screens/VoiceScreen';
 import {colors} from './src/theme/colors';
 
 type TabKey =
@@ -29,6 +30,7 @@ type TabKey =
   | 'contacts'
   | 'map'
   | 'convoy'
+  | 'voice'
   | 'diagnostics'
   | 'emergency';
 
@@ -38,6 +40,7 @@ const tabs: Array<{key: TabKey; label: string}> = [
   {key: 'contacts', label: 'Contacts'},
   {key: 'map', label: 'Map'},
   {key: 'convoy', label: 'Convoy'},
+  {key: 'voice', label: 'Voice'},
   {key: 'diagnostics', label: 'Diag'},
   {key: 'emergency', label: 'SOS'},
 ];
@@ -50,7 +53,8 @@ function AppContent(): React.JSX.Element {
     convoyState.snapshot?.issues.filter(issue =>
       issue.type === 'hazard' ||
       issue.type === 'lost-member' ||
-      issue.type === 'large-gap',
+      issue.type === 'large-gap' ||
+      issue.type === 'order-conflict',
     ).length ?? 0;
 
   return (
@@ -81,6 +85,10 @@ function AppContent(): React.JSX.Element {
 
         <View style={[styles.screenWrap, activeTab !== 'convoy' && styles.hidden]}>
           <ConvoyScreen />
+        </View>
+
+        <View style={[styles.screenWrap, activeTab !== 'voice' && styles.hidden]}>
+          <VoiceScreen />
         </View>
 
         <View
@@ -194,9 +202,9 @@ const styles = StyleSheet.create({
   },
   tabBar: {
     flexDirection: 'row',
-    paddingHorizontal: 6,
+    paddingHorizontal: 4,
     paddingVertical: 10,
-    gap: 2,
+    gap: 1,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.surface,
@@ -204,8 +212,8 @@ const styles = StyleSheet.create({
   tabButton: {
     flex: 1,
     paddingVertical: 12,
-    paddingHorizontal: 2,
-    borderRadius: 12,
+    paddingHorizontal: 1,
+    borderRadius: 10,
     alignItems: 'center',
   },
   tabButtonActive: {
@@ -220,7 +228,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 3,
   },
   sosTabButton: {
     borderWidth: 1,
@@ -236,7 +244,7 @@ const styles = StyleSheet.create({
   },
   tabText: {
     color: colors.textSecondary,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
   },
   tabTextActive: {
@@ -250,31 +258,31 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   sosBadge: {
-    minWidth: 18,
-    height: 18,
+    minWidth: 17,
+    height: 17,
     borderRadius: 9,
-    paddingHorizontal: 4,
+    paddingHorizontal: 3,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.danger,
   },
   sosBadgeText: {
     color: colors.textPrimary,
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '900',
   },
   convoyBadge: {
-    minWidth: 18,
-    height: 18,
+    minWidth: 17,
+    height: 17,
     borderRadius: 9,
-    paddingHorizontal: 4,
+    paddingHorizontal: 3,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.warning,
   },
   convoyBadgeText: {
     color: colors.background,
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '900',
   },
 });
