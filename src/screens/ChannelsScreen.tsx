@@ -104,6 +104,8 @@ export function ChannelsScreen(): React.JSX.Element {
           direction: 'sent',
           status: result.state === 'sent' ? 'sent' : 'pending',
           protocol: 'bushmesh-routed',
+          bushMeshMessageId: result.messageId,
+          deliveryQueueId: result.queueId ?? undefined,
         });
 
         if (result.state === 'queued') {
@@ -125,6 +127,7 @@ export function ChannelsScreen(): React.JSX.Element {
           direction: 'sent',
           status: 'sent',
           protocol: 'bushmesh',
+          bushMeshMessageId: result.messageId,
         });
         setSendStatus(
           `BushMesh message ${result.messageId} sent in ${result.frameCount} frame(s) via ${result.transport}.`,
@@ -347,7 +350,11 @@ export function ChannelsScreen(): React.JSX.Element {
               </View>
               <Text style={styles.messageText}>{message.text}</Text>
               <Text style={styles.messageMeta}>
-                {message.protocol ?? 'local'} •{' '}
+                {message.protocol ?? 'local'}
+                {message.bushMeshMessageId !== undefined
+                  ? ` • #${message.bushMeshMessageId}`
+                  : ''}
+                {' • '}
                 {new Date(message.createdAt).toLocaleTimeString()}
               </Text>
             </View>
