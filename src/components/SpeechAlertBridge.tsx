@@ -1,31 +1,12 @@
 import React, {useEffect, useMemo, useRef} from 'react';
 
-import {BushMeshQuickActionCode} from '../bushmesh/protocol';
 import {nativeSpeech} from '../native/NativeSpeech';
-import {DriveAlert, useDrive} from '../state/DriveContext';
+import {
+  isSpeakableCriticalAlert,
+  speechForCriticalAlert,
+} from '../speech/criticalAlertSpeech';
+import {useDrive} from '../state/DriveContext';
 import {useSpeech} from '../state/SpeechContext';
-
-const SPOKEN_ACTIONS = new Set<BushMeshQuickActionCode>([
-  BushMeshQuickActionCode.Stop,
-  BushMeshQuickActionCode.Hazard,
-  BushMeshQuickActionCode.Regroup,
-  BushMeshQuickActionCode.Help,
-]);
-
-function speechForAlert(alert: DriveAlert): string {
-  switch (alert.action) {
-    case BushMeshQuickActionCode.Stop:
-      return 'Bushmesh stop. Convoy stop requested.';
-    case BushMeshQuickActionCode.Hazard:
-      return 'Bushmesh hazard. Hazard reported ahead.';
-    case BushMeshQuickActionCode.Regroup:
-      return 'Bushmesh regroup. Regroup requested.';
-    case BushMeshQuickActionCode.Help:
-      return 'Bushmesh help. Assistance requested.';
-    default:
-      return `Bushmesh alert. ${alert.label}.`;
-  }
-}
 
 /**
  * Speaks only fresh radio-originated driver alerts that have already passed the
@@ -38,13 +19,7 @@ export function SpeechAlertBridge(): null {
   const lastSpokenIdRef = useRef<string | null>(null);
 
   const newestSpeakable = useMemo(
-    () =>
-      alerts.find(
-        alert =>
-          alert.source === 'radio' &&
-          SPOKEN_ACTIONS.has(alert.action) &&
-          (alert.expiresAtMs === null || alert.expiresAtMs > Date.now()),
-      ) ?? null,
+    () => alerts.find(alert => isSpeakableCriticalAlert(alert)) ?? null,
     [alerts],
   );
 
@@ -59,10 +34,12 @@ export function SpeechAlertBridge(): null {
     }
 
     lastSpokenIdRef.current = newestSpeakable.id;
-    nativeSpeech.speak(speechForAlert(newestSpeakable), true).catch(() => {
-      // Spoken alerts supplement the visible alert card. A missing or failed
-      // Android voice must never suppress the primary visual safety path.
-    });
+    nativeSpeech
+      .speak(speechForCriticalAlert(newestSpeakable), true)
+      .catch(() => {
+        // Spoken alerts supplement the visible alert card. A missing or failed
+        // Android voice must never suppress the primary visual safety path.
+      });
   }, [criticalAlertsEnabled, newestSpeakable, runtimeState]);
 
   return null;
