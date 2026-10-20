@@ -5,6 +5,7 @@ import {
   BushMeshFileReceiver,
   BushMeshFileSender,
   BushMeshFileSendProgress,
+  PreparedBushMeshFileTransfer,
   decodeFileAck,
   decodeFileChunk,
   decodeFileEnd,
@@ -62,10 +63,19 @@ export class BushMeshFileTransferManager {
     },
   ): BushMeshFileSendProgress {
     const prepared = prepareFileTransfer(transferId, data, options);
+    return this.restoreOutgoing(prepared, [], false);
+  }
+
+  restoreOutgoing(
+    prepared: PreparedBushMeshFileTransfer,
+    acknowledgedChunkIndexes: number[] = [],
+    startAlreadySent = true,
+  ): BushMeshFileSendProgress {
     const sender = new BushMeshFileSender(prepared);
-    this.outgoing.set(transferId, {
+    sender.restoreAcknowledgedChunkIndexes(acknowledgedChunkIndexes);
+    this.outgoing.set(prepared.metadata.transferId, {
       sender,
-      startSent: false,
+      startSent: startAlreadySent,
       endSent: false,
     });
     return sender.progress();
@@ -195,9 +205,6 @@ export class BushMeshFileTransferManager {
       responseFrames.push(session.sender.endFrame());
       session.endSent = true;
     } else if (retryFrames.length === 0) {
-      // A clean ACK closes the current burst. Advance to the next unsent window.
-      // When an ACK reports loss, retry only the missing chunks first; advancing
-      // at the same time would cause duplicate in-flight chunks and waste airtime.
       for (const pending of session.sender.pendingFrames(DEFAULT_FILE_BURST_CHUNKS)) {
         responseFrames.push(pending.frame);
       }
