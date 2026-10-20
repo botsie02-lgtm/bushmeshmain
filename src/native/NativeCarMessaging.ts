@@ -9,12 +9,13 @@ export type NativeCarReply = {
   attempts: number;
   lastAttemptAtMs: number | null;
   lastError: string | null;
-  state: 'queued' | 'blocked' | 'accepted';
+  state: 'queued' | 'inflight' | 'blocked' | 'accepted';
 };
 
 export type NativeCarMessagingStatus = {
   notificationsEnabled: boolean;
   queuedReplies: number;
+  inflightReplies: number;
   blockedReplies: number;
   acceptedReplies: number;
 };
@@ -29,9 +30,10 @@ type NativeCarMessagingModule = {
   ) => Promise<boolean>;
   getPendingReplies: (maxEntries: number) => Promise<NativeCarReply[]>;
   acknowledgeReply: (id: string) => Promise<boolean>;
-  markReplyAttempt: (
+  markReplyAttempt: (id: string) => Promise<boolean>;
+  requeueReplyAfterFailure: (
     id: string,
-    errorMessage: string | null,
+    errorMessage: string,
   ) => Promise<boolean>;
   markReplyBlocked: (id: string, reason: string) => Promise<boolean>;
   markReplyAccepted: (id: string) => Promise<boolean>;
@@ -45,6 +47,7 @@ const module = NativeModules.BushMeshCarMessaging as
 const unsupportedStatus: NativeCarMessagingStatus = {
   notificationsEnabled: false,
   queuedReplies: 0,
+  inflightReplies: 0,
   blockedReplies: 0,
   acceptedReplies: 0,
 };
@@ -87,14 +90,21 @@ export const nativeCarMessaging = {
     return module.acknowledgeReply(id);
   },
 
-  async markReplyAttempt(
+  async markReplyAttempt(id: string): Promise<boolean> {
+    if (!this.isSupported() || !module) {
+      return false;
+    }
+    return module.markReplyAttempt(id);
+  },
+
+  async requeueReplyAfterFailure(
     id: string,
-    errorMessage: string | null = null,
+    errorMessage: string,
   ): Promise<boolean> {
     if (!this.isSupported() || !module) {
       return false;
     }
-    return module.markReplyAttempt(id, errorMessage);
+    return module.requeueReplyAfterFailure(id, errorMessage);
   },
 
   async markReplyBlocked(id: string, reason: string): Promise<boolean> {
