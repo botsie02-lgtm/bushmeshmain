@@ -23,7 +23,6 @@ export type BushMeshPersistentDistressBeaconState = {
   messageId: number | null;
   transmissions: number;
   remainingRepeats: number;
-  restored: boolean;
 };
 
 type DistressCheckpoint = {
@@ -203,8 +202,11 @@ export class BushMeshPersistentDistressBeacon {
       messageId: this.checkpoint?.messageId ?? null,
       transmissions: this.checkpoint?.transmissions ?? 0,
       remainingRepeats: this.checkpoint?.dueAtMs.length ?? 0,
-      restored: this.restored,
     };
+  }
+
+  wasRestored(): boolean {
+    return this.restored;
   }
 
   async flushPersistence(): Promise<void> {
