@@ -22,6 +22,26 @@ export type BushMeshKnownPeer = {
   neighbor: BushMeshNeighbor | null;
 };
 
+export type BushMeshPeerSnapshot = {
+  hello: BushMeshNodeHello;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  neighbor?: {
+    rssi: number;
+    snr: number;
+    hopCount: number;
+    batteryPercent?: number;
+    lastSeenAt: number;
+  };
+};
+
+export type BushMeshPeerRegistrySnapshot = {
+  version: 1;
+  savedAt: number;
+  peers: BushMeshPeerSnapshot[];
+  routes: BushMeshRouteCandidate[];
+};
+
 export class BushMeshPeerRegistry {
   readonly neighbors: BushMeshNeighborTable;
   readonly routes: BushMeshRoutingTable;
@@ -170,6 +190,99 @@ export class BushMeshPeerRegistry {
   peerPolicy(nodeId: number): BushMeshPeerPolicy | null {
     const peer = this.peers.get(nodeId);
     return peer ? {...peer.policy} : null;
+  }
+
+  snapshot(now = Date.now()): BushMeshPeerRegistrySnapshot {
+    this.prune(now);
+
+    return {
+      version: 1,
+      savedAt: now,
+      peers: Array.from(this.peers.values()).map(peer => ({
+        hello: {...peer.hello},
+        firstSeenAt: peer.firstSeenAt,
+        lastSeenAt: peer.lastSeenAt,
+        neighbor: peer.neighbor
+          ? {
+              rssi: peer.neighbor.smoothedRssi,
+              snr: peer.neighbor.smoothedSnr,
+              hopCount: peer.neighbor.hopCount,
+              batteryPercent: peer.neighbor.batteryPercent,
+              lastSeenAt: peer.neighbor.lastSeenAt,
+            }
+          : undefined,
+      })),
+      routes: this.routes.snapshot(now),
+    };
+  }
+
+  /**
+   * Restores peer capability and topology hints without extending the lifetime
+   * of stale routes. Fresh discovery traffic will naturally replace this state.
+   */
+  restore(
+    snapshot: BushMeshPeerRegistrySnapshot,
+    options?: {now?: number; replace?: boolean},
+  ): {peers: number; routes: number} {
+    const now = options?.now ?? Date.now();
+
+    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.peers)) {
+      throw new Error('Unsupported BushMesh peer-registry snapshot.');
+    }
+
+    if (options?.replace !== false) {
+      this.clear();
+    }
+
+    let restoredPeers = 0;
+
+    for (const entry of snapshot.peers) {
+      if (
+        !entry ||
+        !entry.hello ||
+        !Number.isFinite(entry.firstSeenAt) ||
+        !Number.isFinite(entry.lastSeenAt) ||
+        entry.firstSeenAt < 0 ||
+        entry.lastSeenAt < entry.firstSeenAt
+      ) {
+        continue;
+      }
+
+      // Do not resurrect peers whose most recent observation is already older
+      // than the normal neighbor retention horizon after the table prunes it.
+      const observation = entry.neighbor
+        ? {
+            rssi: entry.neighbor.rssi,
+            snr: entry.neighbor.snr,
+            hopCount: entry.neighbor.hopCount,
+            batteryPercent: entry.neighbor.batteryPercent,
+            seenAt: entry.neighbor.lastSeenAt,
+          }
+        : undefined;
+
+      try {
+        this.upsertHello(entry.hello, {
+          now: entry.lastSeenAt,
+          observation,
+        });
+        const restored = this.peers.get(entry.hello.nodeId);
+        if (restored) {
+          restored.firstSeenAt = entry.firstSeenAt;
+          restored.lastSeenAt = entry.lastSeenAt;
+          restoredPeers += 1;
+        }
+      } catch {
+        // Corrupt individual peer entries are skipped rather than making the
+        // entire topology snapshot unusable.
+      }
+    }
+
+    this.prune(now);
+    const restoredRoutes = Array.isArray(snapshot.routes)
+      ? this.routes.restore(snapshot.routes, {now, replace: false})
+      : 0;
+
+    return {peers: restoredPeers, routes: restoredRoutes};
   }
 
   prune(now = Date.now()): number[] {
