@@ -12,6 +12,7 @@ import {BushMeshProvider} from './src/state/BushMeshContext';
 import {BushMeshConvoyLifecycle} from './src/state/BushMeshConvoyLifecycle';
 import {BushMeshRuntimeLifecycle} from './src/state/BushMeshRuntimeLifecycle';
 import {BushMeshSyncInventoryBridge} from './src/state/BushMeshSyncInventoryBridge';
+import {useBushMeshConvoyState} from './src/state/useBushMeshConvoyState';
 import {useBushMeshLiveState} from './src/state/useBushMeshLiveState';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
@@ -44,6 +45,13 @@ const tabs: Array<{key: TabKey; label: string}> = [
 function AppContent(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>('device');
   const {unacknowledgedDistressCount} = useBushMeshLiveState();
+  const convoyState = useBushMeshConvoyState();
+  const convoyAttentionCount =
+    convoyState.snapshot?.issues.filter(issue =>
+      issue.type === 'hazard' ||
+      issue.type === 'lost-member' ||
+      issue.type === 'large-gap',
+    ).length ?? 0;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -92,7 +100,9 @@ function AppContent(): React.JSX.Element {
         {tabs.map(tab => {
           const isActive = tab.key === activeTab;
           const isEmergency = tab.key === 'emergency';
+          const isConvoy = tab.key === 'convoy';
           const hasUnseenSos = isEmergency && unacknowledgedDistressCount > 0;
+          const hasConvoyAttention = isConvoy && convoyAttentionCount > 0;
 
           return (
             <TouchableOpacity
@@ -103,6 +113,7 @@ function AppContent(): React.JSX.Element {
                 isEmergency && styles.sosTabButton,
                 isEmergency && isActive && styles.sosTabButtonActive,
                 hasUnseenSos && !isActive && styles.sosTabButtonUnread,
+                hasConvoyAttention && !isActive && styles.convoyTabAttention,
               ]}
               onPress={() => setActiveTab(tab.key)}>
               <View style={styles.tabLabelRow}>
@@ -121,6 +132,12 @@ function AppContent(): React.JSX.Element {
                       {unacknowledgedDistressCount > 99
                         ? '99+'
                         : unacknowledgedDistressCount}
+                    </Text>
+                  </View>
+                ) : hasConvoyAttention ? (
+                  <View style={styles.convoyBadge}>
+                    <Text style={styles.convoyBadgeText}>
+                      {convoyAttentionCount > 99 ? '99+' : convoyAttentionCount}
                     </Text>
                   </View>
                 ) : null}
@@ -194,6 +211,11 @@ const styles = StyleSheet.create({
   tabButtonActive: {
     backgroundColor: colors.accent,
   },
+  convoyTabAttention: {
+    borderWidth: 2,
+    borderColor: colors.warning,
+    backgroundColor: colors.surfaceSoft,
+  },
   tabLabelRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -238,6 +260,20 @@ const styles = StyleSheet.create({
   },
   sosBadgeText: {
     color: colors.textPrimary,
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  convoyBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.warning,
+  },
+  convoyBadgeText: {
+    color: colors.background,
     fontSize: 9,
     fontWeight: '900',
   },
