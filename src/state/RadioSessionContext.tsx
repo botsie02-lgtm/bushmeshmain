@@ -8,8 +8,11 @@ import React, {
   useState,
 } from 'react';
 
+import {decodeBushMeshMeshCoreFrame} from '../bushmesh/meshcoreBridge';
 import {BushMeshOutboxEntry} from '../bushmesh/outbox';
 import {BushMeshQuickActionCode} from '../bushmesh/protocol';
+import {parseMeshCoreChannelDataFrame} from '../meshcore/meshcoreChannelData';
+import {base64ToBytes} from '../meshcore/meshcorePackets';
 import {
   NativeRadioServiceStatus,
   nativeRadioService,
@@ -91,6 +94,49 @@ async function yieldNativeRecoveryToForeground(): Promise<NativeRadioServiceStat
   return current;
 }
 
+async function replayBackgroundInbox(): Promise<{
+  replayed: number;
+  skipped: number;
+}> {
+  if (!nativeRadioService.isSupported()) {
+    return {replayed: 0, skipped: 0};
+  }
+
+  const recoveredFrames = await nativeRadioService.drainBackgroundInbox(128);
+  let replayed = 0;
+  let skipped = 0;
+
+  for (const recovered of recoveredFrames) {
+    try {
+      const bytes = base64ToBytes(recovered.frameBase64);
+      const frame = parseMeshCoreChannelDataFrame(bytes);
+      if (!frame) {
+        skipped += 1;
+        continue;
+      }
+
+      const message = decodeBushMeshMeshCoreFrame(frame, {
+        receivedAtMs: recovered.receivedAtMs,
+        source: 'background-replay',
+      });
+
+      if (message) {
+        replayed += 1;
+      } else {
+        skipped += 1;
+      }
+    } catch {
+      // Native capture validates the surrounding MeshCore frame, but foreground
+      // protocol decoding may still reject a future/unknown Bushmesh payload.
+      // One unsupported frame must never block outbox recovery or other inbox
+      // entries from replaying.
+      skipped += 1;
+    }
+  }
+
+  return {replayed, skipped};
+}
+
 export function RadioSessionProvider({
   children,
 }: {
@@ -147,13 +193,33 @@ export function RadioSessionProvider({
       }
 
       try {
-        // Establish foreground ownership of persistence before loading. This is
-        // a no-op unless Android had resurrected a native radio session and was
-        // actively draining the same encrypted queue.
+        // Establish foreground ownership of persistence before loading. The
+        // native module claims a newer generation lease synchronously before it
+        // dispatches the service intent, so the recovery worker cannot mutate
+        // the encrypted queue after this call returns.
         if (nativeRadioService.isSupported()) {
           const status = await yieldNativeRecoveryToForeground();
           if (active) {
             setNativeRuntime(status);
+          }
+
+          try {
+            const replay = await replayBackgroundInbox();
+            if (active && replay.skipped > 0) {
+              setNativeRuntimeError(
+                `${replay.skipped} background Bushmesh frame${
+                  replay.skipped === 1 ? '' : 's'
+                } could not be replayed by the current protocol.`,
+              );
+            }
+          } catch (inboxError) {
+            if (active) {
+              setNativeRuntimeError(
+                inboxError instanceof Error
+                  ? `Background Bushmesh inbox could not be replayed: ${inboxError.message}`
+                  : 'Background Bushmesh inbox could not be replayed.',
+              );
+            }
           }
         }
 
