@@ -1,5 +1,6 @@
 import {
   BushMeshPriority,
+  decodeBushMeshTypedPacket,
   decodeBushMeshWire,
   encodeBushMeshRoutedWire,
   encodeBushMeshTextMessage,
@@ -14,6 +15,7 @@ import {
 } from './BushMeshReliableSender';
 import {
   BushMeshStoreForwardFlushResult,
+  BushMeshStoreForwardItem,
   BushMeshStoreForwardRuntime,
   BushMeshStoreForwardStore,
 } from './BushMeshStoreForwardRuntime';
@@ -35,6 +37,7 @@ export type BushMeshMessageDeliveryFlushEvent = {
   sentMessageIds: number[];
   failedMessageIds: number[];
   expiredMessageIds: number[];
+  deferredMessageIds: number[];
   raw: BushMeshStoreForwardFlushResult;
 };
 
@@ -101,7 +104,9 @@ export class BushMeshMessageDeliveryService {
 
   async flush(): Promise<BushMeshStoreForwardFlushResult> {
     const queueMap = new Map(this.queueMessageIds);
-    const result = await this.sender.flush();
+    const result = await this.sender.flush({
+      canSend: item => this.canFlushItem(item),
+    });
     const event: BushMeshMessageDeliveryFlushEvent = {
       sentMessageIds: result.sentIds
         .map(id => queueMap.get(id))
@@ -110,6 +115,9 @@ export class BushMeshMessageDeliveryService {
         .map(id => queueMap.get(id))
         .filter((id): id is number => id !== undefined),
       expiredMessageIds: result.expiredIds
+        .map(id => queueMap.get(id))
+        .filter((id): id is number => id !== undefined),
+      deferredMessageIds: (result.deferredIds ?? [])
         .map(id => queueMap.get(id))
         .filter((id): id is number => id !== undefined),
       raw: result,
@@ -122,7 +130,8 @@ export class BushMeshMessageDeliveryService {
     if (
       event.sentMessageIds.length > 0 ||
       event.failedMessageIds.length > 0 ||
-      event.expiredMessageIds.length > 0
+      event.expiredMessageIds.length > 0 ||
+      event.deferredMessageIds.length > 0
     ) {
       this.events.onFlush?.(event);
     }
@@ -236,6 +245,31 @@ export class BushMeshMessageDeliveryService {
     }
 
     return this.toResult(delivery, messageId, innerMessageId);
+  }
+
+  private canFlushItem(item: BushMeshStoreForwardItem): boolean {
+    try {
+      const typed = decodeBushMeshTypedPacket(item.wireBytes);
+      if (typed.kind !== 'routed') {
+        return true;
+      }
+
+      const destinationNodeId = typed.value.destinationNodeId;
+      if (destinationNodeId === undefined) {
+        return true;
+      }
+
+      if (typed.wire.envelope.priority === BushMeshPriority.Emergency) {
+        return true;
+      }
+
+      const peers = this.node.peers();
+      return Boolean(peers?.bestRoute(destinationNodeId));
+    } catch {
+      // Let the network/runtime decoder reject malformed queued data; do not
+      // permanently wedge the queue because a preflight inspection failed.
+      return true;
+    }
   }
 
   private startAutoFlush(intervalMs: number): void {
