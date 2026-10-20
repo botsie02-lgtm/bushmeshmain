@@ -294,7 +294,7 @@ export function DeviceScreen(): React.JSX.Element {
         setConnectedDeviceLabel(label);
         setMeshCoreBle(null);
         setConnectionOwner('android-native');
-        setSharedConnectionStatus('Connecting');
+        setSharedConnectionStatus('Disconnected');
         setConnectedDeviceName(label);
 
         const session = await nativeMeshCoreSessionCoordinator.start(address, label, {
