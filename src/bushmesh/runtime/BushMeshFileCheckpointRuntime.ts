@@ -221,7 +221,7 @@ export class BushMeshFileCheckpointRuntime {
     resumeFrame: number[],
     now = Date.now(),
   ): Promise<void> {
-    const request = decodeFileResumeRequest(frame);
+    const request = decodeFileResumeRequest(resumeFrame);
     const checkpoint = this.require(request.transferId);
     checkpoint.nextMissingChunkIndex = request.nextMissingChunkIndex;
     checkpoint.updatedAt = now;
