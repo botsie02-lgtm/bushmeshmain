@@ -1,0 +1,158 @@
+package com.bushmeshmain.radio
+
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.ReactContextBaseJavaModule
+import com.facebook.react.bridge.ReactMethod
+import java.util.Locale
+
+class BushMeshSpeechModule(
+  reactContext: ReactApplicationContext,
+) : ReactContextBaseJavaModule(reactContext), TextToSpeech.OnInitListener {
+
+  companion object {
+    private const val READY_POLL_MS = 100L
+    private const val READY_MAX_ATTEMPTS = 30
+  }
+
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private var engine: TextToSpeech? = null
+  private var initComplete = false
+  private var initFailed = false
+  private var selectedLanguage: Locale? = null
+
+  init {
+    mainHandler.post {
+      engine = TextToSpeech(reactApplicationContext.applicationContext, this)
+    }
+  }
+
+  override fun getName(): String = "BushMeshSpeech"
+
+  override fun onInit(status: Int) {
+    if (status != TextToSpeech.SUCCESS) {
+      initFailed = true
+      initComplete = true
+      return
+    }
+
+    val tts = engine ?: run {
+      initFailed = true
+      initComplete = true
+      return
+    }
+
+    val preferred = Locale.getDefault()
+    val languageStatus = tts.setLanguage(preferred)
+    selectedLanguage = when {
+      languageStatus != TextToSpeech.LANG_MISSING_DATA &&
+        languageStatus != TextToSpeech.LANG_NOT_SUPPORTED -> preferred
+      tts.setLanguage(Locale.ENGLISH) != TextToSpeech.LANG_MISSING_DATA &&
+        tts.language != null -> tts.language
+      else -> null
+    }
+
+    initFailed = selectedLanguage == null
+    initComplete = true
+  }
+
+  @ReactMethod
+  fun speak(text: String, interrupt: Boolean, promise: Promise) {
+    val clean = text.trim()
+    if (clean.isEmpty()) {
+      promise.reject("BUSHMESH_TTS_EMPTY", "Speech text cannot be empty.")
+      return
+    }
+
+    withReady(promise) { tts ->
+      val queueMode =
+        if (interrupt) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+      val utteranceId = "bushmesh-${System.currentTimeMillis()}"
+      val result = tts.speak(clean, queueMode, null, utteranceId)
+      if (result == TextToSpeech.ERROR) {
+        promise.reject("BUSHMESH_TTS_SPEAK_FAILED", "Android TTS rejected the utterance.")
+      } else {
+        promise.resolve(true)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun stop(promise: Promise) {
+    mainHandler.post {
+      try {
+        engine?.stop()
+        promise.resolve(true)
+      } catch (error: Exception) {
+        promise.reject("BUSHMESH_TTS_STOP_FAILED", error.message, error)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun getStatus(promise: Promise) {
+    mainHandler.post {
+      val status = Arguments.createMap().apply {
+        putBoolean("initialized", initComplete && !initFailed)
+        putBoolean("initializing", !initComplete)
+        putBoolean("failed", initFailed)
+        putString("languageTag", selectedLanguage?.toLanguageTag())
+      }
+      promise.resolve(status)
+    }
+  }
+
+  override fun invalidate() {
+    mainHandler.post {
+      try {
+        engine?.stop()
+        engine?.shutdown()
+      } finally {
+        engine = null
+        selectedLanguage = null
+        initComplete = false
+        initFailed = false
+      }
+    }
+    super.invalidate()
+  }
+
+  private fun withReady(
+    promise: Promise,
+    attempt: Int = 0,
+    action: (TextToSpeech) -> Unit,
+  ) {
+    mainHandler.post {
+      if (initFailed) {
+        promise.reject(
+          "BUSHMESH_TTS_UNAVAILABLE",
+          "Android text-to-speech is unavailable or has no usable offline voice.",
+        )
+        return@post
+      }
+
+      val tts = engine
+      if (initComplete && tts != null) {
+        action(tts)
+        return@post
+      }
+
+      if (attempt >= READY_MAX_ATTEMPTS) {
+        promise.reject(
+          "BUSHMESH_TTS_TIMEOUT",
+          "Android text-to-speech did not become ready in time.",
+        )
+        return@post
+      }
+
+      mainHandler.postDelayed(
+        { withReady(promise, attempt + 1, action) },
+        READY_POLL_MS,
+      )
+    }
+  }
+}
