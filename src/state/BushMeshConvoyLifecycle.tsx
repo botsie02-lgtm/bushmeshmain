@@ -4,8 +4,13 @@ import {
   getBushMeshConvoyState,
   nextBushMeshConvoyStatus,
   recommendedBushMeshConvoyHeartbeatMs,
+  updateBushMeshConvoyTelemetry,
 } from '../bushmesh/runtime/BushMeshConvoyHub';
 import {getBushMeshConvoyPersistence} from '../bushmesh/runtime/BushMeshConvoyPersistence';
+import {
+  getBushMeshNativePosition,
+  isBushMeshNativeLocationAvailable,
+} from '../bushmesh/runtime/BushMeshNativeLocation';
 import {sendActiveBushMeshConvoyStatus} from '../bushmesh/runtime/BushMeshRuntimeHub';
 import {useBushMesh} from './BushMeshContext';
 import {useBushMeshConvoyState} from './useBushMeshConvoyState';
@@ -67,6 +72,38 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
       }
     };
 
+    const refreshLocalPosition = async () => {
+      if (!isBushMeshNativeLocationAvailable()) {
+        return;
+      }
+
+      try {
+        const state = getBushMeshConvoyState();
+        const position = await getBushMeshNativePosition({
+          // Reuse a reasonably fresh fix so hazard cadence does not force GPS
+          // hardware to produce a brand-new location every three seconds.
+          maxAgeMs: Math.max(
+            5000,
+            Math.min(30_000, state.config.heartbeatIntervalMs),
+          ),
+          timeoutMs: 5000,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        updateBushMeshConvoyTelemetry({
+          location: position.location,
+          speedKph: position.speedKph,
+          headingDegrees: position.headingDegrees,
+        });
+      } catch {
+        // Location is opportunistic. A denied permission, tunnel/no-fix state,
+        // or timeout must not prevent the radio heartbeat from being sent.
+      }
+    };
+
     const run = async () => {
       clearTimer();
       const state = getBushMeshConvoyState();
@@ -90,6 +127,10 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
       if (!sendingRef.current) {
         sendingRef.current = true;
         try {
+          await refreshLocalPosition();
+          if (cancelled) {
+            return;
+          }
           const status = nextBushMeshConvoyStatus(localBushMeshNodeId);
           await sendActiveBushMeshConvoyStatus(channelIndex, status);
         } catch {
