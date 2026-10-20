@@ -12,17 +12,25 @@ import {BushMeshProvider} from './src/state/BushMeshContext';
 import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
+import {DiagnosticsScreen} from './src/screens/DiagnosticsScreen';
 import {EmergencyScreen} from './src/screens/EmergencyScreen';
 import {MapScreen} from './src/screens/MapScreen';
 import {colors} from './src/theme/colors';
 
-type TabKey = 'device' | 'channels' | 'contacts' | 'map' | 'emergency';
+type TabKey =
+  | 'device'
+  | 'channels'
+  | 'contacts'
+  | 'map'
+  | 'diagnostics'
+  | 'emergency';
 
 const tabs: Array<{key: TabKey; label: string}> = [
   {key: 'device', label: 'Device'},
   {key: 'channels', label: 'Channels'},
   {key: 'contacts', label: 'Contacts'},
   {key: 'map', label: 'Map'},
+  {key: 'diagnostics', label: 'Diag'},
   {key: 'emergency', label: 'SOS'},
 ];
 
@@ -53,6 +61,14 @@ function AppContent(): React.JSX.Element {
 
         <View style={[styles.screenWrap, activeTab !== 'map' && styles.hidden]}>
           <MapScreen />
+        </View>
+
+        <View
+          style={[
+            styles.screenWrap,
+            activeTab !== 'diagnostics' && styles.hidden,
+          ]}>
+          <DiagnosticsScreen />
         </View>
 
         <View style={[styles.screenWrap, activeTab !== 'emergency' && styles.hidden]}>
@@ -132,7 +148,9 @@ const styles = StyleSheet.create({
   },
   tabBar: {
     flexDirection: 'row',
-    padding: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 10,
+    gap: 2,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.surface,
@@ -140,7 +158,8 @@ const styles = StyleSheet.create({
   tabButton: {
     flex: 1,
     paddingVertical: 12,
-    borderRadius: 14,
+    paddingHorizontal: 2,
+    borderRadius: 12,
     alignItems: 'center',
   },
   tabButtonActive: {
@@ -156,7 +175,7 @@ const styles = StyleSheet.create({
   },
   tabText: {
     color: colors.textSecondary,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '700',
   },
   tabTextActive: {
