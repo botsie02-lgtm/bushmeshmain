@@ -34,6 +34,10 @@ class BushMeshRadioService : Service() {
     MeshCoreNativeBleRuntime.get(applicationContext)
   }
 
+  private val outboxLease: BushMeshOutboxLease by lazy {
+    BushMeshOutboxLease(applicationContext)
+  }
+
   private val backgroundWorker: MeshCoreNativeBackgroundWorker by lazy {
     MeshCoreNativeBackgroundWorker(applicationContext, nativeBle)
   }
@@ -144,7 +148,11 @@ class BushMeshRadioService : Service() {
     val target = readPersistedNativeTarget() ?: return
     BushMeshRadioServiceState.requestRadio(target.second, target.first)
     nativeBle.connect(target.first, target.second)
-    backgroundWorker.start()
+
+    // Sticky restart is the only path that grants native background ownership.
+    // The epoch is immediately invalidated if a foreground bridge call returns.
+    val recoveryLease = outboxLease.claimBackground()
+    backgroundWorker.start(recoveryLease)
   }
 
   private fun persistNativeTarget(address: String, label: String?) {
