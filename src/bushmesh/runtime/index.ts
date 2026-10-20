@@ -15,6 +15,7 @@ export * from './BushMeshOutbox';
 export * from './BushMeshPeerActions';
 export * from './BushMeshPeerMaintenance';
 export * from './BushMeshPeerRegistry';
+export * from './BushMeshPersistentStore';
 export * from './BushMeshReliableSender';
 export * from './BushMeshRuntimeHub';
 export * from './BushMeshRuntimeServices';
