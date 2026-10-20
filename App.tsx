@@ -22,7 +22,7 @@ import {LocationSessionProvider} from './src/state/LocationSessionContext';
 import {OfflineMapProvider} from './src/state/OfflineMapContext';
 import {DriveScreen} from './src/screens/DriveScreen';
 import {DeviceScreen} from './src/screens/DeviceScreen';
-import {ChannelsScreen} from './src/screens/ChannelsScreen';
+import {RadioScreen} from './src/screens/RadioScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
 import {ConvoyScreen} from './src/screens/ConvoyScreen';
 import {LocationScreen} from './src/screens/LocationScreen';
@@ -79,7 +79,7 @@ function AppContent(): React.JSX.Element {
         </View>
 
         <View style={[styles.screenWrap, activeTab !== 'channels' && styles.hidden]}>
-          <ChannelsScreen />
+          <RadioScreen />
         </View>
 
         <View style={[styles.screenWrap, activeTab !== 'convoy' && styles.hidden]}>
