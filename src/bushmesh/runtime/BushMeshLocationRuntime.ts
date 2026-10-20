@@ -3,6 +3,7 @@ import {
   BushMeshLocationDeltaDecoder,
   BushMeshLocationDeltaEncoder,
   BushMeshPacketType,
+  BushMeshPeerPolicy,
   BushMeshPriority,
   CompactLocation,
   DecodedBushMeshWireMessage,
@@ -47,12 +48,14 @@ export class BushMeshLocationPublisher {
     options?: {
       forceAbsolute?: boolean;
       ackRequested?: boolean;
+      peerPolicy?: BushMeshPeerPolicy | null;
     },
   ): BushMeshPreparedLocationUpdate {
-    const update = this.encoder.encode(
-      location,
-      options?.forceAbsolute ?? false,
-    );
+    const peerAllowsDelta =
+      options?.peerPolicy == null ||
+      (options.peerPolicy.compatible && options.peerPolicy.allowLocationDelta);
+    const forceAbsolute = options?.forceAbsolute === true || !peerAllowsDelta;
+    const update = this.encoder.encode(location, forceAbsolute);
 
     return {
       messageId,
