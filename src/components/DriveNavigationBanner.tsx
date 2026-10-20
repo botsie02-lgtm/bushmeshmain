@@ -1,11 +1,12 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {buddyTailDistanceMeters} from '../convoy/buddyTails';
-import {formatDistance} from '../convoy/convoy';
+import {distanceMeters, formatDistance} from '../convoy/convoy';
 import {getFieldTargetGuidance} from '../convoy/fieldTarget';
 import {getMovingTargetGuidance} from '../convoy/movingTarget';
 import {useConvoy} from '../state/ConvoyContext';
+import {useRouteSession} from '../state/RouteSessionContext';
 import {colors} from '../theme/colors';
 
 function formatAge(ageSeconds: number): string {
@@ -53,7 +54,15 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
     getBuddyTail,
     clearNavigationTarget,
   } = useConvoy();
+  const {
+    engineInfo,
+    status: routeStatus,
+    activePlan,
+    planTo,
+    clearRoute,
+  } = useRouteSession();
   const [nowMs, setNowMs] = useState(Date.now());
+  const previousTargetKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 5_000);
@@ -77,6 +86,93 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
   );
   const tailDistanceMeters = buddyTail ? buddyTailDistanceMeters(buddyTail) : 0;
 
+  const targetKey = navigationFieldTarget
+    ? `field:${navigationFieldTarget.id}`
+    : navigationTargetVehicleId
+      ? `vehicle:${navigationTargetVehicleId}`
+      : null;
+
+  useEffect(() => {
+    const previous = previousTargetKeyRef.current;
+    previousTargetKeyRef.current = targetKey;
+    if (
+      previous !== null &&
+      targetKey !== previous &&
+      activePlan !== null
+    ) {
+      clearRoute().catch(() => undefined);
+    }
+  }, [activePlan, clearRoute, targetKey]);
+
+  const currentDestination = navigationFieldTarget
+    ? {
+        latitude: navigationFieldTarget.latitude,
+        longitude: navigationFieldTarget.longitude,
+      }
+    : navigationTargetVehicle
+      ? {
+          latitude: navigationTargetVehicle.latitude,
+          longitude: navigationTargetVehicle.longitude,
+        }
+      : null;
+
+  const routedDestination = activePlan
+    ? activePlan.geometry[activePlan.geometry.length - 1] ?? null
+    : null;
+  const routeTargetDeltaMeters =
+    currentDestination && routedDestination
+      ? distanceMeters(currentDestination, routedDestination)
+      : null;
+  const routeMatchesTarget =
+    routeTargetDeltaMeters !== null && routeTargetDeltaMeters <= 100;
+  const routePlanning = routeStatus === 'planning';
+
+  const stopNavigation = () => {
+    clearNavigationTarget();
+    clearRoute().catch(() => undefined);
+  };
+
+  const requestRoute = () => {
+    if (!currentDestination || routePlanning) {
+      return;
+    }
+    planTo(currentDestination).catch(() => undefined);
+  };
+
+  const routeButton = (enabled: boolean) => {
+    if (engineInfo === null) {
+      return null;
+    }
+
+    const label = routePlanning
+      ? 'ROUTING…'
+      : activePlan === null
+        ? 'ROUTE'
+        : routeMatchesTarget
+          ? 'ROUTED'
+          : 'REPLAN';
+    const actionable = enabled && !routePlanning && !routeMatchesTarget;
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.routeButton,
+          routeMatchesTarget && styles.routeButtonActive,
+          !actionable && !routeMatchesTarget && styles.routeButtonDisabled,
+        ]}
+        onPress={requestRoute}
+        disabled={!actionable}>
+        <Text
+          style={[
+            styles.routeButtonText,
+            routeMatchesTarget && styles.routeButtonTextActive,
+          ]}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   const hasVehicleTarget = navigationTargetVehicleId !== null;
   const hasFieldTarget = navigationFieldTarget !== null;
   if (!hasVehicleTarget && !hasFieldTarget) {
@@ -89,6 +185,7 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
       (navigationFieldTarget.expiresAtMs !== null &&
         navigationFieldTarget.expiresAtMs <= nowMs);
     const arrived = fixedGuidance?.arrived ?? false;
+    const routeEnabled = fixedGuidance !== null && !expired && !arrived;
 
     return (
       <View
@@ -154,9 +251,12 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
           </View>
         )}
 
-        <TouchableOpacity style={styles.stopButton} onPress={clearNavigationTarget}>
-          <Text style={styles.stopText}>×</Text>
-        </TouchableOpacity>
+        <View style={styles.actions}>
+          {routeButton(routeEnabled)}
+          <TouchableOpacity style={styles.stopButton} onPress={stopNavigation}>
+            <Text style={styles.stopText}>×</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
@@ -206,9 +306,12 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
         </View>
       )}
 
-      <TouchableOpacity style={styles.stopButton} onPress={clearNavigationTarget}>
-        <Text style={styles.stopText}>×</Text>
-      </TouchableOpacity>
+      <View style={styles.actions}>
+        {routeButton(safeToFollow && movingGuidance !== null)}
+        <TouchableOpacity style={styles.stopButton} onPress={stopNavigation}>
+          <Text style={styles.stopText}>×</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -292,11 +395,28 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   waiting: {color: colors.warning, fontSize: 10, fontWeight: '900'},
-  stopButton: {
-    width: 36,
-    height: 36,
+  actions: {
+    alignItems: 'center',
+    gap: 6,
     marginLeft: 10,
-    borderRadius: 18,
+  },
+  routeButton: {
+    minWidth: 58,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    alignItems: 'center',
+  },
+  routeButtonActive: {backgroundColor: colors.accent},
+  routeButtonDisabled: {opacity: 0.4},
+  routeButtonText: {color: colors.accent, fontSize: 7, fontWeight: '900'},
+  routeButtonTextActive: {color: colors.background},
+  stopButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',
@@ -304,8 +424,8 @@ const styles = StyleSheet.create({
   },
   stopText: {
     color: colors.textSecondary,
-    fontSize: 24,
-    lineHeight: 25,
+    fontSize: 22,
+    lineHeight: 23,
     fontWeight: '700',
   },
 });
