@@ -21,9 +21,17 @@ class BushMeshRadioServiceModule(
     MeshCoreNativeBleRuntime.get(reactContext.applicationContext)
   }
 
+  private val outboxLease: BushMeshOutboxLease by lazy {
+    BushMeshOutboxLease(reactContext.applicationContext)
+  }
+
   @ReactMethod
   fun start(deviceLabel: String?, promise: Promise) {
     try {
+      // Claim synchronously before dispatching the service intent. This closes
+      // the gap where JS could restore the encrypted outbox while a resurrected
+      // native worker was still between service-loop ticks.
+      outboxLease.claimForeground()
       dispatch(BushMeshRadioService.ACTION_START, deviceLabel, null)
       promise.resolve(true)
     } catch (error: Exception) {
@@ -34,6 +42,7 @@ class BushMeshRadioServiceModule(
   @ReactMethod
   fun startNativeBle(deviceAddress: String, deviceLabel: String?, promise: Promise) {
     try {
+      outboxLease.claimForeground()
       dispatch(BushMeshRadioService.ACTION_START, deviceLabel, deviceAddress)
       promise.resolve(true)
     } catch (error: Exception) {
@@ -44,6 +53,7 @@ class BushMeshRadioServiceModule(
   @ReactMethod
   fun stop(promise: Promise) {
     try {
+      outboxLease.claimForeground()
       dispatch(BushMeshRadioService.ACTION_STOP, null, null)
       promise.resolve(true)
     } catch (error: Exception) {
@@ -81,6 +91,7 @@ class BushMeshRadioServiceModule(
   fun getStatus(promise: Promise) {
     val nativeStatus = nativeBle.status()
     val nativeOwnership = BushMeshRadioServiceState.deviceAddress != null
+    val lease = outboxLease.current()
 
     val status: WritableMap = WritableNativeMap().apply {
       putBoolean("running", BushMeshRadioServiceState.running)
@@ -98,6 +109,8 @@ class BushMeshRadioServiceModule(
       putString("nativeBleLastError", nativeStatus.lastError)
       putDouble("nativeBleQueuedWrites", nativeStatus.queuedWrites.toDouble())
       putDouble("nativeBleBufferedFrames", nativeStatus.bufferedFrames.toDouble())
+      putString("outboxLeaseOwner", lease.owner)
+      putDouble("outboxLeaseEpoch", lease.epoch.toDouble())
     }
     promise.resolve(status)
   }
