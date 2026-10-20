@@ -1,4 +1,4 @@
-import React, {useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -102,6 +102,12 @@ export function DeviceScreen(): React.JSX.Element {
   );
   const [devices, setDevices] = useState<Device[]>([]);
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+  const [connectedDeviceAddress, setConnectedDeviceAddress] = useState<
+    string | null
+  >(null);
+  const [connectedDeviceLabel, setConnectedDeviceLabel] = useState<string | null>(
+    null,
+  );
   const [meshCoreBle, setMeshCoreBle] = useState<MeshCoreBleDiscovery | null>(
     null,
   );
@@ -114,6 +120,7 @@ export function DeviceScreen(): React.JSX.Element {
   const [showDebugLogs, setShowDebugLogs] = useState(false);
 
   const nativeHandoffSupported = nativeRadioService.isSupported();
+  const hasConnectedRadio = connectedDeviceAddress !== null;
   const isScanning = status === 'Scanning';
   const isConnecting = status === 'Connecting';
   const namedChannels = sharedChannels.filter(
@@ -121,7 +128,7 @@ export function DeviceScreen(): React.JSX.Element {
   );
 
   const canSendCommands =
-    connectedDevice !== null &&
+    hasConnectedRadio &&
     !isWriting &&
     (connectionOwner === 'android-native'
       ? nativeSessionRef.current !== null
@@ -256,6 +263,117 @@ export function DeviceScreen(): React.JSX.Element {
     }
   };
 
+  useEffect(() => {
+    if (!nativeHandoffSupported) {
+      return;
+    }
+
+    let active = true;
+
+    const recoverNativeOwner = async () => {
+      try {
+        const nativeStatus = await nativeRadioService.getStatus();
+        const address = nativeStatus.nativeBleDeviceAddress?.trim() ?? '';
+        if (nativeStatus.ownership !== 'native-service' || !address) {
+          return;
+        }
+
+        const label =
+          nativeStatus.nativeBleDeviceLabel ??
+          nativeStatus.deviceLabel ??
+          'MeshCore radio';
+
+        if (!active) {
+          return;
+        }
+
+        setStatus('Connecting');
+        setStatusDetail('Recovering Android-owned MeshCore radio session...');
+        setConnectedDevice(null);
+        setConnectedDeviceAddress(address);
+        setConnectedDeviceLabel(label);
+        setMeshCoreBle(null);
+        setConnectionOwner('android-native');
+        setSharedConnectionStatus('Connecting');
+        setConnectedDeviceName(label);
+
+        const session = await nativeMeshCoreSessionCoordinator.start(address, label, {
+          onStatus: message => {
+            if (active) {
+              setStatusDetail(message);
+            }
+          },
+          onError: message => {
+            if (active) {
+              setStatus('Error');
+              setStatusDetail(message);
+            }
+          },
+          onFrame: response => {
+            if (active) {
+              setTxFrames(current => [
+                makeLogItem(nativeResponseLog(response)),
+                ...current.slice(0, 39),
+              ]);
+            }
+          },
+        });
+
+        if (!active) {
+          return;
+        }
+
+        nativeSessionRef.current = session;
+        setSendChannelMessageHandler(async (channelIndex, message) => {
+          await session.sendChannelMessage(channelIndex, message);
+        });
+        setSharedConnectionStatus('Connected');
+        setStatus('Connected');
+
+        const responses = await session.probeChannels();
+        if (!active) {
+          return;
+        }
+        const channels = responses
+          .map(response => channelFromParsedLines(response.parsed?.lines))
+          .filter((channel): channel is BushMeshChannel => channel !== null);
+        setSharedChannels(channels);
+        const named = channels.filter(channel => channel.channelName !== 'Empty');
+        setStatusDetail(
+          `Recovered Android-owned radio. Loaded ${named.length} named channel(s) from ${channels.length} slot(s).`,
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        nativeSessionRef.current = null;
+        setConnectionOwner('none');
+        setConnectedDeviceAddress(null);
+        setConnectedDeviceLabel(null);
+        setSharedConnectionStatus('Disconnected');
+        setConnectedDeviceName(null);
+        setSendChannelMessageHandler(null);
+        setStatus('Error');
+        setStatusDetail(
+          error instanceof Error
+            ? `Native radio recovery failed: ${error.message}`
+            : 'Native radio recovery failed.',
+        );
+      }
+    };
+
+    recoverNativeOwner().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [
+    nativeHandoffSupported,
+    setConnectedDeviceName,
+    setSendChannelMessageHandler,
+    setSharedChannels,
+    setSharedConnectionStatus,
+  ]);
+
   const connectToDevice = async (device: Device) => {
     try {
       manager.stopDeviceScan();
@@ -269,6 +387,8 @@ export function DeviceScreen(): React.JSX.Element {
         readyDevice.name ?? readyDevice.localName ?? 'Unknown device';
 
       setConnectedDevice(readyDevice);
+      setConnectedDeviceAddress(readyDevice.id);
+      setConnectedDeviceLabel(deviceName);
       setMeshCoreBle(discovery);
       setConnectionOwner('react-native');
       setTxChunks([]);
@@ -312,7 +432,7 @@ export function DeviceScreen(): React.JSX.Element {
   };
 
   const handoffToAndroid = async () => {
-    if (!connectedDevice) {
+    if (!connectedDeviceAddress) {
       return;
     }
     if (!nativeHandoffSupported) {
@@ -324,9 +444,8 @@ export function DeviceScreen(): React.JSX.Element {
       return;
     }
 
-    const address = connectedDevice.id;
-    const label =
-      connectedDevice.name ?? connectedDevice.localName ?? 'MeshCore radio';
+    const address = connectedDeviceAddress;
+    const label = connectedDeviceLabel ?? 'MeshCore radio';
 
     setIsWriting(true);
     setStatusDetail('Handing MeshCore BLE ownership to Android...');
@@ -351,6 +470,7 @@ export function DeviceScreen(): React.JSX.Element {
       });
 
       nativeSessionRef.current = session;
+      setConnectedDevice(null);
       setConnectionOwner('android-native');
       setSharedConnectionStatus('Connected');
       setConnectedDeviceName(label);
@@ -362,8 +482,12 @@ export function DeviceScreen(): React.JSX.Element {
       await runNativeStartupSync(session);
     } catch (error) {
       nativeSessionRef.current = null;
+      setConnectedDevice(null);
       setConnectionOwner('none');
+      setConnectedDeviceAddress(null);
+      setConnectedDeviceLabel(null);
       setSharedConnectionStatus('Disconnected');
+      setConnectedDeviceName(null);
       setSendChannelMessageHandler(null);
       setStatus('Error');
       setStatusDetail(
@@ -396,6 +520,8 @@ export function DeviceScreen(): React.JSX.Element {
       }
     } finally {
       setConnectedDevice(null);
+      setConnectedDeviceAddress(null);
+      setConnectedDeviceLabel(null);
       setMeshCoreBle(null);
       setConnectionOwner('none');
       setTxChunks([]);
@@ -628,9 +754,6 @@ export function DeviceScreen(): React.JSX.Element {
     </View>
   );
 
-  const connectedDeviceName =
-    connectedDevice?.name ?? connectedDevice?.localName ?? null;
-
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.heroCard}>
@@ -638,8 +761,8 @@ export function DeviceScreen(): React.JSX.Element {
         <Text style={styles.title}>Companion Node</Text>
         <Text style={styles.body}>
           Connect and sync through React Native, then hand ownership to Android
-          for sticky reconnect and process-death recovery without losing the
-          MeshCore protocol session.
+          for sticky reconnect and process-death recovery. A returning app also
+          re-adopts an Android-owned radio automatically.
         </Text>
       </View>
 
@@ -659,10 +782,13 @@ export function DeviceScreen(): React.JSX.Element {
           ) : null}
         </View>
         <Text style={styles.statusDetail}>{statusDetail}</Text>
-        {connectedDeviceName ? (
+        {connectedDeviceAddress ? (
           <View style={styles.deviceNameBox}>
             <Text style={styles.deviceNameLabel}>Connected Node</Text>
-            <Text style={styles.deviceNameValue}>{connectedDeviceName}</Text>
+            <Text style={styles.deviceNameValue}>
+              {connectedDeviceLabel ?? 'MeshCore radio'}
+            </Text>
+            <Text style={styles.deviceAddress}>{connectedDeviceAddress}</Text>
             <Text style={styles.ownerText}>{ownerLabel}</Text>
           </View>
         ) : null}
@@ -693,21 +819,21 @@ export function DeviceScreen(): React.JSX.Element {
         <TouchableOpacity
           style={[styles.button, isScanning && styles.buttonDisabled]}
           onPress={startScan}
-          disabled={isScanning || isConnecting || isWriting || connectedDevice !== null}>
+          disabled={isScanning || isConnecting || isWriting || hasConnectedRadio}>
           {isScanning ? (
             <ActivityIndicator color={colors.background} />
           ) : (
             <Text style={styles.buttonText}>Scan for devices</Text>
           )}
         </TouchableOpacity>
-        {connectedDevice ? (
+        {hasConnectedRadio ? (
           <TouchableOpacity style={styles.secondaryButton} onPress={disconnect}>
             <Text style={styles.secondaryButtonText}>Disconnect</Text>
           </TouchableOpacity>
         ) : null}
       </View>
 
-      {connectedDevice && connectionOwner === 'react-native' ? (
+      {hasConnectedRadio && connectionOwner === 'react-native' ? (
         <View style={styles.handoffCard}>
           <Text style={styles.sectionTitleNoMargin}>Android radio ownership</Text>
           <Text style={styles.body}>
@@ -731,18 +857,18 @@ export function DeviceScreen(): React.JSX.Element {
         </View>
       ) : null}
 
-      {connectedDevice && connectionOwner === 'android-native' ? (
+      {hasConnectedRadio && connectionOwner === 'android-native' ? (
         <View style={styles.nativeCard}>
           <Text style={styles.nativeTitle}>ANDROID OWNS THIS RADIO</Text>
           <Text style={styles.body}>
-            MeshCore commands, Bushmesh datagrams and reconnects now run through
-            the Android-native session. Disconnect explicitly to release the
-            sticky target.
+            MeshCore commands, Bushmesh datagrams and reconnects run through the
+            Android-native session. This ownership survives React Native process
+            death until you explicitly disconnect the target.
           </Text>
         </View>
       ) : null}
 
-      {connectedDevice ? (
+      {hasConnectedRadio ? (
         <View style={styles.syncCard}>
           <Text style={styles.sectionTitleNoMargin}>Radio Sync</Text>
           <Text style={styles.body}>
@@ -792,7 +918,7 @@ export function DeviceScreen(): React.JSX.Element {
         </View>
       ) : null}
 
-      {devices.length > 0 && !connectedDevice ? (
+      {devices.length > 0 && !hasConnectedRadio ? (
         <View style={styles.scanResultsCard}>
           <Text style={styles.sectionTitleNoMargin}>Nearby Devices</Text>
           <FlatList
@@ -805,7 +931,7 @@ export function DeviceScreen(): React.JSX.Element {
         </View>
       ) : null}
 
-      {!connectedDevice && devices.length === 0 ? (
+      {!hasConnectedRadio && devices.length === 0 ? (
         <View style={styles.scanResultsCard}>
           <Text style={styles.sectionTitleNoMargin}>Nearby Devices</Text>
           <Text style={styles.emptyText}>
@@ -814,7 +940,7 @@ export function DeviceScreen(): React.JSX.Element {
         </View>
       ) : null}
 
-      {connectedDevice ? (
+      {hasConnectedRadio ? (
         <View style={styles.debugToggleCard}>
           <TouchableOpacity
             style={styles.debugToggleButton}
@@ -826,7 +952,7 @@ export function DeviceScreen(): React.JSX.Element {
         </View>
       ) : null}
 
-      {connectedDevice && showDebugLogs ? (
+      {hasConnectedRadio && showDebugLogs ? (
         <View style={styles.debugSection}>
           <View style={styles.txCard}>
             <Text style={styles.sectionTitleNoMargin}>Manual Commands</Text>
@@ -955,6 +1081,7 @@ const styles = StyleSheet.create({
   },
   deviceNameLabel: {color: colors.textMuted, fontSize: 12, fontWeight: '800'},
   deviceNameValue: {color: colors.textPrimary, fontSize: 15, fontWeight: '900', marginTop: 4},
+  deviceAddress: {color: colors.textMuted, fontSize: 10, marginTop: 4},
   ownerText: {color: colors.accent, fontSize: 10, fontWeight: '900', marginTop: 6, letterSpacing: 0.8},
   quickStatsRow: {flexDirection: 'row', gap: 10, marginTop: 16},
   quickStatCard: {
