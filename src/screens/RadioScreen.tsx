@@ -1,3 +1,4 @@
+import {Buffer} from 'buffer';
 import React, {useMemo, useState} from 'react';
 import {
   ScrollView,
@@ -8,11 +9,13 @@ import {
   View,
 } from 'react-native';
 
+import {estimateLoRaAirtimeMs} from '../radio/loraAirtime';
 import {
   BushMeshChannel,
   BushMeshChannelMessage,
   useBushMesh,
 } from '../state/BushMeshContext';
+import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
 
 function isPrivateChannel(channel: BushMeshChannel): boolean {
@@ -66,6 +69,7 @@ export function RadioScreen(): React.JSX.Element {
     addLocalChannelMessage,
     setActiveChannelIndex,
   } = useBushMesh();
+  const {snapshot: radioSession} = useRadioSession();
   const [messageText, setMessageText] = useState('');
   const [sendStatus, setSendStatus] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -88,6 +92,18 @@ export function RadioScreen(): React.JSX.Element {
   );
 
   const cleanMessage = messageText.trim();
+  const messageBytes = Buffer.byteLength(cleanMessage, 'utf8');
+  const modem = radioSession.radioProfile?.modem ?? null;
+  const airtimeFloor = useMemo(() => {
+    if (!modem || messageBytes === 0) {
+      return null;
+    }
+    try {
+      return estimateLoRaAirtimeMs(messageBytes, modem);
+    } catch {
+      return null;
+    }
+  }, [messageBytes, modem]);
   const canSend =
     activeChannel !== null &&
     canSendChannelMessage &&
@@ -241,11 +257,33 @@ export function RadioScreen(): React.JSX.Element {
           editable={activeChannel !== null}
         />
         <View style={styles.composeMeta}>
-          <Text style={styles.characterCount}>{cleanMessage.length}/133</Text>
+          <Text style={styles.characterCount}>
+            {cleanMessage.length}/133 · {messageBytes} UTF-8 bytes
+          </Text>
           <Text style={styles.transportState}>
             {canSendChannelMessage ? 'MESHCORE READY' : 'RADIO NOT READY'}
           </Text>
         </View>
+
+        <View style={styles.airtimeCard}>
+          <View style={styles.airtimeCopy}>
+            <Text style={styles.airtimeLabel}>PAYLOAD-ONLY RF FLOOR</Text>
+            <Text style={styles.airtimeValue}>
+              {airtimeFloor ? `${airtimeFloor.totalDurationMs.toFixed(0)} ms` : 'UNKNOWN'}
+            </Text>
+          </View>
+          <Text style={styles.airtimeMeta}>
+            {modem
+              ? `SF${modem.spreadingFactor} · ${modem.bandwidthKhz} kHz · 4/${modem.codingRate}`
+              : 'Waiting for radio SF/BW/CR'}
+          </Text>
+        </View>
+        <Text style={styles.airtimeNote}>
+          This is the physical airtime floor for the text bytes only. MeshCore
+          routing, encryption and framing add additional radio bytes, so Bushmesh
+          does not present this as total packet airtime.
+        </Text>
+
         <TouchableOpacity
           style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
           disabled={!canSend}
@@ -385,6 +423,20 @@ const styles = StyleSheet.create({
   composeMeta: {flexDirection: 'row', justifyContent: 'space-between', marginTop: 7},
   characterCount: {color: colors.textMuted, fontSize: 10, fontWeight: '700'},
   transportState: {color: colors.textMuted, fontSize: 9, fontWeight: '900'},
+  airtimeCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    backgroundColor: colors.surfaceSoft,
+    borderRadius: 12,
+    padding: 11,
+    marginTop: 11,
+  },
+  airtimeCopy: {flex: 1},
+  airtimeLabel: {color: colors.textMuted, fontSize: 8, fontWeight: '900'},
+  airtimeValue: {color: colors.accent, fontSize: 20, fontWeight: '900', marginTop: 2},
+  airtimeMeta: {color: colors.textSecondary, fontSize: 9, fontWeight: '800'},
+  airtimeNote: {color: colors.textMuted, fontSize: 9, lineHeight: 14, marginTop: 7},
   sendButton: {
     minHeight: 50,
     marginTop: 12,
