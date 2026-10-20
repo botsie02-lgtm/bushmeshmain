@@ -1,19 +1,16 @@
-import {Buffer} from 'buffer';
-
 import {
   NativeRadioServiceStatus,
   nativeRadioService,
 } from '../native/NativeRadioService';
-
-export type NativeMeshCoreFrameTransportEvents = {
-  onFrame: (bytes: number[]) => void;
-  onStatus?: (status: NativeRadioServiceStatus) => void;
-  onError?: (message: string) => void;
-};
+import {
+  MeshCoreFrameTransport,
+  MeshCoreFrameTransportHandlers,
+} from './MeshCoreFrameTransport';
 
 export type NativeMeshCoreFrameTransportOptions = {
   pollIntervalMs?: number;
   maxFramesPerPoll?: number;
+  onNativeStatus?: (status: NativeRadioServiceStatus) => void;
 };
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
@@ -27,9 +24,13 @@ const DEFAULT_MAX_FRAMES_PER_POLL = 32;
  * the same MeshCore parser used by the existing BLE-PLX path. It intentionally
  * does not interpret protocol responses or claim peer delivery.
  */
-export class NativeMeshCoreFrameTransport {
+export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
+  readonly id: string;
+
   private readonly pollIntervalMs: number;
   private readonly maxFramesPerPoll: number;
+  private readonly onNativeStatus?: (status: NativeRadioServiceStatus) => void;
+  private handlers: MeshCoreFrameTransportHandlers | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private polling = false;
   private started = false;
@@ -38,9 +39,9 @@ export class NativeMeshCoreFrameTransport {
   constructor(
     private readonly deviceAddress: string,
     private readonly deviceLabel: string | null,
-    private readonly events: NativeMeshCoreFrameTransportEvents,
     options: NativeMeshCoreFrameTransportOptions = {},
   ) {
+    this.id = `android-native:${deviceAddress}`;
     this.pollIntervalMs = Math.max(
       25,
       Math.floor(options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS),
@@ -52,13 +53,15 @@ export class NativeMeshCoreFrameTransport {
         Math.floor(options.maxFramesPerPoll ?? DEFAULT_MAX_FRAMES_PER_POLL),
       ),
     );
+    this.onNativeStatus = options.onNativeStatus;
   }
 
   isSupported(): boolean {
     return nativeRadioService.isSupported();
   }
 
-  async start(): Promise<void> {
+  async start(handlers: MeshCoreFrameTransportHandlers): Promise<void> {
+    this.handlers = handlers;
     if (this.started) {
       return;
     }
@@ -82,20 +85,20 @@ export class NativeMeshCoreFrameTransport {
   async stop(): Promise<void> {
     this.started = false;
     this.generation += 1;
+    this.handlers = null;
     this.clearPollTimer();
     await nativeRadioService.stop();
   }
 
-  async write(bytes: number[] | Uint8Array): Promise<void> {
+  async writeBase64(base64Frame: string): Promise<void> {
     if (!this.started) {
       throw new Error('Native MeshCore BLE transport has not been started.');
     }
-    if (bytes.length === 0) {
+    if (!base64Frame) {
       throw new Error('MeshCore BLE frame cannot be empty.');
     }
 
-    const encoded = Buffer.from(bytes).toString('base64');
-    const accepted = await nativeRadioService.enqueueNativeBleWrite(encoded);
+    const accepted = await nativeRadioService.enqueueNativeBleWrite(base64Frame);
     if (!accepted) {
       const status = await nativeRadioService.getStatus();
       const detail = status.nativeBleLastError
@@ -103,6 +106,22 @@ export class NativeMeshCoreFrameTransport {
         : '';
       throw new Error(`Android native BLE transport rejected the write.${detail}`);
     }
+  }
+
+  async ensureReady(): Promise<number | null> {
+    const status = await nativeRadioService.getStatus();
+    this.onNativeStatus?.(status);
+
+    if (status.nativeBleState !== 'ready') {
+      throw new Error(
+        status.nativeBleLastError ??
+          `Native MeshCore BLE transport is ${status.nativeBleState ?? 'not ready'}.`,
+      );
+    }
+
+    return typeof status.nativeBleMtu === 'number' && status.nativeBleMtu > 0
+      ? status.nativeBleMtu
+      : null;
   }
 
   async getStatus(): Promise<NativeRadioServiceStatus> {
@@ -118,7 +137,7 @@ export class NativeMeshCoreFrameTransport {
     this.pollTimer = setTimeout(() => {
       this.pollTimer = null;
       this.poll(generation).catch(error => {
-        this.events.onError?.(
+        this.handlers?.onError?.(
           error instanceof Error
             ? error.message
             : 'Native MeshCore BLE polling failed.',
@@ -143,16 +162,26 @@ export class NativeMeshCoreFrameTransport {
         return;
       }
 
-      this.events.onStatus?.(status);
+      this.onNativeStatus?.(status);
+      this.handlers?.onStatus?.(
+        `Native BLE ${status.nativeBleState ?? 'unknown'}${
+          status.nativeBleMtu ? ` · MTU ${status.nativeBleMtu}` : ''
+        }`,
+      );
 
       for (const encoded of frames) {
         if (!this.started || generation !== this.generation) {
           return;
         }
         try {
-          this.events.onFrame(Array.from(Buffer.from(encoded, 'base64')));
+          const bytes = Array.from(
+            Uint8Array.from(globalThis.atob(encoded), character =>
+              character.charCodeAt(0),
+            ),
+          );
+          this.handlers?.onFrame(bytes);
         } catch (error) {
-          this.events.onError?.(
+          this.handlers?.onError?.(
             error instanceof Error
               ? `Invalid buffered MeshCore BLE frame: ${error.message}`
               : 'Invalid buffered MeshCore BLE frame.',
