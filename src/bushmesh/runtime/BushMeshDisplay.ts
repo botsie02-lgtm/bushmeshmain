@@ -51,6 +51,9 @@ function renderTyped(packet: BushMeshTypedPacket): string | null {
           : ''
       }`;
 
+    case 'location-delta':
+      return `📍 Location delta ${packet.value.northMetres >= 0 ? '+' : ''}${packet.value.northMetres} m north, ${packet.value.eastMetres >= 0 ? '+' : ''}${packet.value.eastMetres} m east`;
+
     case 'telemetry': {
       const values: string[] = [];
       if (packet.value.batteryPercent !== undefined) {
