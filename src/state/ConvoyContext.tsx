@@ -11,6 +11,10 @@ import {subscribeBushMeshInboundMessages} from '../bushmesh/inboundBus';
 import {BushMeshInboundMessage} from '../bushmesh/meshcoreBridge';
 import {BushMeshMessageType} from '../bushmesh/protocol';
 import {
+  BuddyTail,
+  appendBuddyTailPoint,
+} from '../convoy/buddyTails';
+import {
   ConvoyVehicle,
   Coordinate,
   shouldReplaceVehiclePosition,
@@ -19,9 +23,11 @@ import {useBushMesh} from './BushMeshContext';
 
 type ConvoyContextValue = {
   vehicles: ConvoyVehicle[];
+  buddyTails: BuddyTail[];
   localPosition: Coordinate | null;
   navigationTargetVehicleId: string | null;
   navigationTargetVehicle: ConvoyVehicle | null;
+  getBuddyTail: (vehicleId: string) => BuddyTail | null;
   upsertBushMeshMessage: (message: BushMeshInboundMessage) => void;
   setLocalPosition: (position: Coordinate | null) => void;
   setNavigationTarget: (vehicleId: string) => void;
@@ -35,6 +41,7 @@ const ConvoyContext = createContext<ConvoyContextValue | null>(null);
 export function ConvoyProvider({children}: {children: React.ReactNode}): React.JSX.Element {
   const {contacts} = useBushMesh();
   const [vehicles, setVehicles] = useState<ConvoyVehicle[]>([]);
+  const [buddyTailMap, setBuddyTailMap] = useState<Record<string, BuddyTail>>({});
   const [localPosition, setLocalPosition] = useState<Coordinate | null>(null);
   const [navigationTargetVehicleId, setNavigationTargetVehicleId] = useState<
     string | null
@@ -70,6 +77,14 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
 
       const withoutExisting = current.filter(vehicle => vehicle.id !== incoming.id);
       return [incoming, ...withoutExisting];
+    });
+
+    setBuddyTailMap(current => {
+      const updated = appendBuddyTailPoint(current[incoming.id], incoming);
+      if (updated.points === current[incoming.id]?.points) {
+        return current;
+      }
+      return {...current, [incoming.id]: updated};
     });
   }, []);
 
@@ -140,10 +155,7 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
     const now = Date.now();
     const nowSeconds = Math.floor(now / 1000);
     const demoOrigin = {latitude: -37.5628, longitude: 146.2504};
-
-    setNavigationTargetVehicleId(null);
-    setLocalPosition(demoOrigin);
-    setVehicles([
+    const demoVehicles: ConvoyVehicle[] = [
       {
         id: 'A1B2C3D4E501',
         name: 'Lead — Ranger',
@@ -192,11 +204,22 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
         pathLength: 3,
         simulated: true,
       },
-    ]);
+    ];
+
+    const demoTails: Record<string, BuddyTail> = {};
+    demoVehicles.forEach(vehicle => {
+      demoTails[vehicle.id] = appendBuddyTailPoint(undefined, vehicle, now);
+    });
+
+    setNavigationTargetVehicleId(null);
+    setLocalPosition(demoOrigin);
+    setVehicles(demoVehicles);
+    setBuddyTailMap(demoTails);
   }, []);
 
   const clearConvoy = useCallback(() => {
     setVehicles([]);
+    setBuddyTailMap({});
     setLocalPosition(null);
     setNavigationTargetVehicleId(null);
   }, []);
@@ -209,12 +232,21 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
     [vehicles, navigationTargetVehicleId],
   );
 
+  const buddyTails = useMemo(() => Object.values(buddyTailMap), [buddyTailMap]);
+
+  const getBuddyTail = useCallback(
+    (vehicleId: string): BuddyTail | null => buddyTailMap[vehicleId] ?? null,
+    [buddyTailMap],
+  );
+
   const value = useMemo<ConvoyContextValue>(
     () => ({
       vehicles,
+      buddyTails,
       localPosition,
       navigationTargetVehicleId,
       navigationTargetVehicle,
+      getBuddyTail,
       upsertBushMeshMessage,
       setLocalPosition,
       setNavigationTarget,
@@ -224,9 +256,11 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
     }),
     [
       vehicles,
+      buddyTails,
       localPosition,
       navigationTargetVehicleId,
       navigationTargetVehicle,
+      getBuddyTail,
       upsertBushMeshMessage,
       setNavigationTarget,
       clearNavigationTarget,
