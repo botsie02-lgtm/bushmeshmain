@@ -161,23 +161,24 @@ export class BushMeshPeerDirectory {
 
   private view(entry: BushMeshPeerDirectoryEntry, now: number): BushMeshPeerDirectoryView {
     const local = this.localHello();
-    const policy = local
+    const policy: BushMeshPeerPolicy = local
       ? negotiateBushMeshPeerPolicy(local, entry.hello)
       : {
           compatible: false,
           protocolVersion: null,
           capabilities: 0,
-          transport: 'text-safe' as const,
+          transport: 'text-safe',
           allowSemantic: false,
           allowDictionary: false,
+          dictionaryVersion: null,
           allowFragmentation: false,
           allowSelectiveAck: false,
           allowStoreAndForward: false,
           allowLocationDelta: false,
-          allowFileTransfer: false,
-          allowRouting: false,
           allowSensorDelta: false,
           allowCompressedBinary: false,
+          allowFileTransfer: false,
+          allowRouting: false,
         };
 
     return {
