@@ -10,13 +10,18 @@ export type BushMeshConvoyMember = {
   gapFromPreviousMetres: number | null;
 };
 
-export type BushMeshConvoyIssue =
-  | {
-      type: 'stale-member' | 'lost-member' | 'hazard' | 'large-gap' | 'stopped-member';
-      nodeId: number;
-      orderIndex: number;
-      detail: string;
-    };
+export type BushMeshConvoyIssue = {
+  type:
+    | 'stale-member'
+    | 'lost-member'
+    | 'hazard'
+    | 'large-gap'
+    | 'stopped-member'
+    | 'order-conflict';
+  nodeId: number;
+  orderIndex: number;
+  detail: string;
+};
 
 export type BushMeshConvoySnapshot = {
   convoyId: number;
@@ -95,11 +100,24 @@ export class BushMeshConvoyTracker {
       return false;
     }
 
+    // Optional telemetry fields are sparse by design. Preserve the most recent
+    // known value when a compact heartbeat omits an unchanged field.
+    const mergedStatus: BushMeshConvoyStatus = {
+      ...status,
+      location: status.location
+        ? {...status.location}
+        : existing?.status.location
+          ? {...existing.status.location}
+          : undefined,
+      speedKph: status.speedKph ?? existing?.status.speedKph,
+      headingDegrees:
+        status.headingDegrees ?? existing?.status.headingDegrees,
+      batteryPercent:
+        status.batteryPercent ?? existing?.status.batteryPercent,
+    };
+
     convoy.set(status.nodeId, {
-      status: {
-        ...status,
-        location: status.location ? {...status.location} : undefined,
-      },
+      status: mergedStatus,
       firstSeenAt: existing?.firstSeenAt ?? receivedAt,
       lastSeenAt: receivedAt,
     });
@@ -130,7 +148,11 @@ export class BushMeshConvoyTracker {
             : 'active';
 
       let gapFromPreviousMetres: number | null = null;
-      if (member.status.location && previousWithLocation?.status.location) {
+      if (
+        health !== 'lost' &&
+        member.status.location &&
+        previousWithLocation?.status.location
+      ) {
         gapFromPreviousMetres = Math.round(
           distanceMetres(
             previousWithLocation.status.location,
@@ -149,7 +171,7 @@ export class BushMeshConvoyTracker {
         }
       }
 
-      if (member.status.location) {
+      if (health !== 'lost' && member.status.location) {
         previousWithLocation = member;
       }
 
@@ -201,6 +223,34 @@ export class BushMeshConvoyTracker {
       });
     }
 
+    const activeByOrder = new Map<number, BushMeshConvoyMember[]>();
+    for (const member of members) {
+      if (member.health === 'lost') {
+        continue;
+      }
+      const samePosition = activeByOrder.get(member.status.orderIndex) ?? [];
+      samePosition.push(member);
+      activeByOrder.set(member.status.orderIndex, samePosition);
+    }
+
+    for (const [orderIndex, conflicting] of activeByOrder.entries()) {
+      if (conflicting.length < 2) {
+        continue;
+      }
+
+      const labels = conflicting
+        .map(item => item.status.nodeId.toString(16).padStart(8, '0'))
+        .join(', ');
+      for (const member of conflicting) {
+        issues.push({
+          type: 'order-conflict',
+          nodeId: member.status.nodeId,
+          orderIndex,
+          detail: `Multiple active vehicles claim convoy position ${orderIndex}: ${labels}.`,
+        });
+      }
+    }
+
     const lead = members.find(
       member => member.status.role === BushMeshConvoyRole.Lead,
     );
@@ -214,7 +264,11 @@ export class BushMeshConvoyTracker {
       members,
       issues,
       healthy: issues.every(
-        issue => issue.type !== 'lost-member' && issue.type !== 'hazard',
+        issue =>
+          issue.type !== 'lost-member' &&
+          issue.type !== 'hazard' &&
+          issue.type !== 'large-gap' &&
+          issue.type !== 'order-conflict',
       ),
       leadNodeId: lead?.status.nodeId ?? members[0]?.status.nodeId ?? null,
       tailNodeId:
@@ -254,6 +308,7 @@ export class BushMeshConvoyTracker {
       .filter(
         member =>
           member.health === 'active' &&
+          !member.status.hazard &&
           member.status.nodeId !== sourceNodeId &&
           member.status.nodeId !== destinationNodeId &&
           member.status.orderIndex > low &&
