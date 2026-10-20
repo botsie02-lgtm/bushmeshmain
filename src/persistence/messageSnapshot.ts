@@ -9,17 +9,25 @@ export type BushMeshMessageSnapshotV1 = {
   messages: BushMeshChannelMessage[];
 };
 
-const DIRECTIONS = new Set(['sent', 'received']);
-const STATUSES = new Set(['sent', 'failed', 'pending']);
+type PersistedMessageV1 = Omit<BushMeshChannelMessage, 'status'> & {
+  status: BushMeshChannelMessage['status'] | 'sent';
+};
 
-function validateMessage(
+type PersistedMessageSnapshotV1 = Omit<BushMeshMessageSnapshotV1, 'messages'> & {
+  messages: PersistedMessageV1[];
+};
+
+const DIRECTIONS = new Set(['sent', 'received']);
+const STATUSES = new Set(['sent', 'pending', 'accepted', 'confirmed', 'failed']);
+
+function validatePersistedMessage(
   message: unknown,
-): asserts message is BushMeshChannelMessage {
+): asserts message is PersistedMessageV1 {
   if (!message || typeof message !== 'object') {
     throw new Error('Persisted Bushmesh message is not an object.');
   }
 
-  const candidate = message as Partial<BushMeshChannelMessage>;
+  const candidate = message as Partial<PersistedMessageV1>;
   if (typeof candidate.id !== 'string' || candidate.id.length === 0) {
     throw new Error('Persisted Bushmesh message has an invalid id.');
   }
@@ -55,6 +63,18 @@ function validateMessage(
   }
 }
 
+function normalizePersistedMessage(
+  message: PersistedMessageV1,
+): BushMeshChannelMessage {
+  return {
+    ...message,
+    // Older builds used "sent" immediately after PACKET_MSG_SENT. MeshCore's
+    // response only proves the companion accepted the packet, so migrate that
+    // legacy state to the truthful name rather than preserving a false claim.
+    status: message.status === 'sent' ? 'accepted' : message.status,
+  };
+}
+
 export function createMessageSnapshot(
   messages: BushMeshChannelMessage[],
   savedAtMs = Date.now(),
@@ -65,9 +85,9 @@ export function createMessageSnapshot(
 
   const deduped = new Map<string, BushMeshChannelMessage>();
   messages.forEach(message => {
-    validateMessage(message);
+    validatePersistedMessage(message);
     if (!deduped.has(message.id)) {
-      deduped.set(message.id, {...message});
+      deduped.set(message.id, normalizePersistedMessage(message));
     }
   });
 
@@ -100,18 +120,21 @@ export function decodeMessageSnapshot(
   }
 
   validateMessageSnapshot(parsed);
-  const snapshot = parsed as BushMeshMessageSnapshotV1;
-  return createMessageSnapshot(snapshot.messages, snapshot.savedAtMs);
+  const snapshot = parsed as PersistedMessageSnapshotV1;
+  return createMessageSnapshot(
+    snapshot.messages.map(normalizePersistedMessage),
+    snapshot.savedAtMs,
+  );
 }
 
 export function validateMessageSnapshot(
   snapshot: unknown,
-): asserts snapshot is BushMeshMessageSnapshotV1 {
+): asserts snapshot is PersistedMessageSnapshotV1 {
   if (!snapshot || typeof snapshot !== 'object') {
     throw new Error('Message snapshot is not an object.');
   }
 
-  const candidate = snapshot as Partial<BushMeshMessageSnapshotV1>;
+  const candidate = snapshot as Partial<PersistedMessageSnapshotV1>;
   if (candidate.version !== BUSHMESH_MESSAGE_SNAPSHOT_VERSION) {
     throw new Error(
       `Unsupported message snapshot version ${String(candidate.version)}.`,
@@ -128,5 +151,5 @@ export function validateMessageSnapshot(
     throw new Error('Message snapshot messages are invalid.');
   }
 
-  candidate.messages.forEach(validateMessage);
+  candidate.messages.forEach(validatePersistedMessage);
 }
