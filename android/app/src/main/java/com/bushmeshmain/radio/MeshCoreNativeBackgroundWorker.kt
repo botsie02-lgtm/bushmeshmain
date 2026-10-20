@@ -29,6 +29,7 @@ class MeshCoreNativeBackgroundWorker(
     val pendingOutboxId: String?,
     val lastError: String?,
     val acceptedCount: Long,
+    val leaseEpoch: Long,
   )
 
   private data class PendingCommand(
@@ -49,11 +50,13 @@ class MeshCoreNativeBackgroundWorker(
 
   private val handler = Handler(Looper.getMainLooper())
   private val outboxStore = BushMeshNativeOutboxStore(context)
+  private val outboxLease = BushMeshOutboxLease(context)
   private val frameListener = MeshCoreNativeBleRuntime.FrameListener { frame ->
     handler.post { handleFrame(frame) }
   }
 
   private var running = false
+  private var recoveryLease: BushMeshOutboxLease.Lease? = null
   private var phase = "stopped"
   private var identityRef: String? = null
   private var firmwareVersion: Int? = null
@@ -83,10 +86,22 @@ class MeshCoreNativeBackgroundWorker(
   }
 
   @Synchronized
-  fun start() {
-    if (running) {
+  fun start(lease: BushMeshOutboxLease.Lease) {
+    if (
+      lease.owner != BushMeshOutboxLease.OWNER_BACKGROUND ||
+      !outboxLease.stillOwns(lease)
+    ) {
+      throw IllegalStateException("Native recovery worker requires the active background outbox lease.")
+    }
+
+    if (running && recoveryLease == lease) {
       return
     }
+    if (running) {
+      stop()
+    }
+
+    recoveryLease = lease
     running = true
     phase = "waiting-for-radio"
     lastError = null
@@ -106,6 +121,7 @@ class MeshCoreNativeBackgroundWorker(
     firmwareVersion = null
     maxChannels = null
     lastReadyConnectionAtMs = 0L
+    recoveryLease = null
     phase = "stopped"
   }
 
@@ -119,9 +135,15 @@ class MeshCoreNativeBackgroundWorker(
     pendingOutboxId = pending?.outboxId,
     lastError = lastError,
     acceptedCount = acceptedCount,
+    leaseEpoch = recoveryLease?.epoch ?: 0L,
   )
 
   private fun tick() {
+    if (!hasBackgroundLease()) {
+      yieldToForeground()
+      return
+    }
+
     val now = System.currentTimeMillis()
     val radioStatus = runtime.status()
 
@@ -170,10 +192,28 @@ class MeshCoreNativeBackgroundWorker(
     drainNextOutboxEntry(now)
   }
 
+  private fun hasBackgroundLease(): Boolean {
+    val lease = recoveryLease ?: return false
+    return lease.owner == BushMeshOutboxLease.OWNER_BACKGROUND &&
+      outboxLease.stillOwns(lease)
+  }
+
+  private fun yieldToForeground() {
+    // Do not write another byte or persist another snapshot after losing the
+    // generation lease. Any already-issued radio command may still complete,
+    // but the new foreground owner will recover its persisted in-flight state.
+    running = false
+    handler.removeCallbacks(tickRunnable)
+    runtime.removeFrameListener(frameListener)
+    pending = null
+    activeEntries.clear()
+    phase = "yielded"
+  }
+
   private fun resetProtocolForReconnect() {
     val currentPending = pending
     pending = null
-    if (currentPending?.outboxId != null) {
+    if (currentPending?.outboxId != null && hasBackgroundLease()) {
       recoverPendingOutbox(currentPending.outboxId, "Radio disconnected before acceptance was known.")
     }
     identityRef = null
@@ -188,12 +228,12 @@ class MeshCoreNativeBackgroundWorker(
     bytes: ByteArray,
     outboxId: String? = null,
   ) {
-    if (pending != null) {
+    if (!hasBackgroundLease() || pending != null) {
       return
     }
     if (!runtime.enqueueWrite(bytes)) {
       lastError = runtime.status().lastError ?: "$label could not be queued to BLE."
-      if (outboxId != null) {
+      if (outboxId != null && hasBackgroundLease()) {
         recoverPendingOutbox(outboxId, lastError ?: "Native BLE write was rejected.")
       }
       return
@@ -208,7 +248,7 @@ class MeshCoreNativeBackgroundWorker(
   }
 
   private fun handleFrame(frame: ByteArray) {
-    if (!running || frame.isEmpty()) {
+    if (!running || !hasBackgroundLease() || frame.isEmpty()) {
       return
     }
 
@@ -220,7 +260,7 @@ class MeshCoreNativeBackgroundWorker(
       val code = if (frame.size > 1) frame[1].toInt() and 0xff else null
       val message = "${current.label} returned PACKET_ERROR${code?.let { " ($it)" } ?: ""}."
       lastError = message
-      if (current.outboxId != null) {
+      if (current.outboxId != null && hasBackgroundLease()) {
         failOutboxAttempt(current.outboxId, message, System.currentTimeMillis())
       }
       return
@@ -271,6 +311,11 @@ class MeshCoreNativeBackgroundWorker(
       8
     }
 
+    if (!hasBackgroundLease()) {
+      yieldToForeground()
+      return
+    }
+
     activeEntries = try {
       outboxStore.loadRecoverable().toMutableList()
     } catch (error: Exception) {
@@ -281,7 +326,7 @@ class MeshCoreNativeBackgroundWorker(
   }
 
   private fun drainNextOutboxEntry(nowMs: Long) {
-    if (activeEntries.isEmpty()) {
+    if (!hasBackgroundLease() || activeEntries.isEmpty()) {
       return
     }
 
@@ -321,6 +366,9 @@ class MeshCoreNativeBackgroundWorker(
     )
     replaceEntry(attempted)
     persistActiveEntries()
+    if (!hasBackgroundLease()) {
+      return
+    }
 
     phase = "sending-outbox"
     sendCommand(
@@ -332,6 +380,9 @@ class MeshCoreNativeBackgroundWorker(
   }
 
   private fun acceptOutboxAttempt(id: String) {
+    if (!hasBackgroundLease()) {
+      return
+    }
     activeEntries.removeAll { it.id == id }
     acceptedCount += 1L
     phase = "ready"
@@ -339,6 +390,9 @@ class MeshCoreNativeBackgroundWorker(
   }
 
   private fun failOutboxAttempt(id: String, message: String, nowMs: Long) {
+    if (!hasBackgroundLease()) {
+      return
+    }
     val entry = activeEntries.find { it.id == id } ?: return
     if (entry.attempts >= entry.maxAttempts) {
       activeEntries.removeAll { it.id == id }
@@ -356,6 +410,9 @@ class MeshCoreNativeBackgroundWorker(
   }
 
   private fun recoverPendingOutbox(id: String, message: String) {
+    if (!hasBackgroundLease()) {
+      return
+    }
     val entry = activeEntries.find { it.id == id } ?: return
     replaceEntry(
       entry.copy(
@@ -384,6 +441,9 @@ class MeshCoreNativeBackgroundWorker(
   }
 
   private fun persistActiveEntries() {
+    if (!hasBackgroundLease()) {
+      return
+    }
     try {
       if (activeEntries.isEmpty()) {
         outboxStore.clear()
