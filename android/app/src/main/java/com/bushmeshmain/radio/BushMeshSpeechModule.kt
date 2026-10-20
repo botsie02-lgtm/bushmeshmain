@@ -2,9 +2,13 @@ package com.bushmeshmain.radio
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -24,10 +28,22 @@ class BushMeshSpeechModule(
   }
 
   private val mainHandler = Handler(Looper.getMainLooper())
+  private val audioManager =
+    reactContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+  private val speechAudioAttributes = AudioAttributes.Builder()
+    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+    .build()
+  private val focusChangeListener = AudioManager.OnAudioFocusChangeListener {
+    // Bushmesh requests only transient may-duck focus. The system owns actual
+    // media-volume behavior; spoken safety text remains visible if focus is denied.
+  }
+
   private var engine: TextToSpeech? = null
   private var initComplete = false
   private var initFailed = false
   private var selectedLanguage: Locale? = null
+  private var activeFocusRequest: AudioFocusRequest? = null
 
   init {
     mainHandler.post {
@@ -66,12 +82,27 @@ class BushMeshSpeechModule(
       if (englishSupported) Locale.ENGLISH else null
     }
 
-    tts.setAudioAttributes(
-      AudioAttributes.Builder()
-        .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
-        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-        .build(),
-    )
+    tts.setAudioAttributes(speechAudioAttributes)
+    tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+      override fun onStart(utteranceId: String?) = Unit
+
+      override fun onDone(utteranceId: String?) {
+        mainHandler.post { abandonSpeechFocus() }
+      }
+
+      @Deprecated("Deprecated in Android framework but still required by the listener contract")
+      override fun onError(utteranceId: String?) {
+        mainHandler.post { abandonSpeechFocus() }
+      }
+
+      override fun onError(utteranceId: String?, errorCode: Int) {
+        mainHandler.post { abandonSpeechFocus() }
+      }
+
+      override fun onStop(utteranceId: String?, interrupted: Boolean) {
+        mainHandler.post { abandonSpeechFocus() }
+      }
+    })
 
     initFailed = selectedLanguage == null
     initComplete = true
@@ -89,8 +120,11 @@ class BushMeshSpeechModule(
       val queueMode =
         if (interrupt) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
       val utteranceId = "bushmesh-${System.currentTimeMillis()}"
+
+      requestSpeechFocus()
       val result = tts.speak(clean, queueMode, null, utteranceId)
       if (result == TextToSpeech.ERROR) {
+        abandonSpeechFocus()
         promise.reject("BUSHMESH_TTS_SPEAK_FAILED", "Android TTS rejected the utterance.")
       } else {
         promise.resolve(true)
@@ -103,8 +137,10 @@ class BushMeshSpeechModule(
     mainHandler.post {
       try {
         engine?.stop()
+        abandonSpeechFocus()
         promise.resolve(true)
       } catch (error: Exception) {
+        abandonSpeechFocus()
         promise.reject("BUSHMESH_TTS_STOP_FAILED", error.message, error)
       }
     }
@@ -134,7 +170,10 @@ class BushMeshSpeechModule(
         .apply()
 
       if (!enabled) {
-        mainHandler.post { engine?.stop() }
+        mainHandler.post {
+          engine?.stop()
+          abandonSpeechFocus()
+        }
       }
       promise.resolve(enabled)
     } catch (error: Exception) {
@@ -156,6 +195,7 @@ class BushMeshSpeechModule(
       try {
         engine?.stop()
         engine?.shutdown()
+        abandonSpeechFocus()
       } finally {
         engine = null
         selectedLanguage = null
@@ -170,6 +210,36 @@ class BushMeshSpeechModule(
     reactApplicationContext
       .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       .getBoolean(PREF_CRITICAL_ALERTS_ENABLED, true)
+
+  private fun requestSpeechFocus(): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        .setAudioAttributes(speechAudioAttributes)
+        .setOnAudioFocusChangeListener(focusChangeListener, mainHandler)
+        .setWillPauseWhenDucked(false)
+        .build()
+      activeFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+      activeFocusRequest = request
+      audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+    } else {
+      @Suppress("DEPRECATION")
+      audioManager.requestAudioFocus(
+        focusChangeListener,
+        AudioManager.STREAM_MUSIC,
+        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+      ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+    }
+  }
+
+  private fun abandonSpeechFocus() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      activeFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+      activeFocusRequest = null
+    } else {
+      @Suppress("DEPRECATION")
+      audioManager.abandonAudioFocus(focusChangeListener)
+    }
+  }
 
   private fun withReady(
     promise: Promise,
