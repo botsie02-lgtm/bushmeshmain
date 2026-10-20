@@ -1,4 +1,4 @@
-import React, {useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -12,6 +12,7 @@ import {
   BushMeshVoicePipeline,
   createBushMeshNativeSpeechRecognizer,
   createBushMeshNativeSpeechSynthesizer,
+  getBushMeshVoicePreferenceStore,
   isBushMeshNativeVoiceAvailable,
 } from '../bushmesh/runtime';
 import {useBushMesh} from '../state/BushMeshContext';
@@ -42,6 +43,7 @@ export function VoiceScreen(): React.JSX.Element {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [lastTranscript, setLastTranscript] = useState('');
   const [lastEncoding, setLastEncoding] = useState('No voice message captured yet.');
   const [status, setStatus] = useState(
@@ -49,6 +51,7 @@ export function VoiceScreen(): React.JSX.Element {
       ? 'Ready for local speech-to-text.'
       : 'Native speech services are unavailable on this platform/build.',
   );
+  const lastAutoSpokenId = useRef<string | null>(null);
 
   const pipeline = useMemo(
     () =>
@@ -62,6 +65,88 @@ export function VoiceScreen(): React.JSX.Element {
       ),
     [sendBushMeshMessage],
   );
+
+  const latestBushMeshReceived = channelMessages.find(
+    message =>
+      message.direction === 'received' &&
+      (message.protocol === 'bushmesh' || message.protocol === 'bushmesh-routed'),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void getBushMeshVoicePreferenceStore()
+      .restore()
+      .then(preferences => {
+        if (cancelled) {
+          return;
+        }
+        setAutoSpeak(preferences.autoSpeak);
+        // Never replay old history as soon as a persisted preference is loaded.
+        lastAutoSpokenId.current = latestBushMeshReceived?.id ?? null;
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPreferencesLoaded(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // Only restore preferences once for this mounted screen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!preferencesLoaded) {
+      return;
+    }
+    void getBushMeshVoicePreferenceStore()
+      .persist({autoSpeak})
+      .catch(() => undefined);
+  }, [autoSpeak, preferencesLoaded]);
+
+  useEffect(() => {
+    if (!autoSpeak) {
+      // Keep the high-water mark current while disabled so enabling the switch
+      // only affects messages received after that point.
+      lastAutoSpokenId.current = latestBushMeshReceived?.id ?? null;
+      return;
+    }
+
+    if (
+      !latestBushMeshReceived ||
+      latestBushMeshReceived.id === lastAutoSpokenId.current ||
+      !isBushMeshNativeVoiceAvailable()
+    ) {
+      return;
+    }
+
+    lastAutoSpokenId.current = latestBushMeshReceived.id;
+    let cancelled = false;
+
+    void pipeline
+      .speakReceived(latestBushMeshReceived.text, {
+        senderLabel: latestBushMeshReceived.channelName || 'BushMesh',
+      })
+      .then(() => {
+        if (!cancelled) {
+          setStatus('Automatically spoke a newly received BushMesh message.');
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setStatus(
+            error instanceof Error ? error.message : 'Automatic text-to-speech failed.',
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [autoSpeak, latestBushMeshReceived, pipeline]);
 
   const channelIndex = activeChannel ? Number(activeChannel.channelIndex) : NaN;
   const canCapture =
@@ -110,7 +195,8 @@ export function VoiceScreen(): React.JSX.Element {
   };
 
   const speakLatestReceived = async () => {
-    const latest = channelMessages.find(message => message.direction === 'received');
+    const latest = latestBushMeshReceived ??
+      channelMessages.find(message => message.direction === 'received');
     if (!latest) {
       setStatus('No received channel message is available to speak.');
       return;
@@ -121,6 +207,7 @@ export function VoiceScreen(): React.JSX.Element {
       await pipeline.speakReceived(latest.text, {
         senderLabel: latest.channelName || 'BushMesh',
       });
+      lastAutoSpokenId.current = latest.id;
       setStatus('Speaking the latest received message locally.');
     } catch (error) {
       setStatus(
@@ -192,12 +279,25 @@ export function VoiceScreen(): React.JSX.Element {
               received text.
             </Text>
           </View>
-          <Switch value={autoSpeak} onValueChange={setAutoSpeak} />
+          <Switch
+            value={autoSpeak}
+            disabled={!isBushMeshNativeVoiceAvailable()}
+            onValueChange={value => {
+              lastAutoSpokenId.current = latestBushMeshReceived?.id ?? null;
+              setAutoSpeak(value);
+              setStatus(
+                value
+                  ? 'Auto-speak enabled for new BushMesh messages.'
+                  : 'Auto-speak disabled.',
+              );
+            }}
+          />
         </View>
 
         <Text style={styles.noteText}>
-          Auto-speak preference is prepared here but remains manual until the
-          receive lifecycle has foreground/background audio controls.
+          Auto-speak only reacts to messages received after it is enabled. It
+          does not replay existing channel history and ignores ordinary MeshCore
+          text that did not arrive through BushMesh.
         </Text>
 
         <TouchableOpacity
