@@ -1,3 +1,4 @@
+export * from './BushMeshAdaptivePayloadPolicy';
 export * from './BushMeshAirtimeController';
 export * from './BushMeshCommandResponder';
 export * from './BushMeshDeliveryTracker';
@@ -22,6 +23,7 @@ export * from './BushMeshPeerRegistry';
 export * from './BushMeshPersistentFileCoordinator';
 export * from './BushMeshPersistentStore';
 export * from './BushMeshReliableSender';
+export * from './BushMeshRouteDecisionEngine';
 export * from './BushMeshRuntimeHub';
 export * from './BushMeshRuntimeServices';
 export * from './BushMeshStoreForwardRuntime';
