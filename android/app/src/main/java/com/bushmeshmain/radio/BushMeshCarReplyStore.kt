@@ -17,9 +17,10 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * Durable encrypted queue for Android Auto voice replies.
  *
- * Radio acceptance is persisted as its own terminal state before an entry is
- * deleted. If the app dies after MeshCore accepts a reply but before cleanup,
- * the recovered entry remains accepted and is never transmitted twice.
+ * State transitions are persisted before and after the MeshCore write:
+ * queued -> inflight -> accepted. An entry left inflight after process death is
+ * intentionally not retried automatically because radio acceptance is unknown;
+ * avoiding duplicate driver speech is safer than guessing.
  */
 class BushMeshCarReplyStore(context: Context) {
   data class Entry(
@@ -36,6 +37,7 @@ class BushMeshCarReplyStore(context: Context) {
 
   companion object {
     const val STATE_QUEUED = "queued"
+    const val STATE_INFLIGHT = "inflight"
     const val STATE_BLOCKED = "blocked"
     const val STATE_ACCEPTED = "accepted"
 
@@ -111,7 +113,7 @@ class BushMeshCarReplyStore(context: Context) {
       .toList()
 
   @Synchronized
-  fun markAttempt(id: String, error: String? = null): Boolean {
+  fun markAttempt(id: String): Boolean {
     val entries = loadMutable()
     val index = entries.indexOfFirst { it.id == id }
     if (index < 0 || entries[index].state != STATE_QUEUED) {
@@ -121,7 +123,24 @@ class BushMeshCarReplyStore(context: Context) {
     entries[index] = current.copy(
       attempts = current.attempts + 1,
       lastAttemptAtMs = System.currentTimeMillis(),
-      lastError = error?.trim()?.takeIf { it.isNotEmpty() }?.take(240),
+      lastError = null,
+      state = STATE_INFLIGHT,
+    )
+    save(entries)
+    return true
+  }
+
+  @Synchronized
+  fun requeueAfterFailure(id: String, error: String): Boolean {
+    val entries = loadMutable()
+    val index = entries.indexOfFirst { it.id == id }
+    if (index < 0 || entries[index].state != STATE_INFLIGHT) {
+      return false
+    }
+    val current = entries[index]
+    entries[index] = current.copy(
+      state = STATE_QUEUED,
+      lastError = error.trim().takeIf { it.isNotEmpty() }?.take(240),
     )
     save(entries)
     return true
@@ -148,7 +167,7 @@ class BushMeshCarReplyStore(context: Context) {
   fun markAccepted(id: String): Boolean {
     val entries = loadMutable()
     val index = entries.indexOfFirst { it.id == id }
-    if (index < 0) {
+    if (index < 0 || entries[index].state != STATE_INFLIGHT) {
       return false
     }
     val current = entries[index]
@@ -182,6 +201,9 @@ class BushMeshCarReplyStore(context: Context) {
 
   @Synchronized
   fun queuedCount(): Int = loadMutable().count { it.state == STATE_QUEUED }
+
+  @Synchronized
+  fun inflightCount(): Int = loadMutable().count { it.state == STATE_INFLIGHT }
 
   @Synchronized
   fun blockedCount(): Int = loadMutable().count { it.state == STATE_BLOCKED }
@@ -220,6 +242,7 @@ class BushMeshCarReplyStore(context: Context) {
         val state = item.optString("state", STATE_QUEUED)
           .takeIf {
             it == STATE_QUEUED ||
+              it == STATE_INFLIGHT ||
               it == STATE_BLOCKED ||
               it == STATE_ACCEPTED
           }
