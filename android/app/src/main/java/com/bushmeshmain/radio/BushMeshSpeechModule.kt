@@ -47,13 +47,19 @@ class BushMeshSpeechModule(
     }
 
     val preferred = Locale.getDefault()
-    val languageStatus = tts.setLanguage(preferred)
-    selectedLanguage = when {
-      languageStatus != TextToSpeech.LANG_MISSING_DATA &&
-        languageStatus != TextToSpeech.LANG_NOT_SUPPORTED -> preferred
-      tts.setLanguage(Locale.ENGLISH) != TextToSpeech.LANG_MISSING_DATA &&
-        tts.language != null -> tts.language
-      else -> null
+    val preferredStatus = tts.setLanguage(preferred)
+    val preferredSupported =
+      preferredStatus != TextToSpeech.LANG_MISSING_DATA &&
+        preferredStatus != TextToSpeech.LANG_NOT_SUPPORTED
+
+    selectedLanguage = if (preferredSupported) {
+      preferred
+    } else {
+      val englishStatus = tts.setLanguage(Locale.ENGLISH)
+      val englishSupported =
+        englishStatus != TextToSpeech.LANG_MISSING_DATA &&
+          englishStatus != TextToSpeech.LANG_NOT_SUPPORTED
+      if (englishSupported) Locale.ENGLISH else null
     }
 
     initFailed = selectedLanguage == null
