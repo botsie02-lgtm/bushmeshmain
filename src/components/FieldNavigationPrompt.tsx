@@ -8,15 +8,13 @@ import {useConvoy} from '../state/ConvoyContext';
 import {useDrive} from '../state/DriveContext';
 import {colors} from '../theme/colors';
 
-const NAVIGABLE_TYPES = new Set(['regroup', 'help', 'hazard']);
+const NAVIGABLE_TYPES = new Set(['regroup', 'help']);
 
 function priority(type: string): number {
   switch (type) {
     case 'help':
-      return 3;
-    case 'regroup':
       return 2;
-    case 'hazard':
+    case 'regroup':
       return 1;
     default:
       return 0;
@@ -75,9 +73,7 @@ export function FieldNavigationPrompt(): React.JSX.Element | null {
         <Text style={styles.eyebrow}>
           {candidate.type === 'help'
             ? 'ASSISTANCE LOCATION'
-            : candidate.type === 'regroup'
-              ? 'REGROUP LOCATION'
-              : 'HAZARD LOCATION'}
+            : 'REGROUP LOCATION'}
         </Text>
         <Text style={styles.title}>{label}</Text>
         <Text style={styles.detail}>
