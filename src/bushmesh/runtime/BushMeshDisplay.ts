@@ -103,6 +103,10 @@ function renderTyped(packet: BushMeshTypedPacket): string | null {
           return 'Node information requested';
         case BushMeshControlCommand.RequestSync:
           return `Sync requested for namespace ${packet.value.namespace}`;
+        case BushMeshControlCommand.ConvoyAction:
+          // Convoy commands have their own operational history/attention UI.
+          // Keeping them out of chat prevents duplicated command presentation.
+          return null;
         default:
           return 'BushMesh command received';
       }
