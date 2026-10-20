@@ -6,7 +6,8 @@ import {
   encodeFragmentAck,
   encodeBushMeshWire,
 } from '../protocol';
-import {BushMeshChannelTransport} from '../../meshcore/meshcoreBushMeshBridge';
+
+export type BushMeshFragmentTransport = 'text-safe' | 'binary';
 
 export type BushMeshFragmentCheckpointStore = {
   getItem: (key: string) => Promise<string | null>;
@@ -17,7 +18,7 @@ export type BushMeshFragmentCheckpointStore = {
 export type BushMeshFragmentCheckpoint = {
   messageId: number;
   channelIndex: number;
-  transport: BushMeshChannelTransport;
+  transport: BushMeshFragmentTransport;
   fragmentWireBytes: number[][];
   acknowledgedFragmentIndexes: number[];
   createdAt: number;
@@ -131,7 +132,7 @@ export class BushMeshFragmentCheckpointRuntime {
   async register(
     messageId: number,
     channelIndex: number,
-    transport: BushMeshChannelTransport,
+    transport: BushMeshFragmentTransport,
     fragmentWireBytes: number[][],
     now = Date.now(),
   ): Promise<void> {
