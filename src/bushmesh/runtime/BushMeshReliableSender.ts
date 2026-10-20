@@ -29,6 +29,26 @@ export class BushMeshReliableSender {
     readonly storeForward: BushMeshStoreForwardRuntime,
   ) {}
 
+  async queueWire(
+    channelIndex: number,
+    wireBytes: number[],
+    options?: {
+      queueTtlMs?: number;
+      maxQueueAttempts?: number;
+    },
+  ): Promise<BushMeshReliableSendResult> {
+    const decoded = decodeBushMeshWire(wireBytes);
+    if (!decoded.envelope.storeAndForward) {
+      throw new Error('BushMesh packet must enable store-and-forward before durable queueing.');
+    }
+
+    const queued = await this.storeForward.enqueue(channelIndex, wireBytes, {
+      ttlMs: options?.queueTtlMs,
+      maxAttempts: options?.maxQueueAttempts,
+    });
+    return {state: 'queued', queuedId: queued.id};
+  }
+
   async sendWireOrQueue(
     channelIndex: number,
     wireBytes: number[],
@@ -47,11 +67,7 @@ export class BushMeshReliableSender {
         throw error;
       }
 
-      const queued = await this.storeForward.enqueue(channelIndex, wireBytes, {
-        ttlMs: options?.queueTtlMs,
-        maxAttempts: options?.maxQueueAttempts,
-      });
-      return {state: 'queued', queuedId: queued.id};
+      return this.queueWire(channelIndex, wireBytes, options);
     }
   }
 
