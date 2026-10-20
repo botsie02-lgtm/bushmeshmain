@@ -174,7 +174,7 @@ function normalizeCatalogEntryForPersistence(
 function validateCommonSnapshotParts(
   savedAtMs: unknown,
   requiredTripPoints: unknown,
-): asserts requiredTripPoints is MapCoordinate[] {
+): number {
   if (!finiteNonNegative(savedAtMs)) {
     throw new Error('Bushmesh map-state snapshot has an invalid saved time.');
   }
@@ -185,6 +185,7 @@ function validateCommonSnapshotParts(
   ) {
     throw new Error('Bushmesh map-state trip-point list is invalid.');
   }
+  return savedAtMs;
 }
 
 function migrateLegacySnapshot(parsed: unknown): BushMeshMapStateSnapshotV2 | null {
@@ -197,12 +198,18 @@ function migrateLegacySnapshot(parsed: unknown): BushMeshMapStateSnapshotV2 | nu
     return null;
   }
 
-  validateCommonSnapshotParts(legacy.savedAtMs, legacy.requiredTripPoints);
+  const savedAtMs = validateCommonSnapshotParts(
+    legacy.savedAtMs,
+    legacy.requiredTripPoints,
+  );
   if (!Array.isArray(legacy.packs) || legacy.packs.length > MAX_PACKS) {
     throw new Error('Legacy Bushmesh map-state pack list is invalid.');
   }
   if (!legacy.packs.every(validPack)) {
     throw new Error('Legacy Bushmesh map-state contains an invalid pack.');
+  }
+  if (!Array.isArray(legacy.requiredTripPoints)) {
+    throw new Error('Legacy Bushmesh map-state trip-point list is invalid.');
   }
 
   // V1 had no authenticated manifest/artifact pair. Never migrate a real
@@ -213,7 +220,7 @@ function migrateLegacySnapshot(parsed: unknown): BushMeshMapStateSnapshotV2 | nu
 
   return {
     version: BUSHMESH_MAP_STATE_SNAPSHOT_VERSION,
-    savedAtMs: legacy.savedAtMs,
+    savedAtMs,
     catalog: [],
     simulatedPacks,
     requiredTripPoints: legacy.requiredTripPoints.map(point => ({...point})),
