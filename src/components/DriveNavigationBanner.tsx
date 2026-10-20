@@ -3,6 +3,7 @@ import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {buddyTailDistanceMeters} from '../convoy/buddyTails';
 import {formatDistance} from '../convoy/convoy';
+import {getFieldTargetGuidance} from '../convoy/fieldTarget';
 import {getMovingTargetGuidance} from '../convoy/movingTarget';
 import {useConvoy} from '../state/ConvoyContext';
 import {colors} from '../theme/colors';
@@ -17,11 +18,31 @@ function formatAge(ageSeconds: number): string {
   return `${Math.floor(ageSeconds / 3_600)}h`;
 }
 
+function fixedTargetEyebrow(type: string, expired: boolean): string {
+  if (expired) {
+    return 'TARGET EXPIRED · HOLD';
+  }
+
+  switch (type) {
+    case 'regroup':
+      return 'NAVIGATE TO REGROUP';
+    case 'help':
+      return 'NAVIGATE TO HELP';
+    case 'hazard':
+      return 'HAZARD LOCATION';
+    case 'stop':
+      return 'STOP LOCATION';
+    default:
+      return 'FIXED FIELD TARGET';
+  }
+}
+
 export function DriveNavigationBanner(): React.JSX.Element | null {
   const {
     localPosition,
     navigationTargetVehicleId,
     navigationTargetVehicle,
+    navigationFieldTarget,
     getBuddyTail,
     clearNavigationTarget,
   } = useConvoy();
@@ -32,9 +53,13 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
     return () => clearInterval(timer);
   }, []);
 
-  const guidance = useMemo(
+  const movingGuidance = useMemo(
     () => getMovingTargetGuidance(localPosition, navigationTargetVehicle, nowMs),
     [localPosition, navigationTargetVehicle, nowMs],
+  );
+  const fixedGuidance = useMemo(
+    () => getFieldTargetGuidance(localPosition, navigationFieldTarget, nowMs),
+    [localPosition, navigationFieldTarget, nowMs],
   );
   const buddyTail = useMemo(
     () =>
@@ -45,11 +70,63 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
   );
   const tailDistanceMeters = buddyTail ? buddyTailDistanceMeters(buddyTail) : 0;
 
-  if (!navigationTargetVehicleId) {
+  const hasVehicleTarget = navigationTargetVehicleId !== null;
+  const hasFieldTarget = navigationFieldTarget !== null;
+  if (!hasVehicleTarget && !hasFieldTarget) {
     return null;
   }
 
-  const safeToFollow = guidance?.safeToFollow ?? false;
+  if (hasFieldTarget && navigationFieldTarget) {
+    const expired =
+      fixedGuidance?.expired ??
+      (navigationFieldTarget.expiresAtMs !== null &&
+        navigationFieldTarget.expiresAtMs <= nowMs);
+
+    return (
+      <View
+        style={[
+          styles.banner,
+          expired ? styles.bannerHold : styles.bannerFixed,
+        ]}>
+        <View style={styles.targetCopy}>
+          <Text style={styles.eyebrow}>
+            {fixedTargetEyebrow(navigationFieldTarget.type, expired)}
+          </Text>
+          <Text style={styles.targetName} numberOfLines={1}>
+            {navigationFieldTarget.label}
+          </Text>
+          <Text style={expired ? styles.tailText : styles.fixedText}>
+            FIXED POINT · sender {navigationFieldTarget.senderId.slice(-6)}
+          </Text>
+        </View>
+
+        {fixedGuidance ? (
+          <View style={styles.guidance}>
+            <Text style={styles.bearing}>
+              {fixedGuidance.compassDirection}{' '}
+              {Math.round(fixedGuidance.bearingDegrees)}°
+            </Text>
+            <Text style={styles.distance}>
+              {formatDistance(fixedGuidance.distanceMeters)}
+            </Text>
+            <Text style={expired ? styles.freshnessHold : styles.freshnessFixed}>
+              {expired ? 'EXPIRED · DO NOT RELY' : 'FIXED LOCATION'}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.guidance}>
+            <Text style={styles.waiting}>WAITING FOR GPS</Text>
+          </View>
+        )}
+
+        <TouchableOpacity style={styles.stopButton} onPress={clearNavigationTarget}>
+          <Text style={styles.stopText}>×</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const safeToFollow = movingGuidance?.safeToFollow ?? false;
   const hasUsefulTail = (buddyTail?.points.length ?? 0) > 1;
 
   return (
@@ -73,15 +150,19 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
         ) : null}
       </View>
 
-      {guidance ? (
+      {movingGuidance ? (
         <View style={styles.guidance}>
           <Text style={styles.bearing}>
-            {guidance.compassDirection} {Math.round(guidance.bearingDegrees)}°
+            {movingGuidance.compassDirection}{' '}
+            {Math.round(movingGuidance.bearingDegrees)}°
           </Text>
-          <Text style={styles.distance}>{formatDistance(guidance.distanceMeters)}</Text>
+          <Text style={styles.distance}>
+            {formatDistance(movingGuidance.distanceMeters)}
+          </Text>
           <Text
             style={safeToFollow ? styles.freshnessLive : styles.freshnessHold}>
-            {guidance.freshness.toUpperCase()} · {formatAge(guidance.ageSeconds)}
+            {movingGuidance.freshness.toUpperCase()} ·{' '}
+            {formatAge(movingGuidance.ageSeconds)}
           </Text>
         </View>
       ) : (
@@ -108,6 +189,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   bannerLive: {borderBottomColor: colors.success},
+  bannerFixed: {borderBottomColor: colors.accent},
   bannerHold: {borderBottomColor: colors.warning},
   targetCopy: {flex: 1, minWidth: 0},
   eyebrow: {
@@ -128,6 +210,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 3,
   },
+  fixedText: {
+    color: colors.accent,
+    fontSize: 8,
+    fontWeight: '800',
+    marginTop: 3,
+  },
   guidance: {alignItems: 'flex-end', marginLeft: 10},
   bearing: {color: colors.accent, fontSize: 18, fontWeight: '900'},
   distance: {
@@ -138,6 +226,12 @@ const styles = StyleSheet.create({
   },
   freshnessLive: {
     color: colors.success,
+    fontSize: 8,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  freshnessFixed: {
+    color: colors.accent,
     fontSize: 8,
     fontWeight: '900',
     marginTop: 2,
