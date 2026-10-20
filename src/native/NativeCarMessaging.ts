@@ -9,13 +9,14 @@ export type NativeCarReply = {
   attempts: number;
   lastAttemptAtMs: number | null;
   lastError: string | null;
-  state: 'queued' | 'blocked';
+  state: 'queued' | 'blocked' | 'accepted';
 };
 
 export type NativeCarMessagingStatus = {
   notificationsEnabled: boolean;
   queuedReplies: number;
   blockedReplies: number;
+  acceptedReplies: number;
 };
 
 type NativeCarMessagingModule = {
@@ -33,6 +34,7 @@ type NativeCarMessagingModule = {
     errorMessage: string | null,
   ) => Promise<boolean>;
   markReplyBlocked: (id: string, reason: string) => Promise<boolean>;
+  markReplyAccepted: (id: string) => Promise<boolean>;
   getStatus: () => Promise<NativeCarMessagingStatus>;
 };
 
@@ -44,6 +46,7 @@ const unsupportedStatus: NativeCarMessagingStatus = {
   notificationsEnabled: false,
   queuedReplies: 0,
   blockedReplies: 0,
+  acceptedReplies: 0,
 };
 
 export const nativeCarMessaging = {
@@ -99,6 +102,13 @@ export const nativeCarMessaging = {
       return false;
     }
     return module.markReplyBlocked(id, reason);
+  },
+
+  async markReplyAccepted(id: string): Promise<boolean> {
+    if (!this.isSupported() || !module) {
+      return false;
+    }
+    return module.markReplyAccepted(id);
   },
 
   async getStatus(): Promise<NativeCarMessagingStatus> {
