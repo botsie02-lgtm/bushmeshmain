@@ -14,6 +14,17 @@ type InventoryState = {
   ids: Set<number>;
 };
 
+export type BushMeshSyncInventorySnapshot = {
+  namespace: number;
+  generation: number;
+  ids: number[];
+};
+
+export type BushMeshSyncManagerSnapshot = {
+  inventories: BushMeshSyncInventorySnapshot[];
+  remoteSummaries: BushMeshInventorySummary[];
+};
+
 export class BushMeshSyncManager {
   private readonly inventories = new Map<number, InventoryState>();
   private readonly remoteSummaries = new Map<number, BushMeshInventorySummary>();
@@ -144,6 +155,88 @@ export class BushMeshSyncManager {
     }
 
     this.remoteSummaries.delete(namespace);
+  }
+
+  snapshot(): BushMeshSyncManagerSnapshot {
+    return {
+      inventories: Array.from(this.inventories.entries())
+        .map(([namespace, state]) => ({
+          namespace,
+          generation: state.generation,
+          ids: Array.from(state.ids).sort((a, b) => a - b),
+        }))
+        .sort((a, b) => a.namespace - b.namespace),
+      remoteSummaries: Array.from(this.remoteSummaries.values())
+        .map(summary => ({...summary, bloomBytes: [...summary.bloomBytes]}))
+        .sort((a, b) => a.namespace - b.namespace),
+    };
+  }
+
+  restore(
+    snapshot: BushMeshSyncManagerSnapshot,
+    options?: {replace?: boolean},
+  ): {inventories: number; remoteSummaries: number} {
+    if (!snapshot || !Array.isArray(snapshot.inventories) || !Array.isArray(snapshot.remoteSummaries)) {
+      throw new Error('BushMesh sync snapshot has invalid shape.');
+    }
+
+    if (options?.replace !== false) {
+      this.inventories.clear();
+      this.remoteSummaries.clear();
+    }
+
+    let restoredInventories = 0;
+    for (const saved of snapshot.inventories) {
+      if (
+        !saved ||
+        !Number.isInteger(saved.namespace) ||
+        saved.namespace < 0 ||
+        saved.namespace > 255 ||
+        !Number.isInteger(saved.generation) ||
+        saved.generation < 1 ||
+        saved.generation > 0xffffffff ||
+        !Array.isArray(saved.ids)
+      ) {
+        continue;
+      }
+
+      const ids = saved.ids.filter(
+        id => Number.isInteger(id) && id >= 0 && id <= 0xffffffff,
+      );
+      this.inventories.set(saved.namespace, {
+        generation: saved.generation,
+        ids: new Set(ids),
+      });
+      restoredInventories += 1;
+    }
+
+    let restoredRemoteSummaries = 0;
+    for (const summary of snapshot.remoteSummaries) {
+      if (
+        !summary ||
+        !Number.isInteger(summary.namespace) ||
+        !Number.isInteger(summary.generation) ||
+        !Array.isArray(summary.bloomBytes)
+      ) {
+        continue;
+      }
+
+      this.remoteSummaries.set(summary.namespace, {
+        ...summary,
+        bloomBytes: [...summary.bloomBytes],
+      });
+      restoredRemoteSummaries += 1;
+    }
+
+    return {
+      inventories: restoredInventories,
+      remoteSummaries: restoredRemoteSummaries,
+    };
+  }
+
+  clear(): void {
+    this.inventories.clear();
+    this.remoteSummaries.clear();
   }
 
   private getOrCreate(namespace: BushMeshSyncNamespace | number): InventoryState {
