@@ -11,6 +11,7 @@ import {
 import {BushMeshFileContentType} from '../bushmesh/protocol';
 import {useBushMesh} from '../state/BushMeshContext';
 import {colors} from '../theme/colors';
+import {BushMeshPacketWorkbench} from './BushMeshPacketWorkbench';
 
 const MAX_TEXT_FILE_BYTES = 4 * 1024;
 const FILE_CHUNK_BYTES = 32;
@@ -81,59 +82,63 @@ export function BushMeshFileSendPanel(): React.JSX.Element {
   };
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.title}>Send Small Text File</Text>
-      <Text style={styles.body}>
-        This is intentionally limited to {MAX_TEXT_FILE_BYTES / 1024} KB until
-        real-radio airtime and reliability measurements are available.
-      </Text>
-
-      <Text style={styles.label}>File name</Text>
-      <TextInput
-        style={styles.input}
-        value={fileName}
-        onChangeText={setFileName}
-        maxLength={120}
-        placeholder="bushmesh-note.txt"
-        placeholderTextColor={colors.textMuted}
-        autoCapitalize="none"
-      />
-
-      <Text style={styles.label}>Contents</Text>
-      <TextInput
-        style={[styles.input, styles.textArea]}
-        value={text}
-        onChangeText={setText}
-        multiline
-        textAlignVertical="top"
-        placeholder="Type text to transfer over BushMesh"
-        placeholderTextColor={colors.textMuted}
-      />
-
-      <View style={styles.metaRow}>
-        <Text style={[styles.meta, payloadTooLarge && styles.errorText]}>
-          {payloadBytes.length}/{MAX_TEXT_FILE_BYTES} bytes
+    <>
+      <View style={styles.card}>
+        <Text style={styles.title}>Send Small Text File</Text>
+        <Text style={styles.body}>
+          This is intentionally limited to {MAX_TEXT_FILE_BYTES / 1024} KB until
+          real-radio airtime and reliability measurements are available.
         </Text>
-        <Text style={[styles.meta, fileNameInvalid && styles.errorText]}>
-          Name {fileNameBytes}/120 bytes
-        </Text>
+
+        <Text style={styles.label}>File name</Text>
+        <TextInput
+          style={styles.input}
+          value={fileName}
+          onChangeText={setFileName}
+          maxLength={120}
+          placeholder="bushmesh-note.txt"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="none"
+        />
+
+        <Text style={styles.label}>Contents</Text>
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          value={text}
+          onChangeText={setText}
+          multiline
+          textAlignVertical="top"
+          placeholder="Type text to transfer over BushMesh"
+          placeholderTextColor={colors.textMuted}
+        />
+
+        <View style={styles.metaRow}>
+          <Text style={[styles.meta, payloadTooLarge && styles.errorText]}>
+            {payloadBytes.length}/{MAX_TEXT_FILE_BYTES} bytes
+          </Text>
+          <Text style={[styles.meta, fileNameInvalid && styles.errorText]}>
+            Name {fileNameBytes}/120 bytes
+          </Text>
+        </View>
+
+        <Text style={styles.status}>{status}</Text>
+
+        <TouchableOpacity
+          style={[styles.sendButton, !canSend && styles.buttonDisabled]}
+          disabled={!canSend}
+          onPress={sendFile}>
+          <Text style={styles.sendButtonText}>
+            {sending
+              ? 'Starting transfer...'
+              : activeChannel
+                ? `Send on ${activeChannel.channelName}`
+                : 'Select an active channel'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <Text style={styles.status}>{status}</Text>
-
-      <TouchableOpacity
-        style={[styles.sendButton, !canSend && styles.buttonDisabled]}
-        disabled={!canSend}
-        onPress={sendFile}>
-        <Text style={styles.sendButtonText}>
-          {sending
-            ? 'Starting transfer...'
-            : activeChannel
-              ? `Send on ${activeChannel.channelName}`
-              : 'Select an active channel'}
-        </Text>
-      </TouchableOpacity>
-    </View>
+      <BushMeshPacketWorkbench />
+    </>
   );
 }
 
