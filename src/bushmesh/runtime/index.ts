@@ -4,6 +4,7 @@ export * from './BushMeshAirtimeTransport';
 export * from './BushMeshCommandResponder';
 export * from './BushMeshConvoyCoordinator';
 export * from './BushMeshConvoyHub';
+export * from './BushMeshConvoyPersistence';
 export * from './BushMeshConvoyTracker';
 export * from './BushMeshDeliveryTracker';
 export * from './BushMeshDiagnostics';
