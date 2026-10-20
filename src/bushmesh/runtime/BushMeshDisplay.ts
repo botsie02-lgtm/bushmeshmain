@@ -1,5 +1,6 @@
 import {
   BushMeshControlCommand,
+  BushMeshConvoyRole,
   BushMeshDistressType,
   BushMeshSyncFrameKind,
   BushMeshTypedPacket,
@@ -26,6 +27,23 @@ function distressLabel(type: number): string {
       return 'Emergency assistance requested';
     default:
       return `Emergency type ${type}`;
+  }
+}
+
+function convoyRoleLabel(role: number): string {
+  switch (role) {
+    case BushMeshConvoyRole.Lead:
+      return 'lead';
+    case BushMeshConvoyRole.Member:
+      return 'member';
+    case BushMeshConvoyRole.Tail:
+      return 'tail';
+    case BushMeshConvoyRole.Recovery:
+      return 'recovery';
+    case BushMeshConvoyRole.Support:
+      return 'support';
+    default:
+      return `role ${role}`;
   }
 }
 
@@ -111,6 +129,24 @@ function renderTyped(packet: BushMeshTypedPacket): string | null {
       return packet.value.kind === BushMeshSyncFrameKind.Summary
         ? `Sync summary • namespace ${packet.value.namespace} • generation ${packet.value.generation}`
         : `Sync range request • namespace ${packet.value.namespace} • ${packet.value.ranges.length} range(s)`;
+
+    case 'convoy': {
+      const values = [
+        `Convoy ${packet.value.convoyId}`,
+        `position ${packet.value.orderIndex}`,
+        convoyRoleLabel(packet.value.role),
+      ];
+      if (packet.value.speedKph !== undefined) {
+        values.push(`${packet.value.speedKph.toFixed(1)} km/h`);
+      }
+      if (packet.value.stopped) {
+        values.push('stopped');
+      }
+      if (packet.value.hazard) {
+        values.push('hazard');
+      }
+      return `🚙 ${values.join(' • ')}`;
+    }
 
     case 'file':
       return 'BushMesh file-transfer frame';
