@@ -33,11 +33,13 @@ export class BushMeshMessageIdGenerator {
   }
 }
 
-type SeenMessage = {
+export type BushMeshSeenMessageSnapshot = {
   key: string;
   seenAt: number;
   expiresAt: number;
 };
+
+type SeenMessage = BushMeshSeenMessageSnapshot;
 
 export class BushMeshRecentMessageCache {
   private readonly seen = new Map<string, SeenMessage>();
@@ -97,6 +99,42 @@ export class BushMeshRecentMessageCache {
     }
 
     return removed;
+  }
+
+  snapshot(now = Date.now()): BushMeshSeenMessageSnapshot[] {
+    this.prune(now);
+    return Array.from(this.seen.values()).map(entry => ({...entry}));
+  }
+
+  restore(
+    entries: BushMeshSeenMessageSnapshot[],
+    now = Date.now(),
+    replace = true,
+  ): number {
+    if (replace) {
+      this.seen.clear();
+    }
+
+    let restored = 0;
+    for (const entry of entries) {
+      if (
+        !entry ||
+        typeof entry.key !== 'string' ||
+        !Number.isFinite(entry.seenAt) ||
+        !Number.isFinite(entry.expiresAt) ||
+        entry.seenAt < 0 ||
+        entry.expiresAt <= now ||
+        entry.expiresAt < entry.seenAt
+      ) {
+        continue;
+      }
+
+      this.seen.set(entry.key, {...entry});
+      restored += 1;
+    }
+
+    this.trimToLimit();
+    return restored;
   }
 
   clear(): void {
