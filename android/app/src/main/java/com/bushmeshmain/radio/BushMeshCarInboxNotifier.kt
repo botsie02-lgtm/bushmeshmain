@@ -3,12 +3,13 @@ package com.bushmeshmain.radio
 import android.content.Context
 
 /**
- * Observes complete MeshCore BLE notifications while Android owns the radio and
- * publishes channel text as Android/Android Auto messaging notifications.
+ * Observes complete MeshCore BLE notifications while Android owns the radio,
+ * persists channel text for foreground recovery, and publishes Android/Android
+ * Auto messaging notifications when the driver has enabled them.
  *
- * It never consumes MeshCore frames, never sends protocol commands and has its
- * own replay registry, so foreground React Native and background protocol
- * workers continue to receive the exact same raw notifications independently.
+ * It never consumes MeshCore frames and never sends protocol commands, so
+ * foreground React Native and background protocol workers continue receiving
+ * the same raw notifications independently.
  */
 class BushMeshCarInboxNotifier(
   context: Context,
@@ -17,6 +18,7 @@ class BushMeshCarInboxNotifier(
   private val notifications = BushMeshCarNotifications(context)
   private val receipts = BushMeshCarNotificationReceiptStore(context)
   private val channelDirectory = BushMeshCarChannelDirectory(context)
+  private val channelInbox = BushMeshNativeChannelInboxStore(context)
   private var running = false
 
   private val listener = MeshCoreNativeBleRuntime.FrameListener { frame ->
@@ -52,6 +54,14 @@ class BushMeshCarInboxNotifier(
     }
 
     val message = MeshCoreNativeChannelMessageParser.parse(frame) ?: return
+
+    try {
+      // Persist independently of notification permission. Exact repeated frames
+      // are deduped by the encrypted inbox store.
+      channelInbox.append(frame)
+    } catch (_: Exception) {
+      // Message retention failure must not destabilize live MeshCore handling.
+    }
 
     // Permission can be granted later. Do not record a notification receipt
     // while notifications are disabled, otherwise a later queued replay could
