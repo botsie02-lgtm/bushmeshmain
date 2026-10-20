@@ -11,6 +11,7 @@ class BushMeshStoragePackage : ReactPackage {
   ): List<NativeModule> = listOf(
     BushMeshStorageModule(reactContext),
     BushMeshVoiceModule(reactContext),
+    BushMeshLocationModule(reactContext),
   )
 
   override fun createViewManagers(
