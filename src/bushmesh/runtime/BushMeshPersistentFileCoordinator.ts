@@ -61,10 +61,13 @@ export class BushMeshPersistentFileCoordinator {
         continue;
       }
 
+      // Re-send FILE_START after process restart. A peer that retained receive
+      // state can treat it idempotently, while a restarted peer can recreate its
+      // receiver before missing chunks are retried.
       manager.restoreOutgoing(
         saved.transfer,
         checkpoint.acknowledgedChunkIndexes,
-        true,
+        false,
       );
       restored.push(checkpoint.transferId);
     }
