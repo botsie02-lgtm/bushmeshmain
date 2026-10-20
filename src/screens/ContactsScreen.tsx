@@ -53,8 +53,7 @@ function formatLastSeen(value: string): string {
   if (ageMs < 24 * 60 * 60_000) {
     return `${Math.floor(ageMs / (60 * 60_000))} hr ago`;
   }
-
-  return new Date(timestamp).toLocaleDateString();
+  return `${Math.floor(ageMs / (24 * 60 * 60_000))} day(s) ago`;
 }
 
 export function ContactsScreen(): React.JSX.Element {
@@ -65,138 +64,106 @@ export function ContactsScreen(): React.JSX.Element {
     localBushMeshNodeId,
     activeChannel,
     canSendBushMeshRoutedMessage,
+    bushMeshDeliveryStatus,
     sendBushMeshRoutedMessage,
     refreshBushMeshDiscovery,
+    flushBushMeshQueuedMessages,
     addLocalChannelMessage,
   } = useBushMesh();
 
   const [selectedPeerId, setSelectedPeerId] = useState<number | null>(null);
   const [messageText, setMessageText] = useState('');
-  const [sendStatus, setSendStatus] = useState(
-    'Select a BushMesh peer to send a routed direct message.',
+  const [status, setStatus] = useState(
+    'Select a BushMesh peer for direct messages or control requests.',
   );
-  const [isSending, setIsSending] = useState(false);
-  const [isDiscovering, setIsDiscovering] = useState(false);
-  const [peerAction, setPeerAction] = useState<'info' | 'location' | null>(null);
+  const [busy, setBusy] = useState<
+    'message' | 'discovery' | 'info' | 'location' | 'flush' | null
+  >(null);
 
-  const sortedPeers = useMemo(
+  const peers = useMemo(
     () =>
       [...knownBushMeshPeers].sort((a, b) =>
         b.lastSeenAt.localeCompare(a.lastSeenAt),
       ),
     [knownBushMeshPeers],
   );
-
-  const selectedPeer =
-    sortedPeers.find(peer => peer.nodeId === selectedPeerId) ?? null;
-  const cleanMessage = messageText.trim();
+  const selectedPeer = peers.find(peer => peer.nodeId === selectedPeerId) ?? null;
   const channelIndex = activeChannel ? Number(activeChannel.channelIndex) : NaN;
-  const canUsePeerActions =
+  const validChannel = Number.isInteger(channelIndex);
+  const actionsReady =
     selectedPeer !== null &&
     localBushMeshNodeId !== null &&
-    Number.isInteger(channelIndex) &&
+    validChannel &&
     canSendBushMeshRoutedMessage &&
-    peerAction === null;
-  const canSendDirect =
-    canUsePeerActions && cleanMessage.length > 0 && !isSending;
-  const canRefreshDiscovery =
-    connectionStatus === 'Connected' &&
-    Number.isInteger(channelIndex) &&
-    !isDiscovering;
+    busy === null;
+  const cleanMessage = messageText.trim();
 
-  const runDiscoveryRefresh = async () => {
+  const refreshDiscovery = async () => {
     try {
-      setIsDiscovering(true);
-      setSendStatus('Broadcasting BushMesh HELLO on the active channel...');
+      setBusy('discovery');
+      setStatus('Broadcasting BushMesh HELLO...');
       await refreshBushMeshDiscovery();
-      setSendStatus(
-        `BushMesh HELLO broadcast on ${activeChannel?.channelName ?? `channel ${channelIndex}`}. Nearby BushMesh nodes should answer with their own periodic HELLO traffic.`,
-      );
+      setStatus('BushMesh HELLO broadcast on the active channel.');
     } catch (error) {
-      setSendStatus(
-        error instanceof Error ? error.message : 'BushMesh discovery refresh failed.',
-      );
+      setStatus(error instanceof Error ? error.message : 'Discovery failed.');
     } finally {
-      setIsDiscovering(false);
+      setBusy(null);
     }
   };
 
-  const sendPeerInfoRequest = async () => {
-    if (
-      !selectedPeer ||
-      localBushMeshNodeId === null ||
-      !Number.isInteger(channelIndex)
-    ) {
-      setSendStatus('Select a peer and active BushMesh channel first.');
+  const requestInfo = async () => {
+    if (!actionsReady || !selectedPeer || localBushMeshNodeId === null) {
       return;
     }
 
     try {
-      setPeerAction('info');
-      setSendStatus(`Requesting node info from ${nodeIdLabel(selectedPeer.nodeId)}...`);
+      setBusy('info');
       const result = await requestBushMeshPeerNodeInfo(
         channelIndex,
         localBushMeshNodeId,
         selectedPeer.nodeId,
       );
-      setSendStatus(
-        `Node-info request ${result.routedMessageId} sent to ${nodeIdLabel(selectedPeer.nodeId)}. The peer should answer with its current HELLO data.`,
+      setStatus(
+        `Node-info request ${result.routedMessageId} sent to ${nodeIdLabel(selectedPeer.nodeId)}.`,
       );
     } catch (error) {
-      setSendStatus(
-        error instanceof Error ? error.message : 'Failed to request peer node info.',
-      );
+      setStatus(error instanceof Error ? error.message : 'Node-info request failed.');
     } finally {
-      setPeerAction(null);
+      setBusy(null);
     }
   };
 
-  const sendPeerLocationRequest = async () => {
-    if (
-      !selectedPeer ||
-      localBushMeshNodeId === null ||
-      !Number.isInteger(channelIndex)
-    ) {
-      setSendStatus('Select a peer and active BushMesh channel first.');
+  const requestLocation = async () => {
+    if (!actionsReady || !selectedPeer || localBushMeshNodeId === null) {
       return;
     }
 
     try {
-      setPeerAction('location');
-      setSendStatus(`Requesting location from ${nodeIdLabel(selectedPeer.nodeId)}...`);
+      setBusy('location');
       const result = await requestBushMeshPeerLocation(
         channelIndex,
         localBushMeshNodeId,
         selectedPeer.nodeId,
         {maxAgeSeconds: 300},
       );
-      setSendStatus(
-        `Location request ${result.routedMessageId} sent to ${nodeIdLabel(selectedPeer.nodeId)}. A peer with a recent location fix will return a compact location packet.`,
+      setStatus(
+        `Location request ${result.routedMessageId} sent to ${nodeIdLabel(selectedPeer.nodeId)}.`,
       );
     } catch (error) {
-      setSendStatus(
-        error instanceof Error ? error.message : 'Failed to request peer location.',
-      );
+      setStatus(error instanceof Error ? error.message : 'Location request failed.');
     } finally {
-      setPeerAction(null);
+      setBusy(null);
     }
   };
 
-  const sendDirectMessage = async () => {
-    if (!selectedPeer) {
-      setSendStatus('Select a BushMesh peer first.');
-      return;
-    }
-
-    if (!activeChannel || !Number.isInteger(channelIndex)) {
-      setSendStatus('Select a valid active channel in the Channels tab first.');
+  const sendDirect = async () => {
+    if (!actionsReady || !selectedPeer || !activeChannel || !cleanMessage) {
       return;
     }
 
     try {
-      setIsSending(true);
-      setSendStatus(`Routing message to ${nodeIdLabel(selectedPeer.nodeId)}...`);
-
+      setBusy('message');
+      setStatus(`Routing message to ${nodeIdLabel(selectedPeer.nodeId)}...`);
       const result = await sendBushMeshRoutedMessage(
         channelIndex,
         cleanMessage,
@@ -208,20 +175,36 @@ export function ContactsScreen(): React.JSX.Element {
         channelName: activeChannel.channelName,
         text: cleanMessage,
         direction: 'sent',
-        status: 'sent',
+        status: result.state === 'sent' ? 'sent' : 'pending',
         protocol: 'bushmesh-routed',
       });
 
-      setSendStatus(
-        `Message ${result.messageId} sent to ${nodeIdLabel(selectedPeer.nodeId)} in ${result.frameCount} frame(s).`,
-      );
+      if (result.state === 'queued') {
+        setStatus(
+          `Message ${result.messageId} saved for retry${result.queueId ? ` as ${result.queueId}` : ''}.`,
+        );
+      } else {
+        setStatus(
+          `Message ${result.messageId} sent to ${nodeIdLabel(selectedPeer.nodeId)} in ${result.frameCount ?? 0} frame(s).`,
+        );
+      }
       setMessageText('');
     } catch (error) {
-      setSendStatus(
-        error instanceof Error ? error.message : 'Failed to send routed message.',
-      );
+      setStatus(error instanceof Error ? error.message : 'Direct message failed.');
     } finally {
-      setIsSending(false);
+      setBusy(null);
+    }
+  };
+
+  const flushQueue = async () => {
+    try {
+      setBusy('flush');
+      await flushBushMeshQueuedMessages();
+      setStatus('Requested immediate retry of queued BushMesh messages.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Queue retry failed.');
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -229,95 +212,73 @@ export function ContactsScreen(): React.JSX.Element {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.heroCard}>
         <Text style={styles.eyebrow}>Contacts</Text>
-        <Text style={styles.title}>Nodes & Direct Messages</Text>
+        <Text style={styles.title}>BushMesh Peers</Text>
         <Text style={styles.body}>
-          MeshCore contacts are synced from the companion node. BushMesh peers are
-          discovered over the selected channel and can receive routed direct
-          messages and control requests by node ID.
+          Discover BushMesh nodes, send routed direct messages, and request peer
+          node information or a current location fix.
         </Text>
       </View>
 
       <View style={styles.summaryCard}>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Connection</Text>
-          <Text
-            style={[
-              styles.summaryValue,
-              connectionStatus === 'Connected' && styles.summaryValueOnline,
-            ]}>
-            {connectionStatus}
-          </Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Local node</Text>
-          <Text style={styles.summaryValue}>
-            {localBushMeshNodeId === null
-              ? 'Waiting for identity'
-              : nodeIdLabel(localBushMeshNodeId)}
-          </Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>BushMesh peers</Text>
-          <Text style={styles.summaryValue}>{sortedPeers.length}</Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>MeshCore contacts</Text>
-          <Text style={styles.summaryValue}>{contacts.length}</Text>
-        </View>
+        <Summary label="Connection" value={connectionStatus} online={connectionStatus === 'Connected'} />
+        <Summary
+          label="Local node"
+          value={localBushMeshNodeId === null ? 'Waiting' : nodeIdLabel(localBushMeshNodeId)}
+        />
+        <Summary label="Peers" value={String(peers.length)} />
+        <Summary label="Queued" value={String(bushMeshDeliveryStatus.queuedMessages)} />
       </View>
 
       <View style={styles.sectionCard}>
         <View style={styles.rowBetween}>
           <View style={styles.flexOne}>
-            <Text style={styles.sectionTitle}>BushMesh Peers</Text>
-            <Text style={styles.sectionBody}>
-              Tap a peer to make it the destination for routed operations.
+            <Text style={styles.sectionTitle}>Discovery</Text>
+            <Text style={styles.detail}>
+              Active channel: {activeChannel ? `${activeChannel.channelName} #${activeChannel.channelIndex}` : 'none'}
             </Text>
           </View>
           <TouchableOpacity
-            style={[
-              styles.refreshButton,
-              !canRefreshDiscovery && styles.refreshButtonDisabled,
-            ]}
-            disabled={!canRefreshDiscovery}
-            onPress={runDiscoveryRefresh}>
-            <Text style={styles.refreshButtonText}>
-              {isDiscovering ? 'Sending...' : 'Refresh'}
+            style={[styles.smallButton, (!validChannel || busy !== null) && styles.disabled]}
+            disabled={!validChannel || busy !== null}
+            onPress={refreshDiscovery}>
+            <Text style={styles.smallButtonText}>
+              {busy === 'discovery' ? 'Sending...' : 'Refresh'}
             </Text>
           </TouchableOpacity>
         </View>
+        <Text style={styles.statusText}>{status}</Text>
+      </View>
 
-        {sortedPeers.length === 0 ? (
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>Discovered Peers</Text>
+        {peers.length === 0 ? (
           <Text style={styles.emptyText}>
-            No BushMesh peers discovered yet. Keep two BushMesh devices on the
-            same MeshCore channel so their HELLO packets can be exchanged.
+            No BushMesh HELLO packets received yet. Keep devices on the same
+            MeshCore channel and use Refresh if needed.
           </Text>
         ) : (
-          sortedPeers.map(peer => {
+          peers.map(peer => {
             const selected = peer.nodeId === selectedPeerId;
             return (
               <TouchableOpacity
                 key={peer.nodeId}
-                style={[styles.peerCard, selected && styles.peerCardSelected]}
+                style={[styles.peerCard, selected && styles.selectedCard]}
                 onPress={() => setSelectedPeerId(peer.nodeId)}>
                 <View style={styles.rowBetween}>
                   <View style={styles.flexOne}>
                     <Text style={styles.peerId}>{nodeIdLabel(peer.nodeId)}</Text>
                     <Text style={styles.peerRole}>{roleLabel(peer.role)}</Text>
                   </View>
-                  <View style={styles.peerMetaRight}>
-                    <Text style={styles.peerSeen}>{formatLastSeen(peer.lastSeenAt)}</Text>
-                    <Text style={styles.peerBattery}>
-                      {peer.batteryPercent === undefined
-                        ? 'Battery --'
-                        : `Battery ${peer.batteryPercent}%`}
+                  <View style={styles.rightText}>
+                    <Text style={styles.detail}>{formatLastSeen(peer.lastSeenAt)}</Text>
+                    <Text style={styles.detail}>
+                      {peer.batteryPercent === undefined ? 'Battery --' : `Battery ${peer.batteryPercent}%`}
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.capabilityText}>
-                  Capability mask 0x{peer.capabilities.toString(16).toUpperCase()}
+                <Text style={styles.capabilities}>
+                  Capabilities 0x{peer.capabilities.toString(16).toUpperCase()}
                 </Text>
-                {selected ? <Text style={styles.selectedText}>Selected destination</Text> : null}
               </TouchableOpacity>
             );
           })
@@ -326,90 +287,100 @@ export function ContactsScreen(): React.JSX.Element {
 
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Peer Actions</Text>
-        <Text style={styles.sectionBody}>
+        <Text style={styles.detail}>
           {selectedPeer
-            ? `Send compact control requests to ${nodeIdLabel(selectedPeer.nodeId)}.`
-            : 'Select a BushMesh peer above.'}
+            ? `Selected ${nodeIdLabel(selectedPeer.nodeId)}`
+            : 'Select a peer above.'}
         </Text>
         <View style={styles.actionRow}>
           <TouchableOpacity
-            style={[styles.actionButton, !canUsePeerActions && styles.actionButtonDisabled]}
-            disabled={!canUsePeerActions}
-            onPress={sendPeerInfoRequest}>
-            <Text style={styles.actionButtonText}>
-              {peerAction === 'info' ? 'Requesting...' : 'Request node info'}
+            style={[styles.actionButton, !actionsReady && styles.disabled]}
+            disabled={!actionsReady}
+            onPress={requestInfo}>
+            <Text style={styles.actionText}>
+              {busy === 'info' ? 'Requesting...' : 'Node info'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.actionButton, !canUsePeerActions && styles.actionButtonDisabled]}
-            disabled={!canUsePeerActions}
-            onPress={sendPeerLocationRequest}>
-            <Text style={styles.actionButtonText}>
-              {peerAction === 'location' ? 'Requesting...' : 'Request location'}
+            style={[styles.actionButton, !actionsReady && styles.disabled]}
+            disabled={!actionsReady}
+            onPress={requestLocation}>
+            <Text style={styles.actionText}>
+              {busy === 'location' ? 'Requesting...' : 'Location'}
             </Text>
           </TouchableOpacity>
         </View>
       </View>
 
       <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Direct Routed Message</Text>
-        <Text style={styles.sectionBody}>
-          {selectedPeer
-            ? `Destination ${nodeIdLabel(selectedPeer.nodeId)} via ${activeChannel?.channelName ?? 'no active channel'}.`
-            : 'Select a BushMesh peer above.'}
-        </Text>
-
+        <Text style={styles.sectionTitle}>Direct Message</Text>
         <TextInput
           style={styles.input}
           value={messageText}
           onChangeText={setMessageText}
-          placeholder="Message a BushMesh peer"
+          placeholder="Message the selected peer"
           placeholderTextColor={colors.textMuted}
           multiline
+          maxLength={1000}
         />
-
         <TouchableOpacity
-          style={[styles.sendButton, !canSendDirect && styles.sendButtonDisabled]}
-          disabled={!canSendDirect}
-          onPress={sendDirectMessage}>
-          <Text style={styles.sendButtonText}>
-            {isSending ? 'Sending...' : 'Send Routed Direct Message'}
+          style={[
+            styles.primaryButton,
+            (!actionsReady || !cleanMessage) && styles.disabled,
+          ]}
+          disabled={!actionsReady || !cleanMessage}
+          onPress={sendDirect}>
+          <Text style={styles.primaryButtonText}>
+            {busy === 'message' ? 'Sending...' : 'Send Routed Direct Message'}
           </Text>
         </TouchableOpacity>
+      </View>
 
-        <Text style={styles.sendStatus}>{sendStatus}</Text>
+      <View style={styles.sectionCard}>
+        <View style={styles.rowBetween}>
+          <View style={styles.flexOne}>
+            <Text style={styles.sectionTitle}>Persistent Delivery</Text>
+            <Text style={styles.detail}>{bushMeshDeliveryStatus.detail}</Text>
+            <Text style={styles.storageText}>
+              {bushMeshDeliveryStatus.storageLabel} • {bushMeshDeliveryStatus.queuedMessages} queued
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[
+              styles.smallButton,
+              (bushMeshDeliveryStatus.queuedMessages === 0 || busy !== null) && styles.disabled,
+            ]}
+            disabled={bushMeshDeliveryStatus.queuedMessages === 0 || busy !== null}
+            onPress={flushQueue}>
+            <Text style={styles.smallButtonText}>
+              {busy === 'flush' ? 'Retrying...' : 'Retry now'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>MeshCore Contacts</Text>
-        <Text style={styles.sectionBody}>
-          These are the contacts currently synced from the connected companion.
-        </Text>
-
         {contacts.length === 0 ? (
-          <Text style={styles.emptyText}>
-            No MeshCore contacts loaded yet. Use the Device tab to sync contacts.
-          </Text>
+          <Text style={styles.emptyText}>No MeshCore contacts are loaded.</Text>
         ) : (
           contacts.map(contact => (
             <View key={contact.publicKey} style={styles.contactCard}>
               <View style={styles.rowBetween}>
                 <View style={styles.flexOne}>
                   <Text style={styles.contactName}>{contact.name || 'Unnamed contact'}</Text>
-                  <Text style={styles.contactKey}>{contact.publicKeyPrefix}</Text>
+                  <Text style={styles.detail}>{contact.publicKeyPrefix}</Text>
                 </View>
                 <Text style={styles.contactType}>Type {contact.type}</Text>
               </View>
-              <Text style={styles.contactDetail}>
+              <Text style={styles.detail}>
                 Path {contact.outPathLength} • Flags 0x{contact.flags.toString(16).toUpperCase()}
               </Text>
               {contact.latitude !== null && contact.longitude !== null ? (
-                <Text style={styles.contactDetail}>
+                <Text style={styles.detail}>
                   {contact.latitude.toFixed(5)}, {contact.longitude.toFixed(5)}
                 </Text>
-              ) : (
-                <Text style={styles.contactDetail}>No location advertised</Text>
-              )}
+              ) : null}
             </View>
           ))
         )}
@@ -418,249 +389,59 @@ export function ContactsScreen(): React.JSX.Element {
   );
 }
 
+function Summary({
+  label,
+  value,
+  online = false,
+}: {
+  label: string;
+  value: string;
+  online?: boolean;
+}) {
+  return (
+    <View style={styles.summaryBox}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={[styles.summaryValue, online && styles.online]}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  heroCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 22,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  eyebrow: {
-    color: colors.accent,
-    fontSize: 13,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    marginBottom: 8,
-  },
-  title: {
-    color: colors.textPrimary,
-    fontSize: 24,
-    fontWeight: '900',
-    marginBottom: 10,
-  },
-  body: {
-    color: colors.textSecondary,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  summaryCard: {
-    marginTop: 16,
-    backgroundColor: colors.surfaceSoft,
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  summaryItem: {
-    minWidth: '45%',
-    flexGrow: 1,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    padding: 10,
-  },
-  summaryLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-  summaryValue: {
-    color: colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  summaryValueOnline: {
-    color: colors.success,
-  },
-  sectionCard: {
-    marginTop: 18,
-    backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  sectionTitle: {
-    color: colors.textPrimary,
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  sectionBody: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 6,
-    marginBottom: 12,
-  },
-  emptyText: {
-    color: colors.textMuted,
-    fontSize: 14,
-    lineHeight: 20,
-    paddingVertical: 10,
-  },
-  refreshButton: {
-    backgroundColor: colors.accent,
-    borderRadius: 12,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-  },
-  refreshButtonDisabled: {
-    opacity: 0.4,
-  },
-  refreshButtonText: {
-    color: colors.background,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  peerCard: {
-    backgroundColor: colors.background,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 13,
-    marginTop: 10,
-  },
-  peerCardSelected: {
-    borderColor: colors.accent,
-    borderWidth: 2,
-  },
-  rowBetween: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  flexOne: {
-    flex: 1,
-  },
-  peerId: {
-    color: colors.textPrimary,
-    fontSize: 17,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-  },
-  peerRole: {
-    color: colors.accent,
-    fontSize: 12,
-    fontWeight: '800',
-    marginTop: 3,
-  },
-  peerMetaRight: {
-    alignItems: 'flex-end',
-  },
-  peerSeen: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  peerBattery: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginTop: 4,
-  },
-  capabilityText: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginTop: 9,
-  },
-  selectedText: {
-    color: colors.success,
-    fontSize: 11,
-    fontWeight: '900',
-    marginTop: 8,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  actionButton: {
-    flex: 1,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    paddingVertical: 11,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-  },
-  actionButtonDisabled: {
-    opacity: 0.4,
-  },
-  actionButtonText: {
-    color: colors.accent,
-    fontSize: 11,
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-  input: {
-    minHeight: 90,
-    backgroundColor: colors.background,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 12,
-    color: colors.textPrimary,
-    fontSize: 15,
-    textAlignVertical: 'top',
-  },
-  sendButton: {
-    marginTop: 12,
-    backgroundColor: colors.accent,
-    borderRadius: 14,
-    paddingVertical: 13,
-    alignItems: 'center',
-  },
-  sendButtonDisabled: {
-    opacity: 0.4,
-  },
-  sendButtonText: {
-    color: colors.background,
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  sendStatus: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 10,
-  },
-  contactCard: {
-    backgroundColor: colors.background,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 12,
-    marginTop: 10,
-  },
-  contactName: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '900',
-  },
-  contactKey: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginTop: 3,
-  },
-  contactType: {
-    color: colors.accent,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  contactDetail: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    marginTop: 7,
-  },
+  screen: {flex: 1, backgroundColor: colors.background},
+  content: {padding: 20, paddingBottom: 40},
+  flexOne: {flex: 1},
+  heroCard: {backgroundColor: colors.surface, borderRadius: 22, padding: 20, borderWidth: 1, borderColor: colors.border},
+  eyebrow: {color: colors.accent, fontSize: 13, fontWeight: '800', textTransform: 'uppercase', marginBottom: 8},
+  title: {color: colors.textPrimary, fontSize: 24, fontWeight: '900'},
+  body: {color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 8},
+  summaryCard: {marginTop: 16, backgroundColor: colors.surfaceSoft, borderRadius: 18, padding: 12, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', flexWrap: 'wrap', gap: 8},
+  summaryBox: {width: '47%', flexGrow: 1, backgroundColor: colors.background, borderRadius: 12, padding: 10},
+  summaryLabel: {color: colors.textMuted, fontSize: 10, fontWeight: '800'},
+  summaryValue: {color: colors.textPrimary, fontSize: 13, fontWeight: '900', marginTop: 4},
+  online: {color: colors.success},
+  sectionCard: {marginTop: 16, backgroundColor: colors.surface, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: colors.border},
+  sectionTitle: {color: colors.textPrimary, fontSize: 18, fontWeight: '900', marginBottom: 8},
+  rowBetween: {flexDirection: 'row', alignItems: 'center', gap: 12},
+  detail: {color: colors.textSecondary, fontSize: 11, lineHeight: 17, marginTop: 4},
+  statusText: {color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 10},
+  emptyText: {color: colors.textMuted, fontSize: 13, lineHeight: 19},
+  smallButton: {borderRadius: 12, borderWidth: 1, borderColor: colors.accent, paddingHorizontal: 12, paddingVertical: 9},
+  smallButtonText: {color: colors.accent, fontSize: 11, fontWeight: '900'},
+  disabled: {opacity: 0.4},
+  peerCard: {backgroundColor: colors.background, borderRadius: 14, borderWidth: 1, borderColor: colors.border, padding: 12, marginTop: 8},
+  selectedCard: {borderColor: colors.accent, borderWidth: 2},
+  peerId: {color: colors.textPrimary, fontSize: 16, fontWeight: '900', letterSpacing: 0.6},
+  peerRole: {color: colors.accent, fontSize: 11, fontWeight: '800', marginTop: 3},
+  rightText: {alignItems: 'flex-end'},
+  capabilities: {color: colors.textMuted, fontSize: 10, marginTop: 8},
+  actionRow: {flexDirection: 'row', gap: 10, marginTop: 10},
+  actionButton: {flex: 1, borderRadius: 12, borderWidth: 1, borderColor: colors.accent, paddingVertical: 11, alignItems: 'center'},
+  actionText: {color: colors.accent, fontSize: 11, fontWeight: '900'},
+  input: {minHeight: 90, backgroundColor: colors.background, borderRadius: 14, borderWidth: 1, borderColor: colors.border, padding: 12, color: colors.textPrimary, fontSize: 15, textAlignVertical: 'top'},
+  primaryButton: {marginTop: 12, backgroundColor: colors.accent, borderRadius: 14, paddingVertical: 13, alignItems: 'center'},
+  primaryButtonText: {color: colors.background, fontSize: 13, fontWeight: '900'},
+  storageText: {color: colors.textMuted, fontSize: 10, marginTop: 7},
+  contactCard: {backgroundColor: colors.background, borderRadius: 14, borderWidth: 1, borderColor: colors.border, padding: 12, marginTop: 8},
+  contactName: {color: colors.textPrimary, fontSize: 15, fontWeight: '900'},
+  contactType: {color: colors.accent, fontSize: 10, fontWeight: '900'},
 });
