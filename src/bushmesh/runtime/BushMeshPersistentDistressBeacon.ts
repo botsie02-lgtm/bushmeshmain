@@ -39,6 +39,7 @@ type DistressCheckpoint = {
 const DEFAULT_KEY = 'bushmesh.activeDistress.v1';
 const MAX_REPEAT_COUNT = 8;
 const MAX_RECOVERY_AGE_MS = 15 * 60 * 1000;
+const RECOVERY_RETRY_DELAY_MS = 5000;
 
 /**
  * Restart-resilient emergency beacon. Missed repeats during downtime collapse
@@ -89,13 +90,22 @@ export class BushMeshPersistentDistressBeacon {
     this.restored = true;
 
     const missed = this.checkpoint.dueAtMs.filter(due => due <= now);
-    this.checkpoint.dueAtMs = this.checkpoint.dueAtMs.filter(due => due > now);
+    const future = this.checkpoint.dueAtMs.filter(due => due > now);
+    this.checkpoint.dueAtMs = future;
 
     if (missed.length > 0 && now < this.checkpoint.expiresAtMs) {
       try {
         await this.transmit(this.checkpoint.channelIndex, this.checkpoint.wireBytes);
       } catch {
-        // Keep the checkpoint. Network reconnection can call resume() later.
+        // Collapse all missed repeats into one near-future retry instead of
+        // dropping them or replaying a burst after a reconnect.
+        const retryAt = Math.min(
+          now + RECOVERY_RETRY_DELAY_MS,
+          this.checkpoint.expiresAtMs - 1,
+        );
+        if (retryAt > now) {
+          this.checkpoint.dueAtMs = [retryAt, ...future].sort((a, b) => a - b);
+        }
       }
     }
 
