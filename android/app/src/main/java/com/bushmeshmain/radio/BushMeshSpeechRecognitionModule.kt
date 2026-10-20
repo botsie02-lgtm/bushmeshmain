@@ -1,6 +1,10 @@
 package com.bushmeshmain.radio
 
+import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -20,9 +24,8 @@ import java.util.Locale
  *
  * This module never falls back to the platform's network recognizer. Android
  * must advertise an on-device recognizer (API 31+) or Bushmesh reports STT as
- * unavailable. The recognition result is returned only after speech ends or JS
- * explicitly calls stopListening(), so the caller can keep transmission as a
- * separate deliberate action.
+ * unavailable. Recognition takes transient-exclusive audio focus while PTT is
+ * active so vehicle/media playback does not feed back into the microphone.
  */
 class BushMeshSpeechRecognitionModule(
   reactContext: ReactApplicationContext,
@@ -33,10 +36,21 @@ class BushMeshSpeechRecognitionModule(
   }
 
   private val mainHandler = Handler(Looper.getMainLooper())
+  private val audioManager =
+    reactContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+  private val focusChangeListener = AudioManager.OnAudioFocusChangeListener {
+    // Recognition remains authoritative while the driver is holding PTT.
+  }
+  private val recognitionAudioAttributes = AudioAttributes.Builder()
+    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+    .build()
+
   private var recognizer: SpeechRecognizer? = null
   private var activePromise: Promise? = null
   private var listening = false
   private var startedAtMs = 0L
+  private var activeFocusRequest: AudioFocusRequest? = null
 
   override fun getName(): String = "BushMeshSpeechRecognition"
 
@@ -66,10 +80,6 @@ class BushMeshSpeechRecognitionModule(
     }
   }
 
-  /**
-   * Starts one PTT recognition turn. The Promise resolves with the final
-   * transcript after speech ends or stopListening() is called.
-   */
   @ReactMethod
   fun recognizeOnce(localeTag: String?, promise: Promise) {
     mainHandler.post {
@@ -108,6 +118,7 @@ class BushMeshSpeechRecognitionModule(
           putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         }
 
+        requestRecognitionFocus()
         activePromise = promise
         listening = true
         startedAtMs = System.currentTimeMillis()
@@ -116,6 +127,7 @@ class BushMeshSpeechRecognitionModule(
         activePromise = null
         listening = false
         startedAtMs = 0L
+        abandonRecognitionFocus()
         promise.reject("BUSHMESH_STT_START_FAILED", error.message, error)
       }
     }
@@ -142,9 +154,11 @@ class BushMeshSpeechRecognitionModule(
     mainHandler.post {
       try {
         recognizer?.cancel()
+        listening = false
         rejectActive("BUSHMESH_STT_CANCELLED", "Speech recognition was cancelled.")
         promise.resolve(true)
       } catch (error: Exception) {
+        abandonRecognitionFocus()
         promise.reject("BUSHMESH_STT_CANCEL_FAILED", error.message, error)
       }
     }
@@ -201,8 +215,12 @@ class BushMeshSpeechRecognitionModule(
       .orEmpty()
 
     val confidences = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
-    val promise = activePromise ?: return
+    val promise = activePromise ?: run {
+      abandonRecognitionFocus()
+      return
+    }
     activePromise = null
+    abandonRecognitionFocus()
 
     if (matches.isEmpty()) {
       startedAtMs = 0L
@@ -216,7 +234,10 @@ class BushMeshSpeechRecognitionModule(
         "confidence",
         confidences?.firstOrNull()?.takeIf { it >= 0f }?.toDouble() ?: -1.0,
       )
-      putDouble("durationMs", (System.currentTimeMillis() - startedAtMs).coerceAtLeast(0L).toDouble())
+      putDouble(
+        "durationMs",
+        (System.currentTimeMillis() - startedAtMs).coerceAtLeast(0L).toDouble(),
+      )
       val alternatives = Arguments.createArray()
       matches.drop(1).take(2).forEach(alternatives::pushString)
       putArray("alternatives", alternatives)
@@ -242,6 +263,7 @@ class BushMeshSpeechRecognitionModule(
           "BUSHMESH_STT_INVALIDATED",
           "Bushmesh speech recognition was shut down.",
         )
+        abandonRecognitionFocus()
       }
     }
     super.invalidate()
@@ -270,10 +292,26 @@ class BushMeshSpeechRecognitionModule(
       }
   }
 
+  private fun requestRecognitionFocus(): Boolean {
+    val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+      .setAudioAttributes(recognitionAudioAttributes)
+      .setOnAudioFocusChangeListener(focusChangeListener, mainHandler)
+      .build()
+    activeFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+    activeFocusRequest = request
+    return audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+  }
+
+  private fun abandonRecognitionFocus() {
+    activeFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+    activeFocusRequest = null
+  }
+
   private fun rejectActive(code: String, message: String) {
-    val promise = activePromise ?: return
+    val promise = activePromise
     activePromise = null
     startedAtMs = 0L
-    promise.reject(code, message)
+    abandonRecognitionFocus()
+    promise?.reject(code, message)
   }
 }
