@@ -6,6 +6,18 @@ export enum BushMeshControlCommand {
   RequestNodeHello = 2,
   RequestSync = 3,
   RequestAbsoluteLocation = 4,
+  ConvoyAction = 5,
+}
+
+export enum BushMeshConvoyAction {
+  Hold = 1,
+  Proceed = 2,
+  Regroup = 3,
+  TurnAround = 4,
+  Obstacle = 5,
+  Recovery = 6,
+  FuelStop = 7,
+  CheckIn = 8,
 }
 
 export type BushMeshLocationRequest = {
@@ -25,10 +37,21 @@ export type BushMeshSyncControl = {
   namespace: number;
 };
 
+export type BushMeshConvoyActionControl = {
+  command: BushMeshControlCommand.ConvoyAction;
+  convoyId: number;
+  originNodeId: number;
+  sequence: number;
+  action: BushMeshConvoyAction | number;
+  targetOrderIndex?: number;
+  etaMinutes?: number;
+};
+
 export type BushMeshControlPacket =
   | BushMeshLocationRequest
   | BushMeshSimpleControl
-  | BushMeshSyncControl;
+  | BushMeshSyncControl
+  | BushMeshConvoyActionControl;
 
 export function encodeControlPacket(packet: BushMeshControlPacket): number[] {
   if (packet.command === BushMeshControlCommand.RequestLocation) {
@@ -47,6 +70,43 @@ export function encodeControlPacket(packet: BushMeshControlPacket): number[] {
   if (packet.command === BushMeshControlCommand.RequestSync) {
     assertIntegerInRange(packet.namespace, 0, 255, 'Sync namespace');
     return [packet.command, packet.namespace];
+  }
+
+  if (packet.command === BushMeshControlCommand.ConvoyAction) {
+    assertIntegerInRange(packet.convoyId, 0, 0xffffffff, 'Convoy ID');
+    assertIntegerInRange(packet.originNodeId, 0, 0xffffffff, 'Convoy command origin');
+    assertIntegerInRange(packet.sequence, 0, 0xffffffff, 'Convoy command sequence');
+    assertIntegerInRange(packet.action, 1, 255, 'Convoy action');
+
+    let flags = 0;
+    const optional: number[] = [];
+
+    if (packet.targetOrderIndex !== undefined) {
+      assertIntegerInRange(
+        packet.targetOrderIndex,
+        0,
+        0xffff,
+        'Convoy target position',
+      );
+      flags |= 0x01;
+      optional.push(...encodeVarUint(packet.targetOrderIndex));
+    }
+
+    if (packet.etaMinutes !== undefined) {
+      assertIntegerInRange(packet.etaMinutes, 0, 0xffff, 'Convoy action ETA');
+      flags |= 0x02;
+      optional.push(...encodeVarUint(packet.etaMinutes));
+    }
+
+    return [
+      packet.command,
+      packet.action,
+      flags,
+      ...encodeVarUint(packet.convoyId),
+      ...encodeVarUint(packet.originNodeId),
+      ...encodeVarUint(packet.sequence),
+      ...optional,
+    ];
   }
 
   if (
@@ -92,6 +152,53 @@ export function decodeControlPacket(bytes: number[]): BushMeshControlPacket {
       throw new Error('Sync request must contain exactly one namespace byte.');
     }
     return {command: BushMeshControlCommand.RequestSync, namespace: bytes[1]};
+  }
+
+  if (command === BushMeshControlCommand.ConvoyAction) {
+    const action = bytes[1];
+    const flags = bytes[2];
+    if (action === undefined || action === 0 || flags === undefined) {
+      throw new Error('Convoy action header is truncated or invalid.');
+    }
+
+    const convoyId = decodeVarUint(bytes, 3);
+    const originNodeId = decodeVarUint(bytes, convoyId.nextOffset);
+    const sequence = decodeVarUint(bytes, originNodeId.nextOffset);
+    let cursor = sequence.nextOffset;
+    let targetOrderIndex: number | undefined;
+    let etaMinutes: number | undefined;
+
+    if ((flags & 0x01) !== 0) {
+      const target = decodeVarUint(bytes, cursor);
+      if (target.value > 0xffff) {
+        throw new Error('Convoy target position exceeds uint16 range.');
+      }
+      targetOrderIndex = target.value;
+      cursor = target.nextOffset;
+    }
+
+    if ((flags & 0x02) !== 0) {
+      const eta = decodeVarUint(bytes, cursor);
+      if (eta.value > 0xffff) {
+        throw new Error('Convoy action ETA exceeds uint16 range.');
+      }
+      etaMinutes = eta.value;
+      cursor = eta.nextOffset;
+    }
+
+    if (cursor !== bytes.length) {
+      throw new Error('Unexpected bytes after convoy action command.');
+    }
+
+    return {
+      command: BushMeshControlCommand.ConvoyAction,
+      convoyId: convoyId.value,
+      originNodeId: originNodeId.value,
+      sequence: sequence.value,
+      action,
+      targetOrderIndex,
+      etaMinutes,
+    };
   }
 
   if (
