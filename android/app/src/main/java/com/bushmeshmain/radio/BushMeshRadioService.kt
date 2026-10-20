@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import com.bushmeshmain.MainActivity
@@ -31,7 +32,9 @@ class BushMeshRadioService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    when (intent?.action) {
+    val action = intent?.action
+
+    when (action) {
       ACTION_START -> {
         BushMeshRadioServiceState.requestRadio(
           intent.getStringExtra(EXTRA_DEVICE_LABEL),
@@ -44,11 +47,12 @@ class BushMeshRadioService : Service() {
     }
 
     if (!BushMeshRadioServiceState.shouldRun()) {
-      // Calls arrive through startForegroundService on modern Android. Promote
-      // immediately, even for a final release action, then tear down cleanly so
-      // Android never sees a foreground-service start that failed to foreground.
+      // Release commands are dispatched through startForegroundService on modern
+      // Android. Promote immediately using only the type being released, then
+      // stop. This satisfies the foreground-service contract without forcing a
+      // radio-only session to also meet location prerequisites (or vice versa).
       BushMeshRadioServiceState.markRunning()
-      startForeground(NOTIFICATION_ID, buildNotification())
+      startForegroundForCurrentState(action)
       stopForeground(STOP_FOREGROUND_REMOVE)
       BushMeshRadioServiceState.markStopped()
       stopSelf(startId)
@@ -56,7 +60,7 @@ class BushMeshRadioService : Service() {
     }
 
     BushMeshRadioServiceState.markRunning()
-    startForeground(NOTIFICATION_ID, buildNotification())
+    startForegroundForCurrentState(action)
 
     // BLE is still owned by the active React Native MeshCore session. Until BLE
     // ownership itself moves into this service, do not resurrect an orphaned
@@ -70,6 +74,32 @@ class BushMeshRadioService : Service() {
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
+
+  private fun startForegroundForCurrentState(action: String?) {
+    val notification = buildNotification()
+
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+      startForeground(NOTIFICATION_ID, notification)
+      return
+    }
+
+    var serviceType = 0
+    if (BushMeshRadioServiceState.radioRequested) {
+      serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+    }
+    if (BushMeshRadioServiceState.locationRequested) {
+      serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+    }
+
+    if (serviceType == 0) {
+      serviceType = when (action) {
+        ACTION_RELEASE_LOCATION -> ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+      }
+    }
+
+    startForeground(NOTIFICATION_ID, notification, serviceType)
+  }
 
   private fun ensureNotificationChannel() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
