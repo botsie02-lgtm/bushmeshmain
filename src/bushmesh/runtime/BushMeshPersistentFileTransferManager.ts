@@ -39,7 +39,7 @@ const DEFAULT_MAX_SESSIONS = 8;
 export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferManager {
   readonly outgoingPersistence: BushMeshPersistentFileCoordinator;
 
-  private readonly incoming = new Map<number, IncomingCheckpoint>();
+  private readonly incomingCheckpoints = new Map<number, IncomingCheckpoint>();
   private persistenceChain: Promise<void> = Promise.resolve();
   private initialized = false;
 
@@ -93,7 +93,7 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
 
     if (frame[0] === BushMeshFileFrameType.Start) {
       const metadata = decodeFileStart(frame);
-      const existing = this.incoming.get(metadata.transferId);
+      const existing = this.incomingCheckpoints.get(metadata.transferId);
 
       // Restored senders deliberately re-announce FILE_START. If this receiver
       // retained the same transfer, keep all reconstructed chunks intact.
@@ -125,7 +125,7 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
           break;
         case BushMeshFileFrameType.End:
           if (result.event === 'complete') {
-            this.incoming.delete(decodeFileEnd(frame).transferId);
+            this.incomingCheckpoints.delete(decodeFileEnd(frame).transferId);
           }
           break;
       }
@@ -144,7 +144,7 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
   }
 
   async cancelPersistent(transferId: number): Promise<boolean> {
-    const hadIncoming = this.incoming.delete(transferId);
+    const hadIncoming = this.incomingCheckpoints.delete(transferId);
     const cancelledOutgoing = await this.outgoingPersistence.cancel(this, transferId);
     const cancelledRuntime = super.cancel(transferId);
     await this.persistIncoming();
@@ -157,7 +157,7 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
 
   private rememberIncomingStart(frame: number[], now: number): void {
     const metadata = decodeFileStart(frame);
-    this.incoming.set(metadata.transferId, {
+    this.incomingCheckpoints.set(metadata.transferId, {
       transferId: metadata.transferId,
       startFrame: [...frame],
       chunkFrames: [],
@@ -168,7 +168,7 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
 
   private rememberIncomingChunk(frame: number[], now: number): void {
     const chunk = decodeFileChunk(frame);
-    const session = this.incoming.get(chunk.transferId);
+    const session = this.incomingCheckpoints.get(chunk.transferId);
     if (!session) {
       return;
     }
@@ -220,7 +220,7 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
     }
 
     const restored: number[] = [];
-    this.incoming.clear();
+    this.incomingCheckpoints.clear();
 
     for (const saved of snapshot.sessions) {
       if (
@@ -251,7 +251,7 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
           validChunks.push({index: item.index, frame: [...item.frame]});
         }
 
-        this.incoming.set(saved.transferId, {
+        this.incomingCheckpoints.set(saved.transferId, {
           transferId: saved.transferId,
           startFrame: [...saved.startFrame],
           chunkFrames: validChunks,
@@ -273,21 +273,21 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
   }
 
   private trimIncoming(now: number): void {
-    for (const [transferId, session] of this.incoming.entries()) {
+    for (const [transferId, session] of this.incomingCheckpoints.entries()) {
       if (now - session.updatedAt > this.maxIncomingAgeMs) {
-        this.incoming.delete(transferId);
+        this.incomingCheckpoints.delete(transferId);
         super.cancel(transferId);
       }
     }
 
-    while (this.incoming.size > this.maxIncomingSessions) {
-      const oldest = Array.from(this.incoming.values()).sort(
+    while (this.incomingCheckpoints.size > this.maxIncomingSessions) {
+      const oldest = Array.from(this.incomingCheckpoints.values()).sort(
         (a, b) => a.updatedAt - b.updatedAt,
       )[0];
       if (!oldest) {
         break;
       }
-      this.incoming.delete(oldest.transferId);
+      this.incomingCheckpoints.delete(oldest.transferId);
       super.cancel(oldest.transferId);
     }
   }
@@ -299,7 +299,7 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
 
     const snapshot: IncomingSnapshot = {
       version: 1,
-      sessions: Array.from(this.incoming.values()).map(session => ({
+      sessions: Array.from(this.incomingCheckpoints.values()).map(session => ({
         transferId: session.transferId,
         startFrame: [...session.startFrame],
         chunkFrames: session.chunkFrames.map(item => ({
@@ -313,7 +313,7 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
   }
 
   private async clearIncomingStore(): Promise<void> {
-    this.incoming.clear();
+    this.incomingCheckpoints.clear();
     if (!this.store) {
       return;
     }
