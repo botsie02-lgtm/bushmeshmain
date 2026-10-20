@@ -21,6 +21,7 @@ export type BushMeshMapCatalogDocumentV1 = {
 
 export type BushMeshMapCatalogTrustPolicy = {
   allowedCatalogIds: string[];
+  allowedCatalogHosts: string[];
   allowedRemoteHosts: string[];
   requireExpiry: boolean;
   maxDocumentAgeMs?: number;
@@ -33,7 +34,7 @@ function validIdentifier(value: unknown): value is string {
   );
 }
 
-function normalizedHost(host: string): string {
+export function normalizeMapCatalogHost(host: string): string {
   return host.trim().toLowerCase().replace(/\.$/, '');
 }
 
@@ -45,7 +46,7 @@ function remoteHostForManifest(
   }
 
   try {
-    return normalizedHost(new URL(manifest.source.url).hostname);
+    return normalizeMapCatalogHost(new URL(manifest.source.url).hostname);
   } catch {
     return null;
   }
@@ -124,6 +125,30 @@ export function decodeMapCatalogDocument(
   return parsed;
 }
 
+export function assertMapCatalogSourceTrusted(
+  sourceUrl: string,
+  policy: BushMeshMapCatalogTrustPolicy,
+): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(sourceUrl);
+  } catch {
+    throw new Error('Bushmesh map catalog URL is invalid.');
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Bushmesh map catalogs must be loaded over HTTPS.');
+  }
+
+  const allowedHosts = new Set(
+    policy.allowedCatalogHosts.map(normalizeMapCatalogHost),
+  );
+  const host = normalizeMapCatalogHost(parsed.hostname);
+  if (!allowedHosts.has(host)) {
+    throw new Error(`Map catalog host ${host} is not trusted by this build.`);
+  }
+}
+
 /**
  * Applies local trust policy after structural validation. HTTPS alone is not
  * treated as publisher authenticity; callers must explicitly pin catalog IDs
@@ -158,7 +183,9 @@ export function assertMapCatalogTrusted(
     throw new Error('Bushmesh map catalog has expired.');
   }
 
-  const allowedHosts = new Set(policy.allowedRemoteHosts.map(normalizedHost));
+  const allowedHosts = new Set(
+    policy.allowedRemoteHosts.map(normalizeMapCatalogHost),
+  );
   for (const manifest of document.packs) {
     const host = remoteHostForManifest(manifest);
     if (host !== null && !allowedHosts.has(host)) {
