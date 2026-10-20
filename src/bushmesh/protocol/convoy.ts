@@ -1,0 +1,185 @@
+import {
+  assertBytes,
+  assertIntegerInRange,
+  decodeVarUint,
+  encodeVarUint,
+} from './codec';
+import {
+  CompactLocation,
+  decodeLocationPayload,
+  encodeLocationPayload,
+} from './location';
+
+export enum BushMeshConvoyRole {
+  Lead = 0,
+  Member = 1,
+  Tail = 2,
+  Recovery = 3,
+  Support = 4,
+}
+
+export type BushMeshConvoyStatus = {
+  convoyId: number;
+  nodeId: number;
+  sequence: number;
+  orderIndex: number;
+  role: BushMeshConvoyRole | number;
+  location?: CompactLocation;
+  speedKph?: number;
+  headingDegrees?: number;
+  batteryPercent?: number;
+  stopped?: boolean;
+  hazard?: boolean;
+};
+
+const FLAG_LOCATION = 1 << 0;
+const FLAG_SPEED = 1 << 1;
+const FLAG_HEADING = 1 << 2;
+const FLAG_BATTERY = 1 << 3;
+const FLAG_STOPPED = 1 << 4;
+const FLAG_HAZARD = 1 << 5;
+
+export function encodeConvoyStatus(status: BushMeshConvoyStatus): number[] {
+  assertIntegerInRange(status.convoyId, 0, 0xffffffff, 'Convoy ID');
+  assertIntegerInRange(status.nodeId, 0, 0xffffffff, 'Convoy node ID');
+  assertIntegerInRange(status.sequence, 0, 0xffffffff, 'Convoy sequence');
+  assertIntegerInRange(status.orderIndex, 0, 0xffff, 'Convoy order index');
+  assertIntegerInRange(status.role, 0, 7, 'Convoy role');
+
+  let flags = 0;
+  const optional: number[] = [];
+
+  if (status.location) {
+    flags |= FLAG_LOCATION;
+    const locationBytes = encodeLocationPayload({
+      ...status.location,
+      batteryPercent: undefined,
+    });
+    optional.push(locationBytes.length, ...locationBytes);
+  }
+
+  if (status.speedKph !== undefined) {
+    if (!Number.isFinite(status.speedKph) || status.speedKph < 0 || status.speedKph > 6553.5) {
+      throw new Error('Convoy speed must be from 0 to 6553.5 km/h.');
+    }
+    flags |= FLAG_SPEED;
+    optional.push(...encodeVarUint(Math.round(status.speedKph * 10)));
+  }
+
+  if (status.headingDegrees !== undefined) {
+    if (
+      !Number.isFinite(status.headingDegrees) ||
+      status.headingDegrees < 0 ||
+      status.headingDegrees >= 360
+    ) {
+      throw new Error('Convoy heading must be from 0 to less than 360 degrees.');
+    }
+    flags |= FLAG_HEADING;
+    optional.push(...encodeVarUint(Math.round(status.headingDegrees)));
+  }
+
+  if (status.batteryPercent !== undefined) {
+    assertIntegerInRange(status.batteryPercent, 0, 100, 'Convoy battery percentage');
+    flags |= FLAG_BATTERY;
+    optional.push(status.batteryPercent);
+  }
+
+  if (status.stopped) {
+    flags |= FLAG_STOPPED;
+  }
+  if (status.hazard) {
+    flags |= FLAG_HAZARD;
+  }
+
+  return [
+    ...encodeVarUint(status.convoyId),
+    ...encodeVarUint(status.nodeId),
+    ...encodeVarUint(status.sequence),
+    ...encodeVarUint(status.orderIndex),
+    status.role & 0x07,
+    flags,
+    ...optional,
+  ];
+}
+
+export function decodeConvoyStatus(bytes: number[]): BushMeshConvoyStatus {
+  assertBytes(bytes, 'convoy status');
+
+  const convoyId = decodeVarUint(bytes, 0);
+  const nodeId = decodeVarUint(bytes, convoyId.nextOffset);
+  const sequence = decodeVarUint(bytes, nodeId.nextOffset);
+  const orderIndex = decodeVarUint(bytes, sequence.nextOffset);
+  let cursor = orderIndex.nextOffset;
+
+  const role = bytes[cursor];
+  const flags = bytes[cursor + 1];
+  if (role === undefined || flags === undefined) {
+    throw new Error('Convoy status header is truncated.');
+  }
+  if (role > 7) {
+    throw new Error('Convoy status contains an invalid role.');
+  }
+  cursor += 2;
+
+  let location: CompactLocation | undefined;
+  let speedKph: number | undefined;
+  let headingDegrees: number | undefined;
+  let batteryPercent: number | undefined;
+
+  if ((flags & FLAG_LOCATION) !== 0) {
+    const length = bytes[cursor];
+    if (length === undefined || length < 7 || cursor + 1 + length > bytes.length) {
+      throw new Error('Convoy location payload is truncated.');
+    }
+    cursor += 1;
+    const decoded = decodeLocationPayload(bytes.slice(cursor, cursor + length));
+    location = {
+      latitude: decoded.latitude,
+      longitude: decoded.longitude,
+      precision: decoded.precision,
+    };
+    cursor += length;
+  }
+
+  if ((flags & FLAG_SPEED) !== 0) {
+    const speed = decodeVarUint(bytes, cursor);
+    speedKph = speed.value / 10;
+    cursor = speed.nextOffset;
+  }
+
+  if ((flags & FLAG_HEADING) !== 0) {
+    const heading = decodeVarUint(bytes, cursor);
+    if (heading.value >= 360) {
+      throw new Error('Convoy heading is invalid.');
+    }
+    headingDegrees = heading.value;
+    cursor = heading.nextOffset;
+  }
+
+  if ((flags & FLAG_BATTERY) !== 0) {
+    const battery = bytes[cursor];
+    if (battery === undefined || battery > 100) {
+      throw new Error('Convoy battery percentage is invalid.');
+    }
+    batteryPercent = battery;
+    cursor += 1;
+  }
+
+  if (cursor !== bytes.length) {
+    throw new Error('Unexpected bytes after convoy status.');
+  }
+
+  return {
+    convoyId: convoyId.value,
+    nodeId: nodeId.value,
+    sequence: sequence.value,
+    orderIndex: orderIndex.value,
+    role,
+    location,
+    speedKph,
+    headingDegrees,
+    batteryPercent,
+    stopped: (flags & FLAG_STOPPED) !== 0,
+    hazard: (flags & FLAG_HAZARD) !== 0,
+  };
+}
