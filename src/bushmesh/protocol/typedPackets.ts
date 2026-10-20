@@ -18,6 +18,8 @@ import {
 } from './discovery';
 import {
   CompactLocation,
+  LocationDelta,
+  decodeLocationDelta,
   decodeLocationPayload,
   encodeLocationPayload,
 } from './location';
@@ -56,6 +58,7 @@ import {
 export type BushMeshTypedPacket =
   | {kind: 'distress'; wire: DecodedBushMeshWireMessage; value: BushMeshDistress}
   | {kind: 'location'; wire: DecodedBushMeshWireMessage; value: CompactLocation}
+  | {kind: 'location-delta'; wire: DecodedBushMeshWireMessage; value: LocationDelta}
   | {kind: 'telemetry'; wire: DecodedBushMeshWireMessage; value: BushMeshTelemetry}
   | {kind: 'device-info'; wire: DecodedBushMeshWireMessage; value: BushMeshNodeHello}
   | {kind: 'ping'; wire: DecodedBushMeshWireMessage; value: BushMeshPing}
@@ -221,6 +224,20 @@ export function decodeBushMeshTypedPacket(bytes: number[]): BushMeshTypedPacket 
         value: decodeDistressPayload(wire.envelope.payload),
       };
     case BushMeshPacketType.Location: {
+      if (wire.envelope.compression === BushMeshCompressionProfile.SensorDelta) {
+        return {
+          kind: 'location-delta',
+          wire,
+          value: decodeLocationDelta(wire.envelope.payload),
+        };
+      }
+
+      if (wire.envelope.compression !== BushMeshCompressionProfile.Gps) {
+        throw new Error(
+          `Unsupported BushMesh LOCATION compression profile ${wire.envelope.compression}.`,
+        );
+      }
+
       const decoded = decodeLocationPayload(wire.envelope.payload);
       return {
         kind: 'location',
