@@ -26,6 +26,7 @@ export type BushMeshStoreForwardFlushResult = {
   sentIds: string[];
   failedIds: string[];
   expiredIds: string[];
+  deferredIds?: string[];
 };
 
 const STORE_VERSION = 1;
@@ -161,6 +162,7 @@ export class BushMeshStoreForwardRuntime {
       maxMessages?: number;
       baseRetryDelayMs?: number;
       maxRetryDelayMs?: number;
+      canSend?: (item: BushMeshStoreForwardItem) => boolean | Promise<boolean>;
     },
   ): Promise<BushMeshStoreForwardFlushResult> {
     const now = options?.now ?? Date.now();
@@ -168,8 +170,14 @@ export class BushMeshStoreForwardRuntime {
     const ready = this.ready(now).slice(0, options?.maxMessages ?? 8);
     const sentIds: string[] = [];
     const failedIds: string[] = [];
+    const deferredIds: string[] = [];
 
     for (const item of ready) {
+      if (options?.canSend && !(await options.canSend(cloneItem(item)))) {
+        deferredIds.push(item.id);
+        continue;
+      }
+
       try {
         await this.network.sendWire(item.channelIndex, item.wireBytes);
         this.items.delete(item.id);
@@ -194,7 +202,7 @@ export class BushMeshStoreForwardRuntime {
     }
 
     await this.persist();
-    return {sentIds, failedIds, expiredIds};
+    return {sentIds, failedIds, expiredIds, deferredIds};
   }
 
   async acknowledge(id: string): Promise<boolean> {
