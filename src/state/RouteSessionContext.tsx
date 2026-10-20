@@ -23,8 +23,13 @@ import {
   BushMeshRouteProgress,
   calculateRouteProgress,
 } from '../navigation/routeProgress';
-import {MapCoordinate} from '../maps/offlineMapPacks';
+import {
+  MapCoordinate,
+  TripMapCoverage,
+  getTripMapCoverage,
+} from '../maps/offlineMapPacks';
 import {useLocationSession} from './LocationSessionContext';
+import {useOfflineMaps} from './OfflineMapContext';
 
 export type RouteSessionStatus =
   | 'idle'
@@ -48,6 +53,7 @@ type RouteSessionContextValue = {
   activePlan: BushMeshRoutePlan | null;
   progress: BushMeshRouteProgress | null;
   coveragePoints: MapCoordinate[];
+  mapCoverage: TripMapCoverage;
   profile: BushMeshRouteProfile;
   avoidances: BushMeshRouteAvoidance[];
   errorMessage: string | null;
@@ -87,6 +93,7 @@ export function RouteSessionProvider({
   children: React.ReactNode;
 }): React.JSX.Element {
   const {latestFix} = useLocationSession();
+  const {packs} = useOfflineMaps();
   const [status, setStatus] = useState<RouteSessionStatus>('idle');
   const [engineInfo, setEngineInfo] = useState<RouteEngineInfo | null>(null);
   const [activePlan, setActivePlan] = useState<BushMeshRoutePlan | null>(null);
@@ -101,6 +108,11 @@ export function RouteSessionProvider({
 
   const engineRef = useRef<BushMeshOfflineRouteEngine | null>(null);
   const generationRef = useRef(0);
+
+  const mapCoverage = useMemo(
+    () => getTripMapCoverage(packs, coveragePoints),
+    [packs, coveragePoints],
+  );
 
   const attachEngine = useCallback((engine: BushMeshOfflineRouteEngine | null) => {
     generationRef.current += 1;
@@ -275,6 +287,7 @@ export function RouteSessionProvider({
       activePlan,
       progress,
       coveragePoints,
+      mapCoverage,
       profile,
       avoidances,
       errorMessage,
@@ -290,6 +303,7 @@ export function RouteSessionProvider({
       activePlan,
       progress,
       coveragePoints,
+      mapCoverage,
       profile,
       avoidances,
       errorMessage,
