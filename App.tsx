@@ -11,6 +11,7 @@ import {
   SafeAreaView,
 } from 'react-native-safe-area-context';
 
+import {ConvoyLossBanner} from './src/components/ConvoyLossBanner';
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
@@ -60,7 +61,12 @@ function AppContent(): React.JSX.Element {
         <Text style={styles.subtitle}>Off-grid vehicle network</Text>
       </View>
 
-      {activeTab === 'drive' ? <DriveNavigationBanner /> : null}
+      {activeTab === 'drive' ? (
+        <>
+          <ConvoyLossBanner />
+          <DriveNavigationBanner />
+        </>
+      ) : null}
       {activeTab === 'map' ? <MapTrackExportBanner /> : null}
       {activeTab === 'channels' ? (
         <SecureDataStatusBanner kind="messages" />
