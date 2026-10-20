@@ -25,6 +25,10 @@ class BushMeshRadioServiceModule(
     BushMeshOutboxLease(reactContext.applicationContext)
   }
 
+  private val nativeInbox: BushMeshNativeInboxStore by lazy {
+    BushMeshNativeInboxStore(reactContext.applicationContext)
+  }
+
   @ReactMethod
   fun start(deviceLabel: String?, promise: Promise) {
     try {
@@ -88,6 +92,24 @@ class BushMeshRadioServiceModule(
   }
 
   @ReactMethod
+  fun drainBackgroundInbox(maxFrames: Double, promise: Promise) {
+    try {
+      val frames = nativeInbox.drain(maxFrames.toInt().coerceIn(0, 128))
+      val result = Arguments.createArray()
+      frames.forEach { entry ->
+        val item = Arguments.createMap().apply {
+          putDouble("receivedAtMs", entry.receivedAtMs.toDouble())
+          putString("frameBase64", Base64.encodeToString(entry.frame, Base64.NO_WRAP))
+        }
+        result.pushMap(item)
+      }
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_NATIVE_INBOX_DRAIN_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
   fun getStatus(promise: Promise) {
     val nativeStatus = nativeBle.status()
     val nativeOwnership = BushMeshRadioServiceState.deviceAddress != null
@@ -109,6 +131,7 @@ class BushMeshRadioServiceModule(
       putString("nativeBleLastError", nativeStatus.lastError)
       putDouble("nativeBleQueuedWrites", nativeStatus.queuedWrites.toDouble())
       putDouble("nativeBleBufferedFrames", nativeStatus.bufferedFrames.toDouble())
+      putDouble("nativeBackgroundInboxCount", nativeInbox.size().toDouble())
       putString("outboxLeaseOwner", lease.owner)
       putDouble("outboxLeaseEpoch", lease.epoch.toDouble())
     }
