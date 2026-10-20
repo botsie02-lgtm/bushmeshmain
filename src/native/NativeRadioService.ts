@@ -12,6 +12,11 @@ export type NativeBleRuntimeState =
   | 'error'
   | string;
 
+export type NativeBackgroundInboxFrame = {
+  receivedAtMs: number;
+  frameBase64: string;
+};
+
 export type NativeRadioServiceStatus = {
   running: boolean;
   radioRequested?: boolean;
@@ -28,6 +33,7 @@ export type NativeRadioServiceStatus = {
   nativeBleLastError?: string | null;
   nativeBleQueuedWrites?: number;
   nativeBleBufferedFrames?: number;
+  nativeBackgroundInboxCount?: number;
   outboxLeaseOwner?: 'foreground' | 'background' | string;
   outboxLeaseEpoch?: number;
 };
@@ -41,6 +47,7 @@ type NativeRadioServiceModule = {
   stop: () => Promise<boolean>;
   enqueueNativeBleWrite: (base64Frame: string) => Promise<boolean>;
   drainNativeBleFrames: (maxFrames: number) => Promise<string[]>;
+  drainBackgroundInbox: (maxFrames: number) => Promise<NativeBackgroundInboxFrame[]>;
   getStatus: () => Promise<NativeRadioServiceStatus>;
 };
 
@@ -64,6 +71,7 @@ const unsupportedStatus: NativeRadioServiceStatus = {
   nativeBleLastError: null,
   nativeBleQueuedWrites: 0,
   nativeBleBufferedFrames: 0,
+  nativeBackgroundInboxCount: 0,
   outboxLeaseOwner: 'foreground',
   outboxLeaseEpoch: 0,
 };
@@ -119,6 +127,21 @@ export const nativeRadioService = {
     }
     const boundedMax = Math.max(0, Math.min(128, Math.floor(maxFrames)));
     return module.drainNativeBleFrames(boundedMax);
+  },
+
+  async drainBackgroundInbox(maxFrames = 128): Promise<NativeBackgroundInboxFrame[]> {
+    if (!this.isSupported() || !module) {
+      return [];
+    }
+    const boundedMax = Math.max(0, Math.min(128, Math.floor(maxFrames)));
+    const frames = await module.drainBackgroundInbox(boundedMax);
+    return frames.filter(
+      frame =>
+        Number.isFinite(frame.receivedAtMs) &&
+        frame.receivedAtMs >= 0 &&
+        typeof frame.frameBase64 === 'string' &&
+        frame.frameBase64.length > 0,
+    );
   },
 
   async getStatus(): Promise<NativeRadioServiceStatus> {
