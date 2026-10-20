@@ -6,7 +6,10 @@ import {
   decodeBushMeshPosition,
   decodeBushMeshQuickAction,
 } from './protocol';
-import {publishBushMeshInboundMessage} from './inboundBus';
+import {
+  BushMeshInboundMetadata,
+  publishBushMeshInboundMessage,
+} from './inboundBus';
 import {MeshCoreChannelDataFrame} from '../meshcore/meshcoreChannelData';
 
 export type BushMeshInboundMessage =
@@ -29,9 +32,14 @@ export type BushMeshInboundMessage =
  * Converts an application-owned MeshCore datagram into a BushMesh domain
  * message. Unknown data types and future BushMesh message types are ignored so
  * other applications can coexist on the same MeshCore channels.
+ *
+ * Optional transport metadata is forwarded to domain subscribers. This is used
+ * by Android background-inbox replay to preserve the time a frame was actually
+ * heard rather than making old traffic look fresh when JS returns.
  */
 export function decodeBushMeshMeshCoreFrame(
   frame: MeshCoreChannelDataFrame,
+  metadata?: Partial<BushMeshInboundMetadata>,
 ): BushMeshInboundMessage | null {
   if (frame.dataType !== BUSHMESH_MESHCORE_DEV_DATA_TYPE) {
     return null;
@@ -68,6 +76,6 @@ export function decodeBushMeshMeshCoreFrame(
       return null;
   }
 
-  publishBushMeshInboundMessage(message);
+  publishBushMeshInboundMessage(message, metadata);
   return message;
 }
