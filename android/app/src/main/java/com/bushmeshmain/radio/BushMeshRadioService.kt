@@ -47,16 +47,30 @@ class BushMeshRadioService : Service() {
     } else {
       when (action) {
         ACTION_START -> {
-          val label = intent.getStringExtra(EXTRA_DEVICE_LABEL)
-          val address = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
-          BushMeshRadioServiceState.requestRadio(label, address)
+          val requestedLabel = intent.getStringExtra(EXTRA_DEVICE_LABEL)
+          val requestedAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
 
-          if (!address.isNullOrBlank()) {
-            persistNativeTarget(address, label)
-            nativeBle.connect(address, label)
+          if (!requestedAddress.isNullOrBlank()) {
+            BushMeshRadioServiceState.requestRadio(requestedLabel, requestedAddress)
+            persistNativeTarget(requestedAddress, requestedLabel)
+            nativeBle.connect(requestedAddress, requestedLabel)
           } else {
-            clearPersistedNativeTarget()
-            nativeBle.disconnect()
+            // Runtime keepalive calls from the React provider must not silently
+            // steal ownership from a native BLE session. If a native target was
+            // already persisted, preserve it and keep Android responsible for
+            // reconnect. Returning to RN ownership requires ACTION_STOP first.
+            val persisted = readPersistedNativeTarget()
+            val existingAddress =
+              BushMeshRadioServiceState.deviceAddress ?: persisted?.first
+            val existingLabel =
+              BushMeshRadioServiceState.deviceLabel ?: persisted?.second
+
+            if (existingAddress != null) {
+              BushMeshRadioServiceState.requestRadio(existingLabel, existingAddress)
+              nativeBle.connect(existingAddress, existingLabel)
+            } else {
+              BushMeshRadioServiceState.requestRadio(requestedLabel, null)
+            }
           }
         }
 
@@ -105,14 +119,18 @@ class BushMeshRadioService : Service() {
 
   override fun onBind(intent: Intent?): IBinder? = null
 
-  private fun restoreNativeTargetAfterProcessRestart() {
+  private fun readPersistedNativeTarget(): Pair<String, String?>? {
     val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     val address = prefs.getString(PREF_NATIVE_ADDRESS, null)?.takeIf { it.isNotBlank() }
-      ?: return
+      ?: return null
     val label = prefs.getString(PREF_NATIVE_LABEL, null)?.takeIf { it.isNotBlank() }
+    return Pair(address, label)
+  }
 
-    BushMeshRadioServiceState.requestRadio(label, address)
-    nativeBle.connect(address, label)
+  private fun restoreNativeTargetAfterProcessRestart() {
+    val target = readPersistedNativeTarget() ?: return
+    BushMeshRadioServiceState.requestRadio(target.second, target.first)
+    nativeBle.connect(target.first, target.second)
   }
 
   private fun persistNativeTarget(address: String, label: String?) {
