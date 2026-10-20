@@ -2,6 +2,7 @@ import React, {useMemo, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {BushMeshMapPackCatalogEntry} from '../maps/mapPackCatalog';
+import {BushMeshMapPackProgress} from '../native/NativeMapPacks';
 import {useOfflineMaps} from '../state/OfflineMapContext';
 import {colors} from '../theme/colors';
 
@@ -15,10 +16,23 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024) {
     return `${(bytes / 1024).toFixed(0)} KB`;
   }
-  return `${bytes} B`;
+  return `${Math.round(bytes)} B`;
 }
 
-function installLabel(entry: BushMeshMapPackCatalogEntry): string {
+function installLabel(
+  entry: BushMeshMapPackCatalogEntry,
+  progress: BushMeshMapPackProgress | undefined,
+): string {
+  if (progress?.state === 'verifying') {
+    return 'VERIFYING';
+  }
+  if (progress?.state === 'cancelled') {
+    return 'CANCELLED';
+  }
+  if (progress?.state === 'failed') {
+    return 'FAILED';
+  }
+
   switch (entry.installState) {
     case 'ready':
       return 'VERIFIED';
@@ -32,13 +46,48 @@ function installLabel(entry: BushMeshMapPackCatalogEntry): string {
   }
 }
 
+function progressText(
+  progress: BushMeshMapPackProgress | undefined,
+): string | null {
+  if (!progress) {
+    return null;
+  }
+
+  if (progress.state === 'verifying') {
+    return `Verifying SHA-256 · ${formatBytes(progress.downloadedBytes)}`;
+  }
+  if (progress.state === 'ready') {
+    return `Verified · ${formatBytes(progress.downloadedBytes)}`;
+  }
+  if (progress.state === 'cancelled') {
+    return 'Download cancelled. Partial data was discarded.';
+  }
+  if (progress.state === 'failed') {
+    return 'Download failed. Partial data was discarded.';
+  }
+
+  const percent =
+    progress.fraction === null
+      ? null
+      : Math.max(0, Math.min(100, Math.round(progress.fraction * 100)));
+  const downloaded = formatBytes(progress.downloadedBytes);
+  const total =
+    progress.expectedBytes === null ? null : formatBytes(progress.expectedBytes);
+
+  return `${percent === null ? 'Downloading' : `${percent}%`} · ${downloaded}${
+    total ? ` / ${total}` : ''
+  }`;
+}
+
 export function MapPackCatalogPanel(): React.JSX.Element {
   const {
     packCatalog,
+    packProgressById,
     mapPersistenceStatus,
     mapPersistenceError,
     mapPackInstallSupported,
     installMapPack,
+    cancelMapPackInstall,
     verifyMapPack,
     removePack,
   } = useOfflineMaps();
@@ -59,9 +108,28 @@ export function MapPackCatalogPanel(): React.JSX.Element {
       await installMapPack(packId);
       setMessage('Map pack downloaded and SHA-256 verified.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Map-pack installation failed.');
+      const text = error instanceof Error ? error.message : 'Map-pack installation failed.';
+      if (/cancelled/i.test(text)) {
+        setMessage('Map-pack download cancelled. Partial data was discarded.');
+      } else {
+        setMessage(text);
+      }
     } finally {
       setBusyPackId(null);
+    }
+  };
+
+  const runCancel = async (packId: string) => {
+    setMessage(null);
+    try {
+      const cancelled = await cancelMapPackInstall(packId);
+      setMessage(
+        cancelled
+          ? 'Cancelling map-pack download…'
+          : 'No active download was found for this map pack.',
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Map-pack cancellation failed.');
     }
   };
 
@@ -154,11 +222,24 @@ export function MapPackCatalogPanel(): React.JSX.Element {
       ) : (
         packCatalog.map(entry => {
           const manifest = entry.manifest;
-          const busy = busyPackId === manifest.id || entry.installState === 'installing';
+          const progress = packProgressById[manifest.id];
+          const nativeInstalling =
+            entry.installState === 'installing' ||
+            progress?.state === 'downloading' ||
+            progress?.state === 'verifying';
+          const localBusy = busyPackId === manifest.id && !nativeInstalling;
+          const busy = localBusy || nativeInstalling;
           const remote = manifest.source.kind === 'remote';
           const canInstall =
-            remote && mapPackInstallSupported && entry.installState !== 'ready';
+            remote &&
+            mapPackInstallSupported &&
+            entry.installState !== 'ready' &&
+            !nativeInstalling;
           const removing = pendingRemovalId === manifest.id;
+          const progressLabel = progressText(progress);
+          const percent = progress?.fraction == null
+            ? null
+            : Math.max(0, Math.min(1, progress.fraction));
 
           return (
             <View key={manifest.id} style={styles.packCard}>
@@ -177,28 +258,54 @@ export function MapPackCatalogPanel(): React.JSX.Element {
                   style={
                     entry.installState === 'ready'
                       ? styles.statusReady
-                      : entry.installState === 'invalid'
+                      : entry.installState === 'invalid' || progress?.state === 'failed'
                         ? styles.statusInvalid
                         : styles.statusPending
                   }>
-                  {installLabel(entry)}
+                  {installLabel(entry, progress)}
                 </Text>
               </View>
+
+              {progressLabel ? (
+                <View style={styles.progressBlock}>
+                  <Text style={styles.progressText}>{progressLabel}</Text>
+                  {percent !== null && nativeInstalling ? (
+                    <View style={styles.progressTrack}>
+                      <View
+                        style={[
+                          styles.progressFill,
+                          {width: `${Math.round(percent * 100)}%`},
+                        ]}
+                      />
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
 
               {entry.lastError ? (
                 <Text style={styles.packError}>{entry.lastError}</Text>
               ) : null}
 
               <View style={styles.actions}>
+                {nativeInstalling ? (
+                  <TouchableOpacity
+                    style={styles.actionDanger}
+                    onPress={() => {
+                      runCancel(manifest.id).catch(() => undefined);
+                    }}>
+                    <Text style={styles.actionDangerText}>CANCEL</Text>
+                  </TouchableOpacity>
+                ) : null}
+
                 {canInstall ? (
                   <TouchableOpacity
-                    style={[styles.actionPrimary, busy && styles.disabled]}
-                    disabled={busy}
+                    style={[styles.actionPrimary, localBusy && styles.disabled]}
+                    disabled={localBusy}
                     onPress={() => {
                       runInstall(manifest.id).catch(() => undefined);
                     }}>
                     <Text style={styles.actionPrimaryText}>
-                      {busy ? 'WORKING…' : entry.installState === 'invalid' ? 'RETRY' : 'DOWNLOAD'}
+                      {entry.installState === 'invalid' ? 'RETRY' : 'DOWNLOAD'}
                     </Text>
                   </TouchableOpacity>
                 ) : null}
@@ -214,10 +321,11 @@ export function MapPackCatalogPanel(): React.JSX.Element {
                   </TouchableOpacity>
                 ) : null}
 
-                {entry.artifact !== null || entry.installState === 'ready' ? (
+                {(entry.artifact !== null || entry.installState === 'ready') &&
+                !nativeInstalling ? (
                   <TouchableOpacity
-                    style={[styles.actionDanger, busy && styles.disabled]}
-                    disabled={busy}
+                    style={[styles.actionDanger, localBusy && styles.disabled]}
+                    disabled={localBusy}
                     onPress={() => {
                       runRemove(manifest.id).catch(() => undefined);
                     }}>
@@ -286,6 +394,20 @@ const styles = StyleSheet.create({
   statusReady: {color: colors.success, fontSize: 8, fontWeight: '900'},
   statusPending: {color: colors.warning, fontSize: 8, fontWeight: '900'},
   statusInvalid: {color: colors.danger, fontSize: 8, fontWeight: '900'},
+  progressBlock: {marginTop: 9},
+  progressText: {color: colors.textSecondary, fontSize: 9, fontWeight: '800'},
+  progressTrack: {
+    height: 5,
+    backgroundColor: colors.background,
+    borderRadius: 999,
+    overflow: 'hidden',
+    marginTop: 6,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: colors.accent,
+    borderRadius: 999,
+  },
   packError: {color: colors.danger, fontSize: 9, lineHeight: 14, marginTop: 7},
   actions: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10},
   actionPrimary: {
