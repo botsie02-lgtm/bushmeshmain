@@ -22,6 +22,7 @@ export * from './BushMeshNodeRuntime';
 export * from './BushMeshOutbox';
 export * from './BushMeshOutboundPlanner';
 export * from './BushMeshPeerActions';
+export * from './BushMeshPeerDirectory';
 export * from './BushMeshPeerMaintenance';
 export * from './BushMeshPeerRegistry';
 export * from './BushMeshPersistentDedup';
