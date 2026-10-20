@@ -25,16 +25,24 @@ class BushMeshCarNotificationReceiptStore(context: Context) {
   )
 
   @Synchronized
-  fun claim(frame: ByteArray): Boolean {
+  fun hasSeen(frame: ByteArray): Boolean {
+    if (frame.isEmpty()) {
+      return true
+    }
+    return load().contains(fingerprint(frame))
+  }
+
+  /**
+   * Records a frame only after its notification has been posted successfully.
+   * Returns false when another sequential sighting already recorded it.
+   */
+  @Synchronized
+  fun remember(frame: ByteArray): Boolean {
     if (frame.isEmpty()) {
       return false
     }
 
-    val fingerprint = MessageDigest
-      .getInstance("SHA-256")
-      .digest(frame)
-      .let { Base64.encodeToString(it, Base64.NO_WRAP) }
-
+    val fingerprint = fingerprint(frame)
     val receipts = load()
     if (receipts.contains(fingerprint)) {
       return false
@@ -58,6 +66,12 @@ class BushMeshCarNotificationReceiptStore(context: Context) {
 
   @Synchronized
   fun count(): Int = load().size
+
+  private fun fingerprint(frame: ByteArray): String =
+    MessageDigest
+      .getInstance("SHA-256")
+      .digest(frame)
+      .let { Base64.encodeToString(it, Base64.NO_WRAP) }
 
   private fun load(): MutableList<String> {
     val raw = preferences.getString(RECEIPTS_KEY, null) ?: return mutableListOf()
