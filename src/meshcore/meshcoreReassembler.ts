@@ -3,42 +3,30 @@ export type MeshCoreReassembler = {
   reset: () => void;
 };
 
+/**
+ * MeshCore BLE notifications are already complete companion-protocol frames.
+ *
+ * Older BushMesh builds buffered notifications and flushed them after an idle
+ * delay. That could merge two legitimate back-to-back MeshCore responses into
+ * one invalid frame. Keep this compatibility wrapper for now, but forward each
+ * BLE notification immediately and independently.
+ *
+ * The idleMs argument is intentionally retained so existing call sites do not
+ * need to change in the same migration.
+ */
 export function createIdleReassembler(
   onFrameReady: (bytes: number[]) => void,
-  idleMs = 350,
+  _idleMs = 350,
 ): MeshCoreReassembler {
-  let buffer: number[] = [];
-  let timer: ReturnType<typeof setTimeout> | null = null;
-
-  const flush = () => {
-    const frame = buffer;
-    buffer = [];
-    timer = null;
-
-    if (frame.length > 0) {
-      onFrameReady(frame);
-    }
-  };
-
   return {
     pushChunk: (bytes: number[]) => {
-      buffer = [...buffer, ...bytes];
-
-      if (timer) {
-        clearTimeout(timer);
+      if (bytes.length > 0) {
+        onFrameReady([...bytes]);
       }
-
-      timer = setTimeout(flush, idleMs);
     },
 
     reset: () => {
-      buffer = [];
-
-      if (timer) {
-        clearTimeout(timer);
-      }
-
-      timer = null;
+      // BLE notification frames are not buffered, so there is nothing to reset.
     },
   };
 }

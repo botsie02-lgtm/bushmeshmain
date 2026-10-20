@@ -49,6 +49,8 @@ export type ParsedContactInfo = {
   lastModified: number | null;
 };
 
+const CONTACT_INFO_PACKET_BYTES = 148;
+
 function readUInt32LE(bytes: number[], offset: number): number | null {
   if (bytes.length < offset + 4) {
     return null;
@@ -458,7 +460,7 @@ function parseContactInfo(bytes: number[]): ParsedMeshCorePacket {
 
   lines.push(`Byte Length: ${bytes.length}`);
 
-  if (bytes.length < 143) {
+  if (bytes.length < CONTACT_INFO_PACKET_BYTES) {
     lines.push('Parser Note: Packet is shorter than expected for CONTACT.');
     return {
       title: 'Parsed Contact',
@@ -471,7 +473,8 @@ function parseContactInfo(bytes: number[]): ParsedMeshCorePacket {
   const type = bytes[33];
   const flags = bytes[34];
   const outPathLengthRaw = bytes[35];
-  const outPathLength = outPathLengthRaw > 127 ? outPathLengthRaw - 256 : outPathLengthRaw;
+  const outPathLength =
+    outPathLengthRaw > 127 ? outPathLengthRaw - 256 : outPathLengthRaw;
   const name = readText(bytes, 100, 32) || 'Unnamed Contact';
   const lastAdvert = readUInt32LE(bytes, 132);
   const latitudeRaw = readInt32LE(bytes, 136);
@@ -553,7 +556,7 @@ export function parseMeshCorePacketFields(
 
     case 0x83:
       return parseMessagesWaiting(bytes);
-    
+
     case 0x0c:
       return parseBatteryInfo(bytes);
     case 0x02:
@@ -564,7 +567,7 @@ export function parseMeshCorePacketFields(
 
     case 0x04:
       return parseContactsEnd(bytes);
-      
+
     default:
       return null;
   }
