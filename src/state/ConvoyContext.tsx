@@ -88,8 +88,8 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
     });
   }, []);
 
-  const upsertBushMeshMessage = useCallback(
-    (message: BushMeshInboundMessage) => {
+  const upsertBushMeshMessageAt = useCallback(
+    (message: BushMeshInboundMessage, receivedAtMs: number) => {
       if (message.type !== BushMeshMessageType.Position) {
         return;
       }
@@ -106,7 +106,7 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
         accuracyMeters: position.accuracyMeters ?? null,
         sequence: position.sequence,
         packetTimestampSeconds: position.timestampSeconds,
-        receivedAtMs: Date.now(),
+        receivedAtMs,
         snrDb: message.snrDb,
         pathLength: message.pathLength,
       });
@@ -114,9 +114,18 @@ export function ConvoyProvider({children}: {children: React.ReactNode}): React.J
     [resolvedVehicleName, upsertVehicle],
   );
 
+  const upsertBushMeshMessage = useCallback(
+    (message: BushMeshInboundMessage) => {
+      upsertBushMeshMessageAt(message, Date.now());
+    },
+    [upsertBushMeshMessageAt],
+  );
+
   useEffect(() => {
-    return subscribeBushMeshInboundMessages(upsertBushMeshMessage);
-  }, [upsertBushMeshMessage]);
+    return subscribeBushMeshInboundMessages((message, metadata) => {
+      upsertBushMeshMessageAt(message, metadata.receivedAtMs);
+    });
+  }, [upsertBushMeshMessageAt]);
 
   useEffect(() => {
     if (contactNames.size === 0) {
