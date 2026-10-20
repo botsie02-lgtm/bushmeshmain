@@ -6,6 +6,7 @@ export * from './BushMeshDeliveryTracker';
 export * from './BushMeshDiagnostics';
 export * from './BushMeshDisplay';
 export * from './BushMeshDistressBeacon';
+export * from './BushMeshDurableSyncManager';
 export * from './BushMeshDurableTransport';
 export * from './BushMeshFileCheckpointRuntime';
 export * from './BushMeshFileInboxHub';
