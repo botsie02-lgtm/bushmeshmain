@@ -161,6 +161,7 @@ export function DiagnosticsScreen(): React.JSX.Element {
         <View style={styles.metricGrid}>
           <Metric label="Peer positions" value={liveState.peerLocations.length} />
           <Metric label="SOS history" value={liveState.distressAlerts.length} />
+          <Metric label="Unseen SOS" value={liveState.unacknowledgedDistressCount} />
           <Metric label="State revision" value={liveState.revision} />
           <Metric label="Storage loaded" value={liveState.hydrated ? 'Yes' : 'Loading'} />
         </View>
