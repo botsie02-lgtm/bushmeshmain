@@ -47,6 +47,10 @@ type BushMeshChannelMessageInput = Omit<
   // immediately migrates this legacy label to "accepted".
   status: BushMeshMessageDeliveryStatus | 'sent';
 };
+export type BushMeshDurableChannelMessageInput = BushMeshChannelMessageInput & {
+  id: string;
+  createdAt: string;
+};
 export type BushMeshContact = {
   publicKey: string;
   publicKeyPrefix: string;
@@ -106,6 +110,9 @@ type BushMeshContextValue = {
   sendChannelMessage: (channelIndex: number, message: string) => Promise<void>;
   syncContacts: () => Promise<BushMeshContact[]>;
   addLocalChannelMessage: (message: BushMeshChannelMessageInput) => void;
+  addDurableChannelMessage: (
+    message: BushMeshDurableChannelMessageInput,
+  ) => Promise<boolean>;
   updateChannelMessageStatus: (
     messageId: string,
     status: BushMeshMessageDeliveryStatus,
@@ -147,6 +154,7 @@ export function BushMeshProvider({
   const [channelMessages, setChannelMessages] = useState<
     BushMeshChannelMessage[]
   >([]);
+  const channelMessagesRef = useRef<BushMeshChannelMessage[]>([]);
   const [messagePersistenceStatus, setMessagePersistenceStatus] =
     useState<MessagePersistenceStatus>(() =>
       androidMessagePersistence.isSupported() ? 'restoring' : 'unsupported',
@@ -163,6 +171,44 @@ export function BushMeshProvider({
     useState<SendChannelMessageHandler | null>(null);
   const [syncContactsHandlerState, setSyncContactsHandlerState] =
     useState<SyncContactsHandler | null>(null);
+
+  const queueMessageSnapshotWrite = useCallback(
+    (messages: BushMeshChannelMessage[]): Promise<void> => {
+      if (!androidMessagePersistence.isSupported()) {
+        return Promise.resolve();
+      }
+
+      const snapshot = createMessageSnapshot(messages, Date.now());
+      const operation = messageWriteChainRef.current.then(async () => {
+        if (snapshot.messages.length === 0) {
+          await androidMessagePersistence.clear();
+        } else {
+          await androidMessagePersistence.save(snapshot);
+        }
+      });
+
+      const reported = operation
+        .then(() => {
+          setMessagePersistenceStatus('ready');
+          setMessagePersistenceError(null);
+        })
+        .catch(error => {
+          setMessagePersistenceStatus('error');
+          setMessagePersistenceError(
+            error instanceof Error
+              ? error.message
+              : 'Encrypted Bushmesh message history could not be saved.',
+          );
+          throw error;
+        });
+
+      // Keep the serialization chain alive even after one failed write while
+      // still returning the real failure to callers that need durability.
+      messageWriteChainRef.current = reported.catch(() => undefined);
+      return reported;
+    },
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -232,8 +278,14 @@ export function BushMeshProvider({
 
       try {
         const snapshot = await androidMessagePersistence.load();
-        if (snapshot && active) {
-          setChannelMessages(snapshot.messages);
+        if (active) {
+          const restored = snapshot?.messages ?? [];
+          const merged = createMessageSnapshot(
+            [...channelMessagesRef.current, ...restored],
+            Date.now(),
+          ).messages;
+          channelMessagesRef.current = merged;
+          setChannelMessages(merged);
         }
         messagePersistenceReadyRef.current = true;
         if (active) {
@@ -250,6 +302,7 @@ export function BushMeshProvider({
           await androidMessagePersistence.resetSecureStorage();
           messagePersistenceReadyRef.current = true;
           if (active) {
+            channelMessagesRef.current = [];
             setChannelMessages([]);
             setMessagePersistenceStatus('ready');
             setMessagePersistenceError(
@@ -277,6 +330,8 @@ export function BushMeshProvider({
   }, []);
 
   useEffect(() => {
+    channelMessagesRef.current = channelMessages;
+
     if (
       !androidMessagePersistence.isSupported() ||
       !messagePersistenceReadyRef.current
@@ -284,31 +339,8 @@ export function BushMeshProvider({
       return;
     }
 
-    const snapshot = createMessageSnapshot(channelMessages, Date.now());
-    messageWriteChainRef.current = messageWriteChainRef.current
-      .then(async () => {
-        if (snapshot.messages.length === 0) {
-          await androidMessagePersistence.clear();
-          return;
-        }
-        await androidMessagePersistence.save(snapshot);
-      })
-      .then(() => {
-        setMessagePersistenceStatus('ready');
-        setMessagePersistenceError(null);
-      })
-      .catch(error => {
-        // A failed write is retried when history changes again. Do not key this
-        // effect to the error/status state or a permanent storage fault would
-        // create an immediate retry loop.
-        setMessagePersistenceStatus('error');
-        setMessagePersistenceError(
-          error instanceof Error
-            ? error.message
-            : 'Encrypted Bushmesh message history could not be saved.',
-        );
-      });
-  }, [channelMessages]);
+    queueMessageSnapshotWrite(channelMessages).catch(() => undefined);
+  }, [channelMessages, queueMessageSnapshotWrite]);
 
   const persistContacts = useCallback((nextContacts: BushMeshContact[]) => {
     if (!androidContactPersistence.isSupported()) {
@@ -388,6 +420,7 @@ export function BushMeshProvider({
   };
 
   const clearChannelMessages = useCallback(() => {
+    channelMessagesRef.current = [];
     setChannelMessages([]);
   }, []);
 
@@ -395,31 +428,111 @@ export function BushMeshProvider({
     (message: BushMeshChannelMessageInput) => {
       const normalizedStatus: BushMeshMessageDeliveryStatus =
         message.status === 'sent' ? 'accepted' : message.status;
-      setChannelMessages(currentMessages =>
-        createMessageSnapshot(
-          [
-            {
-              ...message,
-              status: normalizedStatus,
-              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-              createdAt: new Date().toISOString(),
-            },
-            ...currentMessages,
-          ],
+      const nowMs = Date.now();
+      const next = createMessageSnapshot(
+        [
+          {
+            ...message,
+            status: normalizedStatus,
+            id: `${nowMs}-${Math.random().toString(16).slice(2)}`,
+            createdAt: new Date(nowMs).toISOString(),
+          },
+          ...channelMessagesRef.current,
+        ],
+        nowMs,
+      ).messages;
+      channelMessagesRef.current = next;
+      setChannelMessages(next);
+    },
+    [],
+  );
+
+  const addDurableChannelMessage = useCallback(
+    async (message: BushMeshDurableChannelMessageInput): Promise<boolean> => {
+      const id = message.id.trim();
+      if (!id) {
+        throw new Error('Durable Bushmesh message requires a stable id.');
+      }
+      if (!Number.isFinite(Date.parse(message.createdAt))) {
+        throw new Error('Durable Bushmesh message has an invalid timestamp.');
+      }
+      if (
+        androidMessagePersistence.isSupported() &&
+        !messagePersistenceReadyRef.current
+      ) {
+        throw new Error('Encrypted message history is still restoring.');
+      }
+
+      if (channelMessagesRef.current.some(existing => existing.id === id)) {
+        return false;
+      }
+
+      const normalizedStatus: BushMeshMessageDeliveryStatus =
+        message.status === 'sent' ? 'accepted' : message.status;
+      const durableMessage: BushMeshChannelMessage = {
+        ...message,
+        id,
+        status: normalizedStatus,
+      };
+
+      if (!androidMessagePersistence.isSupported()) {
+        const next = createMessageSnapshot(
+          [durableMessage, ...channelMessagesRef.current],
           Date.now(),
-        ).messages,
-      );
+        ).messages;
+        channelMessagesRef.current = next;
+        setChannelMessages(next);
+        return true;
+      }
+
+      let inserted = false;
+      const operation = messageWriteChainRef.current.then(async () => {
+        if (channelMessagesRef.current.some(existing => existing.id === id)) {
+          return;
+        }
+
+        const snapshot = createMessageSnapshot(
+          [durableMessage, ...channelMessagesRef.current],
+          Date.now(),
+        );
+        await androidMessagePersistence.save(snapshot);
+
+        // Merge against the newest in-memory state after the durable write in
+        // case a local message arrived while Android storage was completing.
+        const latest = createMessageSnapshot(
+          [durableMessage, ...channelMessagesRef.current],
+          Date.now(),
+        ).messages;
+        channelMessagesRef.current = latest;
+        setChannelMessages(latest);
+        setMessagePersistenceStatus('ready');
+        setMessagePersistenceError(null);
+        inserted = true;
+      });
+
+      const reported = operation.catch(error => {
+        setMessagePersistenceStatus('error');
+        setMessagePersistenceError(
+          error instanceof Error
+            ? error.message
+            : 'Recovered radio message could not be written to encrypted history.',
+        );
+        throw error;
+      });
+      messageWriteChainRef.current = reported.catch(() => undefined);
+      await reported;
+      return inserted;
     },
     [],
   );
 
   const updateChannelMessageStatus = useCallback(
     (messageId: string, status: BushMeshMessageDeliveryStatus) => {
-      setChannelMessages(currentMessages =>
-        currentMessages.map(message =>
-          message.id === messageId ? {...message, status} : message,
-        ),
+      const next = channelMessagesRef.current.map(message =>
+        message.id === messageId ? {...message, status} : message,
       );
+      channelMessagesRef.current = next;
+      setChannelMessages(next);
     },
     [],
   );
@@ -472,6 +585,7 @@ export function BushMeshProvider({
       sendChannelMessage,
       syncContacts,
       addLocalChannelMessage,
+      addDurableChannelMessage,
       updateChannelMessageStatus,
       clearChannels,
       clearChannelMessages,
@@ -496,6 +610,7 @@ export function BushMeshProvider({
       sendChannelMessage,
       syncContacts,
       addLocalChannelMessage,
+      addDurableChannelMessage,
       updateChannelMessageStatus,
       clearChannelMessages,
       clearContacts,
