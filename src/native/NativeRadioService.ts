@@ -28,6 +28,8 @@ export type NativeRadioServiceStatus = {
   nativeBleLastError?: string | null;
   nativeBleQueuedWrites?: number;
   nativeBleBufferedFrames?: number;
+  outboxLeaseOwner?: 'foreground' | 'background' | string;
+  outboxLeaseEpoch?: number;
 };
 
 type NativeRadioServiceModule = {
@@ -62,6 +64,8 @@ const unsupportedStatus: NativeRadioServiceStatus = {
   nativeBleLastError: null,
   nativeBleQueuedWrites: 0,
   nativeBleBufferedFrames: 0,
+  outboxLeaseOwner: 'foreground',
+  outboxLeaseEpoch: 0,
 };
 
 export const nativeRadioService = {
