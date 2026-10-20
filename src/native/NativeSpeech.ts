@@ -6,6 +6,7 @@ export type NativeSpeechStatus = {
   failed: boolean;
   languageTag: string | null;
   criticalAlertsEnabled: boolean;
+  radioMessagesEnabled: boolean;
 };
 
 type NativeSpeechModule = {
@@ -14,6 +15,8 @@ type NativeSpeechModule = {
   getStatus: () => Promise<NativeSpeechStatus>;
   setCriticalAlertsEnabled: (enabled: boolean) => Promise<boolean>;
   getCriticalAlertsEnabled: () => Promise<boolean>;
+  setRadioMessagesEnabled: (enabled: boolean) => Promise<boolean>;
+  getRadioMessagesEnabled: () => Promise<boolean>;
 };
 
 const module = NativeModules.BushMeshSpeech as NativeSpeechModule | undefined;
@@ -24,6 +27,7 @@ const unsupportedStatus: NativeSpeechStatus = {
   failed: true,
   languageTag: null,
   criticalAlertsEnabled: false,
+  radioMessagesEnabled: false,
 };
 
 export const nativeSpeech = {
@@ -70,5 +74,19 @@ export const nativeSpeech = {
       return false;
     }
     return module.setCriticalAlertsEnabled(enabled);
+  },
+
+  async getRadioMessagesEnabled(): Promise<boolean> {
+    if (!this.isSupported() || !module) {
+      return false;
+    }
+    return module.getRadioMessagesEnabled();
+  },
+
+  async setRadioMessagesEnabled(enabled: boolean): Promise<boolean> {
+    if (!this.isSupported() || !module) {
+      return false;
+    }
+    return module.setRadioMessagesEnabled(enabled);
   },
 };
