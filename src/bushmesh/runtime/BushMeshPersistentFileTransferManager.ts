@@ -89,8 +89,27 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
   }
 
   override acceptFrame(frame: number[]): BushMeshFileManagerResult {
-    const result = super.acceptFrame(frame);
     const now = Date.now();
+
+    if (frame[0] === BushMeshFileFrameType.Start) {
+      const metadata = decodeFileStart(frame);
+      const existing = this.incoming.get(metadata.transferId);
+
+      // Restored senders deliberately re-announce FILE_START. If this receiver
+      // retained the same transfer, keep all reconstructed chunks intact.
+      if (existing && this.sameStart(existing.startFrame, frame)) {
+        existing.updatedAt = now;
+        this.queueIncomingPersist(now);
+        return {
+          transferId: metadata.transferId,
+          event: 'started',
+          responseFrames: [],
+          progress: this.incomingProgress(metadata.transferId) ?? undefined,
+        };
+      }
+    }
+
+    const result = super.acceptFrame(frame);
 
     try {
       switch (frame[0]) {
@@ -138,13 +157,6 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
 
   private rememberIncomingStart(frame: number[], now: number): void {
     const metadata = decodeFileStart(frame);
-    const existing = this.incoming.get(metadata.transferId);
-
-    if (existing && this.sameStart(existing.startFrame, frame)) {
-      existing.updatedAt = now;
-      return;
-    }
-
     this.incoming.set(metadata.transferId, {
       transferId: metadata.transferId,
       startFrame: [...frame],
@@ -228,8 +240,6 @@ export class BushMeshPersistentFileTransferManager extends BushMeshFileTransferM
           continue;
         }
 
-        // Replay into the base manager without invoking this override so restore
-        // does not recursively rewrite the checkpoint after every chunk.
         super.acceptFrame(saved.startFrame);
         const validChunks: Array<{index: number; frame: number[]}> = [];
         for (const item of saved.chunkFrames.sort((a, b) => a.index - b.index)) {
