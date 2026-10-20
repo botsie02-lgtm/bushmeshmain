@@ -31,6 +31,16 @@ export class BushMeshFileSender {
     return frame ? [...frame] : null;
   }
 
+  restoreAcknowledgedChunkIndexes(indexes: number[]): void {
+    for (const index of indexes) {
+      if (!Number.isInteger(index) || index < 0 || index >= this.transfer.chunkFrames.length) {
+        continue;
+      }
+
+      this.acknowledged.add(index);
+    }
+  }
+
   applyAckFrame(ackFrame: number[]): BushMeshFileAck {
     const ack = decodeFileAck(ackFrame);
 
