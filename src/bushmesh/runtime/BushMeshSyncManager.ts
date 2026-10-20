@@ -14,13 +14,8 @@ type InventoryState = {
   ids: Set<number>;
 };
 
-// The app can create more than one manager over its lifetime as BLE/runtime
-// sessions restart. Local inventories intentionally survive those runtime
-// objects so sync summaries continue to describe current app state.
-const sharedLocalInventories = new Map<number, InventoryState>();
-
 export class BushMeshSyncManager {
-  private readonly inventories = sharedLocalInventories;
+  private readonly inventories = new Map<number, InventoryState>();
   private readonly remoteSummaries = new Map<number, BushMeshInventorySummary>();
 
   setInventory(
