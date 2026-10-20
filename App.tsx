@@ -11,6 +11,7 @@ import {
   SafeAreaView,
 } from 'react-native-safe-area-context';
 
+import {CarMessagingStatusBanner} from './src/components/CarMessagingStatusBanner';
 import {ConvoyLossBanner} from './src/components/ConvoyLossBanner';
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
@@ -19,6 +20,7 @@ import {SpeechAlertBridge} from './src/components/SpeechAlertBridge';
 import {SpeechPttPanel} from './src/components/SpeechPttPanel';
 import {SpeechStatusBanner} from './src/components/SpeechStatusBanner';
 import {BushMeshProvider} from './src/state/BushMeshContext';
+import {CarMessagingProvider} from './src/state/CarMessagingContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
 import {DriveProvider} from './src/state/DriveContext';
 import {RadioSessionProvider} from './src/state/RadioSessionContext';
@@ -76,6 +78,7 @@ function AppContent(): React.JSX.Element {
       {activeTab === 'channels' ? (
         <>
           <SecureDataStatusBanner kind="messages" />
+          <CarMessagingStatusBanner />
           <SpeechPttPanel />
         </>
       ) : null}
@@ -137,20 +140,22 @@ function App(): React.JSX.Element {
   return (
     <SafeAreaProvider>
       <BushMeshProvider>
-        <ConvoyProvider>
-          <DriveProvider>
-            <SpeechProvider>
-              <SpeechAlertBridge />
-              <RadioSessionProvider>
-                <OfflineMapProvider>
-                  <LocationSessionProvider>
-                    <AppContent />
-                  </LocationSessionProvider>
-                </OfflineMapProvider>
-              </RadioSessionProvider>
-            </SpeechProvider>
-          </DriveProvider>
-        </ConvoyProvider>
+        <CarMessagingProvider>
+          <ConvoyProvider>
+            <DriveProvider>
+              <SpeechProvider>
+                <SpeechAlertBridge />
+                <RadioSessionProvider>
+                  <OfflineMapProvider>
+                    <LocationSessionProvider>
+                      <AppContent />
+                    </LocationSessionProvider>
+                  </OfflineMapProvider>
+                </RadioSessionProvider>
+              </SpeechProvider>
+            </DriveProvider>
+          </ConvoyProvider>
+        </CarMessagingProvider>
       </BushMeshProvider>
     </SafeAreaProvider>
   );
