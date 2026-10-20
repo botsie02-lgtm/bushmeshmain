@@ -94,6 +94,7 @@ export class BushMeshReliabilityController {
   acceptAckWire(ackWireBytes: number[]): {
     messageId: number;
     acknowledgedFragments: number[];
+    receivedFragments: number[];
     missingFragments: number[];
   } {
     const decoded = decodeBushMeshWire(ackWireBytes);
@@ -106,6 +107,7 @@ export class BushMeshReliabilityController {
     return {
       messageId: ack.messageId,
       acknowledgedFragments,
+      receivedFragments: [...ack.receivedFragments],
       missingFragments: ack.missingFragments,
     };
   }
