@@ -22,7 +22,7 @@ import {RadioSessionProvider} from './src/state/RadioSessionContext';
 import {LocationSessionProvider} from './src/state/LocationSessionContext';
 import {OfflineMapProvider} from './src/state/OfflineMapContext';
 import {DriveScreen} from './src/screens/DriveScreen';
-import {DeviceScreen} from './src/screens/DeviceScreen';
+import {DeviceHubScreen} from './src/screens/DeviceHubScreen';
 import {RadioScreen} from './src/screens/RadioScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
 import {ConvoyScreen} from './src/screens/ConvoyScreen';
@@ -101,7 +101,7 @@ function AppContent(): React.JSX.Element {
         </View>
 
         <View style={[styles.screenWrap, activeTab !== 'device' && styles.hidden]}>
-          <DeviceScreen />
+          <DeviceHubScreen />
         </View>
       </View>
 
