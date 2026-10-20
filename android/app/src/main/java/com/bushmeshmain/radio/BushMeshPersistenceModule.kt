@@ -25,15 +25,18 @@ class BushMeshPersistenceModule(
     private const val TRACK_KEY = "encrypted_track_snapshot"
     private const val CONTACTS_KEY = "encrypted_contacts_snapshot"
     private const val MESSAGES_KEY = "encrypted_messages_snapshot"
+    private const val MAP_STATE_KEY = "encrypted_map_state_snapshot"
     private const val OUTBOX_KEY_ALIAS = "bushmesh_outbox_aes_v1"
     private const val TRACK_KEY_ALIAS = "bushmesh_track_aes_v1"
     private const val CONTACTS_KEY_ALIAS = "bushmesh_contacts_aes_v1"
     private const val MESSAGES_KEY_ALIAS = "bushmesh_messages_aes_v1"
+    private const val MAP_STATE_KEY_ALIAS = "bushmesh_map_state_aes_v1"
     private const val ENVELOPE_VERSION = "v1"
     private const val OUTBOX_AAD = ENVELOPE_VERSION
     private const val TRACK_AAD = "$ENVELOPE_VERSION:track"
     private const val CONTACTS_AAD = "$ENVELOPE_VERSION:contacts"
     private const val MESSAGES_AAD = "$ENVELOPE_VERSION:messages"
+    private const val MAP_STATE_AAD = "$ENVELOPE_VERSION:map-state"
     private const val GCM_TAG_BITS = 128
     private const val GCM_IV_BYTES = 12
   }
@@ -118,6 +121,26 @@ class BushMeshPersistenceModule(
   @ReactMethod
   fun resetMessagesStorage(promise: Promise) {
     resetStorage(MESSAGES_KEY, MESSAGES_KEY_ALIAS, "BUSHMESH_MESSAGES_RESET_FAILED", "messages", promise)
+  }
+
+  @ReactMethod
+  fun loadMapState(promise: Promise) {
+    loadSecureValue(MAP_STATE_KEY, MAP_STATE_KEY_ALIAS, MAP_STATE_AAD, "map state", "BUSHMESH_MAP_STATE_LOAD_FAILED", promise)
+  }
+
+  @ReactMethod
+  fun saveMapState(serializedSnapshot: String, promise: Promise) {
+    saveSecureValue(MAP_STATE_KEY, MAP_STATE_KEY_ALIAS, MAP_STATE_AAD, "map state", "BUSHMESH_MAP_STATE_SAVE_FAILED", serializedSnapshot, promise)
+  }
+
+  @ReactMethod
+  fun clearMapState(promise: Promise) {
+    clearSecureValue(MAP_STATE_KEY, "map state", "BUSHMESH_MAP_STATE_CLEAR_FAILED", promise)
+  }
+
+  @ReactMethod
+  fun resetMapStateStorage(promise: Promise) {
+    resetStorage(MAP_STATE_KEY, MAP_STATE_KEY_ALIAS, "BUSHMESH_MAP_STATE_RESET_FAILED", "map state", promise)
   }
 
   private fun loadSecureValue(
