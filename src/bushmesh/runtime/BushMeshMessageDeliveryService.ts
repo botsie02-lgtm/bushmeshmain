@@ -10,6 +10,7 @@ import {
   BushMeshReliableSender,
 } from './BushMeshReliableSender';
 import {
+  BushMeshStoreForwardFlushResult,
   BushMeshStoreForwardRuntime,
   BushMeshStoreForwardStore,
 } from './BushMeshStoreForwardRuntime';
@@ -75,7 +76,7 @@ export class BushMeshMessageDeliveryService {
     };
   }
 
-  async flush(): Promise<ReturnType<BushMeshReliableSender['flush']>> {
+  async flush(): Promise<BushMeshStoreForwardFlushResult> {
     return this.sender.flush();
   }
 
