@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 
+import {publishBushMeshInboxFile} from '../bushmesh/runtime/BushMeshFileInboxHub';
 import {
   BushMeshRuntimeSendResult,
   BushMeshRuntimeStats,
@@ -402,12 +403,21 @@ export function BushMeshProvider({
           });
         },
         onFileComplete: (file, channelIndex) => {
+          const stored = publishBushMeshInboxFile({
+            transferId: file.transferId,
+            channelIndex,
+            fileName: file.fileName,
+            contentType: file.contentType,
+            data: file.data,
+          });
           setChannelMessages(currentMessages => [
             {
               id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
               channelIndex: String(channelIndex),
               channelName: `Channel #${channelIndex}`,
-              text: `Received ${file.fileName ?? 'BushMesh file'} (${file.data.length} bytes).`,
+              text: stored.stored
+                ? `Received ${file.fileName ?? 'BushMesh file'} (${file.data.length} bytes) and saved it to the local BushMesh inbox.`
+                : `Received ${file.fileName ?? 'BushMesh file'} (${file.data.length} bytes), but it was not persisted${stored.reason ? `: ${stored.reason}` : '.'}`,
               direction: 'received',
               status: 'sent',
               protocol: 'bushmesh',
