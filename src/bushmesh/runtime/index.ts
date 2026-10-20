@@ -23,6 +23,7 @@ export * from './BushMeshPeerMaintenance';
 export * from './BushMeshPeerRegistry';
 export * from './BushMeshPersistentDedup';
 export * from './BushMeshPersistentFileCoordinator';
+export * from './BushMeshPersistentFileTransferManager';
 export * from './BushMeshPersistentForwarder';
 export * from './BushMeshPersistentStore';
 export * from './BushMeshReliableSender';
