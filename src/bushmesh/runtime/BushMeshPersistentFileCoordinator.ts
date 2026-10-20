@@ -1,6 +1,8 @@
 import {
   BushMeshFileContentType,
   BushMeshFileSendProgress,
+  encodeFileAck,
+  encodeFileResumeRequest,
 } from '../protocol';
 import {
   BushMeshFileCheckpointRuntime,
@@ -102,17 +104,33 @@ export class BushMeshPersistentFileCoordinator {
     }
 
     const pending = new Set(progress.pendingChunkIndexes);
-    const acknowledged: number[] = [];
-    for (let index = 0; index < progress.chunkCount; index += 1) {
-      if (!pending.has(index)) {
-        acknowledged.push(index);
+
+    // Persist ACK state in the same 64-chunk windows used over the wire. This
+    // keeps checkpoint semantics aligned with the actual FILE_ACK protocol.
+    for (let base = 0; base < progress.chunkCount; base += 64) {
+      const bitCount = Math.min(64, progress.chunkCount - base);
+      const received: number[] = [];
+
+      for (let index = base; index < base + bitCount; index += 1) {
+        if (!pending.has(index)) {
+          received.push(index);
+        }
       }
+
+      await this.checkpoints.applyAckFrame(
+        encodeFileAck(transferId, base, bitCount, received),
+        now,
+      );
     }
 
-    await this.checkpoints.updateProgress(
-      transferId,
-      acknowledged,
-      progress.pendingChunkIndexes[0] ?? progress.chunkCount,
+    // ACK windows can advance independently, so finish by pinning the resume
+    // cursor to the true first missing chunk from the live sender state.
+    await this.checkpoints.applyResumeFrame(
+      encodeFileResumeRequest({
+        transferId,
+        nextMissingChunkIndex:
+          progress.pendingChunkIndexes[0] ?? progress.chunkCount,
+      }),
       now,
     );
 
