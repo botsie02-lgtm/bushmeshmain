@@ -10,6 +10,7 @@ import {
 
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {BushMeshSyncInventoryBridge} from './src/state/BushMeshSyncInventoryBridge';
+import {useBushMeshLiveState} from './src/state/useBushMeshLiveState';
 import {DeviceScreen} from './src/screens/DeviceScreen';
 import {ChannelsScreen} from './src/screens/ChannelsScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
@@ -37,6 +38,7 @@ const tabs: Array<{key: TabKey; label: string}> = [
 
 function AppContent(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>('device');
+  const {unacknowledgedDistressCount} = useBushMeshLiveState();
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -80,6 +82,8 @@ function AppContent(): React.JSX.Element {
       <View style={styles.tabBar}>
         {tabs.map(tab => {
           const isActive = tab.key === activeTab;
+          const isEmergency = tab.key === 'emergency';
+          const hasUnseenSos = isEmergency && unacknowledgedDistressCount > 0;
 
           return (
             <TouchableOpacity
@@ -87,19 +91,31 @@ function AppContent(): React.JSX.Element {
               style={[
                 styles.tabButton,
                 isActive && styles.tabButtonActive,
-                tab.key === 'emergency' && styles.sosTabButton,
-                tab.key === 'emergency' && isActive && styles.sosTabButtonActive,
+                isEmergency && styles.sosTabButton,
+                isEmergency && isActive && styles.sosTabButtonActive,
+                hasUnseenSos && !isActive && styles.sosTabButtonUnread,
               ]}
               onPress={() => setActiveTab(tab.key)}>
-              <Text
-                style={[
-                  styles.tabText,
-                  isActive && styles.tabTextActive,
-                  tab.key === 'emergency' && styles.sosTabText,
-                  tab.key === 'emergency' && isActive && styles.sosTabTextActive,
-                ]}>
-                {tab.label}
-              </Text>
+              <View style={styles.tabLabelRow}>
+                <Text
+                  style={[
+                    styles.tabText,
+                    isActive && styles.tabTextActive,
+                    isEmergency && styles.sosTabText,
+                    isEmergency && isActive && styles.sosTabTextActive,
+                  ]}>
+                  {tab.label}
+                </Text>
+                {hasUnseenSos ? (
+                  <View style={styles.sosBadge}>
+                    <Text style={styles.sosBadgeText}>
+                      {unacknowledgedDistressCount > 99
+                        ? '99+'
+                        : unacknowledgedDistressCount}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
             </TouchableOpacity>
           );
         })}
@@ -167,6 +183,12 @@ const styles = StyleSheet.create({
   tabButtonActive: {
     backgroundColor: colors.accent,
   },
+  tabLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
   sosTabButton: {
     borderWidth: 1,
     borderColor: colors.danger,
@@ -174,6 +196,10 @@ const styles = StyleSheet.create({
   sosTabButtonActive: {
     backgroundColor: colors.danger,
     borderColor: colors.danger,
+  },
+  sosTabButtonUnread: {
+    backgroundColor: colors.surfaceSoft,
+    borderWidth: 2,
   },
   tabText: {
     color: colors.textSecondary,
@@ -189,6 +215,20 @@ const styles = StyleSheet.create({
   },
   sosTabTextActive: {
     color: colors.textPrimary,
+  },
+  sosBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.danger,
+  },
+  sosBadgeText: {
+    color: colors.textPrimary,
+    fontSize: 9,
+    fontWeight: '900',
   },
 });
 
