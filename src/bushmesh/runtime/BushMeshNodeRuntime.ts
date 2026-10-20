@@ -28,7 +28,6 @@ import {
 import {renderBushMeshReceivedMessage} from './BushMeshDisplay';
 import {
   BushMeshFileManagerResult,
-  BushMeshFileTransferManager,
   BushMeshIncomingFile,
 } from './BushMeshFileTransferManager';
 import {createBushMeshNodeHelloFromPublicKey} from './BushMeshIdentity';
@@ -38,6 +37,8 @@ import {
   publishBushMeshPeerLocation,
 } from './BushMeshLiveStateHub';
 import {BushMeshPeerRegistry} from './BushMeshPeerRegistry';
+import {BushMeshPersistentFileTransferManager} from './BushMeshPersistentFileTransferManager';
+import {getBushMeshPersistentStore} from './BushMeshPersistentStore';
 import {getBushMeshSyncManager} from './BushMeshSyncHub';
 
 export type BushMeshNodeRuntimeEvents = BushMeshNetworkRuntimeEvents & {
@@ -61,7 +62,7 @@ type RoutedDeliveryContext = {
 export class BushMeshNodeRuntime {
   readonly network: BushMeshNetworkRuntime;
   readonly sync = getBushMeshSyncManager();
-  readonly files = new BushMeshFileTransferManager();
+  readonly files: BushMeshPersistentFileTransferManager;
 
   private peerRegistryState: BushMeshPeerRegistry | null = null;
   private responder: BushMeshCommandResponder | null = null;
@@ -70,6 +71,8 @@ export class BushMeshNodeRuntime {
   private identityUnsubscribe: (() => void) | null = null;
   private forwarder = new BushMeshControlledFloodForwarder();
   private readonly forwardTimers = new Set<ReturnType<typeof setTimeout>>();
+  private readonly resumedFileTransfers = new Set<number>();
+  private fileResumeInProgress = false;
   private discoveryChannelIndex: number | null = null;
   private discoveryIntervalMs = 5 * 60 * 1000;
   private discoveryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -86,6 +89,9 @@ export class BushMeshNodeRuntime {
     },
   ) {
     this.allowExperimentalBinary = options?.allowExperimentalBinary ?? false;
+    this.files = new BushMeshPersistentFileTransferManager(
+      getBushMeshPersistentStore() ?? undefined,
+    );
     this.network = new BushMeshNetworkRuntime(
       transport,
       {
@@ -115,6 +121,26 @@ export class BushMeshNodeRuntime {
     }
 
     this.network.start();
+    void this.files
+      .initialize()
+      .then(({outgoingTransferIds, incomingTransferIds}) => {
+        if (outgoingTransferIds.length > 0 || incomingTransferIds.length > 0) {
+          this.events.onStatus?.(
+            `BushMesh restored ${outgoingTransferIds.length} outgoing and ${incomingTransferIds.length} incoming file transfer(s).`,
+          );
+        }
+
+        if (this.discoveryChannelIndex !== null) {
+          void this.resumePersistentFileTransfers(this.discoveryChannelIndex);
+        }
+      })
+      .catch(error => {
+        this.events.onError?.(
+          error instanceof Error
+            ? `BushMesh file recovery failed: ${error.message}`
+            : 'BushMesh file recovery failed.',
+        );
+      });
     this.armDiscovery(true);
   }
 
@@ -123,6 +149,7 @@ export class BushMeshNodeRuntime {
     this.identityUnsubscribe?.();
     this.identityUnsubscribe = null;
     this.clearDiscoveryTimer();
+    void this.files.flushPersistence().catch(() => undefined);
 
     for (const timer of this.forwardTimers) {
       clearTimeout(timer);
@@ -194,6 +221,10 @@ export class BushMeshNodeRuntime {
     this.discoveryChannelIndex = channelIndex;
     this.discoveryIntervalMs = intervalMs;
     this.armDiscovery(true);
+
+    if (channelIndex !== null) {
+      void this.resumePersistentFileTransfers(channelIndex);
+    }
   }
 
   setLocation(location: CompactLocation, capturedAtMs = Date.now()): void {
@@ -297,11 +328,12 @@ export class BushMeshNodeRuntime {
     },
   ): Promise<number> {
     const transferId = options?.transferId ?? this.network.nextMessageId();
-    this.files.createOutgoing(transferId, data, {
+    await this.files.createOutgoingPersistent(transferId, data, {
       chunkSize: options?.chunkSize,
       contentType: options?.contentType,
       fileName: options?.fileName,
     });
+    this.resumedFileTransfers.add(transferId);
     await this.sendFileBurst(
       channelIndex,
       transferId,
@@ -324,6 +356,14 @@ export class BushMeshNodeRuntime {
       );
       await this.sendResponseWire(channelIndex, wireBytes);
     }
+
+    await this.files.recordOutgoingProgress(transferId).catch(error => {
+      this.events.onError?.(
+        error instanceof Error
+          ? `BushMesh file checkpoint update failed: ${error.message}`
+          : 'BushMesh file checkpoint update failed.',
+      );
+    });
 
     return fileFrames.length;
   }
@@ -576,6 +616,40 @@ export class BushMeshNodeRuntime {
     wireBytes: number[],
   ): Promise<void> {
     await this.network.sendWire(channelIndex, wireBytes);
+  }
+
+  private async resumePersistentFileTransfers(channelIndex: number): Promise<void> {
+    if (this.fileResumeInProgress || !this.network.isRunning()) {
+      return;
+    }
+
+    this.fileResumeInProgress = true;
+    try {
+      for (const transferId of this.files.activeOutgoingTransferIds()) {
+        if (this.resumedFileTransfers.has(transferId)) {
+          continue;
+        }
+
+        this.resumedFileTransfers.add(transferId);
+        try {
+          const sent = await this.sendFileBurst(channelIndex, transferId, 8);
+          if (sent > 0) {
+            this.events.onStatus?.(
+              `BushMesh resumed file transfer ${transferId} with ${sent} frame(s).`,
+            );
+          }
+        } catch (error) {
+          this.resumedFileTransfers.delete(transferId);
+          this.events.onError?.(
+            error instanceof Error
+              ? `BushMesh file resume ${transferId} failed: ${error.message}`
+              : `BushMesh file resume ${transferId} failed.`,
+          );
+        }
+      }
+    } finally {
+      this.fileResumeInProgress = false;
+    }
   }
 
   private armDiscovery(sendNow: boolean): void {
