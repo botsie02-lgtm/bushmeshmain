@@ -11,6 +11,7 @@ export * from './BushMeshDurableTransport';
 export * from './BushMeshFileCheckpointRuntime';
 export * from './BushMeshFileInboxHub';
 export * from './BushMeshFileTransferManager';
+export * from './BushMeshFragmentCheckpointRuntime';
 export * from './BushMeshIdentity';
 export * from './BushMeshIdentityHub';
 export * from './BushMeshLiveStateHub';
