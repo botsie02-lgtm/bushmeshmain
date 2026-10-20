@@ -16,6 +16,10 @@ import {
   nextBushMeshConvoyStatus,
   updateBushMeshConvoyTelemetry,
 } from '../bushmesh/runtime/BushMeshConvoyHub';
+import {
+  getBushMeshNativePosition,
+  isBushMeshNativeLocationAvailable,
+} from '../bushmesh/runtime/BushMeshNativeLocation';
 import {sendActiveBushMeshConvoyStatus} from '../bushmesh/runtime/BushMeshRuntimeHub';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useBushMeshConvoyState} from '../state/useBushMeshConvoyState';
@@ -55,6 +59,12 @@ function nodeLabel(nodeId: number): string {
   return nodeId.toString(16).padStart(8, '0').toUpperCase();
 }
 
+function heartbeatLabel(milliseconds: number): string {
+  return milliseconds < 60_000
+    ? `${Math.round(milliseconds / 1000)}s`
+    : `${Math.round(milliseconds / 60_000)}m`;
+}
+
 export function ConvoyScreen(): React.JSX.Element {
   const {
     connectionStatus,
@@ -92,6 +102,7 @@ export function ConvoyScreen(): React.JSX.Element {
     ],
     [],
   );
+  const heartbeatOptions = useMemo(() => [5000, 10_000, 20_000, 30_000, 60_000], []);
 
   const commitNumbers = () => {
     const convoyId = Number(convoyIdText);
@@ -110,6 +121,27 @@ export function ConvoyScreen(): React.JSX.Element {
     return true;
   };
 
+  const refreshPosition = async () => {
+    if (!isBushMeshNativeLocationAvailable()) {
+      return false;
+    }
+
+    try {
+      const position = await getBushMeshNativePosition({
+        maxAgeMs: 15_000,
+        timeoutMs: 5000,
+      });
+      updateBushMeshConvoyTelemetry({
+        location: position.location,
+        speedKph: position.speedKph,
+        headingDegrees: position.headingDegrees,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const sendHeartbeat = async () => {
     if (!commitNumbers()) {
       return;
@@ -121,7 +153,8 @@ export function ConvoyScreen(): React.JSX.Element {
 
     try {
       setSending(true);
-      setStatus('Sending convoy heartbeat...');
+      setStatus('Refreshing local position and sending convoy heartbeat...');
+      await refreshPosition();
       const next = nextBushMeshConvoyStatus(localBushMeshNodeId);
       await sendActiveBushMeshConvoyStatus(channelIndex, next);
       setStatus('Convoy heartbeat sent.');
@@ -135,6 +168,7 @@ export function ConvoyScreen(): React.JSX.Element {
   };
 
   const snapshot = convoy.snapshot;
+  const localLocation = convoy.telemetry.location;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -154,13 +188,19 @@ export function ConvoyScreen(): React.JSX.Element {
             <Text style={styles.sectionTitle}>Convoy mode</Text>
             <Text style={styles.sectionBody}>
               Sends a small status heartbeat on the active MeshCore channel.
+              While enabled, BushMesh may request a fresh phone location before
+              a heartbeat so convoy gap detection has useful coordinates.
             </Text>
           </View>
           <Switch
             value={convoy.config.enabled}
             onValueChange={enabled => {
               configureBushMeshConvoy({enabled});
-              setStatus(enabled ? 'Convoy heartbeat mode enabled.' : 'Convoy heartbeat mode disabled.');
+              setStatus(
+                enabled
+                  ? 'Convoy heartbeat mode enabled.'
+                  : 'Convoy heartbeat mode disabled.',
+              );
             }}
           />
         </View>
@@ -204,6 +244,29 @@ export function ConvoyScreen(): React.JSX.Element {
           })}
         </View>
 
+        <Text style={styles.fieldLabel}>Heartbeat interval</Text>
+        <View style={styles.roleGrid}>
+          {heartbeatOptions.map(interval => {
+            const selected = convoy.config.heartbeatIntervalMs === interval;
+            return (
+              <TouchableOpacity
+                key={interval}
+                style={[styles.roleButton, selected && styles.roleButtonActive]}
+                onPress={() =>
+                  configureBushMeshConvoy({heartbeatIntervalMs: interval})
+                }>
+                <Text style={[styles.roleText, selected && styles.roleTextActive]}>
+                  {heartbeatLabel(interval)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={styles.helpText}>
+          Hazard mode automatically speeds updates up to about 3 seconds.
+          Stopped vehicles back off to at least 20 seconds to conserve airtime.
+        </Text>
+
         <View style={styles.toggleRow}>
           <TouchableOpacity
             style={[
@@ -232,6 +295,43 @@ export function ConvoyScreen(): React.JSX.Element {
           </TouchableOpacity>
         </View>
 
+        <View style={styles.locationCard}>
+          <View style={styles.rowBetween}>
+            <View style={styles.flexOne}>
+              <Text style={styles.fieldLabelNoMargin}>Local phone position</Text>
+              <Text style={styles.locationText}>
+                {localLocation
+                  ? `${localLocation.latitude.toFixed(5)}, ${localLocation.longitude.toFixed(5)}`
+                  : isBushMeshNativeLocationAvailable()
+                    ? 'No location captured yet.'
+                    : 'Native location service unavailable.'}
+              </Text>
+              {convoy.telemetry.speedKph !== undefined ? (
+                <Text style={styles.metaText}>
+                  Speed {convoy.telemetry.speedKph.toFixed(1)} km/h
+                  {convoy.telemetry.headingDegrees === undefined
+                    ? ''
+                    : ` • Heading ${Math.round(convoy.telemetry.headingDegrees)}°`}
+                </Text>
+              ) : null}
+            </View>
+            <TouchableOpacity
+              style={styles.locationButton}
+              onPress={() => {
+                setStatus('Refreshing phone position...');
+                void refreshPosition().then(updated =>
+                  setStatus(
+                    updated
+                      ? 'Phone position refreshed.'
+                      : 'Unable to get a current phone position.',
+                  ),
+                );
+              }}>
+              <Text style={styles.locationButtonText}>Refresh GPS</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <TouchableOpacity
           style={[styles.primaryButton, (!canTransmit || sending) && styles.disabled]}
           disabled={!canTransmit || sending}
@@ -243,7 +343,8 @@ export function ConvoyScreen(): React.JSX.Element {
 
         <Text style={styles.statusText}>{status}</Text>
         <Text style={styles.metaText}>
-          Active channel: {channelReady ? `#${channelIndex}` : 'None'} • Local node: {localBushMeshNodeId === null ? 'Unknown' : nodeLabel(localBushMeshNodeId)}
+          Active channel: {channelReady ? `#${channelIndex}` : 'None'} • Local node:{' '}
+          {localBushMeshNodeId === null ? 'Unknown' : nodeLabel(localBushMeshNodeId)}
         </Text>
       </View>
 
@@ -268,7 +369,9 @@ export function ConvoyScreen(): React.JSX.Element {
           </View>
           <View style={styles.metricBox}>
             <Text style={styles.metricLabel}>State</Text>
-            <Text style={styles.metricValue}>{snapshot?.healthy === false ? 'Attention' : 'Good'}</Text>
+            <Text style={styles.metricValue}>
+              {snapshot?.healthy === false ? 'Attention' : 'Good'}
+            </Text>
           </View>
         </View>
 
@@ -308,9 +411,19 @@ export function ConvoyScreen(): React.JSX.Element {
               </View>
               <Text style={styles.memberMeta}>
                 Position {member.status.orderIndex} • {roleLabel(member.status.role)}
-                {member.status.speedKph === undefined ? '' : ` • ${member.status.speedKph.toFixed(1)} km/h`}
-                {member.status.batteryPercent === undefined ? '' : ` • ${member.status.batteryPercent}%`}
+                {member.status.speedKph === undefined
+                  ? ''
+                  : ` • ${member.status.speedKph.toFixed(1)} km/h`}
+                {member.status.batteryPercent === undefined
+                  ? ''
+                  : ` • ${member.status.batteryPercent}%`}
               </Text>
+              {member.status.location ? (
+                <Text style={styles.memberMeta}>
+                  {member.status.location.latitude.toFixed(5)}, {' '}
+                  {member.status.location.longitude.toFixed(5)}
+                </Text>
+              ) : null}
               {member.gapFromPreviousMetres !== null ? (
                 <Text style={styles.memberMeta}>
                   Gap from previous located vehicle: {member.gapFromPreviousMetres} m
@@ -358,6 +471,7 @@ const styles = StyleSheet.create({
   rowBetween: {flexDirection: 'row', alignItems: 'center', gap: 10},
   flexOne: {flex: 1},
   fieldLabel: {color: colors.textMuted, fontSize: 12, fontWeight: '800', marginTop: 14, marginBottom: 6},
+  fieldLabelNoMargin: {color: colors.textMuted, fontSize: 12, fontWeight: '800'},
   input: {
     backgroundColor: colors.background,
     borderWidth: 1,
@@ -368,6 +482,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 15,
   },
+  helpText: {color: colors.textMuted, fontSize: 11, lineHeight: 17, marginTop: 8},
   roleGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 8},
   roleButton: {
     borderRadius: 10,
@@ -393,6 +508,23 @@ const styles = StyleSheet.create({
   flagButtonWarning: {borderColor: colors.warning},
   flagButtonDanger: {borderColor: colors.danger},
   flagText: {color: colors.textPrimary, fontSize: 12, fontWeight: '900'},
+  locationCard: {
+    marginTop: 14,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    padding: 11,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  locationText: {color: colors.textPrimary, fontSize: 13, fontWeight: '800', marginTop: 5},
+  locationButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+  },
+  locationButtonText: {color: colors.accent, fontSize: 10, fontWeight: '900'},
   primaryButton: {
     marginTop: 14,
     backgroundColor: colors.accent,
