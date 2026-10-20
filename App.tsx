@@ -30,6 +30,7 @@ import {DriveProvider} from './src/state/DriveContext';
 import {RadioSessionProvider} from './src/state/RadioSessionContext';
 import {LocationSessionProvider} from './src/state/LocationSessionContext';
 import {OfflineMapProvider} from './src/state/OfflineMapContext';
+import {RouteSessionProvider} from './src/state/RouteSessionContext';
 import {SpeechProvider} from './src/state/SpeechContext';
 import {DriveScreen} from './src/screens/DriveScreen';
 import {DeviceHubScreen} from './src/screens/DeviceHubScreen';
@@ -156,7 +157,9 @@ function App(): React.JSX.Element {
                 <RadioSessionProvider>
                   <OfflineMapProvider>
                     <LocationSessionProvider>
-                      <AppContent />
+                      <RouteSessionProvider>
+                        <AppContent />
+                      </RouteSessionProvider>
                     </LocationSessionProvider>
                   </OfflineMapProvider>
                 </RadioSessionProvider>
