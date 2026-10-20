@@ -1,19 +1,49 @@
 import type {BushMeshInboundMessage} from './meshcoreBridge';
 
-type BushMeshInboundListener = (message: BushMeshInboundMessage) => void;
+export type BushMeshInboundSource = 'live' | 'background-replay';
+
+export type BushMeshInboundMetadata = {
+  receivedAtMs: number;
+  source: BushMeshInboundSource;
+};
+
+type BushMeshInboundListener = (
+  message: BushMeshInboundMessage,
+  metadata: BushMeshInboundMetadata,
+) => void;
 
 const listeners = new Set<BushMeshInboundListener>();
 
+function normalizeMetadata(
+  metadata?: Partial<BushMeshInboundMetadata>,
+): BushMeshInboundMetadata {
+  const receivedAtMs =
+    typeof metadata?.receivedAtMs === 'number' &&
+    Number.isFinite(metadata.receivedAtMs) &&
+    metadata.receivedAtMs >= 0
+      ? metadata.receivedAtMs
+      : Date.now();
+
+  return {
+    receivedAtMs,
+    source: metadata?.source ?? 'live',
+  };
+}
+
 /**
- * Lightweight JS event bridge between radio transport and Bushmesh domain
- * state. The planned native radio service will eventually replace this, but
- * keeping the UI subscribed to domain messages now avoids coupling screens to
- * MeshCoreClient directly.
+ * Lightweight event bridge between radio transports and Bushmesh domain state.
+ *
+ * Metadata is part of the domain boundary because traffic replayed after an
+ * Android process restart must retain the time it was actually heard. Treating
+ * replay time as receive time would falsely make stale convoy positions appear
+ * live. Callers that do not supply metadata remain live by default.
  */
 export function publishBushMeshInboundMessage(
   message: BushMeshInboundMessage,
+  metadata?: Partial<BushMeshInboundMetadata>,
 ): void {
-  listeners.forEach(listener => listener(message));
+  const normalized = normalizeMetadata(metadata);
+  listeners.forEach(listener => listener(message, normalized));
 }
 
 export function subscribeBushMeshInboundMessages(
