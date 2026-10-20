@@ -1,6 +1,7 @@
 package com.bushmeshmain.radio
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -65,6 +66,13 @@ class BushMeshSpeechModule(
       if (englishSupported) Locale.ENGLISH else null
     }
 
+    tts.setAudioAttributes(
+      AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build(),
+    )
+
     initFailed = selectedLanguage == null
     initComplete = true
   }
@@ -74,11 +82,6 @@ class BushMeshSpeechModule(
     val clean = text.trim()
     if (clean.isEmpty()) {
       promise.reject("BUSHMESH_TTS_EMPTY", "Speech text cannot be empty.")
-      return
-    }
-
-    if (!criticalAlertsEnabled()) {
-      promise.resolve(false)
       return
     }
 
