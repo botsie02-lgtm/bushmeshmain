@@ -12,6 +12,11 @@ import {
   encodeBushMeshFormationShare,
 } from '../bushmesh/formationProtocol';
 import {
+  BUSHMESH_POSITION_REQUEST_DEFAULT_TTL_SECONDS,
+  BushMeshPositionRequest,
+  encodeBushMeshPositionRequest,
+} from '../bushmesh/positionRequestProtocol';
+import {
   BushMeshOutboxEntry,
   BushMeshOutboxPriority,
   InMemoryBushMeshOutbox,
@@ -132,6 +137,27 @@ export class BushMeshTransmissionController {
       expiresAtMs,
       createdAtMs,
       5,
+    );
+  }
+
+  enqueuePositionRequest(
+    channelIndex: number,
+    request: BushMeshPositionRequest,
+    createdAtMs = Date.now(),
+  ): BushMeshOutboxEntry {
+    const ttlSeconds =
+      request.ttlSeconds ?? BUSHMESH_POSITION_REQUEST_DEFAULT_TTL_SECONDS;
+    const expiresAtMs = request.timestampSeconds * 1000 + ttlSeconds * 1000;
+
+    return this.enqueue(
+      channelIndex,
+      encodeBushMeshPositionRequest(request),
+      'control',
+      `Position request ${request.sequence} from ${request.senderId} to ${request.targetId}`,
+      request.senderId,
+      expiresAtMs,
+      createdAtMs,
+      4,
     );
   }
 
