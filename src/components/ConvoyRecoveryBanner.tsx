@@ -25,6 +25,7 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
     clearNavigationTarget,
   } = useConvoy();
   const [nowMs, setNowMs] = useState(Date.now());
+  const [caseIndex, setCaseIndex] = useState(0);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 5_000);
@@ -35,7 +36,16 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
     () => prioritizeConvoyRecoveryCases(vehicles, buddyTails, nowMs),
     [vehicles, buddyTails, nowMs],
   );
-  const candidate = recoveryCases[0] ?? null;
+
+  useEffect(() => {
+    if (recoveryCases.length === 0) {
+      setCaseIndex(0);
+      return;
+    }
+    setCaseIndex(current => Math.min(current, recoveryCases.length - 1));
+  }, [recoveryCases.length]);
+
+  const candidate = recoveryCases[caseIndex] ?? recoveryCases[0] ?? null;
 
   if (!candidate) {
     return null;
@@ -55,6 +65,11 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   const uncertaintyText = searchArea
     ? `${formatDistance(searchArea.radiusMeters)} UNCERTAINTY RADIUS`
     : 'LAST FIX STILL WITHIN CURRENT-POSITION WINDOW';
+
+  const showNext = recoveryCases.length > 1;
+  const nextCase = () => {
+    setCaseIndex(current => (current + 1) % recoveryCases.length);
+  };
 
   return (
     <View
@@ -77,7 +92,7 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
                 : styles.watchText,
           ]}>
           {freshness === 'lost' ? 'LOST VEHICLE' : 'VEHICLE STALE'}
-          {recoveryCases.length > 1 ? ` · 1 OF ${recoveryCases.length}` : ''}
+          {showNext ? ` · ${caseIndex + 1} OF ${recoveryCases.length}` : ''}
         </Text>
         <Text style={styles.name} numberOfLines={1}>
           {vehicle.name}
@@ -96,24 +111,31 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
         </Text>
       </View>
 
-      <TouchableOpacity
-        style={[
-          styles.button,
-          level === 'watch' ? styles.buttonWatch : styles.buttonUrgent,
-          targeted && styles.buttonActive,
-        ]}
-        onPress={() =>
-          targeted ? clearNavigationTarget() : setNavigationTarget(vehicle.id)
-        }>
-        <Text
+      <View style={styles.actions}>
+        <TouchableOpacity
           style={[
-            styles.buttonText,
-            level === 'watch' ? styles.buttonWatchText : styles.buttonUrgentText,
-            targeted && styles.buttonTextActive,
-          ]}>
-          {targeted ? 'FOCUSED' : 'RECOVER'}
-        </Text>
-      </TouchableOpacity>
+            styles.button,
+            level === 'watch' ? styles.buttonWatch : styles.buttonUrgent,
+            targeted && styles.buttonActive,
+          ]}
+          onPress={() =>
+            targeted ? clearNavigationTarget() : setNavigationTarget(vehicle.id)
+          }>
+          <Text
+            style={[
+              styles.buttonText,
+              level === 'watch' ? styles.buttonWatchText : styles.buttonUrgentText,
+              targeted && styles.buttonTextActive,
+            ]}>
+            {targeted ? 'FOCUSED' : 'RECOVER'}
+          </Text>
+        </TouchableOpacity>
+        {showNext ? (
+          <TouchableOpacity style={styles.nextButton} onPress={nextCase}>
+            <Text style={styles.nextButtonText}>NEXT</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -166,6 +188,7 @@ const styles = StyleSheet.create({
   },
   trailGood: {color: colors.success},
   trailBad: {color: colors.danger},
+  actions: {alignItems: 'stretch', gap: 6},
   button: {
     minWidth: 82,
     borderRadius: 999,
@@ -181,4 +204,13 @@ const styles = StyleSheet.create({
   buttonUrgentText: {color: colors.danger},
   buttonWatchText: {color: colors.accent},
   buttonTextActive: {color: colors.background},
+  nextButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    alignItems: 'center',
+  },
+  nextButtonText: {color: colors.textSecondary, fontSize: 8, fontWeight: '900'},
 });
