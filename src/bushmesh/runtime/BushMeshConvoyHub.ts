@@ -132,18 +132,20 @@ function convoyLocationFields(
   const anchorIntervalMs = telemetry.hazard
     ? HAZARD_LOCATION_ANCHOR_MS
     : NORMAL_LOCATION_ANCHOR_MS;
-  const needsAnchor =
-    !outboundLocationAnchor ||
-    outboundLocationAnchorAt === null ||
-    now - outboundLocationAnchorAt >= anchorIntervalMs;
+  const anchor = outboundLocationAnchor;
+  const anchorAt = outboundLocationAnchorAt;
 
-  if (needsAnchor) {
+  if (
+    !anchor ||
+    anchorAt === null ||
+    now - anchorAt >= anchorIntervalMs
+  ) {
     outboundLocationAnchor = {...current};
     outboundLocationAnchorAt = now;
     return {location: {...current}};
   }
 
-  const delta = convoyLocationDelta(outboundLocationAnchor, current);
+  const delta = convoyLocationDelta(anchor, current);
   const unchanged =
     Math.abs(delta.northMetres) < LOCATION_CHANGE_THRESHOLD_METRES &&
     Math.abs(delta.eastMetres) < LOCATION_CHANGE_THRESHOLD_METRES;
