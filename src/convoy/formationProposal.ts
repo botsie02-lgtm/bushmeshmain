@@ -3,6 +3,12 @@ import {BushMeshFormationShare} from './formationProtocol';
 
 export type FormationProposalTrust = 'normal-review' | 'caution-review';
 
+export type FormationProposalTransportContext = {
+  channelIndex: number;
+  snrDb: number;
+  pathLength: number;
+};
+
 export type BushMeshFormationProposal = {
   id: string;
   share: BushMeshFormationShare;
@@ -13,6 +19,7 @@ export type BushMeshFormationProposal = {
   senderIncluded: boolean;
   senderClaimsLead: boolean;
   localMemberIncluded: boolean | null;
+  transport: FormationProposalTransportContext | null;
   trust: FormationProposalTrust;
   warnings: string[];
   requiresExplicitAcceptance: true;
@@ -39,12 +46,14 @@ function normalizeIdentity(identity: BushMeshIdentityRef): string {
 /**
  * Creates a review-only proposal from a decoded formation share. Bushmesh v1
  * sender references are not signed formation authority, so this function never
- * marks a proposal as trusted enough for automatic application.
+ * marks a proposal as trusted enough for automatic application. Radio metrics
+ * are retained only as transport context and never increase identity trust.
  */
 export function buildFormationProposal(
   share: BushMeshFormationShare,
   receivedAtMs = Date.now(),
   localIdentityRef?: BushMeshIdentityRef | null,
+  transport?: FormationProposalTransportContext | null,
 ): BushMeshFormationProposal {
   const senderId = normalizeIdentity(share.senderId);
   const memberIds = share.memberIds.map(normalizeIdentity);
@@ -96,6 +105,7 @@ export function buildFormationProposal(
     senderIncluded,
     senderClaimsLead,
     localMemberIncluded,
+    transport: transport ? {...transport} : null,
     trust: warnings.length === 0 ? 'normal-review' : 'caution-review',
     warnings,
     requiresExplicitAcceptance: true,
