@@ -7,6 +7,11 @@ import {
   decodeBushMeshQuickAction,
 } from './protocol';
 import {
+  BUSHMESH_FORMATION_MESSAGE_TYPE,
+  DecodedBushMeshFormationShare,
+  decodeBushMeshFormationShare,
+} from './formationProtocol';
+import {
   BushMeshInboundMetadata,
   publishBushMeshInboundMessage,
 } from './inboundBus';
@@ -26,6 +31,13 @@ export type BushMeshInboundMessage =
       snrDb: number;
       pathLength: number;
       action: DecodedBushMeshQuickAction;
+    }
+  | {
+      type: typeof BUSHMESH_FORMATION_MESSAGE_TYPE;
+      channelIndex: number;
+      snrDb: number;
+      pathLength: number;
+      formation: DecodedBushMeshFormationShare;
     };
 
 /**
@@ -69,6 +81,16 @@ export function decodeBushMeshMeshCoreFrame(
         snrDb: frame.snrDb,
         pathLength: frame.pathLength,
         action: decodeBushMeshQuickAction(frame.payload),
+      };
+      break;
+
+    case BUSHMESH_FORMATION_MESSAGE_TYPE:
+      message = {
+        type: BUSHMESH_FORMATION_MESSAGE_TYPE,
+        channelIndex: frame.channelIndex,
+        snrDb: frame.snrDb,
+        pathLength: frame.pathLength,
+        formation: decodeBushMeshFormationShare(frame.payload),
       };
       break;
 
