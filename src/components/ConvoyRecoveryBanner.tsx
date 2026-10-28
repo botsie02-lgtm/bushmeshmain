@@ -1,10 +1,13 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {formatDistance} from '../convoy/convoy';
+import {queueRecoveryPositionRequest} from '../convoy/recoveryPositionRequest';
 import {getRecoveryRecommendation} from '../convoy/recoveryRecommendation';
+import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
 import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
+import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
 
 function formatAge(ageSeconds: number): string {
@@ -17,14 +20,27 @@ function formatAge(ageSeconds: number): string {
   return `${Math.floor(ageSeconds / 3_600)}h`;
 }
 
+function normalizedIdentity(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.replace(/[^0-9a-f]/gi, '').toUpperCase();
+  return /^[0-9A-F]{12}$/.test(normalized) ? normalized : null;
+}
+
 export function ConvoyRecoveryBanner(): React.JSX.Element | null {
+  const {activeChannel} = useBushMesh();
   const {
     navigationTargetVehicleId,
     setNavigationTarget,
     clearNavigationTarget,
   } = useConvoy();
   const {activeCases: recoveryCases} = useConvoyRecovery();
+  const {snapshot: radioSession, drainOnce} = useRadioSession();
   const [caseIndex, setCaseIndex] = useState(0);
+  const [requestStatus, setRequestStatus] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const requestSequenceRef = useRef(1);
 
   useEffect(() => {
     if (recoveryCases.length === 0) {
@@ -35,6 +51,11 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   }, [recoveryCases.length]);
 
   const candidate = recoveryCases[caseIndex] ?? recoveryCases[0] ?? null;
+
+  useEffect(() => {
+    setRequestStatus(null);
+    setRequesting(false);
+  }, [candidate?.vehicle.id]);
 
   if (!candidate) {
     return null;
@@ -75,6 +96,70 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   const showNext = recoveryCases.length > 1;
   const nextCase = () => {
     setCaseIndex(current => (current + 1) % recoveryCases.length);
+  };
+
+  const channelIndex = Number(activeChannel?.channelIndex);
+  const validChannel =
+    Number.isInteger(channelIndex) && channelIndex >= 0 && channelIndex <= 7;
+  const ownIdentity = normalizedIdentity(radioSession.identityRef);
+  const targetIdentity = normalizedIdentity(vehicle.id);
+  const canRequestFix =
+    !vehicle.simulated &&
+    validChannel &&
+    radioSession.transportReady &&
+    ownIdentity !== null &&
+    targetIdentity !== null &&
+    ownIdentity !== targetIdentity;
+
+  const nextRequestSequence = (): number => {
+    const sequence = requestSequenceRef.current;
+    requestSequenceRef.current = sequence >= 0xffff ? 1 : sequence + 1;
+    return sequence;
+  };
+
+  const requestFix = async () => {
+    if (!canRequestFix || !targetIdentity || requesting) {
+      return;
+    }
+
+    setRequesting(true);
+    try {
+      const queued = queueRecoveryPositionRequest({
+        channelIndex,
+        targetId: targetIdentity,
+        sequence: nextRequestSequence(),
+      });
+      setRequestStatus(
+        'Fresh-position request queued. Peer receipt is not yet confirmed.',
+      );
+
+      const result = await drainOnce();
+      if (result.entry?.id !== queued.entry.id) {
+        setRequestStatus(
+          'Fresh-position request remains queued behind other radio traffic.',
+        );
+      } else if (result.outcome === 'accepted') {
+        setRequestStatus(
+          'MeshCore accepted the request for transmission. Waiting for a fresh position; peer receipt is not confirmed.',
+        );
+      } else if (result.outcome === 'failed') {
+        setRequestStatus(
+          'The radio could not accept the fresh-position request after retries.',
+        );
+      } else {
+        setRequestStatus(
+          'Fresh-position request is queued and will retry while its short TTL remains valid.',
+        );
+      }
+    } catch (error) {
+      setRequestStatus(
+        error instanceof Error
+          ? error.message
+          : 'Fresh-position request could not be queued.',
+      );
+    } finally {
+      setRequesting(false);
+    }
   };
 
   return (
@@ -138,6 +223,9 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
         ) : null}
         <Text style={styles.recommendationLabel}>{recommendation.label}</Text>
         <Text style={styles.recommendationDetail}>{recommendation.detail}</Text>
+        {requestStatus ? (
+          <Text style={styles.requestStatus}>{requestStatus}</Text>
+        ) : null}
       </View>
 
       <View style={styles.actions}>
@@ -159,6 +247,23 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
             {targeted ? 'FOCUSED' : 'RECOVER'}
           </Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.requestButton,
+            !canRequestFix && styles.buttonDisabled,
+          ]}
+          disabled={!canRequestFix || requesting}
+          onPress={() => requestFix().catch(() => undefined)}>
+          <Text
+            style={[
+              styles.requestButtonText,
+              !canRequestFix && styles.buttonDisabledText,
+            ]}>
+            {requesting ? 'REQUESTING…' : 'REQUEST FIX'}
+          </Text>
+        </TouchableOpacity>
+
         {showNext ? (
           <TouchableOpacity style={styles.nextButton} onPress={nextCase}>
             <Text style={styles.nextButtonText}>NEXT</Text>
@@ -263,6 +368,13 @@ const styles = StyleSheet.create({
     lineHeight: 13,
     marginTop: 2,
   },
+  requestStatus: {
+    color: colors.accent,
+    fontSize: 8,
+    lineHeight: 12,
+    fontWeight: '700',
+    marginTop: 5,
+  },
   actions: {alignItems: 'stretch', gap: 6},
   button: {
     minWidth: 82,
@@ -279,6 +391,18 @@ const styles = StyleSheet.create({
   buttonUrgentText: {color: colors.danger},
   buttonWatchText: {color: colors.accent},
   buttonTextActive: {color: colors.background},
+  requestButton: {
+    minWidth: 82,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  requestButtonText: {color: colors.accent, fontSize: 8, fontWeight: '900'},
+  buttonDisabled: {borderColor: colors.border, opacity: 0.45},
+  buttonDisabledText: {color: colors.textMuted},
   nextButton: {
     borderRadius: 999,
     borderWidth: 1,
