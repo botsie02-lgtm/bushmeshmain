@@ -77,6 +77,7 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
     navigationFieldTarget,
     getBuddyTail,
     getRecoveryTrailAssessment,
+    getRecoverySearchArea,
     clearNavigationTarget,
   } = useConvoy();
   const {
@@ -115,6 +116,13 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
         ? getRecoveryTrailAssessment(navigationTargetVehicleId, nowMs)
         : null,
     [getRecoveryTrailAssessment, navigationTargetVehicleId, nowMs],
+  );
+  const recoverySearchArea = useMemo(
+    () =>
+      navigationTargetVehicleId
+        ? getRecoverySearchArea(navigationTargetVehicleId, nowMs)
+        : null,
+    [getRecoverySearchArea, navigationTargetVehicleId, nowMs],
   );
   const recoveryTrailText = recoveryTrailLabel(recoveryTrail);
   const tailDistanceMeters = buddyTail ? buddyTailDistanceMeters(buddyTail) : 0;
@@ -327,6 +335,12 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
             {formatDistance(tailDistanceMeters)} retained path
           </Text>
         ) : null}
+        {!safeToFollow && recoverySearchArea ? (
+          <Text style={styles.searchAreaText}>
+            UNCERTAINTY AREA · radius {formatDistance(recoverySearchArea.radiusMeters)} ·{' '}
+            {recoverySearchArea.confidenceLabel.toUpperCase()}
+          </Text>
+        ) : null}
       </View>
 
       {movingGuidance ? (
@@ -403,6 +417,12 @@ const styles = StyleSheet.create({
     color: colors.warning,
     fontSize: 8,
     fontWeight: '900',
+    marginTop: 3,
+  },
+  searchAreaText: {
+    color: colors.textMuted,
+    fontSize: 8,
+    fontWeight: '800',
     marginTop: 3,
   },
   fixedText: {
