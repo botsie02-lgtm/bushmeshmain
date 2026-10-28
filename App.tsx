@@ -12,6 +12,7 @@ import {
 } from 'react-native-safe-area-context';
 
 import {CarMessagingStatusBanner} from './src/components/CarMessagingStatusBanner';
+import {ConvoyFormationBanner} from './src/components/ConvoyFormationBanner';
 import {ConvoyLossBanner} from './src/components/ConvoyLossBanner';
 import {ConvoyReacquiredBanner} from './src/components/ConvoyReacquiredBanner';
 import {ConvoyRecoveryBanner} from './src/components/ConvoyRecoveryBanner';
@@ -30,6 +31,7 @@ import {SpeechStatusBanner} from './src/components/SpeechStatusBanner';
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {CarMessagingProvider} from './src/state/CarMessagingContext';
 import {ConvoyProvider} from './src/state/ConvoyContext';
+import {ConvoyFormationProvider} from './src/state/ConvoyFormationContext';
 import {ConvoyRecoveryProvider} from './src/state/ConvoyRecoveryContext';
 import {DriveProvider} from './src/state/DriveContext';
 import {RadioSessionProvider} from './src/state/RadioSessionContext';
@@ -92,6 +94,7 @@ function AppContent(): React.JSX.Element {
       {activeTab === 'convoy' ? (
         <>
           <ConvoyRecoveryBanner />
+          <ConvoyFormationBanner />
           <ConvoyRecoveryHistoryStrip />
         </>
       ) : null}
@@ -164,23 +167,25 @@ function App(): React.JSX.Element {
         <NativeChannelMessageBridge />
         <CarMessagingProvider>
           <ConvoyProvider>
-            <ConvoyRecoveryProvider>
-              <DriveProvider>
-                <SpeechProvider>
-                  <SpeechAlertBridge />
-                  <RadioMessageSpeechBridge />
-                  <RadioSessionProvider>
-                    <OfflineMapProvider>
-                      <LocationSessionProvider>
-                        <RouteSessionProvider>
-                          <AppContent />
-                        </RouteSessionProvider>
-                      </LocationSessionProvider>
-                    </OfflineMapProvider>
-                  </RadioSessionProvider>
-                </SpeechProvider>
-              </DriveProvider>
-            </ConvoyRecoveryProvider>
+            <ConvoyFormationProvider>
+              <ConvoyRecoveryProvider>
+                <DriveProvider>
+                  <SpeechProvider>
+                    <SpeechAlertBridge />
+                    <RadioMessageSpeechBridge />
+                    <RadioSessionProvider>
+                      <OfflineMapProvider>
+                        <LocationSessionProvider>
+                          <RouteSessionProvider>
+                            <AppContent />
+                          </RouteSessionProvider>
+                        </LocationSessionProvider>
+                      </OfflineMapProvider>
+                    </RadioSessionProvider>
+                  </SpeechProvider>
+                </DriveProvider>
+              </ConvoyRecoveryProvider>
+            </ConvoyFormationProvider>
           </ConvoyProvider>
         </CarMessagingProvider>
       </BushMeshProvider>
