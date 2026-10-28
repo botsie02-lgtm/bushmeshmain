@@ -42,11 +42,15 @@ export type BushMeshConvoySnapshot = {
 type StoredMember = {
   status: BushMeshConvoyStatus;
   locationAnchor?: CompactLocation;
+  expectedIntervalMs?: number;
   firstSeenAt: number;
   lastSeenAt: number;
 };
 
 const EARTH_RADIUS_METRES = 6_371_000;
+const MIN_INTERVAL_SAMPLE_MS = 1000;
+const MAX_INTERVAL_SAMPLE_MS = 2 * 60 * 1000;
+const INTERVAL_EWMA_OLD_WEIGHT = 0.7;
 
 function radians(value: number): number {
   return (value * Math.PI) / 180;
@@ -73,6 +77,29 @@ function isNewerSequence(current: number, incoming: number): boolean {
 
   const delta = (incoming - current) >>> 0;
   return delta > 0 && delta < 0x80000000;
+}
+
+function learnedHeartbeatInterval(
+  existing: StoredMember | undefined,
+  receivedAt: number,
+): number | undefined {
+  if (!existing) {
+    return undefined;
+  }
+
+  const sample = receivedAt - existing.lastSeenAt;
+  if (sample < MIN_INTERVAL_SAMPLE_MS || sample > MAX_INTERVAL_SAMPLE_MS) {
+    return existing.expectedIntervalMs;
+  }
+
+  if (existing.expectedIntervalMs === undefined) {
+    return sample;
+  }
+
+  return Math.round(
+    existing.expectedIntervalMs * INTERVAL_EWMA_OLD_WEIGHT +
+      sample * (1 - INTERVAL_EWMA_OLD_WEIGHT),
+  );
 }
 
 export class BushMeshConvoyTracker {
@@ -140,6 +167,7 @@ export class BushMeshConvoyTracker {
     convoy.set(status.nodeId, {
       status: mergedStatus,
       locationAnchor,
+      expectedIntervalMs: learnedHeartbeatInterval(existing, receivedAt),
       firstSeenAt: existing?.firstSeenAt ?? receivedAt,
       lastSeenAt: receivedAt,
     });
@@ -162,10 +190,17 @@ export class BushMeshConvoyTracker {
 
     for (const member of stored) {
       const ageMs = Math.max(0, now - member.lastSeenAt);
+      const learnedInterval = member.expectedIntervalMs;
+      const staleThresholdMs = learnedInterval === undefined
+        ? this.staleAfterMs
+        : Math.max(this.staleAfterMs, Math.round(learnedInterval * 1.8));
+      const lostThresholdMs = learnedInterval === undefined
+        ? this.lostAfterMs
+        : Math.max(this.lostAfterMs, Math.round(learnedInterval * 3.2));
       const health: BushMeshConvoyMemberHealth =
-        ageMs >= this.lostAfterMs
+        ageMs >= lostThresholdMs
           ? 'lost'
-          : ageMs >= this.staleAfterMs
+          : ageMs >= staleThresholdMs
             ? 'stale'
             : 'active';
 
