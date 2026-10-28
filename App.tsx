@@ -27,6 +27,7 @@ import {NativeChannelMessageBridge} from './src/components/NativeChannelMessageB
 import {PositionRequestResponder} from './src/components/PositionRequestResponder';
 import {RadioMessageSpeechBridge} from './src/components/RadioMessageSpeechBridge';
 import {RadioSpeechStatusBanner} from './src/components/RadioSpeechStatusBanner';
+import {RecoveryCheckpointBanner} from './src/components/RecoveryCheckpointBanner';
 import {RouteGuidanceBanner} from './src/components/RouteGuidanceBanner';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
 import {SpeechAlertBridge} from './src/components/SpeechAlertBridge';
@@ -101,6 +102,7 @@ function AppContent(): React.JSX.Element {
         <>
           <FormationProposalBanner />
           <ConvoyRecoveryBanner />
+          <RecoveryCheckpointBanner />
           <ConvoyLinkWatchBanner />
           <ConvoyFormationBanner />
           <ConvoyRecoveryHistoryStrip />
