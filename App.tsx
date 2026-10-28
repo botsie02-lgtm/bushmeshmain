@@ -29,6 +29,7 @@ import {RadioMessageSpeechBridge} from './src/components/RadioMessageSpeechBridg
 import {RadioSpeechStatusBanner} from './src/components/RadioSpeechStatusBanner';
 import {RecoveryCheckpointBanner} from './src/components/RecoveryCheckpointBanner';
 import {RecoveryCheckpointGuard} from './src/components/RecoveryCheckpointGuard';
+import {RecoveryReferenceNotice} from './src/components/RecoveryReferenceNotice';
 import {RouteGuidanceBanner} from './src/components/RouteGuidanceBanner';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
 import {SpeechAlertBridge} from './src/components/SpeechAlertBridge';
@@ -87,6 +88,9 @@ function AppContent(): React.JSX.Element {
       </View>
 
       <ConvoyReacquiredBanner visible={activeTab === 'convoy'} />
+      <RecoveryReferenceNotice
+        visible={activeTab === 'drive' || activeTab === 'map'}
+      />
 
       {activeTab === 'drive' ? (
         <>
