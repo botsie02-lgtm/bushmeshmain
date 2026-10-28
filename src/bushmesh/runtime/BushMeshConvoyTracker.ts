@@ -1,4 +1,8 @@
-import {BushMeshConvoyRole, BushMeshConvoyStatus} from '../protocol';
+import {
+  BushMeshConvoyRole,
+  BushMeshConvoyStatus,
+  applyConvoyLocationDelta,
+} from '../protocol';
 
 export type BushMeshConvoyMemberHealth = 'active' | 'stale' | 'lost';
 
@@ -100,15 +104,24 @@ export class BushMeshConvoyTracker {
       return false;
     }
 
+    let location = status.location ? {...status.location} : undefined;
+    if (!location && status.locationDelta && existing?.status.location) {
+      location = applyConvoyLocationDelta(
+        existing.status.location,
+        status.locationDelta,
+      );
+    }
+
     // Optional telemetry fields are sparse by design. Preserve the most recent
-    // known value when a compact heartbeat omits an unchanged field.
+    // known value when a compact heartbeat omits an unchanged field. Delta
+    // coordinates are normalised into an ordinary absolute location here so
+    // routing/UI code never needs to understand the wire compression scheme.
     const mergedStatus: BushMeshConvoyStatus = {
       ...status,
-      location: status.location
-        ? {...status.location}
-        : existing?.status.location
-          ? {...existing.status.location}
-          : undefined,
+      location:
+        location ??
+        (existing?.status.location ? {...existing.status.location} : undefined),
+      locationDelta: undefined,
       speedKph: status.speedKph ?? existing?.status.speedKph,
       headingDegrees:
         status.headingDegrees ?? existing?.status.headingDegrees,
@@ -215,6 +228,7 @@ export class BushMeshConvoyTracker {
           location: member.status.location
             ? {...member.status.location}
             : undefined,
+          locationDelta: undefined,
         },
         firstSeenAt: member.firstSeenAt,
         lastSeenAt: member.lastSeenAt,
