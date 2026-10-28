@@ -3,6 +3,7 @@ import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {formatDistance} from '../convoy/convoy';
 import {prioritizeConvoyRecoveryCases} from '../convoy/recoveryPriority';
+import {getRecoveryRecommendation} from '../convoy/recoveryRecommendation';
 import {useConvoy} from '../state/ConvoyContext';
 import {colors} from '../theme/colors';
 
@@ -52,6 +53,7 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   }
 
   const {vehicle, freshness, ageSeconds, trail, searchArea, level, reason} = candidate;
+  const recommendation = getRecoveryRecommendation(candidate);
   const targeted = navigationTargetVehicleId === vehicle.id;
 
   const trailText = trail
@@ -109,6 +111,8 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
           ]}>
           {trailText}
         </Text>
+        <Text style={styles.recommendationLabel}>{recommendation.label}</Text>
+        <Text style={styles.recommendationDetail}>{recommendation.detail}</Text>
       </View>
 
       <View style={styles.actions}>
@@ -188,6 +192,19 @@ const styles = StyleSheet.create({
   },
   trailGood: {color: colors.success},
   trailBad: {color: colors.danger},
+  recommendationLabel: {
+    color: colors.textPrimary,
+    fontSize: 9,
+    fontWeight: '900',
+    marginTop: 6,
+    letterSpacing: 0.5,
+  },
+  recommendationDetail: {
+    color: colors.textSecondary,
+    fontSize: 9,
+    lineHeight: 13,
+    marginTop: 2,
+  },
   actions: {alignItems: 'stretch', gap: 6},
   button: {
     minWidth: 82,
