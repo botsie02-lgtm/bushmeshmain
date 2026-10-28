@@ -13,6 +13,7 @@ import {
 } from '../bushmesh/formationProtocol';
 import {
   BUSHMESH_POSITION_REQUEST_DEFAULT_TTL_SECONDS,
+  BUSHMESH_POSITION_RESPONSE_FLAG,
   BushMeshPositionRequest,
   encodeBushMeshPositionRequest,
 } from '../bushmesh/positionRequestProtocol';
@@ -68,13 +69,19 @@ export class BushMeshTransmissionController {
   ): BushMeshOutboxEntry {
     this.outbox.cancelQueuedPositions(position.senderId, channelIndex);
 
+    const requestDriven =
+      ((position.flags ?? 0) & BUSHMESH_POSITION_RESPONSE_FLAG) !== 0;
+    const expiresAtMs = requestDriven
+      ? createdAtMs + BUSHMESH_POSITION_REQUEST_DEFAULT_TTL_SECONDS * 1000
+      : null;
+
     return this.enqueue(
       channelIndex,
       encodeBushMeshPosition(position),
       'position',
-      `Position ${position.sequence} from ${position.senderId}`,
+      `${requestDriven ? 'Requested position' : 'Position'} ${position.sequence} from ${position.senderId}`,
       position.senderId,
-      null,
+      expiresAtMs,
       createdAtMs,
       3,
     );
