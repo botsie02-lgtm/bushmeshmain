@@ -13,6 +13,7 @@ import {useConvoyFormation} from '../state/ConvoyFormationContext';
 import {colors} from '../theme/colors';
 import {ConvoyFormationPanel} from './ConvoyFormationPanel';
 import {FormationShareControl} from './FormationShareControl';
+import {FormationSourceCard} from './FormationSourceCard';
 
 function stateColor(state: string): string {
   switch (state) {
@@ -81,6 +82,7 @@ export function ConvoyFormationBanner(): React.JSX.Element {
             style={styles.modalScroll}
             contentContainerStyle={styles.modalContent}>
             <ConvoyFormationPanel />
+            <FormationSourceCard />
             <View style={styles.shareCard}>
               <Text style={styles.shareEyebrow}>SHARE WITH CONVOY</Text>
               <Text style={styles.shareHint}>
