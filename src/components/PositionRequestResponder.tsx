@@ -24,11 +24,6 @@ function normalizeIdentity(value: string | null | undefined): string | null {
   return /^[0-9A-F]{12}$/.test(normalized) ? normalized : null;
 }
 
-function normalizeContactIdentity(value: string): string | null {
-  const normalized = value.replace(/[^0-9a-f]/gi, '').toUpperCase();
-  return normalized.length >= 12 ? normalized.slice(0, 12) : null;
-}
-
 /**
  * Answers a targeted recovery position request with the latest already-accepted
  * local GPS fix. The response uses the normal POSITION wire format, flagged as
@@ -40,11 +35,12 @@ function normalizeContactIdentity(value: string): string | null {
  *
  * Current Bushmesh identity refs are compact identifiers, not cryptographic
  * authentication. Therefore auto-response fails closed unless the requester is
- * already known as a MeshCore contact or observed convoy member, is asking on
- * the selected channel, and has not triggered the responder rate limit.
+ * an actually observed, non-simulated convoy member in this app session, is
+ * asking on the selected channel, and has not triggered the responder rate
+ * limit. A saved contact alone is intentionally not enough to disclose GPS.
  */
 export function PositionRequestResponder(): null {
-  const {activeChannel, contacts} = useBushMesh();
+  const {activeChannel} = useBushMesh();
   const {vehicles} = useConvoy();
   const {snapshot} = useRadioSession();
   const {providerLabel, respondToPositionRequest} = useLocationSession();
@@ -52,22 +48,19 @@ export function PositionRequestResponder(): null {
   const seenRequestsRef = useRef<Map<string, number>>(new Map());
   const lastResponseAtByRequesterRef = useRef<Map<string, number>>(new Map());
 
-  const knownRequesterIds = useMemo(() => {
+  const observedRequesterIds = useMemo(() => {
     const ids = new Set<string>();
     vehicles.forEach(vehicle => {
+      if (vehicle.simulated) {
+        return;
+      }
       const id = normalizeIdentity(vehicle.id);
       if (id) {
         ids.add(id);
       }
     });
-    contacts.forEach(contact => {
-      const id = normalizeContactIdentity(contact.publicKeyPrefix || contact.publicKey);
-      if (id) {
-        ids.add(id);
-      }
-    });
     return ids;
-  }, [contacts, vehicles]);
+  }, [vehicles]);
 
   const activeChannelIndex = Number(activeChannel?.channelIndex);
   const hasValidActiveChannel =
@@ -110,7 +103,7 @@ export function PositionRequestResponder(): null {
       if (
         !hasValidActiveChannel ||
         message.channelIndex !== activeChannelIndex ||
-        !knownRequesterIds.has(requesterId)
+        !observedRequesterIds.has(requesterId)
       ) {
         return;
       }
@@ -158,7 +151,7 @@ export function PositionRequestResponder(): null {
     activeChannelIndex,
     hasValidActiveChannel,
     identityRef,
-    knownRequesterIds,
+    observedRequesterIds,
     providerLabel,
     respondToPositionRequest,
   ]);
