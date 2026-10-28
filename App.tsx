@@ -13,6 +13,7 @@ import {
 
 import {CarMessagingStatusBanner} from './src/components/CarMessagingStatusBanner';
 import {ConvoyLossBanner} from './src/components/ConvoyLossBanner';
+import {ConvoyReacquiredBanner} from './src/components/ConvoyReacquiredBanner';
 import {ConvoyRecoveryBanner} from './src/components/ConvoyRecoveryBanner';
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {FieldNavigationPrompt} from './src/components/FieldNavigationPrompt';
@@ -73,6 +74,8 @@ function AppContent(): React.JSX.Element {
         <Text style={styles.appName}>BushMesh</Text>
         <Text style={styles.subtitle}>Off-grid vehicle network</Text>
       </View>
+
+      <ConvoyReacquiredBanner visible={activeTab === 'convoy'} />
 
       {activeTab === 'drive' ? (
         <>
