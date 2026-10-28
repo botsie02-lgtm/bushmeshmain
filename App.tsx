@@ -20,6 +20,7 @@ import {ConvoyRecoveryBanner} from './src/components/ConvoyRecoveryBanner';
 import {ConvoyRecoveryHistoryStrip} from './src/components/ConvoyRecoveryHistoryStrip';
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {FieldNavigationPrompt} from './src/components/FieldNavigationPrompt';
+import {FormationProposalBanner} from './src/components/FormationProposalBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
 import {NativeChannelMessageBridge} from './src/components/NativeChannelMessageBridge';
 import {RadioMessageSpeechBridge} from './src/components/RadioMessageSpeechBridge';
@@ -35,6 +36,7 @@ import {ConvoyProvider} from './src/state/ConvoyContext';
 import {ConvoyFormationProvider} from './src/state/ConvoyFormationContext';
 import {ConvoyRecoveryProvider} from './src/state/ConvoyRecoveryContext';
 import {DriveProvider} from './src/state/DriveContext';
+import {FormationProposalProvider} from './src/state/FormationProposalContext';
 import {RadioSessionProvider} from './src/state/RadioSessionContext';
 import {LocationSessionProvider} from './src/state/LocationSessionContext';
 import {OfflineMapProvider} from './src/state/OfflineMapContext';
@@ -95,6 +97,7 @@ function AppContent(): React.JSX.Element {
       {activeTab === 'map' ? <MapTrackExportBanner /> : null}
       {activeTab === 'convoy' ? (
         <>
+          <FormationProposalBanner />
           <ConvoyRecoveryBanner />
           <ConvoyFormationBanner />
           <ConvoyRecoveryHistoryStrip />
@@ -176,13 +179,15 @@ function App(): React.JSX.Element {
                     <SpeechAlertBridge />
                     <RadioMessageSpeechBridge />
                     <RadioSessionProvider>
-                      <OfflineMapProvider>
-                        <LocationSessionProvider>
-                          <RouteSessionProvider>
-                            <AppContent />
-                          </RouteSessionProvider>
-                        </LocationSessionProvider>
-                      </OfflineMapProvider>
+                      <FormationProposalProvider>
+                        <OfflineMapProvider>
+                          <LocationSessionProvider>
+                            <RouteSessionProvider>
+                              <AppContent />
+                            </RouteSessionProvider>
+                          </LocationSessionProvider>
+                        </OfflineMapProvider>
+                      </FormationProposalProvider>
                     </RadioSessionProvider>
                   </SpeechProvider>
                 </DriveProvider>
