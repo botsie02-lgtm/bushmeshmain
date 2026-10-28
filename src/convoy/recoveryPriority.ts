@@ -1,5 +1,14 @@
 import {BuddyTail} from './buddyTails';
-import {ConvoyFreshness, ConvoyVehicle, getConvoyFreshness, positionAgeSeconds} from './convoy';
+import {
+  ConvoyFreshness,
+  ConvoyVehicle,
+  getConvoyFreshness,
+  positionAgeSeconds,
+} from './convoy';
+import {
+  RecoveryCheckpointSet,
+  deriveRecoveryCheckpoints,
+} from './recoveryCheckpoints';
 import {RecoveryObservedMotion, getRecoveryObservedMotion} from './recoveryMotion';
 import {RecoverySearchArea, buildRecoverySearchArea} from './recoverySearchArea';
 import {RecoveryTrailAssessment, assessRecoveryTrail} from './recoveryTrail';
@@ -12,6 +21,7 @@ export type ConvoyRecoveryCase = {
   ageSeconds: number;
   level: RecoveryPriorityLevel;
   trail: RecoveryTrailAssessment | null;
+  checkpoints: RecoveryCheckpointSet | null;
   observedMotion: RecoveryObservedMotion | null;
   searchArea: RecoverySearchArea | null;
   reason: string;
@@ -41,7 +51,9 @@ function levelFor(
 ): RecoveryPriorityLevel {
   if (
     freshness === 'lost' &&
-    (!trail || trail.state === 'broken' || (searchArea?.radiusMeters ?? 0) >= 1_500)
+    (!trail ||
+      trail.state === 'broken' ||
+      (searchArea?.radiusMeters ?? 0) >= 1_500)
   ) {
     return 'critical';
   }
@@ -87,6 +99,7 @@ export function prioritizeConvoyRecoveryCases(
 
       const tail = tails.get(vehicle.id);
       const trail = assessRecoveryTrail(tail, nowMs);
+      const checkpoints = deriveRecoveryCheckpoints(tail);
       const observedMotion = getRecoveryObservedMotion(tail, nowMs);
       const searchArea = buildRecoverySearchArea(vehicle, nowMs);
       const ageSeconds = positionAgeSeconds(vehicle.receivedAtMs, nowMs);
@@ -107,6 +120,7 @@ export function prioritizeConvoyRecoveryCases(
           ageSeconds,
           level: levelFor(freshness, trail, searchArea),
           trail,
+          checkpoints,
           observedMotion,
           searchArea,
           reason: reasonFor(freshness, trail, searchArea),
