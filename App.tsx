@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 
+import {isUrgentBushMeshConvoyAction} from './src/bushmesh/protocol';
 import {BushMeshProvider} from './src/state/BushMeshContext';
 import {BushMeshConvoyLifecycle} from './src/state/BushMeshConvoyLifecycle';
 import {BushMeshRuntimeLifecycle} from './src/state/BushMeshRuntimeLifecycle';
@@ -49,13 +50,30 @@ function AppContent(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>('device');
   const {unacknowledgedDistressCount} = useBushMeshLiveState();
   const convoyState = useBushMeshConvoyState();
-  const convoyAttentionCount =
+  const now = Date.now();
+  const convoyIssueAttentionCount =
     convoyState.snapshot?.issues.filter(issue =>
       issue.type === 'hazard' ||
       issue.type === 'lost-member' ||
       issue.type === 'large-gap' ||
       issue.type === 'order-conflict',
     ).length ?? 0;
+  const convoyCommandAttentionCount = convoyState.recentCommands.filter(entry => {
+    if (entry.local || now - entry.receivedAt > 60_000) {
+      return false;
+    }
+
+    const targetedHere =
+      entry.command.targetOrderIndex !== undefined &&
+      entry.command.targetOrderIndex === convoyState.config.orderIndex;
+    const urgentBroadcast =
+      entry.command.targetOrderIndex === undefined &&
+      isUrgentBushMeshConvoyAction(entry.command.action);
+
+    return targetedHere || urgentBroadcast;
+  }).length;
+  const convoyAttentionCount =
+    convoyIssueAttentionCount + convoyCommandAttentionCount;
 
   return (
     <SafeAreaView style={styles.safeArea}>
