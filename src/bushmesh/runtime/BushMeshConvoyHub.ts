@@ -6,6 +6,7 @@ import {
   BushMeshConvoyStatus,
   BushMeshForwardingInput,
   CompactLocation,
+  convoyLocationDelta,
 } from '../protocol';
 import {
   BushMeshConvoySnapshot,
@@ -51,6 +52,11 @@ const tracker = new BushMeshConvoyTracker();
 const listeners = new Set<Listener>();
 const seenCommandKeys = new Map<string, number>();
 
+const NORMAL_LOCATION_ANCHOR_MS = 60_000;
+const HAZARD_LOCATION_ANCHOR_MS = 20_000;
+const LOCATION_CHANGE_THRESHOLD_METRES = 2;
+const MAX_DELTA_COMPONENT_METRES = 20_000;
+
 let sequence = 1;
 let commandSequence = 1;
 let revision = 0;
@@ -65,6 +71,8 @@ let telemetry: BushMeshConvoyLocalTelemetry = {};
 let recentCommands: BushMeshConvoyCommandEntry[] = [];
 let lastTransmitAt: number | null = null;
 let lastReceiveAt: number | null = null;
+let outboundLocationAnchor: CompactLocation | null = null;
+let outboundLocationAnchorAt: number | null = null;
 
 function notify(): void {
   revision += 1;
@@ -108,6 +116,56 @@ function rememberCommand(
   return true;
 }
 
+function resetOutboundLocationAnchor(): void {
+  outboundLocationAnchor = null;
+  outboundLocationAnchorAt = null;
+}
+
+function convoyLocationFields(
+  now: number,
+): Pick<BushMeshConvoyStatus, 'location' | 'locationDelta'> {
+  const current = telemetry.location;
+  if (!current) {
+    return {};
+  }
+
+  const anchorIntervalMs = telemetry.hazard
+    ? HAZARD_LOCATION_ANCHOR_MS
+    : NORMAL_LOCATION_ANCHOR_MS;
+  const needsAnchor =
+    !outboundLocationAnchor ||
+    outboundLocationAnchorAt === null ||
+    now - outboundLocationAnchorAt >= anchorIntervalMs;
+
+  if (needsAnchor) {
+    outboundLocationAnchor = {...current};
+    outboundLocationAnchorAt = now;
+    return {location: {...current}};
+  }
+
+  const delta = convoyLocationDelta(outboundLocationAnchor, current);
+  const unchanged =
+    Math.abs(delta.northMetres) < LOCATION_CHANGE_THRESHOLD_METRES &&
+    Math.abs(delta.eastMetres) < LOCATION_CHANGE_THRESHOLD_METRES;
+
+  if (unchanged) {
+    return {};
+  }
+
+  if (
+    Math.abs(delta.northMetres) > MAX_DELTA_COMPONENT_METRES ||
+    Math.abs(delta.eastMetres) > MAX_DELTA_COMPONENT_METRES
+  ) {
+    // A large jump is more likely to be a GPS correction/teleport than useful
+    // delta data. Reset the anchor immediately so receivers self-heal.
+    outboundLocationAnchor = {...current};
+    outboundLocationAnchorAt = now;
+    return {location: {...current}};
+  }
+
+  return {locationDelta: delta};
+}
+
 export function configureBushMeshConvoy(
   next: Partial<BushMeshConvoyLocalConfig>,
 ): BushMeshConvoyLocalConfig {
@@ -133,6 +191,7 @@ export function configureBushMeshConvoy(
     recentCommands = [];
     seenCommandKeys.clear();
     lastReceiveAt = null;
+    resetOutboundLocationAnchor();
   }
   notify();
   return {...config};
@@ -165,13 +224,14 @@ export function nextBushMeshConvoyStatus(
   nodeId: number,
   now = Date.now(),
 ): BushMeshConvoyStatus {
+  const locationFields = convoyLocationFields(now);
   const status: BushMeshConvoyStatus = {
     convoyId: config.convoyId,
     nodeId,
     sequence,
     orderIndex: config.orderIndex,
     role: config.role,
-    location: telemetry.location ? {...telemetry.location} : undefined,
+    ...locationFields,
     speedKph: telemetry.speedKph,
     headingDegrees: telemetry.headingDegrees,
     batteryPercent: telemetry.batteryPercent,
