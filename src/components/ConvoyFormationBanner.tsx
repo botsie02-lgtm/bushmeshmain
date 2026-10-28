@@ -12,6 +12,7 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import {useConvoyFormation} from '../state/ConvoyFormationContext';
 import {colors} from '../theme/colors';
 import {ConvoyFormationPanel} from './ConvoyFormationPanel';
+import {FormationShareControl} from './FormationShareControl';
 
 function stateColor(state: string): string {
   switch (state) {
@@ -80,6 +81,15 @@ export function ConvoyFormationBanner(): React.JSX.Element {
             style={styles.modalScroll}
             contentContainerStyle={styles.modalContent}>
             <ConvoyFormationPanel />
+            <View style={styles.shareCard}>
+              <Text style={styles.shareEyebrow}>SHARE WITH CONVOY</Text>
+              <Text style={styles.shareHint}>
+                Shares the explicit order and gap-alert thresholds over the active
+                Bushmesh channel. Receivers must review and accept it; Bushmesh never
+                replaces their formation automatically.
+              </Text>
+              <FormationShareControl />
+            </View>
             <Text style={styles.modalHint}>
               Order is explicit configuration, not GPS inference. Gap distances are
               straight-line separation and become unknown when a required position
@@ -135,6 +145,17 @@ const styles = StyleSheet.create({
   closeText: {color: colors.background, fontSize: 9, fontWeight: '900'},
   modalScroll: {flex: 1},
   modalContent: {paddingBottom: 36},
+  shareCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  shareEyebrow: {color: colors.accent, fontSize: 8, fontWeight: '900', letterSpacing: 1},
+  shareHint: {color: colors.textSecondary, fontSize: 9, lineHeight: 13, marginTop: 4},
   modalHint: {
     color: colors.textMuted,
     fontSize: 10,
