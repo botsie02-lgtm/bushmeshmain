@@ -7,6 +7,11 @@ import {
   encodeBushMeshQuickAction,
 } from '../bushmesh/protocol';
 import {
+  BUSHMESH_FORMATION_MESSAGE_TYPE,
+  BushMeshFormationShare,
+  encodeBushMeshFormationShare,
+} from '../bushmesh/formationProtocol';
+import {
   BushMeshOutboxEntry,
   BushMeshOutboxPriority,
   InMemoryBushMeshOutbox,
@@ -23,6 +28,8 @@ export type TransmissionAttemptResult = {
   entry: BushMeshOutboxEntry | null;
   outcome: 'idle' | 'accepted' | 'retrying' | 'failed';
 };
+
+const FORMATION_SHARE_TTL_MS = 15 * 60 * 1000;
 
 /**
  * Coordinates Bushmesh application traffic independently of the underlying
@@ -95,6 +102,36 @@ export class BushMeshTransmissionController {
       expiresAtMs,
       createdAtMs,
       action.action === BushMeshQuickActionCode.Ok ? 3 : 5,
+    );
+  }
+
+  enqueueFormationShare(
+    channelIndex: number,
+    share: BushMeshFormationShare,
+    createdAtMs = Date.now(),
+  ): BushMeshOutboxEntry {
+    for (const entry of this.outbox.list()) {
+      if (
+        entry.state === 'queued' &&
+        entry.identityRef === share.senderId &&
+        entry.channelIndex === channelIndex &&
+        entry.payload.length >= 2 &&
+        entry.payload[1] === BUSHMESH_FORMATION_MESSAGE_TYPE
+      ) {
+        this.outbox.cancel(entry.id);
+      }
+    }
+
+    const expiresAtMs = share.timestampSeconds * 1000 + FORMATION_SHARE_TTL_MS;
+    return this.enqueue(
+      channelIndex,
+      encodeBushMeshFormationShare(share),
+      'control',
+      `Formation revision ${share.revision} from ${share.senderId}`,
+      share.senderId,
+      expiresAtMs,
+      createdAtMs,
+      5,
     );
   }
 
