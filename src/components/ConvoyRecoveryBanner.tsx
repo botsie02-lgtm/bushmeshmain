@@ -40,7 +40,16 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
     return null;
   }
 
-  const {vehicle, freshness, ageSeconds, trail, searchArea, level, reason} = candidate;
+  const {
+    vehicle,
+    freshness,
+    ageSeconds,
+    trail,
+    observedMotion,
+    searchArea,
+    level,
+    reason,
+  } = candidate;
   const recommendation = getRecoveryRecommendation(candidate);
   const targeted = navigationTargetVehicleId === vehicle.id;
 
@@ -99,6 +108,14 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
           ]}>
           {trailText}
         </Text>
+        {observedMotion?.quality === 'usable' ? (
+          <Text style={styles.motionText}>
+            LAST OBSERVED COURSE · {observedMotion.compassDirection}{' '}
+            {Math.round(observedMotion.bearingDegrees)}° ·{' '}
+            {Math.round(observedMotion.speedKmh)} km/h ·{' '}
+            {formatAge(observedMotion.ageSeconds)} old
+          </Text>
+        ) : null}
         <Text style={styles.recommendationLabel}>{recommendation.label}</Text>
         <Text style={styles.recommendationDetail}>{recommendation.detail}</Text>
       </View>
@@ -180,6 +197,12 @@ const styles = StyleSheet.create({
   },
   trailGood: {color: colors.success},
   trailBad: {color: colors.danger},
+  motionText: {
+    color: colors.accent,
+    fontSize: 8,
+    fontWeight: '900',
+    marginTop: 4,
+  },
   recommendationLabel: {
     color: colors.textPrimary,
     fontSize: 9,
