@@ -1,7 +1,10 @@
 import {BuddyTail} from '../convoy/buddyTails';
 import {ConvoyVehicle} from '../convoy/convoy';
 import {buildRecoverySearchArea} from '../convoy/recoverySearchArea';
-import {assessRecoveryTrail} from '../convoy/recoveryTrail';
+import {
+  RecoveryTrailState,
+  assessRecoveryTrail,
+} from '../convoy/recoveryTrail';
 import {
   RecoverySearchAreaFeature,
   recoverySearchAreaToGeoJson,
@@ -16,11 +19,7 @@ export type RecoveryOverlay = {
   active: boolean;
   trail: RecoveryTrailFeatureCollection;
   searchArea: RecoverySearchAreaFeature | null;
-  trailState: ReturnType<typeof assessRecoveryTrail> extends infer T
-    ? T extends {state: infer S}
-      ? S
-      : null
-    : null;
+  trailState: RecoveryTrailState | null;
   searchRadiusMeters: number | null;
   summary: string;
 };
