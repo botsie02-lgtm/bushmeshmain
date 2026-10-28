@@ -1,5 +1,6 @@
 import {BuddyTail} from './buddyTails';
 import {
+  Coordinate,
   bearingDegrees,
   compassDirection,
   distanceMeters,
@@ -8,6 +9,8 @@ import {recoveryTrailSegmentIsContinuous} from './recoveryTrail';
 
 export type RecoveryObservedMotion = {
   vehicleId: string;
+  from: Coordinate;
+  to: Coordinate;
   bearingDegrees: number;
   compassDirection: string;
   distanceMeters: number;
@@ -76,6 +79,8 @@ export function getRecoveryObservedMotion(
 
   return {
     vehicleId: tail.vehicleId,
+    from: {latitude: start.latitude, longitude: start.longitude},
+    to: {latitude: end.latitude, longitude: end.longitude},
     bearingDegrees: bearing,
     compassDirection: compassDirection(bearing),
     distanceMeters: travelledMeters,
