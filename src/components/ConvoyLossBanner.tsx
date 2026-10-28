@@ -1,85 +1,32 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useMemo, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
-import {ConvoyFreshness, getConvoyFreshness} from '../convoy/convoy';
 import {useConvoy} from '../state/ConvoyContext';
+import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
 import {colors} from '../theme/colors';
 
-type LossAlert = {
-  key: string;
-  vehicleId: string;
-  vehicleName: string;
-  freshness: 'stale' | 'lost';
-  detectedAtMs: number;
-};
-
-function severityRank(freshness: ConvoyFreshness): number {
-  switch (freshness) {
-    case 'live':
-      return 0;
-    case 'recent':
-      return 1;
-    case 'stale':
-      return 2;
-    case 'lost':
-      return 3;
-  }
-}
-
 export function ConvoyLossBanner(): React.JSX.Element | null {
-  const {vehicles, getBuddyTail} = useConvoy();
-  const previousFreshnessRef = useRef(new Map<string, ConvoyFreshness>());
-  const initializedRef = useRef(false);
-  const [nowMs, setNowMs] = useState(Date.now());
-  const [alert, setAlert] = useState<LossAlert | null>(null);
-  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+  const {getBuddyTail} = useConvoy();
+  const {events} = useConvoyRecovery();
+  const [dismissedEventId, setDismissedEventId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 5_000);
-    return () => clearInterval(timer);
-  }, []);
+  const alert = useMemo(
+    () =>
+      events.find(
+        event =>
+          (event.type === 'stale' || event.type === 'lost') &&
+          event.id !== dismissedEventId,
+      ) ?? null,
+    [dismissedEventId, events],
+  );
 
-  useEffect(() => {
-    const next = new Map<string, ConvoyFreshness>();
-    let newestTransition: LossAlert | null = null;
-
-    vehicles.forEach(vehicle => {
-      const freshness = getConvoyFreshness(vehicle.receivedAtMs, nowMs);
-      next.set(vehicle.id, freshness);
-
-      const previous = previousFreshnessRef.current.get(vehicle.id);
-      if (
-        initializedRef.current &&
-        previous &&
-        severityRank(freshness) > severityRank(previous) &&
-        (freshness === 'stale' || freshness === 'lost')
-      ) {
-        newestTransition = {
-          key: `${vehicle.id}-${freshness}-${vehicle.receivedAtMs}`,
-          vehicleId: vehicle.id,
-          vehicleName: vehicle.name,
-          freshness,
-          detectedAtMs: nowMs,
-        };
-      }
-    });
-
-    previousFreshnessRef.current = next;
-    initializedRef.current = true;
-
-    if (newestTransition) {
-      setAlert(newestTransition);
-      setDismissedKey(null);
-    }
-  }, [nowMs, vehicles]);
-
-  if (!alert || alert.key === dismissedKey) {
+  if (!alert) {
     return null;
   }
 
   const tail = getBuddyTail(alert.vehicleId);
   const tailPoints = tail?.points.length ?? 0;
-  const critical = alert.freshness === 'lost';
+  const critical = alert.type === 'lost';
 
   return (
     <View style={[styles.banner, critical ? styles.lost : styles.stale]}>
@@ -98,7 +45,7 @@ export function ConvoyLossBanner(): React.JSX.Element | null {
       <TouchableOpacity
         accessibilityLabel="Dismiss convoy freshness alert"
         style={styles.dismiss}
-        onPress={() => setDismissedKey(alert.key)}>
+        onPress={() => setDismissedEventId(alert.id)}>
         <Text style={styles.dismissText}>×</Text>
       </TouchableOpacity>
     </View>
