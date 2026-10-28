@@ -4,7 +4,7 @@ import {
   BushMeshPacketType,
   BushMeshTypedPacket,
   decodeBushMeshTypedPacket,
-  encodeBushMeshControlWire,
+  encodeBushMeshConvoyCommandWire,
   encodeBushMeshConvoyWire,
 } from '../protocol';
 import {tryDecodeBushMeshChannelFrame} from '../../meshcore/meshcoreBushMeshBridge';
@@ -114,7 +114,7 @@ export async function sendActiveBushMeshConvoyCommand(
   }
 
   const command = nextBushMeshConvoyCommand(originNodeId, action, options);
-  const wireBytes = encodeBushMeshControlWire(
+  const wireBytes = encodeBushMeshConvoyCommandWire(
     command,
     activeRuntime.nextMessageId(),
   );
