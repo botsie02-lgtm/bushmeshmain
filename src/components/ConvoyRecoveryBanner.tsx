@@ -2,7 +2,12 @@ import React, {useEffect, useRef, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {formatDistance} from '../convoy/convoy';
-import {queueRecoveryPositionRequest} from '../convoy/recoveryPositionRequest';
+import {
+  RecoveryPositionRequestSnapshot,
+  getLatestRecoveryPositionRequest,
+  queueRecoveryPositionRequest,
+  recordRecoveryPositionRequestDrainResult,
+} from '../convoy/recoveryPositionRequest';
 import {getRecoveryRecommendation} from '../convoy/recoveryRecommendation';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
@@ -28,6 +33,33 @@ function normalizedIdentity(value: string | null | undefined): string | null {
   return /^[0-9A-F]{12}$/.test(normalized) ? normalized : null;
 }
 
+function requestLifecycleText(
+  request: RecoveryPositionRequestSnapshot | null,
+  nowMs: number,
+): string | null {
+  if (!request) {
+    return null;
+  }
+
+  switch (request.state) {
+    case 'queued':
+      return 'Fresh-position request queued. Peer receipt is not confirmed.';
+    case 'accepted':
+      return `MeshCore accepted the request for transmission. Waiting up to ${Math.max(
+        0,
+        Math.ceil((request.expiresAtMs - nowMs) / 1000),
+      )}s for a fresh response; peer receipt is not confirmed.`;
+    case 'retrying':
+      return 'Fresh-position request is waiting for another radio attempt while its TTL remains valid.';
+    case 'failed':
+      return 'The radio could not accept the fresh-position request after retries.';
+    case 'responded':
+      return 'A request-driven fresh POSITION response was observed from this vehicle.';
+    case 'expired':
+      return 'The position-request window expired without a request-driven response being observed.';
+  }
+}
+
 export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   const {activeChannel} = useBushMesh();
   const {
@@ -38,7 +70,7 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   const {activeCases: recoveryCases} = useConvoyRecovery();
   const {snapshot: radioSession, drainOnce} = useRadioSession();
   const [caseIndex, setCaseIndex] = useState(0);
-  const [requestStatus, setRequestStatus] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
   const requestSequenceRef = useRef(1);
 
@@ -53,7 +85,7 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   const candidate = recoveryCases[caseIndex] ?? recoveryCases[0] ?? null;
 
   useEffect(() => {
-    setRequestStatus(null);
+    setRequestError(null);
     setRequesting(false);
   }, [candidate?.vehicle.id]);
 
@@ -74,6 +106,7 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   } = candidate;
   const recommendation = getRecoveryRecommendation(candidate);
   const targeted = navigationTargetVehicleId === vehicle.id;
+  const nowMs = Date.now();
 
   const trailText = trail
     ? trail.pointCount >= 2
@@ -90,7 +123,7 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   const checkpoint = checkpoints?.lastContinuousBeforeBreak ?? null;
   const latestBreak = checkpoints?.latestBreak ?? null;
   const checkpointAgeSeconds = checkpoint
-    ? Math.max(0, Math.floor((Date.now() - checkpoint.receivedAtMs) / 1000))
+    ? Math.max(0, Math.floor((nowMs - checkpoint.receivedAtMs) / 1000))
     : null;
 
   const showNext = recoveryCases.length > 1;
@@ -103,13 +136,25 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
     Number.isInteger(channelIndex) && channelIndex >= 0 && channelIndex <= 7;
   const ownIdentity = normalizedIdentity(radioSession.identityRef);
   const targetIdentity = normalizedIdentity(vehicle.id);
+  const latestRequest = targetIdentity
+    ? getLatestRecoveryPositionRequest(targetIdentity, nowMs)
+    : null;
+  const requestPending =
+    latestRequest?.state === 'queued' ||
+    latestRequest?.state === 'accepted' ||
+    latestRequest?.state === 'retrying';
+  const requestCooldownActive =
+    latestRequest !== null && nowMs < latestRequest.nextAllowedAtMs;
   const canRequestFix =
     !vehicle.simulated &&
     validChannel &&
     radioSession.transportReady &&
     ownIdentity !== null &&
     targetIdentity !== null &&
-    ownIdentity !== targetIdentity;
+    ownIdentity !== targetIdentity &&
+    !requestPending &&
+    !requestCooldownActive;
+  const requestLifecycle = requestLifecycleText(latestRequest, nowMs);
 
   const nextRequestSequence = (): number => {
     const sequence = requestSequenceRef.current;
@@ -123,36 +168,17 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
     }
 
     setRequesting(true);
+    setRequestError(null);
     try {
       const queued = queueRecoveryPositionRequest({
         channelIndex,
         targetId: targetIdentity,
         sequence: nextRequestSequence(),
       });
-      setRequestStatus(
-        'Fresh-position request queued. Peer receipt is not yet confirmed.',
-      );
-
       const result = await drainOnce();
-      if (result.entry?.id !== queued.entry.id) {
-        setRequestStatus(
-          'Fresh-position request remains queued behind other radio traffic.',
-        );
-      } else if (result.outcome === 'accepted') {
-        setRequestStatus(
-          'MeshCore accepted the request for transmission. Waiting for a fresh position; peer receipt is not confirmed.',
-        );
-      } else if (result.outcome === 'failed') {
-        setRequestStatus(
-          'The radio could not accept the fresh-position request after retries.',
-        );
-      } else {
-        setRequestStatus(
-          'Fresh-position request is queued and will retry while its short TTL remains valid.',
-        );
-      }
+      recordRecoveryPositionRequestDrainResult(queued.request.id, result);
     } catch (error) {
-      setRequestStatus(
+      setRequestError(
         error instanceof Error
           ? error.message
           : 'Fresh-position request could not be queued.',
@@ -223,8 +249,18 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
         ) : null}
         <Text style={styles.recommendationLabel}>{recommendation.label}</Text>
         <Text style={styles.recommendationDetail}>{recommendation.detail}</Text>
-        {requestStatus ? (
-          <Text style={styles.requestStatus}>{requestStatus}</Text>
+        {requestError ? (
+          <Text style={styles.requestError}>{requestError}</Text>
+        ) : requestLifecycle ? (
+          <Text
+            style={[
+              styles.requestStatus,
+              latestRequest?.state === 'expired' && styles.requestExpired,
+              latestRequest?.state === 'failed' && styles.requestFailed,
+              latestRequest?.state === 'responded' && styles.requestResponded,
+            ]}>
+            {requestLifecycle}
+          </Text>
         ) : null}
       </View>
 
@@ -260,7 +296,11 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
               styles.requestButtonText,
               !canRequestFix && styles.buttonDisabledText,
             ]}>
-            {requesting ? 'REQUESTING…' : 'REQUEST FIX'}
+            {requesting
+              ? 'REQUESTING…'
+              : requestPending
+                ? 'AWAITING FIX'
+                : 'REQUEST FIX'}
           </Text>
         </TouchableOpacity>
 
@@ -370,6 +410,16 @@ const styles = StyleSheet.create({
   },
   requestStatus: {
     color: colors.accent,
+    fontSize: 8,
+    lineHeight: 12,
+    fontWeight: '700',
+    marginTop: 5,
+  },
+  requestExpired: {color: colors.warning},
+  requestFailed: {color: colors.danger},
+  requestResponded: {color: colors.success},
+  requestError: {
+    color: colors.danger,
     fontSize: 8,
     lineHeight: 12,
     fontWeight: '700',
