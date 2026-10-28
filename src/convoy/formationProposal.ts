@@ -9,6 +9,13 @@ export type FormationProposalTransportContext = {
   pathLength: number;
 };
 
+export type FormationProposalAcceptance = {
+  allowed: boolean;
+  reason: string | null;
+  ageSeconds: number;
+  futureSkewSeconds: number;
+};
+
 export type BushMeshFormationProposal = {
   id: string;
   share: BushMeshFormationShare;
@@ -39,8 +46,48 @@ export type AcceptedFormationPlan = {
   sourceTimestampSeconds: number;
 };
 
+const MAX_ACCEPTABLE_PROPOSAL_AGE_SECONDS = 15 * 60;
+const MAX_ACCEPTABLE_FUTURE_SKEW_SECONDS = 5 * 60;
+
 function normalizeIdentity(identity: BushMeshIdentityRef): string {
   return identity.replace(/[^0-9a-f]/gi, '').toUpperCase();
+}
+
+/**
+ * Re-evaluates proposal freshness at the moment the driver tries to accept it.
+ * A proposal can remain visible for review/history after this window, but stale
+ * or severely future-skewed order changes cannot be applied.
+ */
+export function getFormationProposalAcceptance(
+  proposal: BushMeshFormationProposal,
+  nowMs = Date.now(),
+): FormationProposalAcceptance {
+  const packetTimestampMs = proposal.share.timestampSeconds * 1000;
+  const signedAgeSeconds = Math.floor((nowMs - packetTimestampMs) / 1000);
+  const futureSkewSeconds = Math.max(0, -signedAgeSeconds);
+  const ageSeconds = Math.max(0, signedAgeSeconds);
+
+  if (futureSkewSeconds > MAX_ACCEPTABLE_FUTURE_SKEW_SECONDS) {
+    return {
+      allowed: false,
+      reason:
+        'This formation timestamp is too far in the future to apply safely. Check device clocks or wait for a fresh share.',
+      ageSeconds,
+      futureSkewSeconds,
+    };
+  }
+
+  if (ageSeconds > MAX_ACCEPTABLE_PROPOSAL_AGE_SECONDS) {
+    return {
+      allowed: false,
+      reason:
+        'This formation share is more than fifteen minutes old. Ask for a fresh order before applying it.',
+      ageSeconds,
+      futureSkewSeconds,
+    };
+  }
+
+  return {allowed: true, reason: null, ageSeconds, futureSkewSeconds};
 }
 
 /**
@@ -87,7 +134,7 @@ export function buildFormationProposal(
   if (clockSkewSeconds > 120) {
     warnings.push('The formation packet timestamp is more than two minutes in the future.');
   }
-  if (packetAgeSeconds > 900) {
+  if (packetAgeSeconds > MAX_ACCEPTABLE_PROPOSAL_AGE_SECONDS) {
     warnings.push('The formation packet is more than fifteen minutes old.');
   }
 
@@ -121,7 +168,13 @@ export function acceptFormationProposal(
   proposal: BushMeshFormationProposal,
   localIdentityRef: BushMeshIdentityRef,
   selfFormationId = '__bushmesh_self__',
+  nowMs = Date.now(),
 ): AcceptedFormationPlan {
+  const acceptance = getFormationProposalAcceptance(proposal, nowMs);
+  if (!acceptance.allowed) {
+    throw new Error(acceptance.reason ?? 'Formation proposal can no longer be accepted.');
+  }
+
   const localIdentity = normalizeIdentity(localIdentityRef);
   const memberIds = proposal.share.memberIds.map(normalizeIdentity);
   if (!memberIds.includes(localIdentity)) {
