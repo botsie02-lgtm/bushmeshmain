@@ -6,10 +6,14 @@ import {
 } from './convoy';
 import {OperationalMarkerType} from './operationalMarkers';
 
+export type FieldNavigationTargetType =
+  | OperationalMarkerType
+  | 'recovery-checkpoint';
+
 export type FieldNavigationTarget = {
   id: string;
   label: string;
-  type: OperationalMarkerType;
+  type: FieldNavigationTargetType;
   latitude: number;
   longitude: number;
   senderId: string;
@@ -20,7 +24,7 @@ export type FieldNavigationTarget = {
 export type FieldTargetGuidance = {
   targetId: string;
   label: string;
-  type: OperationalMarkerType;
+  type: FieldNavigationTargetType;
   latitude: number;
   longitude: number;
   distanceMeters: number;
@@ -32,7 +36,7 @@ export type FieldTargetGuidance = {
   arrived: boolean;
 };
 
-export function fieldTargetLabel(type: OperationalMarkerType): string {
+export function fieldTargetLabel(type: FieldNavigationTargetType): string {
   switch (type) {
     case 'regroup':
       return 'Regroup point';
@@ -42,11 +46,13 @@ export function fieldTargetLabel(type: OperationalMarkerType): string {
       return 'Hazard location';
     case 'stop':
       return 'Stop point';
+    case 'recovery-checkpoint':
+      return 'Recovery checkpoint';
   }
 }
 
 export function fieldTargetArrivalRadiusMeters(
-  type: OperationalMarkerType,
+  type: FieldNavigationTargetType,
 ): number {
   switch (type) {
     case 'help':
@@ -57,6 +63,8 @@ export function fieldTargetArrivalRadiusMeters(
       return 150;
     case 'stop':
       return 50;
+    case 'recovery-checkpoint':
+      return 75;
   }
 }
 
