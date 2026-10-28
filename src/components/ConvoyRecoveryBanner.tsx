@@ -45,6 +45,7 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
     freshness,
     ageSeconds,
     trail,
+    checkpoints,
     observedMotion,
     searchArea,
     level,
@@ -64,6 +65,12 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   const uncertaintyText = searchArea
     ? `${formatDistance(searchArea.radiusMeters)} UNCERTAINTY RADIUS`
     : 'LAST FIX STILL WITHIN CURRENT-POSITION WINDOW';
+
+  const checkpoint = checkpoints?.lastContinuousBeforeBreak ?? null;
+  const latestBreak = checkpoints?.latestBreak ?? null;
+  const checkpointAgeSeconds = checkpoint
+    ? Math.max(0, Math.floor((Date.now() - checkpoint.receivedAtMs) / 1000))
+    : null;
 
   const showNext = recoveryCases.length > 1;
   const nextCase = () => {
@@ -108,6 +115,19 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
           ]}>
           {trailText}
         </Text>
+        {checkpoint && latestBreak && checkpointAgeSeconds !== null ? (
+          <View style={styles.checkpointBox}>
+            <Text style={styles.checkpointLabel}>LAST CONTINUOUS CHECKPOINT</Text>
+            <Text style={styles.checkpointText}>
+              {formatAge(checkpointAgeSeconds)} old · break after this fix ·{' '}
+              {formatDistance(latestBreak.distanceJumpMeters)} jump ·{' '}
+              {formatAge(Math.round(latestBreak.timeGapSeconds))} gap
+            </Text>
+            <Text style={styles.checkpointWarning}>
+              Newer fixes after the break are kept as evidence, not treated as a continuous trail.
+            </Text>
+          </View>
+        ) : null}
         {observedMotion?.quality === 'usable' ? (
           <Text style={styles.motionText}>
             LAST OBSERVED COURSE · {observedMotion.compassDirection}{' '}
@@ -197,6 +217,33 @@ const styles = StyleSheet.create({
   },
   trailGood: {color: colors.success},
   trailBad: {color: colors.danger},
+  checkpointBox: {
+    marginTop: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    borderRadius: 10,
+    backgroundColor: colors.surfaceSoft,
+  },
+  checkpointLabel: {
+    color: colors.warning,
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+  },
+  checkpointText: {
+    color: colors.textPrimary,
+    fontSize: 9,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  checkpointWarning: {
+    color: colors.textMuted,
+    fontSize: 8,
+    lineHeight: 12,
+    marginTop: 3,
+  },
   motionText: {
     color: colors.accent,
     fontSize: 8,
