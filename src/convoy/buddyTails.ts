@@ -8,6 +8,10 @@ export type BuddyTailPoint = {
   receivedAtMs: number;
   packetTimestampSeconds: number;
   sequence: number;
+  /** Link/GPS evidence is optional for backward-compatible restored/manual tails. */
+  snrDb?: number | null;
+  pathLength?: number | null;
+  accuracyMeters?: number | null;
 };
 
 export type BuddyTail = {
@@ -37,6 +41,9 @@ export function appendBuddyTailPoint(
     receivedAtMs: vehicle.receivedAtMs,
     packetTimestampSeconds: vehicle.packetTimestampSeconds,
     sequence: vehicle.sequence,
+    snrDb: vehicle.snrDb,
+    pathLength: vehicle.pathLength,
+    accuracyMeters: vehicle.accuracyMeters,
   };
 
   if (last) {
