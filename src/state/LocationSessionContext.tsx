@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 
+import {BUSHMESH_POSITION_RESPONSE_FLAG} from '../bushmesh/positionRequestProtocol';
 import {distanceMeters, getConvoyFreshness} from '../convoy/convoy';
 import {getConvoyGapDecision} from '../convoy/gapMonitor';
 import {androidGpsLocationProvider} from '../location/AndroidGpsLocationProvider';
@@ -53,6 +54,13 @@ export type TrackPersistenceStatus =
   | 'unsupported'
   | 'error';
 
+export type RequestedPositionResponseResult = {
+  queued: boolean;
+  entryId: string | null;
+  fixAgeMs: number | null;
+  reason: string | null;
+};
+
 type LocationSessionContextValue = {
   status: LocationSessionStatus;
   providerLabel: string | null;
@@ -71,6 +79,10 @@ type LocationSessionContextValue = {
   startProvider: (provider: BushMeshLocationProvider) => void;
   startNativeGps: () => Promise<void>;
   startSimulation: () => void;
+  respondToPositionRequest: (
+    channelIndex: number,
+    nowMs?: number,
+  ) => RequestedPositionResponseResult;
   exportTrackGpx: () => Promise<NativeExportResult>;
   clearTrack: () => void;
   stop: () => void;
@@ -79,6 +91,9 @@ type LocationSessionContextValue = {
 const LocationSessionContext = createContext<LocationSessionContextValue | null>(
   null,
 );
+
+const MAX_REQUEST_RESPONSE_FIX_AGE_MS = 45_000;
+const MAX_REQUEST_RESPONSE_FUTURE_SKEW_MS = 10_000;
 
 function parseChannelIndex(value: string | null | undefined): number | null {
   if (value == null || value.trim() === '') {
@@ -119,6 +134,7 @@ export function LocationSessionProvider({
   const trackRecorderRef = useRef(new BushMeshTrackRecorder());
   const stopProviderRef = useRef<LocationProviderStop | null>(null);
   const lastAcceptedFixTimestampRef = useRef<number | null>(null);
+  const latestFixRef = useRef<BushMeshLocationFix | null>(null);
   const activeChannelRef = useRef(activeChannel);
   const vehiclesRef = useRef(vehicles);
   const radioSessionRef = useRef(radioSession);
@@ -277,12 +293,95 @@ export function LocationSessionProvider({
     stopProviderRef.current?.();
     stopProviderRef.current = null;
     plannerRef.current.reset();
+    latestFixRef.current = null;
     setProviderLabel(null);
+    setLatestFix(null);
     setStatus('stopped');
     setLastError(null);
   }, []);
 
   useEffect(() => stop, [stop]);
+
+  const respondToPositionRequest = useCallback(
+    (
+      channelIndex: number,
+      nowMs = Date.now(),
+    ): RequestedPositionResponseResult => {
+      const fix = latestFixRef.current;
+      if (!fix) {
+        return {
+          queued: false,
+          entryId: null,
+          fixAgeMs: null,
+          reason: 'No accepted local GPS fix is available.',
+        };
+      }
+
+      const currentRadio = radioSessionRef.current;
+      if (!currentRadio.transportReady || currentRadio.identityRef === null) {
+        return {
+          queued: false,
+          entryId: null,
+          fixAgeMs: Math.max(0, nowMs - fix.timestampMs),
+          reason: 'Radio transport or identity is unavailable.',
+        };
+      }
+
+      const fixAgeMs = nowMs - fix.timestampMs;
+      if (fixAgeMs < -MAX_REQUEST_RESPONSE_FUTURE_SKEW_MS) {
+        return {
+          queued: false,
+          entryId: null,
+          fixAgeMs,
+          reason: 'The latest GPS fix is future-dated beyond the allowed clock skew.',
+        };
+      }
+      if (fixAgeMs > MAX_REQUEST_RESPONSE_FIX_AGE_MS) {
+        return {
+          queued: false,
+          entryId: null,
+          fixAgeMs,
+          reason: 'The latest GPS fix is too old to send as a recovery response.',
+        };
+      }
+
+      try {
+        const position = plannerRef.current.buildImmediateTransmission(
+          fix,
+          channelIndex,
+          BUSHMESH_POSITION_RESPONSE_FLAG,
+        );
+        const entry = queuePositionRef.current(position);
+        setTransmittedPlanCount(count => count + 1);
+        drainOnceRef.current().catch(error => {
+          setLastError(
+            error instanceof Error
+              ? error.message
+              : 'Requested position radio drain failed.',
+          );
+        });
+        return {
+          queued: true,
+          entryId: entry.id,
+          fixAgeMs: Math.max(0, fixAgeMs),
+          reason: null,
+        };
+      } catch (error) {
+        const reason =
+          error instanceof Error
+            ? error.message
+            : 'Requested position could not be queued.';
+        setLastError(reason);
+        return {
+          queued: false,
+          entryId: null,
+          fixAgeMs: Math.max(0, fixAgeMs),
+          reason,
+        };
+      }
+    },
+    [],
+  );
 
   const handleFix = useCallback(
     (fix: BushMeshLocationFix) => {
@@ -303,6 +402,7 @@ export function LocationSessionProvider({
       }
 
       lastAcceptedFixTimestampRef.current = fix.timestampMs;
+      latestFixRef.current = fix;
       setLatestFix(fix);
       setLocalPosition({
         latitude: fix.latitude,
@@ -398,6 +498,7 @@ export function LocationSessionProvider({
       plannerRef.current.reset();
       lastAcceptedFixTimestampRef.current =
         trackRecorderRef.current.snapshot().lastRecordedAtMs;
+      latestFixRef.current = null;
       setProviderLabel(provider.label);
       setLatestFix(null);
       setLastPlan(null);
@@ -465,6 +566,7 @@ export function LocationSessionProvider({
       startProvider,
       startNativeGps,
       startSimulation,
+      respondToPositionRequest,
       exportTrackGpx,
       clearTrack,
       stop,
@@ -487,6 +589,7 @@ export function LocationSessionProvider({
       startProvider,
       startNativeGps,
       startSimulation,
+      respondToPositionRequest,
       exportTrackGpx,
       clearTrack,
       stop,
