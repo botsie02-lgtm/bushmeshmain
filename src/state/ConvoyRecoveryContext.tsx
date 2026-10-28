@@ -28,9 +28,23 @@ export type ConvoyRecoveryEvent = {
   currentFreshness: ConvoyFreshness;
 };
 
+export type ConvoyRecoveryIncident = {
+  id: string;
+  vehicleId: string;
+  vehicleName: string;
+  status: 'active' | 'recovered';
+  startedAtMs: number;
+  escalatedToLostAtMs: number | null;
+  resolvedAtMs: number | null;
+  durationMs: number | null;
+  worstState: 'stale' | 'lost';
+  eventIds: string[];
+};
+
 type ConvoyRecoveryContextValue = {
   activeCases: ConvoyRecoveryCase[];
   events: ConvoyRecoveryEvent[];
+  incidents: ConvoyRecoveryIncident[];
   latestReacquired: ConvoyRecoveryEvent | null;
   acknowledgeReacquired: (eventId: string) => void;
   clearRecoveryHistory: () => void;
@@ -50,6 +64,65 @@ function severity(freshness: ConvoyFreshness): number {
     case 'lost':
       return 3;
   }
+}
+
+function buildRecoveryIncidents(
+  events: ConvoyRecoveryEvent[],
+): ConvoyRecoveryIncident[] {
+  const chronological = [...events].sort(
+    (left, right) => left.occurredAtMs - right.occurredAtMs,
+  );
+  const activeByVehicle = new Map<string, ConvoyRecoveryIncident>();
+  const completed: ConvoyRecoveryIncident[] = [];
+
+  chronological.forEach(event => {
+    if (event.type === 'stale' || event.type === 'lost') {
+      let incident = activeByVehicle.get(event.vehicleId);
+      if (!incident) {
+        incident = {
+          id: `incident:${event.vehicleId}:${event.occurredAtMs}`,
+          vehicleId: event.vehicleId,
+          vehicleName: event.vehicleName,
+          status: 'active',
+          startedAtMs: event.occurredAtMs,
+          escalatedToLostAtMs: event.type === 'lost' ? event.occurredAtMs : null,
+          resolvedAtMs: null,
+          durationMs: null,
+          worstState: event.type,
+          eventIds: [event.id],
+        };
+        activeByVehicle.set(event.vehicleId, incident);
+        return;
+      }
+
+      incident.vehicleName = event.vehicleName;
+      incident.eventIds.push(event.id);
+      if (event.type === 'lost') {
+        incident.worstState = 'lost';
+        incident.escalatedToLostAtMs ??= event.occurredAtMs;
+      }
+      return;
+    }
+
+    const incident = activeByVehicle.get(event.vehicleId);
+    if (!incident) {
+      return;
+    }
+
+    incident.vehicleName = event.vehicleName;
+    incident.eventIds.push(event.id);
+    incident.status = 'recovered';
+    incident.resolvedAtMs = event.occurredAtMs;
+    incident.durationMs = Math.max(0, event.occurredAtMs - incident.startedAtMs);
+    completed.push(incident);
+    activeByVehicle.delete(event.vehicleId);
+  });
+
+  return [...activeByVehicle.values(), ...completed].sort((left, right) => {
+    const leftTime = left.resolvedAtMs ?? left.startedAtMs;
+    const rightTime = right.resolvedAtMs ?? right.startedAtMs;
+    return rightTime - leftTime;
+  });
 }
 
 export function ConvoyRecoveryProvider({
@@ -142,6 +215,8 @@ export function ConvoyRecoveryProvider({
     [vehicles, buddyTails, nowMs],
   );
 
+  const incidents = useMemo(() => buildRecoveryIncidents(events), [events]);
+
   const latestReacquired = useMemo(
     () =>
       events.find(
@@ -170,6 +245,7 @@ export function ConvoyRecoveryProvider({
     () => ({
       activeCases,
       events,
+      incidents,
       latestReacquired,
       acknowledgeReacquired,
       clearRecoveryHistory,
@@ -177,6 +253,7 @@ export function ConvoyRecoveryProvider({
     [
       activeCases,
       events,
+      incidents,
       latestReacquired,
       acknowledgeReacquired,
       clearRecoveryHistory,
