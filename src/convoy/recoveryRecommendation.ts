@@ -3,6 +3,7 @@ import {ConvoyRecoveryCase} from './recoveryPriority';
 export type RecoveryRecommendationKind =
   | 'monitor'
   | 'trail-context'
+  | 'continuity-checkpoint'
   | 'last-known-only'
   | 'regroup-first';
 
@@ -15,7 +16,7 @@ export type RecoveryRecommendation = {
 export function getRecoveryRecommendation(
   recoveryCase: ConvoyRecoveryCase,
 ): RecoveryRecommendation {
-  const {freshness, trail, searchArea} = recoveryCase;
+  const {freshness, trail, checkpoints, searchArea} = recoveryCase;
   const uncertaintyRadius = searchArea?.radiusMeters ?? 0;
 
   if (
@@ -30,12 +31,21 @@ export function getRecoveryRecommendation(
     };
   }
 
+  if (trail?.state === 'broken' && checkpoints?.lastContinuousBeforeBreak) {
+    return {
+      kind: 'continuity-checkpoint',
+      label: 'USE CONTINUITY CHECKPOINT',
+      detail:
+        'The buddy trail breaks after a known continuous fix. Use that checkpoint as a recovery reference anchor, but do not assume the missing vehicle remained there or travelled along the broken segment.',
+    };
+  }
+
   if (trail?.state === 'broken') {
     return {
       kind: 'last-known-only',
       label: 'USE LAST KNOWN ONLY',
       detail:
-        'The buddy trail contains a discontinuity. Do not follow the broken segment as a continuous route; use the last fix and uncertainty area as reference only.',
+        'The buddy trail contains a discontinuity and no trustworthy pre-break checkpoint is available. Do not follow the broken segment as a continuous route.',
     };
   }
 
