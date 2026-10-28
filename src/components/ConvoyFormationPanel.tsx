@@ -46,23 +46,77 @@ function gapColor(gap: ConvoyGapDecision | null): string {
   }
 }
 
+const GAP_PRESETS = [
+  {label: 'COMPACT', caution: 300, critical: 600},
+  {label: 'STANDARD', caution: 600, critical: 1_000},
+  {label: 'SPREAD', caution: 1_000, critical: 1_800},
+] as const;
+
 export function ConvoyFormationPanel(): React.JSX.Element {
   const {vehicles} = useConvoy();
   const {
     configured,
     members,
     snapshot,
+    cautionGapMeters,
+    criticalGapMeters,
+    persistenceStatus,
+    persistenceError,
     startDraftFormation,
     clearFormation,
     moveMember,
     removeMember,
     addVehicle,
+    setGapThresholds,
+    resetFormationStorage,
   } = useConvoyFormation();
 
-  const assignedIds = useMemo(() => new Set(members.map(member => member.id)), [members]);
+  const assignedIds = useMemo(
+    () => new Set(members.map(member => member.id)),
+    [members],
+  );
   const unassignedVehicles = useMemo(
     () => vehicles.filter(vehicle => !assignedIds.has(vehicle.id)),
     [assignedIds, vehicles],
+  );
+
+  const storageCopy =
+    persistenceStatus === 'loading'
+      ? 'LOADING SECURE FORMATION…'
+      : persistenceStatus === 'ready'
+        ? 'ENCRYPTED FORMATION SAVED ON ANDROID'
+        : persistenceStatus === 'unsupported'
+          ? 'FORMATION IS SESSION-ONLY ON THIS PLATFORM'
+          : 'SECURE FORMATION STORAGE NEEDS ATTENTION';
+
+  const storageColor =
+    persistenceStatus === 'ready'
+      ? colors.success
+      : persistenceStatus === 'error'
+        ? colors.danger
+        : colors.textMuted;
+
+  const storageStatus = (
+    <View style={styles.storageCard}>
+      <View style={styles.storageCopy}>
+        <Text style={[styles.storageLabel, {color: storageColor}]}>
+          {storageCopy}
+        </Text>
+        {persistenceStatus === 'error' ? (
+          <Text style={styles.storageError} numberOfLines={3}>
+            {persistenceError ??
+              'Bushmesh could not read the encrypted formation snapshot.'}
+          </Text>
+        ) : null}
+      </View>
+      {persistenceStatus === 'error' ? (
+        <TouchableOpacity
+          style={styles.storageResetButton}
+          onPress={() => resetFormationStorage().catch(() => undefined)}>
+          <Text style={styles.storageResetText}>RESET STORAGE</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
   );
 
   if (!configured) {
@@ -74,7 +128,11 @@ export function ConvoyFormationPanel(): React.JSX.Element {
           Bushmesh will not guess lead or tail from GPS geometry. Create a draft
           from the heard-member list, then explicitly arrange the real convoy order.
         </Text>
-        <TouchableOpacity style={styles.primaryButton} onPress={startDraftFormation}>
+        {storageStatus}
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={startDraftFormation}
+          disabled={persistenceStatus === 'loading'}>
           <Text style={styles.primaryButtonText}>CREATE DRAFT ORDER</Text>
         </TouchableOpacity>
       </View>
@@ -97,6 +155,54 @@ export function ConvoyFormationPanel(): React.JSX.Element {
         <TouchableOpacity style={styles.clearButton} onPress={clearFormation}>
           <Text style={styles.clearButtonText}>RESET</Text>
         </TouchableOpacity>
+      </View>
+
+      {storageStatus}
+
+      <View style={styles.thresholdCard}>
+        <View style={styles.thresholdHeader}>
+          <View>
+            <Text style={styles.thresholdEyebrow}>GAP ALERT THRESHOLDS</Text>
+            <Text style={styles.thresholdValue}>
+              caution {formatDistance(cautionGapMeters)} · critical{' '}
+              {formatDistance(criticalGapMeters)}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.thresholdHint}>
+          These are Bushmesh alert settings, not universal safe following distances.
+          Pick values appropriate to your convoy, terrain, visibility and speed.
+        </Text>
+        <View style={styles.presetRow}>
+          {GAP_PRESETS.map(preset => {
+            const active =
+              cautionGapMeters === preset.caution &&
+              criticalGapMeters === preset.critical;
+            return (
+              <TouchableOpacity
+                key={preset.label}
+                style={[styles.presetButton, active && styles.presetButtonActive]}
+                onPress={() =>
+                  setGapThresholds(preset.caution, preset.critical)
+                }>
+                <Text
+                  style={[
+                    styles.presetText,
+                    active && styles.presetTextActive,
+                  ]}>
+                  {preset.label}
+                </Text>
+                <Text
+                  style={[
+                    styles.presetMeta,
+                    active && styles.presetTextActive,
+                  ]}>
+                  {preset.caution}/{preset.critical} m
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
 
       <View style={styles.summaryRow}>
@@ -125,7 +231,8 @@ export function ConvoyFormationPanel(): React.JSX.Element {
               </View>
               <View style={styles.memberCopy}>
                 <Text style={styles.memberName} numberOfLines={1}>
-                  {state.label}{self ? ' · THIS VEHICLE' : ''}
+                  {state.label}
+                  {self ? ' · THIS VEHICLE' : ''}
                 </Text>
                 <Text style={[styles.gapText, {color: gapColor(state.gapToAhead)}]}>
                   {gapLabel(state.gapToAhead)}
@@ -202,6 +309,28 @@ const styles = StyleSheet.create({
   },
   title: {color: colors.textPrimary, fontSize: 16, fontWeight: '900', marginTop: 3},
   body: {color: colors.textSecondary, fontSize: 10, lineHeight: 15, marginTop: 5},
+  storageCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 11,
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSoft,
+  },
+  storageCopy: {flex: 1, minWidth: 0},
+  storageLabel: {fontSize: 8, fontWeight: '900'},
+  storageError: {color: colors.textSecondary, fontSize: 9, lineHeight: 13, marginTop: 3},
+  storageResetButton: {
+    borderWidth: 1,
+    borderColor: colors.danger,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  storageResetText: {color: colors.danger, fontSize: 7, fontWeight: '900'},
   primaryButton: {
     marginTop: 12,
     alignSelf: 'flex-start',
@@ -219,6 +348,31 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   clearButtonText: {color: colors.textSecondary, fontSize: 8, fontWeight: '900'},
+  thresholdCard: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  thresholdHeader: {flexDirection: 'row', justifyContent: 'space-between'},
+  thresholdEyebrow: {color: colors.textMuted, fontSize: 8, fontWeight: '900'},
+  thresholdValue: {color: colors.textPrimary, fontSize: 10, fontWeight: '900', marginTop: 2},
+  thresholdHint: {color: colors.textMuted, fontSize: 8, lineHeight: 12, marginTop: 5},
+  presetRow: {flexDirection: 'row', gap: 6, marginTop: 8},
+  presetButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 7,
+    alignItems: 'center',
+  },
+  presetButtonActive: {backgroundColor: colors.accent, borderColor: colors.accent},
+  presetText: {color: colors.textSecondary, fontSize: 7, fontWeight: '900'},
+  presetMeta: {color: colors.textMuted, fontSize: 7, marginTop: 2},
+  presetTextActive: {color: colors.background},
   summaryRow: {flexDirection: 'row', gap: 8, marginTop: 12},
   summaryMetric: {
     flex: 1,
