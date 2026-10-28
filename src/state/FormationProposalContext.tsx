@@ -58,6 +58,11 @@ export function FormationProposalProvider({
         message.formation,
         metadata.receivedAtMs,
         localIdentity,
+        {
+          channelIndex: message.channelIndex,
+          snrDb: message.snrDb,
+          pathLength: message.pathLength,
+        },
       );
 
       setProposals(current => {
