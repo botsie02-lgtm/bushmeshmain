@@ -1,5 +1,6 @@
 import {BuddyTail} from '../convoy/buddyTails';
 import {ConvoyVehicle} from '../convoy/convoy';
+import {getRecoveryObservedMotion} from '../convoy/recoveryMotion';
 import {buildRecoverySearchArea} from '../convoy/recoverySearchArea';
 import {
   RecoveryTrailState,
@@ -9,6 +10,10 @@ import {
   RecoveryCheckpointFeatureCollection,
   recoveryCheckpointsToGeoJson,
 } from './recoveryCheckpointGeoJson';
+import {
+  RecoveryMotionFeature,
+  recoveryObservedMotionToGeoJson,
+} from './recoveryMotionGeoJson';
 import {
   RecoverySearchAreaFeature,
   recoverySearchAreaToGeoJson,
@@ -23,6 +28,7 @@ export type RecoveryOverlay = {
   active: boolean;
   trail: RecoveryTrailFeatureCollection;
   checkpoints: RecoveryCheckpointFeatureCollection;
+  observedMotion: RecoveryMotionFeature | null;
   searchArea: RecoverySearchAreaFeature | null;
   trailState: RecoveryTrailState | null;
   searchRadiusMeters: number | null;
@@ -39,9 +45,11 @@ export function buildRecoveryOverlay(
   }
 
   const trailAssessment = assessRecoveryTrail(tail, nowMs);
+  const observedMotion = getRecoveryObservedMotion(tail, nowMs);
   const searchArea = buildRecoverySearchArea(vehicle, nowMs);
   const trailGeoJson = recoveryTrailToGeoJson(tail, nowMs);
   const checkpointGeoJson = recoveryCheckpointsToGeoJson(tail, nowMs);
+  const observedMotionFeature = recoveryObservedMotionToGeoJson(observedMotion);
   const searchAreaFeature = recoverySearchAreaToGeoJson(searchArea);
   const active = searchArea !== null;
 
@@ -58,7 +66,13 @@ export function buildRecoveryOverlay(
       checkpointGeoJson.features.length > 1
         ? ` · ${checkpointGeoJson.features.length} continuity checkpoints`
         : '';
-    summary = `${searchArea.state} last-known position · uncertainty radius ${radius} · ${trailSummary}${checkpointSummary}`;
+    const motionSummary =
+      observedMotion?.quality === 'usable'
+        ? ` · last observed course ${observedMotion.compassDirection} ${Math.round(
+            observedMotion.bearingDegrees,
+          )}°`
+        : '';
+    summary = `${searchArea.state} last-known position · uncertainty radius ${radius} · ${trailSummary}${checkpointSummary}${motionSummary}`;
   }
 
   return {
@@ -66,6 +80,7 @@ export function buildRecoveryOverlay(
     active,
     trail: trailGeoJson,
     checkpoints: checkpointGeoJson,
+    observedMotion: observedMotionFeature,
     searchArea: searchAreaFeature,
     trailState: trailAssessment?.state ?? null,
     searchRadiusMeters: searchArea?.radiusMeters ?? null,
