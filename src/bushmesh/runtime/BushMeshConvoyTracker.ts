@@ -1,6 +1,7 @@
 import {
   BushMeshConvoyRole,
   BushMeshConvoyStatus,
+  CompactLocation,
   applyConvoyLocationDelta,
 } from '../protocol';
 
@@ -40,6 +41,7 @@ export type BushMeshConvoySnapshot = {
 
 type StoredMember = {
   status: BushMeshConvoyStatus;
+  locationAnchor?: CompactLocation;
   firstSeenAt: number;
   lastSeenAt: number;
 };
@@ -104,12 +106,18 @@ export class BushMeshConvoyTracker {
       return false;
     }
 
+    let locationAnchor = existing?.locationAnchor
+      ? {...existing.locationAnchor}
+      : undefined;
     let location = status.location ? {...status.location} : undefined;
-    if (!location && status.locationDelta && existing?.status.location) {
-      location = applyConvoyLocationDelta(
-        existing.status.location,
-        status.locationDelta,
-      );
+
+    if (location) {
+      // Absolute coordinates are periodic self-healing anchors. All compact
+      // deltas until the next anchor are measured from this coordinate rather
+      // than the previous heartbeat, so dropped packets do not corrupt state.
+      locationAnchor = {...location};
+    } else if (status.locationDelta && locationAnchor) {
+      location = applyConvoyLocationDelta(locationAnchor, status.locationDelta);
     }
 
     // Optional telemetry fields are sparse by design. Preserve the most recent
@@ -131,6 +139,7 @@ export class BushMeshConvoyTracker {
 
     convoy.set(status.nodeId, {
       status: mergedStatus,
+      locationAnchor,
       firstSeenAt: existing?.firstSeenAt ?? receivedAt,
       lastSeenAt: receivedAt,
     });
