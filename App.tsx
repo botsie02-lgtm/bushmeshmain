@@ -24,6 +24,7 @@ import {FieldNavigationPrompt} from './src/components/FieldNavigationPrompt';
 import {FormationProposalBanner} from './src/components/FormationProposalBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
 import {NativeChannelMessageBridge} from './src/components/NativeChannelMessageBridge';
+import {PositionRequestResponder} from './src/components/PositionRequestResponder';
 import {RadioMessageSpeechBridge} from './src/components/RadioMessageSpeechBridge';
 import {RadioSpeechStatusBanner} from './src/components/RadioSpeechStatusBanner';
 import {RouteGuidanceBanner} from './src/components/RouteGuidanceBanner';
@@ -185,6 +186,7 @@ function App(): React.JSX.Element {
                         <OfflineMapProvider>
                           <LocationSessionProvider>
                             <RouteSessionProvider>
+                              <PositionRequestResponder />
                               <AppContent />
                             </RouteSessionProvider>
                           </LocationSessionProvider>
