@@ -1,6 +1,13 @@
 import {BuddyTail} from '../convoy/buddyTails';
 import {distanceMeters} from '../convoy/convoy';
-import {RecoveryTrailState, assessRecoveryTrail} from '../convoy/recoveryTrail';
+import {
+  MAX_RECOVERY_TRAIL_SPATIAL_JUMP_METERS,
+  MAX_RECOVERY_TRAIL_TIME_GAP_SECONDS,
+  RecoveryTrailState,
+  assessRecoveryTrail,
+  recoveryTrailGapSeconds,
+  recoveryTrailSegmentIsContinuous,
+} from '../convoy/recoveryTrail';
 import {BushMeshGeoJsonPosition} from './operationalPictureGeoJson';
 
 export type RecoveryTrailSegmentState =
@@ -35,9 +42,6 @@ export type RecoveryTrailFeatureCollection = {
   features: RecoveryTrailSegmentFeature[];
 };
 
-const TIME_GAP_SECONDS = 180;
-const SPATIAL_JUMP_METERS = 1_500;
-
 export function recoveryTrailToGeoJson(
   tail: BuddyTail | null | undefined,
   nowMs = Date.now(),
@@ -52,13 +56,15 @@ export function recoveryTrailToGeoJson(
   for (let index = 1; index < tail.points.length; index += 1) {
     const from = tail.points[index - 1];
     const to = tail.points[index];
-    const elapsedSeconds = Math.max(0, (to.receivedAtMs - from.receivedAtMs) / 1000);
+    const elapsedSeconds = recoveryTrailGapSeconds(from, to);
     const segmentDistanceMeters = distanceMeters(from, to);
+    const continuous = recoveryTrailSegmentIsContinuous(from, to);
 
-    const segmentState: RecoveryTrailSegmentState =
-      elapsedSeconds > TIME_GAP_SECONDS
+    const segmentState: RecoveryTrailSegmentState = continuous
+      ? 'contiguous'
+      : elapsedSeconds > MAX_RECOVERY_TRAIL_TIME_GAP_SECONDS
         ? 'time-gap'
-        : segmentDistanceMeters > SPATIAL_JUMP_METERS
+        : segmentDistanceMeters > MAX_RECOVERY_TRAIL_SPATIAL_JUMP_METERS
           ? 'spatial-jump'
           : 'contiguous';
 
