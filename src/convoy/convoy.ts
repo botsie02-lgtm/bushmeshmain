@@ -16,6 +16,8 @@ export type ConvoyVehicle = {
   receivedAtMs: number;
   snrDb: number | null;
   pathLength: number | null;
+  /** Bushmesh POSITION flags, retained so recovery can report packet provenance. */
+  positionFlags?: number;
   simulated?: boolean;
 };
 
