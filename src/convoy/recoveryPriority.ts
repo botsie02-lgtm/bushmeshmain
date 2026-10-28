@@ -1,5 +1,6 @@
 import {BuddyTail} from './buddyTails';
 import {ConvoyFreshness, ConvoyVehicle, getConvoyFreshness, positionAgeSeconds} from './convoy';
+import {RecoveryObservedMotion, getRecoveryObservedMotion} from './recoveryMotion';
 import {RecoverySearchArea, buildRecoverySearchArea} from './recoverySearchArea';
 import {RecoveryTrailAssessment, assessRecoveryTrail} from './recoveryTrail';
 
@@ -11,6 +12,7 @@ export type ConvoyRecoveryCase = {
   ageSeconds: number;
   level: RecoveryPriorityLevel;
   trail: RecoveryTrailAssessment | null;
+  observedMotion: RecoveryObservedMotion | null;
   searchArea: RecoverySearchArea | null;
   reason: string;
   sortWeight: number;
@@ -83,7 +85,9 @@ export function prioritizeConvoyRecoveryCases(
         return [];
       }
 
-      const trail = assessRecoveryTrail(tails.get(vehicle.id), nowMs);
+      const tail = tails.get(vehicle.id);
+      const trail = assessRecoveryTrail(tail, nowMs);
+      const observedMotion = getRecoveryObservedMotion(tail, nowMs);
       const searchArea = buildRecoverySearchArea(vehicle, nowMs);
       const ageSeconds = positionAgeSeconds(vehicle.receivedAtMs, nowMs);
       const uncertaintyWeight = Math.min(
@@ -103,6 +107,7 @@ export function prioritizeConvoyRecoveryCases(
           ageSeconds,
           level: levelFor(freshness, trail, searchArea),
           trail,
+          observedMotion,
           searchArea,
           reason: reasonFor(freshness, trail, searchArea),
           sortWeight,
