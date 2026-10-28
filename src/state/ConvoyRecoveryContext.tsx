@@ -8,7 +8,12 @@ import React, {
   useState,
 } from 'react';
 
-import {ConvoyFreshness, getConvoyFreshness} from '../convoy/convoy';
+import {
+  ConvoyFreshness,
+  Coordinate,
+  distanceMeters,
+  getConvoyFreshness,
+} from '../convoy/convoy';
 import {
   ConvoyRecoveryCase,
   prioritizeConvoyRecoveryCases,
@@ -16,6 +21,13 @@ import {
 import {useConvoy} from './ConvoyContext';
 
 export type ConvoyRecoveryEventType = 'stale' | 'lost' | 'reacquired';
+
+export type ConvoyRecoveryPositionSnapshot = Coordinate & {
+  receivedAtMs: number;
+  accuracyMeters: number | null;
+  snrDb: number | null;
+  pathLength: number | null;
+};
 
 export type ConvoyRecoveryEvent = {
   id: string;
@@ -26,6 +38,7 @@ export type ConvoyRecoveryEvent = {
   positionReceivedAtMs: number;
   previousFreshness: ConvoyFreshness | null;
   currentFreshness: ConvoyFreshness;
+  position: ConvoyRecoveryPositionSnapshot;
 };
 
 export type ConvoyRecoveryIncident = {
@@ -39,6 +52,9 @@ export type ConvoyRecoveryIncident = {
   durationMs: number | null;
   worstState: 'stale' | 'lost';
   eventIds: string[];
+  lastKnown: ConvoyRecoveryPositionSnapshot;
+  reacquired: ConvoyRecoveryPositionSnapshot | null;
+  reacquisitionOffsetMeters: number | null;
 };
 
 type ConvoyRecoveryContextValue = {
@@ -90,6 +106,9 @@ function buildRecoveryIncidents(
           durationMs: null,
           worstState: event.type,
           eventIds: [event.id],
+          lastKnown: event.position,
+          reacquired: null,
+          reacquisitionOffsetMeters: null,
         };
         activeByVehicle.set(event.vehicleId, incident);
         return;
@@ -97,6 +116,7 @@ function buildRecoveryIncidents(
 
       incident.vehicleName = event.vehicleName;
       incident.eventIds.push(event.id);
+      incident.lastKnown = event.position;
       if (event.type === 'lost') {
         incident.worstState = 'lost';
         incident.escalatedToLostAtMs ??= event.occurredAtMs;
@@ -114,6 +134,11 @@ function buildRecoveryIncidents(
     incident.status = 'recovered';
     incident.resolvedAtMs = event.occurredAtMs;
     incident.durationMs = Math.max(0, event.occurredAtMs - incident.startedAtMs);
+    incident.reacquired = event.position;
+    incident.reacquisitionOffsetMeters = distanceMeters(
+      incident.lastKnown,
+      event.position,
+    );
     completed.push(incident);
     activeByVehicle.delete(event.vehicleId);
   });
@@ -156,6 +181,14 @@ export function ConvoyRecoveryProvider({
       const previousReceivedAt = previousReceivedAtRef.current.get(vehicle.id);
       const hasNewFix =
         previousReceivedAt !== undefined && vehicle.receivedAtMs > previousReceivedAt;
+      const position: ConvoyRecoveryPositionSnapshot = {
+        latitude: vehicle.latitude,
+        longitude: vehicle.longitude,
+        receivedAtMs: vehicle.receivedAtMs,
+        accuracyMeters: vehicle.accuracyMeters,
+        snrDb: vehicle.snrDb,
+        pathLength: vehicle.pathLength,
+      };
 
       if (initializedRef.current && previousFreshness) {
         if (
@@ -171,6 +204,7 @@ export function ConvoyRecoveryProvider({
             positionReceivedAtMs: vehicle.receivedAtMs,
             previousFreshness,
             currentFreshness,
+            position,
           });
         } else if (
           (previousFreshness === 'stale' || previousFreshness === 'lost') &&
@@ -186,6 +220,7 @@ export function ConvoyRecoveryProvider({
             positionReceivedAtMs: vehicle.receivedAtMs,
             previousFreshness,
             currentFreshness,
+            position,
           });
         }
       }
