@@ -135,6 +135,7 @@ export function ConvoyProvider({
         receivedAtMs,
         snrDb: message.snrDb,
         pathLength: message.pathLength,
+        positionFlags: position.flags ?? 0,
       });
     },
     [resolvedVehicleName, upsertVehicle],
