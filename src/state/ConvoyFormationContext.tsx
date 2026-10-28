@@ -15,6 +15,7 @@ import {
 import {AcceptedFormationPlan} from '../convoy/formationProposal';
 import {androidFormationPersistence} from '../persistence/AndroidFormationPersistence';
 import {
+  BushMeshFormationSource,
   createFormationSnapshot,
   decodeFormationSnapshot,
   encodeFormationSnapshot,
@@ -43,6 +44,7 @@ type ConvoyFormationContextValue = {
   snapshot: ConvoyFormationSnapshot;
   cautionGapMeters: number;
   criticalGapMeters: number;
+  formationSource: BushMeshFormationSource;
   persistenceStatus: ConvoyFormationPersistenceStatus;
   persistenceError: string | null;
   startDraftFormation: () => void;
@@ -58,6 +60,10 @@ type ConvoyFormationContextValue = {
 const ConvoyFormationContext = createContext<ConvoyFormationContextValue | null>(
   null,
 );
+
+function localSource(nowMs = Date.now()): BushMeshFormationSource {
+  return {kind: 'local-manual', updatedAtMs: nowMs};
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error
@@ -78,6 +84,9 @@ export function ConvoyFormationProvider({
   );
   const [criticalGapMeters, setCriticalGapMeters] = useState(
     DEFAULT_CRITICAL_GAP_METERS,
+  );
+  const [formationSource, setFormationSource] = useState<BushMeshFormationSource>(
+    () => localSource(),
   );
   const [persistenceStatus, setPersistenceStatus] =
     useState<ConvoyFormationPersistenceStatus>(
@@ -117,6 +126,7 @@ export function ConvoyFormationProvider({
         setMemberRefs(restored.members.map(member => ({...member})));
         setCautionGapMeters(restored.cautionGapMeters);
         setCriticalGapMeters(restored.criticalGapMeters);
+        setFormationSource(restored.source);
         setPersistenceStatus('ready');
       })
       .catch(error => {
@@ -148,6 +158,7 @@ export function ConvoyFormationProvider({
             members: memberRefs,
             cautionGapMeters,
             criticalGapMeters,
+            source: formationSource,
           }),
         );
 
@@ -166,6 +177,7 @@ export function ConvoyFormationProvider({
     cautionGapMeters,
     configured,
     criticalGapMeters,
+    formationSource,
     memberRefs,
     persistenceStatus,
   ]);
@@ -210,6 +222,10 @@ export function ConvoyFormationProvider({
     ],
   );
 
+  const markLocalEdit = useCallback(() => {
+    setFormationSource(localSource());
+  }, []);
+
   const startDraftFormation = useCallback(() => {
     const remoteRefs = [...vehicles]
       .sort((left, right) => left.name.localeCompare(right.name))
@@ -219,6 +235,7 @@ export function ConvoyFormationProvider({
       ...remoteRefs,
     ]);
     setConfigured(true);
+    setFormationSource(localSource());
   }, [vehicles]);
 
   const clearFormation = useCallback(() => {
@@ -226,27 +243,36 @@ export function ConvoyFormationProvider({
     setConfigured(false);
     setCautionGapMeters(DEFAULT_CAUTION_GAP_METERS);
     setCriticalGapMeters(DEFAULT_CRITICAL_GAP_METERS);
+    setFormationSource(localSource());
   }, []);
 
-  const moveMember = useCallback((id: string, direction: 'up' | 'down') => {
-    setMemberRefs(current => {
-      const index = current.findIndex(member => member.id === id);
-      if (index < 0) {
-        return current;
-      }
-      const nextIndex = direction === 'up' ? index - 1 : index + 1;
-      if (nextIndex < 0 || nextIndex >= current.length) {
-        return current;
-      }
-      const next = [...current];
-      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-      return next;
-    });
-  }, []);
+  const moveMember = useCallback(
+    (id: string, direction: 'up' | 'down') => {
+      setMemberRefs(current => {
+        const index = current.findIndex(member => member.id === id);
+        if (index < 0) {
+          return current;
+        }
+        const nextIndex = direction === 'up' ? index - 1 : index + 1;
+        if (nextIndex < 0 || nextIndex >= current.length) {
+          return current;
+        }
+        const next = [...current];
+        [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+        return next;
+      });
+      markLocalEdit();
+    },
+    [markLocalEdit],
+  );
 
-  const removeMember = useCallback((id: string) => {
-    setMemberRefs(current => current.filter(member => member.id !== id));
-  }, []);
+  const removeMember = useCallback(
+    (id: string) => {
+      setMemberRefs(current => current.filter(member => member.id !== id));
+      markLocalEdit();
+    },
+    [markLocalEdit],
+  );
 
   const addVehicle = useCallback(
     (vehicleId: string) => {
@@ -260,8 +286,9 @@ export function ConvoyFormationProvider({
         return [...current, {id: vehicleId, kind: 'vehicle'}];
       });
       setConfigured(true);
+      markLocalEdit();
     },
-    [vehicleById],
+    [markLocalEdit, vehicleById],
   );
 
   const setGapThresholds = useCallback(
@@ -278,8 +305,9 @@ export function ConvoyFormationProvider({
       }
       setCautionGapMeters(cautionMeters);
       setCriticalGapMeters(criticalMeters);
+      markLocalEdit();
     },
-    [],
+    [markLocalEdit],
   );
 
   const applyAcceptedFormationPlan = useCallback(
@@ -308,6 +336,13 @@ export function ConvoyFormationProvider({
       setMemberRefs(nextMembers);
       setCautionGapMeters(plan.cautionGapMeters);
       setCriticalGapMeters(plan.criticalGapMeters);
+      setFormationSource({
+        kind: 'accepted-remote',
+        senderId: plan.sourceSenderId,
+        revision: plan.sourceRevision,
+        timestampSeconds: plan.sourceTimestampSeconds,
+        acceptedAtMs: Date.now(),
+      });
       setConfigured(true);
     },
     [],
@@ -329,6 +364,7 @@ export function ConvoyFormationProvider({
       setConfigured(false);
       setCautionGapMeters(DEFAULT_CAUTION_GAP_METERS);
       setCriticalGapMeters(DEFAULT_CRITICAL_GAP_METERS);
+      setFormationSource(localSource());
       setPersistenceStatus('ready');
     } catch (error) {
       setPersistenceError(errorMessage(error));
@@ -344,6 +380,7 @@ export function ConvoyFormationProvider({
       snapshot,
       cautionGapMeters,
       criticalGapMeters,
+      formationSource,
       persistenceStatus,
       persistenceError,
       startDraftFormation,
@@ -361,6 +398,7 @@ export function ConvoyFormationProvider({
       snapshot,
       cautionGapMeters,
       criticalGapMeters,
+      formationSource,
       persistenceStatus,
       persistenceError,
       startDraftFormation,
