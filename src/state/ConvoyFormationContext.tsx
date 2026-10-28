@@ -12,6 +12,7 @@ import {
   ConvoyFormationSnapshot,
   evaluateConvoyFormation,
 } from '../convoy/formation';
+import {AcceptedFormationPlan} from '../convoy/formationProposal';
 import {androidFormationPersistence} from '../persistence/AndroidFormationPersistence';
 import {
   createFormationSnapshot,
@@ -50,6 +51,7 @@ type ConvoyFormationContextValue = {
   removeMember: (id: string) => void;
   addVehicle: (vehicleId: string) => void;
   setGapThresholds: (cautionMeters: number, criticalMeters: number) => void;
+  applyAcceptedFormationPlan: (plan: AcceptedFormationPlan) => void;
   resetFormationStorage: () => Promise<void>;
 };
 
@@ -280,6 +282,37 @@ export function ConvoyFormationProvider({
     [],
   );
 
+  const applyAcceptedFormationPlan = useCallback(
+    (plan: AcceptedFormationPlan) => {
+      if (
+        !Number.isFinite(plan.cautionGapMeters) ||
+        plan.cautionGapMeters <= 0 ||
+        !Number.isFinite(plan.criticalGapMeters) ||
+        plan.criticalGapMeters <= plan.cautionGapMeters
+      ) {
+        throw new Error('Accepted formation proposal has invalid gap thresholds.');
+      }
+      if (!plan.members.some(member => member.kind === 'self')) {
+        throw new Error('Accepted formation proposal does not identify this vehicle.');
+      }
+
+      const seen = new Set<string>();
+      const nextMembers = plan.members.map(member => {
+        if (!member.id || seen.has(member.id)) {
+          throw new Error('Accepted formation proposal contains duplicate members.');
+        }
+        seen.add(member.id);
+        return {id: member.id, kind: member.kind};
+      });
+
+      setMemberRefs(nextMembers);
+      setCautionGapMeters(plan.cautionGapMeters);
+      setCriticalGapMeters(plan.criticalGapMeters);
+      setConfigured(true);
+    },
+    [],
+  );
+
   const resetFormationStorage = useCallback(async () => {
     if (!androidFormationPersistence.supported) {
       clearFormation();
@@ -319,6 +352,7 @@ export function ConvoyFormationProvider({
       removeMember,
       addVehicle,
       setGapThresholds,
+      applyAcceptedFormationPlan,
       resetFormationStorage,
     }),
     [
@@ -335,6 +369,7 @@ export function ConvoyFormationProvider({
       removeMember,
       addVehicle,
       setGapThresholds,
+      applyAcceptedFormationPlan,
       resetFormationStorage,
     ],
   );
