@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 
+import {BUSHMESH_POSITION_RESPONSE_FLAG} from '../bushmesh/positionRequestProtocol';
 import {
   ConvoyFreshness,
   Coordinate,
@@ -27,6 +28,7 @@ export type ConvoyRecoveryPositionSnapshot = Coordinate & {
   accuracyMeters: number | null;
   snrDb: number | null;
   pathLength: number | null;
+  requestDriven: boolean;
 };
 
 export type ConvoyRecoveryEvent = {
@@ -55,6 +57,7 @@ export type ConvoyRecoveryIncident = {
   lastKnown: ConvoyRecoveryPositionSnapshot;
   reacquired: ConvoyRecoveryPositionSnapshot | null;
   reacquisitionOffsetMeters: number | null;
+  reacquiredViaRequest: boolean;
 };
 
 type ConvoyRecoveryContextValue = {
@@ -109,6 +112,7 @@ function buildRecoveryIncidents(
           lastKnown: event.position,
           reacquired: null,
           reacquisitionOffsetMeters: null,
+          reacquiredViaRequest: false,
         };
         activeByVehicle.set(event.vehicleId, incident);
         return;
@@ -135,6 +139,7 @@ function buildRecoveryIncidents(
     incident.resolvedAtMs = event.occurredAtMs;
     incident.durationMs = Math.max(0, event.occurredAtMs - incident.startedAtMs);
     incident.reacquired = event.position;
+    incident.reacquiredViaRequest = event.position.requestDriven;
     incident.reacquisitionOffsetMeters = distanceMeters(
       incident.lastKnown,
       event.position,
@@ -188,6 +193,8 @@ export function ConvoyRecoveryProvider({
         accuracyMeters: vehicle.accuracyMeters,
         snrDb: vehicle.snrDb,
         pathLength: vehicle.pathLength,
+        requestDriven:
+          ((vehicle.positionFlags ?? 0) & BUSHMESH_POSITION_RESPONSE_FLAG) !== 0,
       };
 
       if (initializedRef.current && previousFreshness) {
