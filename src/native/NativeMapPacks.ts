@@ -114,14 +114,17 @@ function artifactFromNative(
   };
 }
 
-function progressFromNative(value: NativeMapPackProgress): BushMeshMapPackProgress {
-  const validState =
-    value.state === 'downloading' ||
-    value.state === 'verifying' ||
-    value.state === 'ready' ||
-    value.state === 'cancelled' ||
-    value.state === 'failed';
+function isProgressState(value: unknown): value is BushMeshMapPackProgressState {
+  return (
+    value === 'downloading' ||
+    value === 'verifying' ||
+    value === 'ready' ||
+    value === 'cancelled' ||
+    value === 'failed'
+  );
+}
 
+function progressFromNative(value: NativeMapPackProgress): BushMeshMapPackProgress {
   if (
     typeof value.packId !== 'string' ||
     value.packId.trim() === '' ||
@@ -137,7 +140,7 @@ function progressFromNative(value: NativeMapPackProgress): BushMeshMapPackProgre
         !Number.isFinite(value.fraction) ||
         value.fraction < 0 ||
         value.fraction > 1)) ||
-    !validState
+    !isProgressState(value.state)
   ) {
     throw new Error('Android returned invalid Bushmesh map-pack progress.');
   }
