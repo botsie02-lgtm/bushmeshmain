@@ -1,4 +1,4 @@
-import {useEffect, useRef} from 'react';
+import {useEffect, useMemo, useRef} from 'react';
 
 import {subscribeBushMeshInboundMessages} from '../bushmesh/inboundBus';
 import {
@@ -8,10 +8,13 @@ import {
 } from '../bushmesh/positionRequestProtocol';
 import {BushMeshMessageType} from '../bushmesh/protocol';
 import {recordRecoveryPositionResponse} from '../convoy/recoveryPositionRequest';
+import {useBushMesh} from '../state/BushMeshContext';
+import {useConvoy} from '../state/ConvoyContext';
 import {useLocationSession} from '../state/LocationSessionContext';
 import {useRadioSession} from '../state/RadioSessionContext';
 
 const REQUEST_DEDUPE_RETENTION_MS = 10 * 60 * 1000;
+const REQUESTER_RESPONSE_COOLDOWN_MS = 30_000;
 
 function normalizeIdentity(value: string | null | undefined): string | null {
   if (!value) {
@@ -19,6 +22,11 @@ function normalizeIdentity(value: string | null | undefined): string | null {
   }
   const normalized = value.replace(/[^0-9a-f]/gi, '').toUpperCase();
   return /^[0-9A-F]{12}$/.test(normalized) ? normalized : null;
+}
+
+function normalizeContactIdentity(value: string): string | null {
+  const normalized = value.replace(/[^0-9a-f]/gi, '').toUpperCase();
+  return normalized.length >= 12 ? normalized.slice(0, 12) : null;
 }
 
 /**
@@ -30,15 +38,42 @@ function normalizeIdentity(value: string | null | undefined): string | null {
  * channel, allowing the requester UI to distinguish a response from a request
  * that merely expired without a fresh fix.
  *
- * This bridge deliberately refuses simulated GPS, expired/replayed requests,
- * requests for another radio identity, and stale local fixes. A request is not
- * an instruction to fabricate a location or make an old fix appear current.
+ * Current Bushmesh identity refs are compact identifiers, not cryptographic
+ * authentication. Therefore auto-response fails closed unless the requester is
+ * already known as a MeshCore contact or observed convoy member, is asking on
+ * the selected channel, and has not triggered the responder rate limit.
  */
 export function PositionRequestResponder(): null {
+  const {activeChannel, contacts} = useBushMesh();
+  const {vehicles} = useConvoy();
   const {snapshot} = useRadioSession();
   const {providerLabel, respondToPositionRequest} = useLocationSession();
   const identityRef = normalizeIdentity(snapshot.identityRef);
   const seenRequestsRef = useRef<Map<string, number>>(new Map());
+  const lastResponseAtByRequesterRef = useRef<Map<string, number>>(new Map());
+
+  const knownRequesterIds = useMemo(() => {
+    const ids = new Set<string>();
+    vehicles.forEach(vehicle => {
+      const id = normalizeIdentity(vehicle.id);
+      if (id) {
+        ids.add(id);
+      }
+    });
+    contacts.forEach(contact => {
+      const id = normalizeContactIdentity(contact.publicKeyPrefix || contact.publicKey);
+      if (id) {
+        ids.add(id);
+      }
+    });
+    return ids;
+  }, [contacts, vehicles]);
+
+  const activeChannelIndex = Number(activeChannel?.channelIndex);
+  const hasValidActiveChannel =
+    Number.isInteger(activeChannelIndex) &&
+    activeChannelIndex >= 0 &&
+    activeChannelIndex <= 7;
 
   useEffect(() => {
     return subscribeBushMeshInboundMessages(message => {
@@ -46,7 +81,11 @@ export function PositionRequestResponder(): null {
         const requestDriven =
           ((message.position.flags ?? 0) & BUSHMESH_POSITION_RESPONSE_FLAG) !== 0;
         if (requestDriven) {
-          recordRecoveryPositionResponse(message.position.senderId, Date.now());
+          recordRecoveryPositionResponse(
+            message.position.senderId,
+            message.channelIndex,
+            Date.now(),
+          );
         }
         return;
       }
@@ -57,7 +96,22 @@ export function PositionRequestResponder(): null {
 
       const request = message.request;
       const targetId = normalizeIdentity(request.targetId);
-      if (!identityRef || !targetId || targetId !== identityRef) {
+      const requesterId = normalizeIdentity(request.senderId);
+      if (
+        !identityRef ||
+        !targetId ||
+        !requesterId ||
+        targetId !== identityRef ||
+        requesterId === identityRef
+      ) {
+        return;
+      }
+
+      if (
+        !hasValidActiveChannel ||
+        message.channelIndex !== activeChannelIndex ||
+        !knownRequesterIds.has(requesterId)
+      ) {
         return;
       }
 
@@ -69,6 +123,14 @@ export function PositionRequestResponder(): null {
       const nowMs = Date.now();
       const temporal = getPositionRequestTemporalDecision(request, nowMs);
       if (!temporal.active) {
+        return;
+      }
+
+      const lastResponseAt = lastResponseAtByRequesterRef.current.get(requesterId);
+      if (
+        lastResponseAt !== undefined &&
+        nowMs - lastResponseAt < REQUESTER_RESPONSE_COOLDOWN_MS
+      ) {
         return;
       }
 
@@ -89,9 +151,17 @@ export function PositionRequestResponder(): null {
         // outbox. If GPS was unavailable/stale, a later retransmission may be
         // answered once a trustworthy fix exists.
         seen.set(requestKey, nowMs);
+        lastResponseAtByRequesterRef.current.set(requesterId, nowMs);
       }
     });
-  }, [identityRef, providerLabel, respondToPositionRequest]);
+  }, [
+    activeChannelIndex,
+    hasValidActiveChannel,
+    identityRef,
+    knownRequesterIds,
+    providerLabel,
+    respondToPositionRequest,
+  ]);
 
   return null;
 }
