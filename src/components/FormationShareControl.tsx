@@ -1,11 +1,54 @@
-import React, {useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
+import {BushMeshOutboxEntry} from '../bushmesh/outbox';
 import {queueLocalFormationShare} from '../convoy/formationShareService';
+import {bushMeshRadioSession} from '../radio/BushMeshRadioSession';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoyFormation} from '../state/ConvoyFormationContext';
 import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
+
+function deliveryCopy(entry: BushMeshOutboxEntry | null): string | null {
+  if (!entry) {
+    return null;
+  }
+
+  switch (entry.state) {
+    case 'queued':
+      return entry.attempts > 0
+        ? `Queued for retry · ${entry.attempts}/${entry.maxAttempts} radio attempt${entry.attempts === 1 ? '' : 's'}.`
+        : 'Queued for radio acceptance.';
+    case 'inflight':
+      return `Attempting radio handoff · attempt ${entry.attempts}/${entry.maxAttempts}.`;
+    case 'accepted':
+      return 'RADIO ACCEPTED · peer receipt is not confirmed.';
+    case 'failed':
+      return `FAILED after ${entry.attempts} radio attempt${entry.attempts === 1 ? '' : 's'}${
+        entry.lastError ? ` · ${entry.lastError}` : ''
+      }`;
+    case 'cancelled':
+      return entry.lastError
+        ? `CANCELLED · ${entry.lastError}`
+        : 'CANCELLED · superseded or expired before transmission.';
+  }
+}
+
+function deliveryColor(entry: BushMeshOutboxEntry | null): string {
+  switch (entry?.state) {
+    case 'accepted':
+      return colors.success;
+    case 'failed':
+      return colors.danger;
+    case 'cancelled':
+      return colors.warning;
+    case 'inflight':
+      return colors.accent;
+    case 'queued':
+    default:
+      return colors.textSecondary;
+  }
+}
 
 export function FormationShareControl(): React.JSX.Element {
   const {activeChannelIndex} = useBushMesh();
@@ -16,8 +59,30 @@ export function FormationShareControl(): React.JSX.Element {
     criticalGapMeters,
   } = useConvoyFormation();
   const {snapshot: radio} = useRadioSession();
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [trackedEntryId, setTrackedEntryId] = useState<string | null>(null);
+  const [trackedRevision, setTrackedRevision] = useState<number | null>(null);
+  const [trackedEntry, setTrackedEntry] = useState<BushMeshOutboxEntry | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (trackedEntryId === null) {
+      setTrackedEntry(null);
+      return;
+    }
+
+    const refresh = () => {
+      const entry =
+        bushMeshRadioSession
+          .listOutbox()
+          .find(candidate => candidate.id === trackedEntryId) ?? null;
+      setTrackedEntry(entry);
+    };
+
+    refresh();
+    return bushMeshRadioSession.subscribe(refresh);
+  }, [trackedEntryId]);
 
   const channelIndex =
     activeChannelIndex === null ? null : Number.parseInt(activeChannelIndex, 10);
@@ -46,11 +111,10 @@ export function FormationShareControl(): React.JSX.Element {
         criticalGapMeters,
       });
       setError(null);
-      setFeedback(
-        `Queued revision ${queued.revision} on channel ${channelIndex}. Radio acceptance is tracked by the Bushmesh outbox.`,
-      );
+      setTrackedRevision(queued.revision);
+      setTrackedEntryId(queued.entry.id);
+      setTrackedEntry(queued.entry);
     } catch (shareError) {
-      setFeedback(null);
       setError(
         shareError instanceof Error
           ? shareError.message
@@ -69,6 +133,8 @@ export function FormationShareControl(): React.JSX.Element {
           ? 'Radio transport offline'
           : `Channel ${channelIndex} ready`;
 
+  const statusCopy = useMemo(() => deliveryCopy(trackedEntry), [trackedEntry]);
+
   return (
     <View style={styles.container}>
       <TouchableOpacity
@@ -81,7 +147,11 @@ export function FormationShareControl(): React.JSX.Element {
         <Text style={canShare ? styles.readyText : styles.waitingText}>
           {readiness}
         </Text>
-        {feedback ? <Text style={styles.feedback}>{feedback}</Text> : null}
+        {trackedRevision !== null && statusCopy ? (
+          <Text style={[styles.feedback, {color: deliveryColor(trackedEntry)}]}>
+            Revision {trackedRevision} · {statusCopy}
+          </Text>
+        ) : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </View>
     </View>
@@ -106,6 +176,6 @@ const styles = StyleSheet.create({
   copy: {flex: 1, minWidth: 0},
   readyText: {color: colors.success, fontSize: 8, fontWeight: '900'},
   waitingText: {color: colors.textMuted, fontSize: 8, fontWeight: '900'},
-  feedback: {color: colors.textSecondary, fontSize: 8, lineHeight: 11, marginTop: 2},
+  feedback: {fontSize: 8, lineHeight: 11, marginTop: 2, fontWeight: '800'},
   error: {color: colors.danger, fontSize: 8, lineHeight: 11, marginTop: 2},
 });
