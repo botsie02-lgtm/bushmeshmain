@@ -1,6 +1,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
+import {BUSHMESH_POSITION_RESPONSE_FLAG} from '../bushmesh/positionRequestProtocol';
 import {getConvoyFreshness} from '../convoy/convoy';
 import {useConvoy} from '../state/ConvoyContext';
 import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
@@ -44,16 +45,26 @@ export function ConvoyReacquiredBanner({
     0,
     Math.floor((nowMs - vehicle.receivedAtMs) / 1000),
   );
+  const requestedFix =
+    ((vehicle.positionFlags ?? 0) & BUSHMESH_POSITION_RESPONSE_FLAG) !== 0;
 
   return (
     <View style={styles.banner}>
       <View style={styles.copy}>
-        <Text style={styles.eyebrow}>VEHICLE REACQUIRED</Text>
+        <Text style={styles.eyebrow}>
+          {requestedFix ? 'REQUESTED FIX RECEIVED' : 'VEHICLE REACQUIRED'}
+        </Text>
         <Text style={styles.name}>{latestReacquired.vehicleName}</Text>
         <Text style={styles.detail}>
           Fresh position {ageSeconds}s ago · {freshness.toUpperCase()}
+          {requestedFix ? ' · REQUEST RESPONSE' : ''}
           {vehicle.snrDb == null ? '' : ` · ${vehicle.snrDb.toFixed(1)} dB SNR`}
         </Text>
+        {requestedFix ? (
+          <Text style={styles.requestDetail}>
+            This position was flagged by the peer as a response to an explicit Bushmesh position request.
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.actions}>
@@ -106,6 +117,12 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 10,
     fontWeight: '700',
+    marginTop: 3,
+  },
+  requestDetail: {
+    color: colors.textMuted,
+    fontSize: 8,
+    lineHeight: 12,
     marginTop: 3,
   },
   actions: {flexDirection: 'row', alignItems: 'center', gap: 7},
