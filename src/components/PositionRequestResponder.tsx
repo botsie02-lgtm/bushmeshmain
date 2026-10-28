@@ -3,8 +3,11 @@ import React, {useEffect, useRef} from 'react';
 import {subscribeBushMeshInboundMessages} from '../bushmesh/inboundBus';
 import {
   BUSHMESH_POSITION_REQUEST_MESSAGE_TYPE,
+  BUSHMESH_POSITION_RESPONSE_FLAG,
   getPositionRequestTemporalDecision,
 } from '../bushmesh/positionRequestProtocol';
+import {BushMeshMessageType} from '../bushmesh/protocol';
+import {recordRecoveryPositionResponse} from '../convoy/recoveryPositionRequest';
 import {useLocationSession} from '../state/LocationSessionContext';
 import {useRadioSession} from '../state/RadioSessionContext';
 
@@ -23,6 +26,10 @@ function normalizeIdentity(value: string | null | undefined): string | null {
  * local GPS fix. The response uses the normal POSITION wire format, flagged as
  * request-driven, so convoy receivers do not need a second location model.
  *
+ * The same always-mounted bridge records flagged responses observed on the
+ * channel, allowing the requester UI to distinguish a response from a request
+ * that merely expired without a fresh fix.
+ *
  * This bridge deliberately refuses simulated GPS, expired/replayed requests,
  * requests for another radio identity, and stale local fixes. A request is not
  * an instruction to fabricate a location or make an old fix appear current.
@@ -35,6 +42,15 @@ export function PositionRequestResponder(): null {
 
   useEffect(() => {
     return subscribeBushMeshInboundMessages(message => {
+      if (message.type === BushMeshMessageType.Position) {
+        const requestDriven =
+          ((message.position.flags ?? 0) & BUSHMESH_POSITION_RESPONSE_FLAG) !== 0;
+        if (requestDriven) {
+          recordRecoveryPositionResponse(message.position.senderId, Date.now());
+        }
+        return;
+      }
+
       if (message.type !== BUSHMESH_POSITION_REQUEST_MESSAGE_TYPE) {
         return;
       }
