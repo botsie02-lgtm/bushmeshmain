@@ -24,6 +24,7 @@ export type RecoveryPositionRequestState =
 export type RecoveryPositionRequestRecord = {
   id: string;
   targetId: string;
+  channelIndex: number;
   outboxEntryId: string;
   requestedAtMs: number;
   expiresAtMs: number;
@@ -109,8 +110,9 @@ export function queueRecoveryPositionRequest(
   });
 
   const request: RecoveryPositionRequestRecord = {
-    id: `${targetId}:${nowMs}:${input.sequence}`,
+    id: `${targetId}:${input.channelIndex}:${nowMs}:${input.sequence}`,
     targetId,
+    channelIndex: input.channelIndex,
     outboxEntryId: entry.id,
     requestedAtMs: nowMs,
     expiresAtMs: nowMs + ttlSeconds * 1000,
@@ -149,19 +151,21 @@ export function recordRecoveryPositionRequestDrainResult(
 }
 
 /**
- * Marks the newest still-correlatable request for this vehicle as responded.
- * POSITION responses intentionally do not carry a request ID; the fresh fix is
- * useful recovery evidence regardless of which convoy member originated the
- * request, so correlation is target/time based and labelled accordingly.
+ * Marks the newest still-correlatable request for this vehicle/channel as
+ * responded. POSITION responses intentionally do not carry a request ID, so
+ * correlation remains target/time/channel based and must not be presented as
+ * cryptographic proof of which request caused the response.
  */
 export function recordRecoveryPositionResponse(
   senderId: string,
+  channelIndex: number,
   receivedAtMs = Date.now(),
 ): RecoveryPositionRequestRecord | null {
   const targetId = normalizeTarget(senderId);
   const request = requestRecords.find(
     record =>
       record.targetId === targetId &&
+      record.channelIndex === channelIndex &&
       record.responseReceivedAtMs === null &&
       receivedAtMs >= record.requestedAtMs &&
       receivedAtMs <= record.expiresAtMs + RESPONSE_CORRELATION_GRACE_MS,
