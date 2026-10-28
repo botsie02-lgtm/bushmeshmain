@@ -56,6 +56,11 @@ const NORMAL_LOCATION_ANCHOR_MS = 60_000;
 const HAZARD_LOCATION_ANCHOR_MS = 20_000;
 const LOCATION_CHANGE_THRESHOLD_METRES = 2;
 const MAX_DELTA_COMPONENT_METRES = 20_000;
+const SPEED_CHANGE_THRESHOLD_KPH = 1.5;
+const HEADING_CHANGE_THRESHOLD_DEGREES = 8;
+const NORMAL_MOTION_REFRESH_MS = 20_000;
+const HAZARD_MOTION_REFRESH_MS = 10_000;
+const BATTERY_REFRESH_MS = 120_000;
 
 let sequence = 1;
 let commandSequence = 1;
@@ -73,6 +78,12 @@ let lastTransmitAt: number | null = null;
 let lastReceiveAt: number | null = null;
 let outboundLocationAnchor: CompactLocation | null = null;
 let outboundLocationAnchorAt: number | null = null;
+let outboundSpeedKph: number | undefined;
+let outboundSpeedAt: number | null = null;
+let outboundHeadingDegrees: number | undefined;
+let outboundHeadingAt: number | null = null;
+let outboundBatteryPercent: number | undefined;
+let outboundBatteryAt: number | null = null;
 
 function notify(): void {
   revision += 1;
@@ -116,9 +127,15 @@ function rememberCommand(
   return true;
 }
 
-function resetOutboundLocationAnchor(): void {
+function resetOutboundCompressionState(): void {
   outboundLocationAnchor = null;
   outboundLocationAnchorAt = null;
+  outboundSpeedKph = undefined;
+  outboundSpeedAt = null;
+  outboundHeadingDegrees = undefined;
+  outboundHeadingAt = null;
+  outboundBatteryPercent = undefined;
+  outboundBatteryAt = null;
 }
 
 function convoyLocationFields(
@@ -168,6 +185,68 @@ function convoyLocationFields(
   return {locationDelta: delta};
 }
 
+function headingDifferenceDegrees(a: number, b: number): number {
+  const difference = Math.abs(a - b) % 360;
+  return Math.min(difference, 360 - difference);
+}
+
+function convoySparseTelemetryFields(
+  now: number,
+): Pick<
+  BushMeshConvoyStatus,
+  'speedKph' | 'headingDegrees' | 'batteryPercent'
+> {
+  const fields: Pick<
+    BushMeshConvoyStatus,
+    'speedKph' | 'headingDegrees' | 'batteryPercent'
+  > = {};
+  const motionRefreshMs = telemetry.hazard
+    ? HAZARD_MOTION_REFRESH_MS
+    : NORMAL_MOTION_REFRESH_MS;
+
+  if (
+    telemetry.speedKph !== undefined &&
+    (outboundSpeedKph === undefined ||
+      outboundSpeedAt === null ||
+      Math.abs(telemetry.speedKph - outboundSpeedKph) >=
+        SPEED_CHANGE_THRESHOLD_KPH ||
+      now - outboundSpeedAt >= motionRefreshMs)
+  ) {
+    fields.speedKph = telemetry.speedKph;
+    outboundSpeedKph = telemetry.speedKph;
+    outboundSpeedAt = now;
+  }
+
+  if (
+    telemetry.headingDegrees !== undefined &&
+    (outboundHeadingDegrees === undefined ||
+      outboundHeadingAt === null ||
+      headingDifferenceDegrees(
+        telemetry.headingDegrees,
+        outboundHeadingDegrees,
+      ) >= HEADING_CHANGE_THRESHOLD_DEGREES ||
+      now - outboundHeadingAt >= motionRefreshMs)
+  ) {
+    fields.headingDegrees = telemetry.headingDegrees;
+    outboundHeadingDegrees = telemetry.headingDegrees;
+    outboundHeadingAt = now;
+  }
+
+  if (
+    telemetry.batteryPercent !== undefined &&
+    (outboundBatteryPercent === undefined ||
+      outboundBatteryAt === null ||
+      telemetry.batteryPercent !== outboundBatteryPercent ||
+      now - outboundBatteryAt >= BATTERY_REFRESH_MS)
+  ) {
+    fields.batteryPercent = telemetry.batteryPercent;
+    outboundBatteryPercent = telemetry.batteryPercent;
+    outboundBatteryAt = now;
+  }
+
+  return fields;
+}
+
 export function configureBushMeshConvoy(
   next: Partial<BushMeshConvoyLocalConfig>,
 ): BushMeshConvoyLocalConfig {
@@ -193,7 +272,7 @@ export function configureBushMeshConvoy(
     recentCommands = [];
     seenCommandKeys.clear();
     lastReceiveAt = null;
-    resetOutboundLocationAnchor();
+    resetOutboundCompressionState();
   }
   notify();
   return {...config};
@@ -227,6 +306,7 @@ export function nextBushMeshConvoyStatus(
   now = Date.now(),
 ): BushMeshConvoyStatus {
   const locationFields = convoyLocationFields(now);
+  const sparseTelemetryFields = convoySparseTelemetryFields(now);
   const status: BushMeshConvoyStatus = {
     convoyId: config.convoyId,
     nodeId,
@@ -234,9 +314,7 @@ export function nextBushMeshConvoyStatus(
     orderIndex: config.orderIndex,
     role: config.role,
     ...locationFields,
-    speedKph: telemetry.speedKph,
-    headingDegrees: telemetry.headingDegrees,
-    batteryPercent: telemetry.batteryPercent,
+    ...sparseTelemetryFields,
     stopped: telemetry.stopped,
     hazard: telemetry.hazard,
   };
