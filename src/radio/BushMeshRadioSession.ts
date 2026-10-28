@@ -1,3 +1,4 @@
+import {BushMeshFormationShare} from '../bushmesh/formationProtocol';
 import {
   BushMeshPosition,
   BushMeshQuickActionCode,
@@ -39,6 +40,13 @@ export type QueueQuickActionInput = {
 };
 
 export type QueuePositionInput = Omit<BushMeshPosition, 'senderId'> & {
+  channelIndex: number;
+};
+
+export type QueueFormationShareInput = Omit<
+  BushMeshFormationShare,
+  'senderId'
+> & {
   channelIndex: number;
 };
 
@@ -222,6 +230,17 @@ export class BushMeshRadioSession {
     const {channelIndex, ...position} = input;
     const entry = this.controller.enqueuePosition(channelIndex, {
       ...position,
+      senderId,
+    });
+    this.emit();
+    return entry;
+  }
+
+  queueFormationShare(input: QueueFormationShareInput): BushMeshOutboxEntry {
+    const senderId = this.requireIdentity();
+    const {channelIndex, ...share} = input;
+    const entry = this.controller.enqueueFormationShare(channelIndex, {
+      ...share,
       senderId,
     });
     this.emit();
