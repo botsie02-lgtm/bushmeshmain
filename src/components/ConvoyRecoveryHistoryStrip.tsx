@@ -1,6 +1,7 @@
 import React from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
+import {formatDistance} from '../convoy/convoy';
 import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
 import {colors} from '../theme/colors';
 
@@ -25,6 +26,7 @@ export function ConvoyRecoveryHistoryStrip(): React.JSX.Element | null {
   }
 
   const activeCount = incidents.filter(incident => incident.status === 'active').length;
+  const recoveredCount = incidents.length - activeCount;
 
   return (
     <View style={styles.container}>
@@ -34,6 +36,7 @@ export function ConvoyRecoveryHistoryStrip(): React.JSX.Element | null {
           <Text style={styles.summary}>
             {incidents.length} incident{incidents.length === 1 ? '' : 's'} this session
             {activeCount > 0 ? ` · ${activeCount} active` : ''}
+            {recoveredCount > 0 ? ` · ${recoveredCount} recovered` : ''}
           </Text>
         </View>
         <TouchableOpacity style={styles.clearButton} onPress={clearRecoveryHistory}>
@@ -44,6 +47,10 @@ export function ConvoyRecoveryHistoryStrip(): React.JSX.Element | null {
       <View style={styles.eventsRow}>
         {recent.map(incident => {
           const active = incident.status === 'active';
+          const recoveredOffset = incident.reacquisitionOffsetMeters;
+          const recoveredSnr = incident.reacquired?.snrDb ?? null;
+          const recoveredPath = incident.reacquired?.pathLength ?? null;
+
           return (
             <View key={incident.id} style={styles.eventChip}>
               <Text
@@ -70,6 +77,17 @@ export function ConvoyRecoveryHistoryStrip(): React.JSX.Element | null {
                 {formatDuration(incident.durationMs, incident.startedAtMs)}
                 {incident.escalatedToLostAtMs !== null ? ' · escalated' : ''}
               </Text>
+              {!active && recoveredOffset !== null ? (
+                <Text style={styles.recoveryEvidence}>
+                  Reacquired {formatDistance(recoveredOffset)} from last known
+                </Text>
+              ) : null}
+              {!active && (recoveredSnr !== null || recoveredPath !== null) ? (
+                <Text style={styles.linkEvidence}>
+                  Link {recoveredSnr === null ? '—' : `${recoveredSnr.toFixed(1)} dB`}
+                  {' · '}path {recoveredPath ?? '—'}
+                </Text>
+              ) : null}
             </View>
           );
         })}
@@ -138,6 +156,17 @@ const styles = StyleSheet.create({
   },
   eventAge: {
     color: colors.textMuted,
+    fontSize: 8,
+    marginTop: 2,
+  },
+  recoveryEvidence: {
+    color: colors.success,
+    fontSize: 8,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  linkEvidence: {
+    color: colors.textSecondary,
     fontSize: 8,
     marginTop: 2,
   },
