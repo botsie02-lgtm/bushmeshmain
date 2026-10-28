@@ -1,11 +1,14 @@
 import {
   assertBytes,
   assertIntegerInRange,
+  decodeSignedVarInt,
   decodeVarUint,
+  encodeSignedVarInt,
   encodeVarUint,
 } from './codec';
 import {
   CompactLocation,
+  LocationDelta,
   decodeLocationPayload,
   encodeLocationPayload,
 } from './location';
@@ -25,6 +28,7 @@ export type BushMeshConvoyStatus = {
   orderIndex: number;
   role: BushMeshConvoyRole | number;
   location?: CompactLocation;
+  locationDelta?: LocationDelta;
   speedKph?: number;
   headingDegrees?: number;
   batteryPercent?: number;
@@ -38,6 +42,82 @@ const FLAG_HEADING = 1 << 2;
 const FLAG_BATTERY = 1 << 3;
 const FLAG_STOPPED = 1 << 4;
 const FLAG_HAZARD = 1 << 5;
+const FLAG_LOCATION_DELTA = 1 << 6;
+
+const EARTH_RADIUS_METRES = 6_371_000;
+const METRES_PER_DEGREE_LATITUDE = (Math.PI * EARTH_RADIUS_METRES) / 180;
+
+function radians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+function normaliseLongitude(longitude: number): number {
+  let normalised = longitude;
+  while (normalised > 180) {
+    normalised -= 360;
+  }
+  while (normalised < -180) {
+    normalised += 360;
+  }
+  return normalised;
+}
+
+function longitudeDeltaDegrees(from: number, to: number): number {
+  let delta = to - from;
+  while (delta > 180) {
+    delta -= 360;
+  }
+  while (delta < -180) {
+    delta += 360;
+  }
+  return delta;
+}
+
+/**
+ * Returns a compact north/east displacement suitable for convoy heartbeats.
+ * The calculation is intentionally local-planar because deltas are only used
+ * between nearby periodic absolute GPS anchors.
+ */
+export function convoyLocationDelta(
+  from: CompactLocation,
+  to: CompactLocation,
+): LocationDelta {
+  const averageLatitude = radians((from.latitude + to.latitude) / 2);
+  const metresPerDegreeLongitude =
+    METRES_PER_DEGREE_LATITUDE * Math.max(0.01, Math.abs(Math.cos(averageLatitude)));
+
+  return {
+    northMetres: Math.round(
+      (to.latitude - from.latitude) * METRES_PER_DEGREE_LATITUDE,
+    ),
+    eastMetres: Math.round(
+      longitudeDeltaDegrees(from.longitude, to.longitude) *
+        metresPerDegreeLongitude,
+    ),
+  };
+}
+
+/** Reconstructs a coordinate from a previously known convoy position. */
+export function applyConvoyLocationDelta(
+  base: CompactLocation,
+  delta: LocationDelta,
+): CompactLocation {
+  const latitude =
+    base.latitude + delta.northMetres / METRES_PER_DEGREE_LATITUDE;
+  const latitudeForLongitude = radians(
+    Math.max(-89.9, Math.min(89.9, (base.latitude + latitude) / 2)),
+  );
+  const metresPerDegreeLongitude =
+    METRES_PER_DEGREE_LATITUDE * Math.max(0.01, Math.abs(Math.cos(latitudeForLongitude)));
+
+  return {
+    latitude: Math.max(-90, Math.min(90, latitude)),
+    longitude: normaliseLongitude(
+      base.longitude + delta.eastMetres / metresPerDegreeLongitude,
+    ),
+    precision: base.precision,
+  };
+}
 
 export function encodeConvoyStatus(status: BushMeshConvoyStatus): number[] {
   assertIntegerInRange(status.convoyId, 0, 0xffffffff, 'Convoy ID');
@@ -45,6 +125,10 @@ export function encodeConvoyStatus(status: BushMeshConvoyStatus): number[] {
   assertIntegerInRange(status.sequence, 0, 0xffffffff, 'Convoy sequence');
   assertIntegerInRange(status.orderIndex, 0, 0xffff, 'Convoy order index');
   assertIntegerInRange(status.role, 0, 7, 'Convoy role');
+
+  if (status.location && status.locationDelta) {
+    throw new Error('Convoy status cannot contain both absolute and delta location.');
+  }
 
   let flags = 0;
   const optional: number[] = [];
@@ -56,6 +140,12 @@ export function encodeConvoyStatus(status: BushMeshConvoyStatus): number[] {
       batteryPercent: undefined,
     });
     optional.push(locationBytes.length, ...locationBytes);
+  } else if (status.locationDelta) {
+    flags |= FLAG_LOCATION_DELTA;
+    optional.push(
+      ...encodeSignedVarInt(status.locationDelta.northMetres),
+      ...encodeSignedVarInt(status.locationDelta.eastMetres),
+    );
   }
 
   if (status.speedKph !== undefined) {
@@ -119,9 +209,13 @@ export function decodeConvoyStatus(bytes: number[]): BushMeshConvoyStatus {
   if (role > 7) {
     throw new Error('Convoy status contains an invalid role.');
   }
+  if ((flags & FLAG_LOCATION) !== 0 && (flags & FLAG_LOCATION_DELTA) !== 0) {
+    throw new Error('Convoy status contains both absolute and delta location.');
+  }
   cursor += 2;
 
   let location: CompactLocation | undefined;
+  let locationDelta: LocationDelta | undefined;
   let speedKph: number | undefined;
   let headingDegrees: number | undefined;
   let batteryPercent: number | undefined;
@@ -139,6 +233,14 @@ export function decodeConvoyStatus(bytes: number[]): BushMeshConvoyStatus {
       precision: decoded.precision,
     };
     cursor += length;
+  } else if ((flags & FLAG_LOCATION_DELTA) !== 0) {
+    const north = decodeSignedVarInt(bytes, cursor);
+    const east = decodeSignedVarInt(bytes, north.nextOffset);
+    locationDelta = {
+      northMetres: north.value,
+      eastMetres: east.value,
+    };
+    cursor = east.nextOffset;
   }
 
   if ((flags & FLAG_SPEED) !== 0) {
@@ -176,6 +278,7 @@ export function decodeConvoyStatus(bytes: number[]): BushMeshConvoyStatus {
     orderIndex: orderIndex.value,
     role,
     location,
+    locationDelta,
     speedKph,
     headingDegrees,
     batteryPercent,
