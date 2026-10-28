@@ -1,8 +1,8 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
-import {formatDistance, getConvoyFreshness, positionAgeSeconds} from '../convoy/convoy';
-import {buildRecoverySearchArea} from '../convoy/recoverySearchArea';
+import {formatDistance} from '../convoy/convoy';
+import {prioritizeConvoyRecoveryCases} from '../convoy/recoveryPriority';
 import {useConvoy} from '../state/ConvoyContext';
 import {colors} from '../theme/colors';
 
@@ -19,10 +19,10 @@ function formatAge(ageSeconds: number): string {
 export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   const {
     vehicles,
+    buddyTails,
     navigationTargetVehicleId,
     setNavigationTarget,
     clearNavigationTarget,
-    getRecoveryTrailAssessment,
   } = useConvoy();
   const [nowMs, setNowMs] = useState(Date.now());
 
@@ -31,31 +31,18 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
     return () => clearInterval(timer);
   }, []);
 
-  const candidate = useMemo(() => {
-    return [...vehicles]
-      .filter(vehicle => {
-        const freshness = getConvoyFreshness(vehicle.receivedAtMs, nowMs);
-        return freshness === 'stale' || freshness === 'lost';
-      })
-      .sort((left, right) => {
-        const leftFreshness = getConvoyFreshness(left.receivedAtMs, nowMs);
-        const rightFreshness = getConvoyFreshness(right.receivedAtMs, nowMs);
-        if (leftFreshness !== rightFreshness) {
-          return leftFreshness === 'lost' ? -1 : 1;
-        }
-        return left.receivedAtMs - right.receivedAtMs;
-      })[0] ?? null;
-  }, [vehicles, nowMs]);
+  const recoveryCases = useMemo(
+    () => prioritizeConvoyRecoveryCases(vehicles, buddyTails, nowMs),
+    [vehicles, buddyTails, nowMs],
+  );
+  const candidate = recoveryCases[0] ?? null;
 
   if (!candidate) {
     return null;
   }
 
-  const freshness = getConvoyFreshness(candidate.receivedAtMs, nowMs);
-  const ageSeconds = positionAgeSeconds(candidate.receivedAtMs, nowMs);
-  const trail = getRecoveryTrailAssessment(candidate.id, nowMs);
-  const searchArea = buildRecoverySearchArea(candidate, nowMs);
-  const targeted = navigationTargetVehicleId === candidate.id;
+  const {vehicle, freshness, ageSeconds, trail, searchArea, level, reason} = candidate;
+  const targeted = navigationTargetVehicleId === vehicle.id;
 
   const trailText = trail
     ? trail.pointCount >= 2
@@ -70,17 +57,35 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
     : 'LAST FIX STILL WITHIN CURRENT-POSITION WINDOW';
 
   return (
-    <View style={styles.banner}>
+    <View
+      style={[
+        styles.banner,
+        level === 'critical'
+          ? styles.bannerCritical
+          : level === 'high'
+            ? styles.bannerHigh
+            : styles.bannerWatch,
+      ]}>
       <View style={styles.copy}>
-        <Text style={styles.eyebrow}>
+        <Text
+          style={[
+            styles.eyebrow,
+            level === 'critical'
+              ? styles.criticalText
+              : level === 'high'
+                ? styles.highText
+                : styles.watchText,
+          ]}>
           {freshness === 'lost' ? 'LOST VEHICLE' : 'VEHICLE STALE'}
+          {recoveryCases.length > 1 ? ` · 1 OF ${recoveryCases.length}` : ''}
         </Text>
         <Text style={styles.name} numberOfLines={1}>
-          {candidate.name}
+          {vehicle.name}
         </Text>
         <Text style={styles.detail}>
           Last heard {formatAge(ageSeconds)} ago · {uncertaintyText}
         </Text>
+        <Text style={styles.reason}>{reason}</Text>
         <Text
           style={[
             styles.trail,
@@ -92,11 +97,20 @@ export function ConvoyRecoveryBanner(): React.JSX.Element | null {
       </View>
 
       <TouchableOpacity
-        style={[styles.button, targeted && styles.buttonActive]}
+        style={[
+          styles.button,
+          level === 'watch' ? styles.buttonWatch : styles.buttonUrgent,
+          targeted && styles.buttonActive,
+        ]}
         onPress={() =>
-          targeted ? clearNavigationTarget() : setNavigationTarget(candidate.id)
+          targeted ? clearNavigationTarget() : setNavigationTarget(vehicle.id)
         }>
-        <Text style={[styles.buttonText, targeted && styles.buttonTextActive]}>
+        <Text
+          style={[
+            styles.buttonText,
+            level === 'watch' ? styles.buttonWatchText : styles.buttonUrgentText,
+            targeted && styles.buttonTextActive,
+          ]}>
           {targeted ? 'FOCUSED' : 'RECOVER'}
         </Text>
       </TouchableOpacity>
@@ -113,15 +127,19 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: colors.danger,
   },
+  bannerCritical: {borderBottomColor: colors.danger},
+  bannerHigh: {borderBottomColor: colors.warning},
+  bannerWatch: {borderBottomColor: colors.accent},
   copy: {flex: 1, minWidth: 0},
   eyebrow: {
-    color: colors.danger,
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 1,
   },
+  criticalText: {color: colors.danger},
+  highText: {color: colors.warning},
+  watchText: {color: colors.accent},
   name: {
     color: colors.textPrimary,
     fontSize: 15,
@@ -132,6 +150,12 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 10,
     fontWeight: '700',
+    marginTop: 3,
+  },
+  reason: {
+    color: colors.textMuted,
+    fontSize: 9,
+    lineHeight: 13,
     marginTop: 3,
   },
   trail: {
@@ -146,12 +170,15 @@ const styles = StyleSheet.create({
     minWidth: 82,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.danger,
     paddingHorizontal: 12,
     paddingVertical: 9,
     alignItems: 'center',
   },
+  buttonUrgent: {borderColor: colors.danger},
+  buttonWatch: {borderColor: colors.accent},
   buttonActive: {backgroundColor: colors.danger},
-  buttonText: {color: colors.danger, fontSize: 9, fontWeight: '900'},
+  buttonText: {fontSize: 9, fontWeight: '900'},
+  buttonUrgentText: {color: colors.danger},
+  buttonWatchText: {color: colors.accent},
   buttonTextActive: {color: colors.background},
 });
