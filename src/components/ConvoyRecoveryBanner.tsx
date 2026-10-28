@@ -1,10 +1,10 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {formatDistance} from '../convoy/convoy';
-import {prioritizeConvoyRecoveryCases} from '../convoy/recoveryPriority';
 import {getRecoveryRecommendation} from '../convoy/recoveryRecommendation';
 import {useConvoy} from '../state/ConvoyContext';
+import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
 import {colors} from '../theme/colors';
 
 function formatAge(ageSeconds: number): string {
@@ -19,24 +19,12 @@ function formatAge(ageSeconds: number): string {
 
 export function ConvoyRecoveryBanner(): React.JSX.Element | null {
   const {
-    vehicles,
-    buddyTails,
     navigationTargetVehicleId,
     setNavigationTarget,
     clearNavigationTarget,
   } = useConvoy();
-  const [nowMs, setNowMs] = useState(Date.now());
+  const {activeCases: recoveryCases} = useConvoyRecovery();
   const [caseIndex, setCaseIndex] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 5_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const recoveryCases = useMemo(
-    () => prioritizeConvoyRecoveryCases(vehicles, buddyTails, nowMs),
-    [vehicles, buddyTails, nowMs],
-  );
 
   useEffect(() => {
     if (recoveryCases.length === 0) {
