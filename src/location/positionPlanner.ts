@@ -94,6 +94,12 @@ export function validateLocationFix(fix: BushMeshLocationFix): string | null {
   return null;
 }
 
+function validateChannelIndex(channelIndex: number): string | null {
+  return Number.isInteger(channelIndex) && channelIndex >= 0 && channelIndex <= 7
+    ? null
+    : 'Convoy channel index must be between 0 and 7.';
+}
+
 /**
  * Stateful, transport-neutral position planner.
  *
@@ -137,14 +143,11 @@ export class BushMeshPositionPlanner {
       };
     }
 
-    if (
-      !Number.isInteger(context.channelIndex) ||
-      context.channelIndex < 0 ||
-      context.channelIndex > 7
-    ) {
+    const channelError = validateChannelIndex(context.channelIndex);
+    if (channelError) {
       return {
         fixAccepted: false,
-        rejectionReason: 'Convoy channel index must be between 0 and 7.',
+        rejectionReason: channelError,
         decision: null,
         headingChangeDegrees: null,
         shouldTransmit: false,
@@ -188,28 +191,40 @@ export class BushMeshPositionPlanner {
       };
     }
 
-    const sequence = this.nextSequence;
-    this.nextSequence = sequence >= 0xffff ? 1 : sequence + 1;
-    this.lastTransmittedAtMs = fix.timestampMs;
-
     return {
       fixAccepted: true,
       rejectionReason: null,
       decision,
       headingChangeDegrees,
       shouldTransmit: true,
-      position: {
-        channelIndex: context.channelIndex,
-        sequence,
-        timestampSeconds: Math.floor(fix.timestampMs / 1000),
-        latitude: fix.latitude,
-        longitude: fix.longitude,
-        altitudeMeters: fix.altitudeMeters ?? null,
-        speedKmh: fix.speedKmh ?? null,
-        headingDegrees: normalizedHeading,
-        accuracyMeters: fix.accuracyMeters ?? null,
-      },
+      position: this.buildPosition(fix, context.channelIndex, 0, true),
     };
+  }
+
+  /**
+   * Builds an immediate transmission from a fix that the location session has
+   * already accepted. This is used for explicit peer position requests and
+   * shares the same sequence counter as adaptive broadcasts.
+   *
+   * The GPS timestamp is preserved: requesting a fix never makes an old fix
+   * look newer than it really is.
+   */
+  buildImmediateTransmission(
+    fix: BushMeshLocationFix,
+    channelIndex: number,
+    flags = 0,
+  ): PlannedBushMeshPosition {
+    const validationError = validateLocationFix(fix);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
+    const channelError = validateChannelIndex(channelIndex);
+    if (channelError) {
+      throw new Error(channelError);
+    }
+
+    return this.buildPosition(fix, channelIndex, flags, true);
   }
 
   reset(): void {
@@ -217,5 +232,37 @@ export class BushMeshPositionPlanner {
     this.lastHeadingDegrees = null;
     this.lastTransmittedAtMs = null;
     this.nextSequence = 1;
+  }
+
+  private buildPosition(
+    fix: BushMeshLocationFix,
+    channelIndex: number,
+    flags: number,
+    markTransmitted: boolean,
+  ): PlannedBushMeshPosition {
+    const sequence = this.nextSequence;
+    this.nextSequence = sequence >= 0xffff ? 1 : sequence + 1;
+    if (markTransmitted) {
+      this.lastTransmittedAtMs = Math.max(
+        this.lastTransmittedAtMs ?? 0,
+        fix.timestampMs,
+      );
+    }
+
+    return {
+      channelIndex,
+      sequence,
+      timestampSeconds: Math.floor(fix.timestampMs / 1000),
+      latitude: fix.latitude,
+      longitude: fix.longitude,
+      altitudeMeters: fix.altitudeMeters ?? null,
+      speedKmh: fix.speedKmh ?? null,
+      headingDegrees:
+        fix.headingDegrees == null
+          ? null
+          : normalizeHeadingDegrees(fix.headingDegrees),
+      accuracyMeters: fix.accuracyMeters ?? null,
+      flags,
+    };
   }
 }
