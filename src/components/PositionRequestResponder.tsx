@@ -34,7 +34,7 @@ export function PositionRequestResponder(): null {
   const seenRequestsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
-    return subscribeBushMeshInboundMessages((message, metadata) => {
+    return subscribeBushMeshInboundMessages(message => {
       if (message.type !== BUSHMESH_POSITION_REQUEST_MESSAGE_TYPE) {
         return;
       }
@@ -50,16 +50,13 @@ export function PositionRequestResponder(): null {
         return;
       }
 
-      const temporal = getPositionRequestTemporalDecision(
-        request,
-        metadata.receivedAtMs,
-      );
+      const nowMs = Date.now();
+      const temporal = getPositionRequestTemporalDecision(request, nowMs);
       if (!temporal.active) {
         return;
       }
 
       const requestKey = `${request.senderId}:${request.timestampSeconds}:${request.sequence}`;
-      const nowMs = Date.now();
       const seen = seenRequestsRef.current;
       for (const [key, seenAtMs] of seen) {
         if (nowMs - seenAtMs > REQUEST_DEDUPE_RETENTION_MS) {
@@ -69,9 +66,14 @@ export function PositionRequestResponder(): null {
       if (seen.has(requestKey)) {
         return;
       }
-      seen.set(requestKey, nowMs);
 
-      respondToPositionRequest(message.channelIndex, nowMs);
+      const response = respondToPositionRequest(message.channelIndex, nowMs);
+      if (response.queued) {
+        // Only mark the request handled after a real response entered the
+        // outbox. If GPS was unavailable/stale, a later retransmission may be
+        // answered once a trustworthy fix exists.
+        seen.set(requestKey, nowMs);
+      }
     });
   }, [identityRef, providerLabel, respondToPositionRequest]);
 
