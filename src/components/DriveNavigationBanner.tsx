@@ -5,6 +5,7 @@ import {buddyTailDistanceMeters} from '../convoy/buddyTails';
 import {distanceMeters, formatDistance} from '../convoy/convoy';
 import {getFieldTargetGuidance} from '../convoy/fieldTarget';
 import {getMovingTargetGuidance} from '../convoy/movingTarget';
+import {RecoveryTrailAssessment} from '../convoy/recoveryTrail';
 import {useConvoy} from '../state/ConvoyContext';
 import {useRouteSession} from '../state/RouteSessionContext';
 import {colors} from '../theme/colors';
@@ -45,6 +46,29 @@ function fixedTargetEyebrow(
   }
 }
 
+function recoveryTrailLabel(
+  assessment: RecoveryTrailAssessment | null,
+): string | null {
+  if (!assessment || assessment.pointCount < 2) {
+    return null;
+  }
+
+  switch (assessment.state) {
+    case 'usable':
+      return `RECOVERY TRAIL · ${assessment.pointCount} fixes · ${formatDistance(
+        assessment.retainedDistanceMeters,
+      )}`;
+    case 'aging':
+      return `AGING TRAIL · ${formatAge(assessment.lastPointAgeSeconds)} old · ${formatDistance(
+        assessment.retainedDistanceMeters,
+      )}`;
+    case 'stale':
+      return `STALE TRAIL · ${formatAge(assessment.lastPointAgeSeconds)} old · REFERENCE ONLY`;
+    case 'broken':
+      return 'TRAIL GAP DETECTED · DO NOT TREAT AS CONTINUOUS';
+  }
+}
+
 export function DriveNavigationBanner(): React.JSX.Element | null {
   const {
     localPosition,
@@ -52,6 +76,7 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
     navigationTargetVehicle,
     navigationFieldTarget,
     getBuddyTail,
+    getRecoveryTrailAssessment,
     clearNavigationTarget,
   } = useConvoy();
   const {
@@ -84,6 +109,14 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
         : null,
     [getBuddyTail, navigationTargetVehicleId],
   );
+  const recoveryTrail = useMemo(
+    () =>
+      navigationTargetVehicleId
+        ? getRecoveryTrailAssessment(navigationTargetVehicleId, nowMs)
+        : null,
+    [getRecoveryTrailAssessment, navigationTargetVehicleId, nowMs],
+  );
+  const recoveryTrailText = recoveryTrailLabel(recoveryTrail);
   const tailDistanceMeters = buddyTail ? buddyTailDistanceMeters(buddyTail) : 0;
 
   const targetKey = navigationFieldTarget
@@ -277,7 +310,18 @@ export function DriveNavigationBanner(): React.JSX.Element | null {
         <Text style={styles.targetName} numberOfLines={1}>
           {navigationTargetVehicle?.name ?? 'Target unavailable'}
         </Text>
-        {!safeToFollow && hasUsefulTail ? (
+        {!safeToFollow && recoveryTrailText ? (
+          <Text
+            style={
+              recoveryTrail?.state === 'usable'
+                ? styles.recoveryTrailUsable
+                : recoveryTrail?.state === 'aging'
+                  ? styles.recoveryTrailAging
+                  : styles.tailText
+            }>
+            {recoveryTrailText}
+          </Text>
+        ) : !safeToFollow && hasUsefulTail ? (
           <Text style={styles.tailText}>
             BUDDY TAIL · {buddyTail?.points.length ?? 0} fixes ·{' '}
             {formatDistance(tailDistanceMeters)} retained path
@@ -347,6 +391,18 @@ const styles = StyleSheet.create({
     color: colors.warning,
     fontSize: 8,
     fontWeight: '800',
+    marginTop: 3,
+  },
+  recoveryTrailUsable: {
+    color: colors.success,
+    fontSize: 8,
+    fontWeight: '900',
+    marginTop: 3,
+  },
+  recoveryTrailAging: {
+    color: colors.warning,
+    fontSize: 8,
+    fontWeight: '900',
     marginTop: 3,
   },
   fixedText: {
