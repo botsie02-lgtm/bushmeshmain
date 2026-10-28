@@ -115,6 +115,9 @@ export function ConvoyRecoveryHistoryStrip(): React.JSX.Element | null {
                   Reacquired {formatDistance(recoveredOffset)} from last known
                 </Text>
               ) : null}
+              {!active && incident.reacquiredViaRequest ? (
+                <Text style={styles.requestEvidence}>REQUEST FIX RESPONSE</Text>
+              ) : null}
               {!active && (recoveredSnr !== null || recoveredPath !== null) ? (
                 <Text style={styles.linkEvidence}>
                   Link {recoveredSnr === null ? '—' : `${recoveredSnr.toFixed(1)} dB`}
@@ -140,6 +143,11 @@ export function ConvoyRecoveryHistoryStrip(): React.JSX.Element | null {
           </View>
 
           <Text style={styles.reportSummary}>{selectedReport.summary}</Text>
+          {selectedIncident.reacquiredViaRequest ? (
+            <Text style={styles.requestReportNote}>
+              Reacquisition provenance: peer flagged this fresh position as a response to an explicit Bushmesh position request.
+            </Text>
+          ) : null}
 
           <View style={styles.evidenceRow}>
             <View style={styles.evidenceBlock}>
@@ -265,6 +273,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 4,
   },
+  requestEvidence: {
+    color: colors.accent,
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    marginTop: 3,
+  },
   linkEvidence: {
     color: colors.textSecondary,
     fontSize: 8,
@@ -312,6 +327,13 @@ const styles = StyleSheet.create({
     fontSize: 9,
     lineHeight: 13,
     marginTop: 6,
+  },
+  requestReportNote: {
+    color: colors.accent,
+    fontSize: 8,
+    lineHeight: 12,
+    fontWeight: '800',
+    marginTop: 5,
   },
   evidenceRow: {
     flexDirection: 'row',
