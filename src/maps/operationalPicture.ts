@@ -262,7 +262,9 @@ export function buildOperationalPicture(
 
   if (input.navigationFieldTarget) {
     const target = input.navigationFieldTarget;
-    const markerStillActive = activeMarkers.some(marker => marker.id === target.id);
+    const isRecoveryCheckpoint = target.type === 'recovery-checkpoint';
+    const markerStillActive =
+      !isRecoveryCheckpoint && activeMarkers.some(marker => marker.id === target.id);
     if (!markerStillActive) {
       points.push({
         id: `target:${target.id}`,
@@ -276,7 +278,9 @@ export function buildOperationalPicture(
             : 'active',
         targeted: true,
         sourceId: target.senderId,
-        markerType: target.type,
+        // Recovery checkpoints are historical reference anchors, not field
+        // command markers such as REGROUP/HELP/HAZARD/STOP.
+        markerType: isRecoveryCheckpoint ? null : target.type,
         simulated: false,
       });
     }
