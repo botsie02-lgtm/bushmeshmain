@@ -13,6 +13,7 @@ import {
 
 import {CarMessagingStatusBanner} from './src/components/CarMessagingStatusBanner';
 import {ConvoyLossBanner} from './src/components/ConvoyLossBanner';
+import {ConvoyRecoveryBanner} from './src/components/ConvoyRecoveryBanner';
 import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {FieldNavigationPrompt} from './src/components/FieldNavigationPrompt';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
@@ -83,6 +84,7 @@ function AppContent(): React.JSX.Element {
         </>
       ) : null}
       {activeTab === 'map' ? <MapTrackExportBanner /> : null}
+      {activeTab === 'convoy' ? <ConvoyRecoveryBanner /> : null}
       {activeTab === 'channels' ? (
         <>
           <SecureDataStatusBanner kind="messages" />
