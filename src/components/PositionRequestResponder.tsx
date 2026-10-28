@@ -15,6 +15,7 @@ import {useRadioSession} from '../state/RadioSessionContext';
 
 const REQUEST_DEDUPE_RETENTION_MS = 10 * 60 * 1000;
 const REQUESTER_RESPONSE_COOLDOWN_MS = 30_000;
+const MAX_AUTO_RESPONSE_FIX_AGE_MS = 15_000;
 
 function normalizeIdentity(value: string | null | undefined): string | null {
   if (!value) {
@@ -43,7 +44,7 @@ export function PositionRequestResponder(): null {
   const {activeChannel} = useBushMesh();
   const {vehicles} = useConvoy();
   const {snapshot} = useRadioSession();
-  const {providerLabel, respondToPositionRequest} = useLocationSession();
+  const {latestFix, providerLabel, respondToPositionRequest} = useLocationSession();
   const identityRef = normalizeIdentity(snapshot.identityRef);
   const seenRequestsRef = useRef<Map<string, number>>(new Map());
   const lastResponseAtByRequesterRef = useRef<Map<string, number>>(new Map());
@@ -119,6 +120,16 @@ export function PositionRequestResponder(): null {
         return;
       }
 
+      // Auto-response is deliberately stricter than the generic location API:
+      // a recovery request may only disclose a fix that is genuinely current.
+      if (
+        !latestFix ||
+        nowMs - latestFix.timestampMs < -10_000 ||
+        nowMs - latestFix.timestampMs > MAX_AUTO_RESPONSE_FIX_AGE_MS
+      ) {
+        return;
+      }
+
       const lastResponseAt = lastResponseAtByRequesterRef.current.get(requesterId);
       if (
         lastResponseAt !== undefined &&
@@ -151,6 +162,7 @@ export function PositionRequestResponder(): null {
     activeChannelIndex,
     hasValidActiveChannel,
     identityRef,
+    latestFix,
     observedRequesterIds,
     providerLabel,
     respondToPositionRequest,
