@@ -17,11 +17,25 @@ export type RecoveryTrailAssessment = {
 
 const USABLE_LAST_POINT_AGE_SECONDS = 120;
 const AGING_LAST_POINT_AGE_SECONDS = 600;
-const MAX_CONTIGUOUS_TIME_GAP_SECONDS = 180;
-const MAX_CONTIGUOUS_SPATIAL_JUMP_METERS = 1_500;
+export const MAX_RECOVERY_TRAIL_TIME_GAP_SECONDS = 180;
+export const MAX_RECOVERY_TRAIL_SPATIAL_JUMP_METERS = 1_500;
 
-function gapSeconds(left: BuddyTailPoint, right: BuddyTailPoint): number {
+export function recoveryTrailGapSeconds(
+  left: BuddyTailPoint,
+  right: BuddyTailPoint,
+): number {
   return Math.max(0, (right.receivedAtMs - left.receivedAtMs) / 1000);
+}
+
+export function recoveryTrailSegmentIsContinuous(
+  left: BuddyTailPoint,
+  right: BuddyTailPoint,
+): boolean {
+  return (
+    recoveryTrailGapSeconds(left, right) <=
+      MAX_RECOVERY_TRAIL_TIME_GAP_SECONDS &&
+    distanceMeters(left, right) <= MAX_RECOVERY_TRAIL_SPATIAL_JUMP_METERS
+  );
 }
 
 export function assessRecoveryTrail(
@@ -45,16 +59,13 @@ export function assessRecoveryTrail(
   for (let index = 1; index < tail.points.length; index += 1) {
     const previous = tail.points[index - 1];
     const current = tail.points[index];
-    const timeGap = gapSeconds(previous, current);
+    const timeGap = recoveryTrailGapSeconds(previous, current);
     const spatialJump = distanceMeters(previous, current);
 
     largestTimeGapSeconds = Math.max(largestTimeGapSeconds, timeGap);
     largestSpatialJumpMeters = Math.max(largestSpatialJumpMeters, spatialJump);
 
-    if (
-      timeGap > MAX_CONTIGUOUS_TIME_GAP_SECONDS ||
-      spatialJump > MAX_CONTIGUOUS_SPATIAL_JUMP_METERS
-    ) {
+    if (!recoveryTrailSegmentIsContinuous(previous, current)) {
       broken = true;
     }
   }
