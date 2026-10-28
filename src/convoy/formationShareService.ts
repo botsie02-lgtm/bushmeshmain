@@ -16,6 +16,13 @@ export type QueuedFormationShare = {
   sequence: number;
 };
 
+let nextFormationSequence = Date.now() & 0xffff;
+
+function allocateFormationSequence(): number {
+  nextFormationSequence = (nextFormationSequence + 1) & 0xffff;
+  return nextFormationSequence;
+}
+
 function normalizeRemoteIdentity(id: string): string {
   const normalized = id.replace(/[^0-9a-f]/gi, '').toUpperCase();
   if (!/^[0-9A-F]{12}$/.test(normalized)) {
@@ -65,7 +72,7 @@ export function queueLocalFormationShare(
 
   const nowMs = input.nowMs ?? Date.now();
   const timestampSeconds = Math.floor(nowMs / 1000);
-  const sequence = timestampSeconds & 0xffff;
+  const sequence = allocateFormationSequence();
   const revision = sequence;
   const entry = bushMeshRadioSession.queueFormationShare({
     channelIndex: input.channelIndex,
