@@ -14,6 +14,7 @@ import {
 import {CarMessagingStatusBanner} from './src/components/CarMessagingStatusBanner';
 import {ConvoyFormationBanner} from './src/components/ConvoyFormationBanner';
 import {ConvoyFormationGapBanner} from './src/components/ConvoyFormationGapBanner';
+import {ConvoyLinkWatchBanner} from './src/components/ConvoyLinkWatchBanner';
 import {ConvoyLossBanner} from './src/components/ConvoyLossBanner';
 import {ConvoyReacquiredBanner} from './src/components/ConvoyReacquiredBanner';
 import {ConvoyRecoveryBanner} from './src/components/ConvoyRecoveryBanner';
@@ -99,6 +100,7 @@ function AppContent(): React.JSX.Element {
         <>
           <FormationProposalBanner />
           <ConvoyRecoveryBanner />
+          <ConvoyLinkWatchBanner />
           <ConvoyFormationBanner />
           <ConvoyRecoveryHistoryStrip />
         </>
