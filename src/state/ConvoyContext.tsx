@@ -20,6 +20,10 @@ import {
   shouldReplaceVehiclePosition,
 } from '../convoy/convoy';
 import {FieldNavigationTarget} from '../convoy/fieldTarget';
+import {
+  RecoveryTrailAssessment,
+  assessRecoveryTrail,
+} from '../convoy/recoveryTrail';
 import {useBushMesh} from './BushMeshContext';
 
 type ConvoyContextValue = {
@@ -30,6 +34,10 @@ type ConvoyContextValue = {
   navigationTargetVehicle: ConvoyVehicle | null;
   navigationFieldTarget: FieldNavigationTarget | null;
   getBuddyTail: (vehicleId: string) => BuddyTail | null;
+  getRecoveryTrailAssessment: (
+    vehicleId: string,
+    nowMs?: number,
+  ) => RecoveryTrailAssessment | null;
   upsertBushMeshMessage: (message: BushMeshInboundMessage) => void;
   setLocalPosition: (position: Coordinate | null) => void;
   setNavigationTarget: (vehicleId: string) => void;
@@ -268,6 +276,12 @@ export function ConvoyProvider({
     [buddyTailMap],
   );
 
+  const getRecoveryTrailAssessment = useCallback(
+    (vehicleId: string, nowMs = Date.now()): RecoveryTrailAssessment | null =>
+      assessRecoveryTrail(buddyTailMap[vehicleId], nowMs),
+    [buddyTailMap],
+  );
+
   const value = useMemo<ConvoyContextValue>(
     () => ({
       vehicles,
@@ -277,6 +291,7 @@ export function ConvoyProvider({
       navigationTargetVehicle,
       navigationFieldTarget,
       getBuddyTail,
+      getRecoveryTrailAssessment,
       upsertBushMeshMessage,
       setLocalPosition,
       setNavigationTarget,
@@ -293,6 +308,7 @@ export function ConvoyProvider({
       navigationTargetVehicle,
       navigationFieldTarget,
       getBuddyTail,
+      getRecoveryTrailAssessment,
       upsertBushMeshMessage,
       setNavigationTarget,
       setNavigationFieldTarget,
