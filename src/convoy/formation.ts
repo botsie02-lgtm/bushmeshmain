@@ -129,12 +129,18 @@ export function evaluateConvoyFormation(
       ahead.freshness === 'unavailable' || behind.freshness === 'unavailable';
     const eitherLost = ahead.freshness === 'lost' || behind.freshness === 'lost';
     const eitherStale = ahead.freshness === 'stale' || behind.freshness === 'stale';
+    const eitherRecent = ahead.freshness === 'recent' || behind.freshness === 'recent';
 
+    // Missing coordinates are different from stale coordinates. Passing a null
+    // distance with otherwise-current freshness produces a quiet UNKNOWN gap,
+    // while genuinely stale/lost radio fixes retain their driver-alert semantics.
     const freshness: ConvoyFreshness = eitherLost
       ? 'lost'
-      : eitherStale || eitherUnavailable
+      : eitherStale
         ? 'stale'
-        : 'live';
+        : eitherRecent
+          ? 'recent'
+          : 'live';
     const directGap =
       !eitherUnavailable &&
       !eitherLost &&
