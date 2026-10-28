@@ -1,24 +1,10 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
-import {ConvoyFreshness, getConvoyFreshness} from '../convoy/convoy';
+import {getConvoyFreshness} from '../convoy/convoy';
 import {useConvoy} from '../state/ConvoyContext';
+import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
 import {colors} from '../theme/colors';
-
-type ReacquiredNotice = {
-  vehicleId: string;
-  vehicleName: string;
-  receivedAtMs: number;
-  noticedAtMs: number;
-};
-
-function wasMissing(freshness: ConvoyFreshness | undefined): boolean {
-  return freshness === 'stale' || freshness === 'lost';
-}
-
-function isBack(freshness: ConvoyFreshness): boolean {
-  return freshness === 'live' || freshness === 'recent';
-}
 
 export function ConvoyReacquiredBanner({
   visible,
@@ -30,9 +16,7 @@ export function ConvoyReacquiredBanner({
     navigationTargetVehicleId,
     setNavigationTarget,
   } = useConvoy();
-  const previousFreshnessRef = useRef<Map<string, ConvoyFreshness>>(new Map());
-  const previousReceivedAtRef = useRef<Map<string, number>>(new Map());
-  const [notice, setNotice] = useState<ReacquiredNotice | null>(null);
+  const {latestReacquired, acknowledgeReacquired} = useConvoyRecovery();
   const [nowMs, setNowMs] = useState(Date.now());
 
   useEffect(() => {
@@ -40,52 +24,18 @@ export function ConvoyReacquiredBanner({
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    const nextFreshness = new Map<string, ConvoyFreshness>();
-    const nextReceivedAt = new Map<string, number>();
-    const now = Date.now();
-
-    vehicles.forEach(vehicle => {
-      const current = getConvoyFreshness(vehicle.receivedAtMs, now);
-      const previous = previousFreshnessRef.current.get(vehicle.id);
-      const previousReceivedAt = previousReceivedAtRef.current.get(vehicle.id);
-      const hasNewFix =
-        previousReceivedAt !== undefined && vehicle.receivedAtMs > previousReceivedAt;
-
-      if (wasMissing(previous) && isBack(current) && hasNewFix) {
-        setNotice({
-          vehicleId: vehicle.id,
-          vehicleName: vehicle.name,
-          receivedAtMs: vehicle.receivedAtMs,
-          noticedAtMs: now,
-        });
-      }
-
-      nextFreshness.set(vehicle.id, current);
-      nextReceivedAt.set(vehicle.id, vehicle.receivedAtMs);
-    });
-
-    previousFreshnessRef.current = nextFreshness;
-    previousReceivedAtRef.current = nextReceivedAt;
-  }, [vehicles]);
-
-  useEffect(() => {
-    if (notice && nowMs - notice.noticedAtMs > 45_000) {
-      setNotice(null);
-    }
-  }, [notice, nowMs]);
-
   const vehicle = useMemo(
-    () => vehicles.find(item => item.id === notice?.vehicleId) ?? null,
-    [notice?.vehicleId, vehicles],
+    () =>
+      vehicles.find(item => item.id === latestReacquired?.vehicleId) ?? null,
+    [latestReacquired?.vehicleId, vehicles],
   );
 
-  if (!visible || !notice || !vehicle) {
+  if (!visible || !latestReacquired || !vehicle) {
     return null;
   }
 
   const freshness = getConvoyFreshness(vehicle.receivedAtMs, nowMs);
-  if (!isBack(freshness)) {
+  if (freshness !== 'live' && freshness !== 'recent') {
     return null;
   }
 
@@ -99,7 +49,7 @@ export function ConvoyReacquiredBanner({
     <View style={styles.banner}>
       <View style={styles.copy}>
         <Text style={styles.eyebrow}>VEHICLE REACQUIRED</Text>
-        <Text style={styles.name}>{notice.vehicleName}</Text>
+        <Text style={styles.name}>{latestReacquired.vehicleName}</Text>
         <Text style={styles.detail}>
           Fresh position {ageSeconds}s ago · {freshness.toUpperCase()}
           {vehicle.snrDb == null ? '' : ` · ${vehicle.snrDb.toFixed(1)} dB SNR`}
@@ -118,7 +68,9 @@ export function ConvoyReacquiredBanner({
             {targeted ? 'FOCUSED' : 'FOLLOW'}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.dismissButton} onPress={() => setNotice(null)}>
+        <TouchableOpacity
+          style={styles.dismissButton}
+          onPress={() => acknowledgeReacquired(latestReacquired.id)}>
           <Text style={styles.dismissText}>×</Text>
         </TouchableOpacity>
       </View>
