@@ -15,6 +15,35 @@ import {sendActiveBushMeshConvoyStatus} from '../bushmesh/runtime/BushMeshRuntim
 import {useBushMesh} from './BushMeshContext';
 import {useBushMeshConvoyState} from './useBushMeshConvoyState';
 
+function mixHeartbeatSeed(value: number): number {
+  let mixed = value >>> 0;
+  mixed ^= mixed >>> 16;
+  mixed = Math.imul(mixed, 0x7feb352d) >>> 0;
+  mixed ^= mixed >>> 15;
+  mixed = Math.imul(mixed, 0x846ca68b) >>> 0;
+  mixed ^= mixed >>> 16;
+  return mixed >>> 0;
+}
+
+/**
+ * Adds deterministic per-node jitter so multiple convoy vehicles do not settle
+ * into the same repeating transmit slot. Hazard traffic keeps a much narrower
+ * spread so urgency is not meaningfully delayed.
+ */
+function staggeredHeartbeatDelay(
+  baseIntervalMs: number,
+  nodeId: number,
+  now = Date.now(),
+): number {
+  const base = Math.max(2000, Math.round(baseIntervalMs));
+  const spreadRatio = base <= 4000 ? 0.04 : 0.12;
+  const timeBucket = Math.floor(now / base) >>> 0;
+  const seed = mixHeartbeatSeed((nodeId ^ timeBucket) >>> 0);
+  const unit = seed / 0xffffffff;
+  const multiplier = 1 + (unit * 2 - 1) * spreadRatio;
+  return Math.max(2000, Math.round(base * multiplier));
+}
+
 /**
  * Periodically emits compact convoy heartbeats while the feature is enabled.
  * It deliberately reuses the active BushMesh transport instead of creating a
@@ -141,9 +170,10 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
         }
       }
 
+      const baseInterval = recommendedBushMeshConvoyHeartbeatMs();
       timerRef.current = setTimeout(
         run,
-        Math.max(2000, recommendedBushMeshConvoyHeartbeatMs()),
+        staggeredHeartbeatDelay(baseInterval, localBushMeshNodeId),
       );
     };
 
