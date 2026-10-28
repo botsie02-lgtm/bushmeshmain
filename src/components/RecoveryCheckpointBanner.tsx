@@ -1,7 +1,7 @@
 import React, {useEffect, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
-import {formatDistance} from '../convoy/convoy';
+import {distanceMeters, formatDistance} from '../convoy/convoy';
 import {useConvoy} from '../state/ConvoyContext';
 import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
 import {colors} from '../theme/colors';
@@ -47,13 +47,7 @@ export function RecoveryCheckpointBanner(): React.JSX.Element | null {
     Math.floor((nowMs - checkpoint.receivedAtMs) / 1000),
   );
   const directDistance = localPosition
-    ? formatDistance(
-        Math.sqrt(
-          // Display-only approximation is deliberately avoided here; the
-          // actual navigation surface calculates geodesic distance/bearing.
-          0,
-        ),
-      )
+    ? formatDistance(distanceMeters(localPosition, checkpoint))
     : null;
 
   const selectCheckpoint = () => {
