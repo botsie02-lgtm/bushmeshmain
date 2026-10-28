@@ -1,6 +1,16 @@
 import {formatDistance} from './convoy';
 import {ConvoyRecoveryIncident} from '../state/ConvoyRecoveryContext';
 
+export type ConvoyRecoveryReportPosition = {
+  latitude: number;
+  longitude: number;
+  receivedAtMs: number;
+  accuracyMeters: number | null;
+  snrDb: number | null;
+  pathLength: number | null;
+  requestDriven: boolean;
+};
+
 export type ConvoyRecoveryReport = {
   version: 1;
   incidentId: string;
@@ -12,23 +22,10 @@ export type ConvoyRecoveryReport = {
   escalatedToLostAtMs: number | null;
   resolvedAtMs: number | null;
   durationMs: number | null;
-  lastKnown: {
-    latitude: number;
-    longitude: number;
-    receivedAtMs: number;
-    accuracyMeters: number | null;
-    snrDb: number | null;
-    pathLength: number | null;
-  };
-  reacquired: {
-    latitude: number;
-    longitude: number;
-    receivedAtMs: number;
-    accuracyMeters: number | null;
-    snrDb: number | null;
-    pathLength: number | null;
-  } | null;
+  lastKnown: ConvoyRecoveryReportPosition;
+  reacquired: ConvoyRecoveryReportPosition | null;
   reacquisitionOffsetMeters: number | null;
+  reacquiredViaRequest: boolean;
   eventCount: number;
   summary: string;
 };
@@ -52,13 +49,16 @@ export function buildConvoyRecoveryReport(
 ): ConvoyRecoveryReport {
   const duration = formatDuration(incident.durationMs, incident.startedAtMs);
   const state = incident.worstState === 'lost' ? 'lost' : 'stale';
+  const requestSuffix = incident.reacquiredViaRequest
+    ? ' via a request-driven position response'
+    : '';
   const outcome =
     incident.status === 'recovered'
       ? incident.reacquisitionOffsetMeters === null
-        ? `reacquired after ${duration}`
+        ? `reacquired after ${duration}${requestSuffix}`
         : `reacquired after ${duration}, ${formatDistance(
             incident.reacquisitionOffsetMeters,
-          )} from last known`
+          )} from last known${requestSuffix}`
       : `still active after ${duration}`;
 
   return {
@@ -75,6 +75,7 @@ export function buildConvoyRecoveryReport(
     lastKnown: {...incident.lastKnown},
     reacquired: incident.reacquired ? {...incident.reacquired} : null,
     reacquisitionOffsetMeters: incident.reacquisitionOffsetMeters,
+    reacquiredViaRequest: incident.reacquiredViaRequest,
     eventCount: incident.eventIds.length,
     summary: `${incident.vehicleName} ${state} incident: ${outcome}.`,
   };
