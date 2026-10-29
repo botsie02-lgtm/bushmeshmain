@@ -2,6 +2,7 @@ import React, {useMemo, useState} from 'react';
 import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {FieldCorrelationCard} from '../components/FieldCorrelationCard';
+import {FieldTestMarkersCard} from '../components/FieldTestMarkersCard';
 import {FieldTriageCard} from '../components/FieldTriageCard';
 import {assessFieldDiagnostics} from '../diagnostics/diagnosticHealth';
 import {serializeFieldDiagnosticsReport} from '../diagnostics/fieldDiagnostics';
@@ -240,6 +241,8 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
         <StatusRow label="Outbox" value={report.persistence.outbox.toUpperCase()} />
         <StatusRow label="Maps" value={report.persistence.maps.toUpperCase()} />
       </View>
+
+      <FieldTestMarkersCard />
 
       <View style={styles.card}>
         <View style={styles.traceHeader}>
