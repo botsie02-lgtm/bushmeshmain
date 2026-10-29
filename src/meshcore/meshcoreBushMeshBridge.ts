@@ -1,14 +1,15 @@
 import {Buffer} from 'buffer';
 
 import {
+  BushMeshCarrierMode,
   BushMeshPeerPolicy,
+  BushMeshPreparedTransportFrame,
   BushMeshPriority,
   BushMeshWireReassembler,
   DecodedBushMeshWireMessage,
-  encodeBushMeshTextCarrier,
-  encodeBushMeshTextMessage,
-  encodeTextForBushMeshPeer,
-  fragmentBushMeshWireMessage,
+  prepareBushMeshPeerTextFrames,
+  prepareBushMeshTextFrames,
+  prepareBushMeshWireFrames,
   tryDecodeBushMeshChannelPayload,
 } from '../bushmesh/protocol';
 import {
@@ -25,14 +26,15 @@ export type MeshCoreBushMeshChannelFrame = {
   decoded: DecodedBushMeshWireMessage;
 };
 
-export type BushMeshChannelTransport = 'text-safe' | 'binary';
+/** @deprecated Prefer BushMeshCarrierMode from the canonical BushMesh facade. */
+export type BushMeshChannelTransport = BushMeshCarrierMode;
 
-export type PreparedBushMeshChannelFrame = {
-  transport: BushMeshChannelTransport;
-  payloadBytes: number[];
-  text?: string;
-  wireBytes: number[];
-  fragmented: boolean;
+/** MeshCore-facing compatibility shape for previously exported bridge frames. */
+export type PreparedBushMeshChannelFrame = Omit<
+  BushMeshPreparedTransportFrame,
+  'carrier'
+> & {
+  transport: BushMeshCarrierMode;
 };
 
 export type BushMeshChannelSendClient = {
@@ -52,56 +54,11 @@ function readUInt32LE(bytes: number[], offset: number): number | null {
   ) >>> 0;
 }
 
-function wireToTransportFrame(
-  wireBytes: number[],
-  transport: BushMeshChannelTransport,
-  fragmented: boolean,
+function toMeshCorePreparedFrame(
+  frame: BushMeshPreparedTransportFrame,
 ): PreparedBushMeshChannelFrame {
-  if (transport === 'binary') {
-    return {
-      transport,
-      payloadBytes: wireBytes,
-      wireBytes,
-      fragmented,
-    };
-  }
-
-  const text = encodeBushMeshTextCarrier(wireBytes);
-  return {
-    transport,
-    payloadBytes: Array.from(Buffer.from(text, 'utf8')),
-    text,
-    wireBytes,
-    fragmented,
-  };
-}
-
-function fragmentToPayloadLimit(
-  wireBytes: number[],
-  messageId: number,
-  priority: BushMeshPriority,
-  transport: BushMeshChannelTransport,
-  maxPayloadBytes: number,
-): PreparedBushMeshChannelFrame[] {
-  const maxCandidate = Math.min(80, wireBytes.length);
-
-  for (let dataBytes = maxCandidate; dataBytes >= 1; dataBytes -= 1) {
-    const fragmentedWireFrames = fragmentBushMeshWireMessage(
-      wireBytes,
-      messageId,
-      dataBytes,
-      priority,
-    );
-    const prepared = fragmentedWireFrames.map(fragmentWireBytes =>
-      wireToTransportFrame(fragmentWireBytes, transport, true),
-    );
-
-    if (prepared.every(frame => frame.payloadBytes.length <= maxPayloadBytes)) {
-      return prepared;
-    }
-  }
-
-  throw new Error('Unable to fit Bushmesh fragments into MeshCore payload limit.');
+  const {carrier, ...rest} = frame;
+  return {...rest, transport: carrier};
 }
 
 export function prepareBushMeshWireChannelFrames(
@@ -114,29 +71,13 @@ export function prepareBushMeshWireChannelFrames(
     allowFragmentation?: boolean;
   },
 ): PreparedBushMeshChannelFrame[] {
-  const transport = options?.transport ?? 'text-safe';
-  const priority = options?.priority ?? BushMeshPriority.DirectMessage;
-  const maxPayloadBytes =
-    options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES;
-  const single = wireToTransportFrame(wireBytes, transport, false);
-
-  if (single.payloadBytes.length <= maxPayloadBytes) {
-    return [single];
-  }
-
-  if (options?.allowFragmentation === false) {
-    throw new Error(
-      'Bushmesh wire message exceeds MeshCore payload limit and peer does not support fragmentation.',
-    );
-  }
-
-  return fragmentToPayloadLimit(
-    wireBytes,
-    messageId,
-    priority,
-    transport,
-    maxPayloadBytes,
-  );
+  return prepareBushMeshWireFrames(wireBytes, messageId, {
+    carrier: options?.transport ?? 'text-safe',
+    priority: options?.priority,
+    maxPayloadBytes:
+      options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES,
+    allowFragmentation: options?.allowFragmentation,
+  }).map(toMeshCorePreparedFrame);
 }
 
 export function prepareBushMeshTextChannelFrames(
@@ -152,12 +93,16 @@ export function prepareBushMeshTextChannelFrames(
     semantic?: boolean;
   },
 ): PreparedBushMeshChannelFrame[] {
-  const encoded = encodeBushMeshTextMessage(text, messageId, options);
-  return prepareBushMeshWireChannelFrames(encoded.wireBytes, messageId, {
-    transport: options?.transport,
+  return prepareBushMeshTextFrames(text, messageId, {
+    carrier: options?.transport ?? 'text-safe',
     priority: options?.priority,
-    maxPayloadBytes: options?.maxPayloadBytes,
-  });
+    ackRequested: options?.ackRequested,
+    storeAndForward: options?.storeAndForward,
+    ttlHops: options?.ttlHops,
+    semantic: options?.semantic,
+    maxPayloadBytes:
+      options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES,
+  }).map(toMeshCorePreparedFrame);
 }
 
 export function prepareBushMeshPeerTextChannelFrames(
@@ -172,17 +117,14 @@ export function prepareBushMeshPeerTextChannelFrames(
     maxPayloadBytes?: number;
   },
 ): PreparedBushMeshChannelFrame[] {
-  if (!policy.compatible) {
-    throw new Error('Cannot prepare Bushmesh frames for an incompatible peer.');
-  }
-
-  const encoded = encodeTextForBushMeshPeer(text, messageId, policy, options);
-  return prepareBushMeshWireChannelFrames(encoded.wireBytes, messageId, {
-    transport: policy.transport,
+  return prepareBushMeshPeerTextFrames(text, messageId, policy, {
     priority: options?.priority,
-    maxPayloadBytes: options?.maxPayloadBytes,
-    allowFragmentation: policy.allowFragmentation,
-  });
+    ackRequested: options?.ackRequested,
+    storeAndForward: options?.storeAndForward,
+    ttlHops: options?.ttlHops,
+    maxPayloadBytes:
+      options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES,
+  }).map(toMeshCorePreparedFrame);
 }
 
 export async function sendBushMeshTextSafeChannelMessage(
@@ -207,7 +149,7 @@ export async function sendBushMeshTextSafeChannelMessage(
 
   for (const frame of frames) {
     if (!frame.text) {
-      throw new Error('Text-safe Bushmesh frame is missing carrier text.');
+      throw new Error('Text-safe BushMesh frame is missing carrier text.');
     }
 
     results.push(await client.sendChannelMessage(channelIndex, frame.text));
