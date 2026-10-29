@@ -9,6 +9,7 @@ export * from './packetTypes';
 export * from './codec';
 export * from './versioning';
 export * from './transport';
+export * from './frameTransport';
 export * from './typedPackets';
 export * from './capabilityPolicy';
 export * from './discovery';
