@@ -18,6 +18,7 @@ class BushMeshRadioServicePackage : ReactPackage {
     BushMeshCarMessagingModule(reactContext),
     BushMeshMessageReceiptModule(reactContext),
     BushMeshMapPackModule(reactContext),
+    BushMeshAppInfoModule(reactContext),
   )
 
   override fun createViewManagers(
