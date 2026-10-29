@@ -3,6 +3,7 @@ import {
   BushMeshConvoyAction,
   BushMeshPacketType,
   BushMeshTypedPacket,
+  DecodedBushMeshWireMessage,
   decodeBushMeshTypedPacket,
   encodeBushMeshConvoyCommandWire,
   encodeBushMeshConvoyWire,
@@ -50,14 +51,12 @@ function inspectMeshCoreIdentity(bytes: number[]): void {
   publishMeshCorePublicKey(publicKey);
 }
 
-function inspectBushMeshConvoy(bytes: number[], now: number): void {
+function inspectBushMeshConvoy(
+  decoded: DecodedBushMeshWireMessage,
+  now: number,
+): void {
   try {
-    const channelFrame = tryDecodeBushMeshChannelFrame(bytes);
-    if (!channelFrame) {
-      return;
-    }
-
-    const packetType = channelFrame.decoded.envelope.type;
+    const packetType = decoded.envelope.type;
     if (
       packetType !== BushMeshPacketType.Convoy &&
       packetType !== BushMeshPacketType.Command
@@ -66,7 +65,7 @@ function inspectBushMeshConvoy(bytes: number[], now: number): void {
     }
 
     const typed: BushMeshTypedPacket = decodeBushMeshTypedPacket(
-      channelFrame.decoded.wireBytes,
+      decoded.wireBytes,
     );
     if (typed.kind === 'convoy') {
       acceptBushMeshConvoyRemote(typed.value, now);
@@ -124,16 +123,33 @@ export async function sendActiveBushMeshConvoyCommand(
   return command;
 }
 
+/**
+ * Current-app compatibility entrypoint. MeshCore parsing stays here at the
+ * adapter edge; BushMeshNetworkRuntime only sees a generic inbound frame.
+ */
 export async function acceptBushMeshMeshCoreFrame(
   bytes: number[],
   now = Date.now(),
 ): Promise<boolean> {
   inspectMeshCoreIdentity(bytes);
-  inspectBushMeshConvoy(bytes, now);
+
+  const channelFrame = tryDecodeBushMeshChannelFrame(bytes);
+  if (!channelFrame) {
+    return false;
+  }
+
+  inspectBushMeshConvoy(channelFrame.decoded, now);
 
   if (!activeRuntime) {
     return false;
   }
 
-  return activeRuntime.acceptMeshCoreFrame(bytes, now);
+  return activeRuntime.acceptFrame(
+    {
+      channelIndex: channelFrame.channelIndex,
+      payloadBytes: channelFrame.payloadBytes,
+      decoded: channelFrame.decoded,
+    },
+    now,
+  );
 }
