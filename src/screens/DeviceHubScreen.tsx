@@ -7,9 +7,10 @@ import {
 } from '../meshcore/NativeMeshCoreSessionCoordinator';
 import {colors} from '../theme/colors';
 import {DeviceScreen} from './DeviceScreen';
+import {FieldDiagnosticsScreen} from './FieldDiagnosticsScreen';
 import {NativeRadioSetupScreen} from './NativeRadioSetupScreen';
 
-type DeviceMode = 'background' | 'legacy';
+type DeviceMode = 'background' | 'legacy' | 'report';
 
 export function DeviceHubScreen(): React.JSX.Element {
   const [mode, setMode] = useState<DeviceMode>('background');
@@ -55,6 +56,20 @@ export function DeviceHubScreen(): React.JSX.Element {
         <TouchableOpacity
           style={[
             styles.modeButton,
+            mode === 'report' && styles.modeButtonActive,
+          ]}
+          onPress={() => setMode('report')}>
+          <Text
+            style={[
+              styles.modeText,
+              mode === 'report' && styles.modeTextActive,
+            ]}>
+            Field Report
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.modeButton,
             mode === 'legacy' && styles.modeButtonActive,
             nativeOwnsRadio && styles.modeButtonDisabled,
           ]}
@@ -81,7 +96,13 @@ export function DeviceHubScreen(): React.JSX.Element {
       ) : null}
 
       <View style={styles.content}>
-        {mode === 'background' ? <NativeRadioSetupScreen /> : <DeviceScreen />}
+        {mode === 'background' ? (
+          <NativeRadioSetupScreen />
+        ) : mode === 'report' ? (
+          <FieldDiagnosticsScreen />
+        ) : (
+          <DeviceScreen />
+        )}
       </View>
     </View>
   );
@@ -91,24 +112,32 @@ const styles = StyleSheet.create({
   screen: {flex: 1, backgroundColor: colors.background},
   modeBar: {
     flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 12,
+    gap: 6,
+    paddingHorizontal: 10,
     paddingTop: 10,
     paddingBottom: 8,
     backgroundColor: colors.background,
   },
   modeButton: {
     flex: 1,
+    minHeight: 42,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingVertical: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 9,
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: colors.surface,
   },
   modeButtonActive: {borderColor: colors.accent},
   modeButtonDisabled: {opacity: 0.45},
-  modeText: {color: colors.textSecondary, fontSize: 11, fontWeight: '800'},
+  modeText: {
+    color: colors.textSecondary,
+    fontSize: 9,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
   modeTextActive: {color: colors.accent},
   modeTextDisabled: {color: colors.textMuted},
   ownershipNotice: {
