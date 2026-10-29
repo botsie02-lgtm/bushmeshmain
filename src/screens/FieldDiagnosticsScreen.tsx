@@ -3,6 +3,7 @@ import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native
 
 import {FieldCorrelationCard} from '../components/FieldCorrelationCard';
 import {FieldTestMarkersCard} from '../components/FieldTestMarkersCard';
+import {FieldTestRunCard} from '../components/FieldTestRunCard';
 import {FieldTriageCard} from '../components/FieldTriageCard';
 import {assessFieldDiagnostics} from '../diagnostics/diagnosticHealth';
 import {serializeFieldDiagnosticsReport} from '../diagnostics/fieldDiagnostics';
@@ -242,6 +243,7 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
         <StatusRow label="Maps" value={report.persistence.maps.toUpperCase()} />
       </View>
 
+      <FieldTestRunCard />
       <FieldTestMarkersCard />
 
       <View style={styles.card}>
