@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {
   SafeAreaView,
   StatusBar,
@@ -46,10 +46,33 @@ const tabs: Array<{key: TabKey; label: string}> = [
   {key: 'emergency', label: 'SOS'},
 ];
 
+const CONVOY_COMMAND_ATTENTION_MS = 60_000;
+
 function AppContent(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>('device');
+  const [, setConvoyAttentionTick] = useState(0);
   const {unacknowledgedDistressCount} = useBushMeshLiveState();
   const convoyState = useBushMeshConvoyState();
+
+  useEffect(() => {
+    const now = Date.now();
+    const nextExpiry = convoyState.recentCommands
+      .filter(entry => !entry.local)
+      .map(entry => entry.receivedAt + CONVOY_COMMAND_ATTENTION_MS)
+      .filter(expiry => expiry > now)
+      .sort((a, b) => a - b)[0];
+
+    if (nextExpiry === undefined) {
+      return undefined;
+    }
+
+    const timer = setTimeout(() => {
+      setConvoyAttentionTick(current => current + 1);
+    }, Math.max(25, nextExpiry - now + 25));
+
+    return () => clearTimeout(timer);
+  }, [convoyState.recentCommands]);
+
   const now = Date.now();
   const convoyIssueAttentionCount =
     convoyState.snapshot?.issues.filter(issue =>
@@ -59,7 +82,10 @@ function AppContent(): React.JSX.Element {
       issue.type === 'order-conflict',
     ).length ?? 0;
   const convoyCommandAttentionCount = convoyState.recentCommands.filter(entry => {
-    if (entry.local || now - entry.receivedAt > 60_000) {
+    if (
+      entry.local ||
+      now - entry.receivedAt > CONVOY_COMMAND_ATTENTION_MS
+    ) {
       return false;
     }
 
