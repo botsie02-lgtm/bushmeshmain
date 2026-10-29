@@ -35,7 +35,7 @@ on:
       - '.github/workflows/bushmesh-protocol.yml'
 
 concurrency:
-  group: bushmesh-protocol-${{ github.ref }}
+  group: bushmesh-protocol-v2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
