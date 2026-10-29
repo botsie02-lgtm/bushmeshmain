@@ -1,0 +1,39 @@
+{
+  "format": "BushMesh security/identity v1 deterministic interoperability vectors",
+  "encoding": "hex unless a field explicitly says base64url",
+  "identityFingerprint": {
+    "domain": "bushmesh.identity-fingerprint.v1",
+    "deviceId": "bm1_test-device",
+    "signingPublicKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "agreementPublicKeyHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "keyEpoch": 1,
+    "fingerprintSha256Hex": "16aaff2783d5cbc727604abac67db8c3183dd62daff2f9c1490dfecded315850",
+    "fingerprintBase64Url": "Fqr_J4PVy8cnYEq6xn24wxg91i2v8vnBSQ3-ze0xWFA"
+  },
+  "hkdfSha256Rfc5869Case1": {
+    "ikmHex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+    "saltHex": "000102030405060708090a0b0c",
+    "infoHex": "f0f1f2f3f4f5f6f7f8f9",
+    "length": 42,
+    "okmHex": "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
+  },
+  "aes256GcmZeroVector": {
+    "keyHex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "nonceHex": "000000000000000000000000",
+    "plaintextHex": "00000000000000000000000000000000",
+    "aadHex": "",
+    "ciphertextAndTagHex": "cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919"
+  },
+  "ed25519Rfc8032Case1": {
+    "seedHex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+    "publicKeyHex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+    "messageHex": "",
+    "signatureHex": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+  },
+  "nonceLayout": {
+    "description": "AES-GCM nonce = 4-byte prefix || 8-byte big-endian durable counter",
+    "prefixHex": "00000000",
+    "counterDecimal": "1",
+    "nonceHex": "000000000000000000000001"
+  }
+}
