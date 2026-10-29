@@ -91,6 +91,20 @@ function markerLabel(type: OperationalMarkerType): string {
   }
 }
 
+function fieldTargetMarkerType(
+  target: FieldNavigationTarget,
+): OperationalMarkerType | null {
+  switch (target.type) {
+    case 'stop':
+    case 'hazard':
+    case 'regroup':
+    case 'help':
+      return target.type;
+    case 'recovery-checkpoint':
+      return null;
+  }
+}
+
 function normalizeLongitude360(longitude: number): number {
   return ((longitude % 360) + 360) % 360;
 }
@@ -280,7 +294,7 @@ export function buildOperationalPicture(
         sourceId: target.senderId,
         // Recovery checkpoints are historical reference anchors, not field
         // command markers such as REGROUP/HELP/HAZARD/STOP.
-        markerType: isRecoveryCheckpoint ? null : target.type,
+        markerType: fieldTargetMarkerType(target),
         simulated: false,
       });
     }
