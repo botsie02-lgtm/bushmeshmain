@@ -2,12 +2,14 @@ import {BushMeshQuickActionCode} from '../src/bushmesh/protocol';
 import {MemoryBushMeshPersistence} from '../src/persistence/BushMeshPersistence';
 import {OutboxPersistenceCoordinator} from '../src/persistence/OutboxPersistenceCoordinator';
 import {BushMeshTransmissionController} from '../src/radio/BushMeshTransmissionController';
+import {LegacyBushMeshOutboundAdapter} from '../src/radio/LegacyBushMeshOutboundAdapter';
 
 describe('OutboxPersistenceCoordinator', () => {
   test('restores queued traffic into a fresh transmission controller', async () => {
     const persistence = new MemoryBushMeshPersistence();
     const original = new BushMeshTransmissionController();
-    original.enqueueQuickAction(
+    const legacy = new LegacyBushMeshOutboundAdapter(original);
+    legacy.enqueueQuickAction(
       2,
       {
         senderId: 'AABBCCDDEEFF',
@@ -38,7 +40,8 @@ describe('OutboxPersistenceCoordinator', () => {
   test('restored generated ids do not collide with newly queued traffic', async () => {
     const persistence = new MemoryBushMeshPersistence();
     const original = new BushMeshTransmissionController();
-    original.enqueueQuickAction(
+    const legacy = new LegacyBushMeshOutboundAdapter(original);
+    legacy.enqueueQuickAction(
       0,
       {
         senderId: '001122334455',
@@ -48,7 +51,7 @@ describe('OutboxPersistenceCoordinator', () => {
       },
       1_000,
     );
-    original.enqueueQuickAction(
+    legacy.enqueueQuickAction(
       0,
       {
         senderId: '001122334455',
@@ -63,7 +66,8 @@ describe('OutboxPersistenceCoordinator', () => {
 
     const restored = new BushMeshTransmissionController();
     await new OutboxPersistenceCoordinator(restored, persistence).restore(3_000);
-    const newEntry = restored.enqueueQuickAction(
+    const restoredLegacy = new LegacyBushMeshOutboundAdapter(restored);
+    const newEntry = restoredLegacy.enqueueQuickAction(
       0,
       {
         senderId: '001122334455',
@@ -80,7 +84,8 @@ describe('OutboxPersistenceCoordinator', () => {
   test('clear removes persisted and runtime queue state', async () => {
     const persistence = new MemoryBushMeshPersistence();
     const controller = new BushMeshTransmissionController();
-    controller.enqueueQuickAction(
+    const legacy = new LegacyBushMeshOutboundAdapter(controller);
+    legacy.enqueueQuickAction(
       0,
       {
         senderId: '001122334455',
