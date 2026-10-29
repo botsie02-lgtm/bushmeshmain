@@ -1,37 +1,18 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useMemo} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {assessFieldDiagnostics} from '../diagnostics/diagnosticHealth';
-import {fieldDiagnosticSession} from '../diagnostics/diagnosticSession';
 import {buildFieldChecklist} from '../diagnostics/fieldChecklist';
-import {DiagnosticSnapshotDiff} from '../diagnostics/snapshotDiff';
 import {fieldReportSupportCode} from '../diagnostics/supportCode';
-import {useFieldDiagnosticsReport} from '../diagnostics/useFieldDiagnosticsReport';
+import {useFieldDiagnosticsCapture} from '../state/FieldDiagnosticsCaptureContext';
 import {colors} from '../theme/colors';
 
 export function FieldSupportSnapshot(): React.JSX.Element {
-  const [capturedAtMs, setCapturedAtMs] = useState(Date.now());
-  const [comparison, setComparison] = useState<DiagnosticSnapshotDiff | null>(null);
-  const [captureCount, setCaptureCount] = useState(0);
-  const report = useFieldDiagnosticsReport(capturedAtMs);
-  const reportRef = useRef(report);
-  reportRef.current = report;
-
+  const {report, comparison, captureCount, capture} = useFieldDiagnosticsCapture();
   const health = useMemo(() => assessFieldDiagnostics(report), [report]);
   const checklist = useMemo(() => buildFieldChecklist(report, health), [health, report]);
   const supportCode = useMemo(() => fieldReportSupportCode(report), [report]);
   const blocked = checklist.items.filter(item => item.state === 'blocked').slice(0, 3);
-
-  useEffect(() => {
-    const snapshot = fieldDiagnosticSession.capture(reportRef.current);
-    setComparison(snapshot.diff);
-    setCaptureCount(snapshot.captureCount);
-  }, [capturedAtMs]);
-
-  const captureNow = () => {
-    setCapturedAtMs(Date.now());
-  };
-
   const topChanges = comparison?.changes.slice(0, 3) ?? [];
 
   return (
@@ -42,7 +23,7 @@ export function FieldSupportSnapshot(): React.JSX.Element {
           <Text style={styles.code}>{supportCode}</Text>
           <Text style={styles.captureMeta}>CAPTURE {captureCount}</Text>
         </View>
-        <TouchableOpacity style={styles.refreshButton} onPress={captureNow}>
+        <TouchableOpacity style={styles.refreshButton} onPress={capture}>
           <Text style={styles.refreshText}>CAPTURE</Text>
         </TouchableOpacity>
       </View>
