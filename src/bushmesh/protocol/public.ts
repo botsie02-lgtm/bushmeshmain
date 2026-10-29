@@ -32,6 +32,7 @@ export * from './linkMetrics';
 export * from './syncProtocol';
 export * from './syncRecords';
 export * from './syncSummary';
+export * from './inventoryIdentity';
 export * from './telemetry';
 export * from './location';
 export * from './locationState';
