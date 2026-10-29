@@ -1,3 +1,10 @@
+/**
+ * Broad source-compatibility barrel for the current branch.
+ *
+ * New application/adaptor code should import from `./public`. Experimental
+ * helpers remain exported here only so existing branch code does not break
+ * during the canonical-API transition.
+ */
 export * from './acknowledgement';
 export * from './airtime';
 export * from './capabilityPolicy';
