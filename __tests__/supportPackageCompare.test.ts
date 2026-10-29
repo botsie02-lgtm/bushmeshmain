@@ -4,9 +4,11 @@ import {
 } from '../src/diagnostics/fieldDiagnostics';
 import {
   createBushMeshSupportPackage,
+  serializeBushMeshSupportPackage,
   type BushMeshSupportPackage,
 } from '../src/diagnostics/supportPackage';
 import {compareBushMeshSupportPackages} from '../src/diagnostics/supportPackageCompare';
+import {parseBushMeshSupportPackage} from '../src/diagnostics/supportPackageReader';
 import type {SupportRuntimeMetadata} from '../src/diagnostics/runtimeMetadata';
 import type {SupportBundleTraceEvent} from '../src/diagnostics/supportBundle';
 
@@ -170,6 +172,41 @@ describe('support package comparison', () => {
     ]);
     expect(comparison.summary).toBe(
       'Compared support packages: 1 tracked field-state change; 1 drill-state change.',
+    );
+  });
+
+  test('round-trips derived runtime health through the validated import path', () => {
+    const exported = supportPackage({
+      runtime: {
+        ...BASE_RUNTIME,
+        phoneBatteryPercent: 12,
+        charging: false,
+      },
+    });
+    const imported = parseBushMeshSupportPackage(
+      serializeBushMeshSupportPackage(exported),
+    );
+
+    expect(imported.runtimeHealth.severity).toBe('action');
+    expect(imported.runtimeHealth.issues.map(issue => issue.code)).toContain(
+      'phone-battery-critical',
+    );
+    expect(imported.supportCode).toBe(exported.supportCode);
+  });
+
+  test('rejects imported runtime health that contradicts runtime metadata', () => {
+    const exported = supportPackage();
+    const tampered = JSON.parse(
+      serializeBushMeshSupportPackage(exported),
+    ) as BushMeshSupportPackage;
+    tampered.runtimeHealth = {
+      severity: 'action',
+      issues: [],
+      summary: 'Contradictory imported assessment.',
+    };
+
+    expect(() => parseBushMeshSupportPackage(JSON.stringify(tampered))).toThrow(
+      'Runtime health assessment does not match the embedded runtime metadata.',
     );
   });
 });
