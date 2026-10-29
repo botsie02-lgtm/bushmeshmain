@@ -1,3 +1,4 @@
+import {assessPhoneRuntimeHealth} from './phoneRuntimeHealth';
 import {fieldReportSupportCode} from './supportCode';
 import type {BushMeshSupportPackage} from './supportPackage';
 
@@ -62,6 +63,16 @@ export function auditSupportPackageIntegrity(
 
   if (bundle.generatedAt !== supportPackage.generatedAt) {
     violations.push('Package and bundle generation timestamps do not match.');
+  }
+
+  const expectedRuntimeHealth = assessPhoneRuntimeHealth(supportPackage.runtime);
+  if (
+    JSON.stringify(supportPackage.runtimeHealth) !==
+    JSON.stringify(expectedRuntimeHealth)
+  ) {
+    violations.push(
+      'Runtime health assessment does not match the embedded runtime metadata.',
+    );
   }
 
   const reportCapturedAtMs = Date.parse(report.capturedAt);
