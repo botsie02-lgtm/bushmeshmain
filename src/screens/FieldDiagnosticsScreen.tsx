@@ -6,8 +6,8 @@ import {FieldTriageCard} from '../components/FieldTriageCard';
 import {assessFieldDiagnostics} from '../diagnostics/diagnosticHealth';
 import {serializeFieldDiagnosticsReport} from '../diagnostics/fieldDiagnostics';
 import {prepareFieldSupportExport} from '../diagnostics/supportExportCoordinator';
-import {useFieldDiagnosticsReport} from '../diagnostics/useFieldDiagnosticsReport';
 import {nativeFileExport} from '../native/NativeFileExport';
+import {useFieldDiagnosticsCapture} from '../state/FieldDiagnosticsCaptureContext';
 import {useFieldEventTrace} from '../state/FieldEventTraceContext';
 import {colors} from '../theme/colors';
 
@@ -38,17 +38,16 @@ function formatTraceTime(timestampMs: number): string {
 
 export function FieldDiagnosticsScreen(): React.JSX.Element {
   const {events: traceEvents, clearTrace} = useFieldEventTrace();
-  const [capturedAtMs, setCapturedAtMs] = useState(Date.now());
+  const {report, capture} = useFieldDiagnosticsCapture();
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [lastSupportCode, setLastSupportCode] = useState<string | null>(null);
-  const report = useFieldDiagnosticsReport(capturedAtMs);
   const health = useMemo(() => assessFieldDiagnostics(report), [report]);
   const serialized = useMemo(() => serializeFieldDiagnosticsReport(report), [report]);
   const exportSupported = nativeFileExport.isSupported();
 
   const captureNewSnapshot = () => {
-    setCapturedAtMs(Date.now());
+    capture();
     setExportStatus(null);
     setLastSupportCode(null);
   };
