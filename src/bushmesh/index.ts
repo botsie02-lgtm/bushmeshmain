@@ -5,8 +5,10 @@
  * `./runtime/public`. MeshCore and other hardware integrations belong outside
  * the canonical BushMesh protocol/runtime surface.
  */
+import * as BushMeshProtocol from './protocol/public';
+import * as BushMeshRuntime from './runtime/public';
+
 export * from './protocol/public';
 export * from './runtime/public';
 
-export * as BushMeshProtocol from './protocol/public';
-export * as BushMeshRuntime from './runtime/public';
+export {BushMeshProtocol, BushMeshRuntime};
