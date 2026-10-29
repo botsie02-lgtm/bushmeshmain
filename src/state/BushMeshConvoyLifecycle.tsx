@@ -124,12 +124,15 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
 
         updateBushMeshConvoyTelemetry({
           location: position.location,
+          locationCapturedAtMs: position.timestampMs,
           speedKph: position.speedKph,
           headingDegrees: position.headingDegrees,
         });
       } catch {
         // Location is opportunistic. A denied permission, tunnel/no-fix state,
-        // or timeout must not prevent the radio heartbeat from being sent.
+        // or timeout must not prevent the radio heartbeat from being sent. The
+        // convoy hub independently expires old fixes so a stale coordinate is
+        // never rebroadcast forever after GPS disappears.
       }
     };
 
