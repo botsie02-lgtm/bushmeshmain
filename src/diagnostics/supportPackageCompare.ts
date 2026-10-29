@@ -51,10 +51,10 @@ export function compareBushMeshSupportPackages(
   after: BushMeshSupportPackage,
 ): SupportPackageComparison {
   const beforeScenarios = new Map(
-    before.scenarios.map(scenario => [scenario.id, scenario.state]),
+    before.scenarios.map(scenario => [scenario.id, scenario.state] as const),
   );
   const afterScenarios = new Map(
-    after.scenarios.map(scenario => [scenario.id, scenario.state]),
+    after.scenarios.map(scenario => [scenario.id, scenario.state] as const),
   );
   const scenarioIds = new Set([
     ...beforeScenarios.keys(),
