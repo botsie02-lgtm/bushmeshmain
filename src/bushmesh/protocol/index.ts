@@ -21,6 +21,7 @@ export * from './location';
 export * from './locationState';
 export * from './messageAck';
 export * from './messageIdentity';
+export * from './packetTypes';
 export * from './persistence';
 export * from './reliabilityController';
 export * from './retransmission';
