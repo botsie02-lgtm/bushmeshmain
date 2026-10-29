@@ -94,6 +94,13 @@ function heartbeatLabel(milliseconds: number): string {
     : `${Math.round(milliseconds / 60_000)}m`;
 }
 
+function ageLabel(milliseconds: number): string {
+  if (milliseconds < 60_000) {
+    return `${Math.max(0, Math.round(milliseconds / 1000))}s`;
+  }
+  return `${Math.round(milliseconds / 60_000)}m`;
+}
+
 export function ConvoyScreen(): React.JSX.Element {
   const {
     connectionStatus,
@@ -104,6 +111,8 @@ export function ConvoyScreen(): React.JSX.Element {
   const convoy = useBushMeshConvoyState();
   const [convoyIdText, setConvoyIdText] = useState(String(convoy.config.convoyId));
   const [orderText, setOrderText] = useState(String(convoy.config.orderIndex));
+  const [targetOrderText, setTargetOrderText] = useState('');
+  const [etaMinutesText, setEtaMinutesText] = useState('');
   const [status, setStatus] = useState('Convoy mode is idle.');
   const [sending, setSending] = useState(false);
   const [sendingCommand, setSendingCommand] = useState<number | null>(null);
@@ -167,6 +176,23 @@ export function ConvoyScreen(): React.JSX.Element {
     return true;
   };
 
+  const parseOptionalCommandNumber = (
+    raw: string,
+    label: string,
+  ): number | undefined | null => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    const value = Number(trimmed);
+    if (!Number.isInteger(value) || value < 0 || value > 65535) {
+      setStatus(`${label} must be blank or a whole number from 0 to 65,535.`);
+      return null;
+    }
+    return value;
+  };
+
   const refreshPosition = async () => {
     if (!isBushMeshNativeLocationAvailable()) {
       return false;
@@ -179,6 +205,7 @@ export function ConvoyScreen(): React.JSX.Element {
       });
       updateBushMeshConvoyTelemetry({
         location: position.location,
+        locationCapturedAtMs: position.timestampMs,
         speedKph: position.speedKph,
         headingDegrees: position.headingDegrees,
       });
@@ -222,15 +249,36 @@ export function ConvoyScreen(): React.JSX.Element {
       return;
     }
 
+    const targetOrderIndex = parseOptionalCommandNumber(
+      targetOrderText,
+      'Target position',
+    );
+    if (targetOrderIndex === null) {
+      return;
+    }
+    const etaMinutes = parseOptionalCommandNumber(etaMinutesText, 'ETA minutes');
+    if (etaMinutes === null) {
+      return;
+    }
+
     try {
       setSendingCommand(action);
-      setStatus(`Sending convoy command ${actionLabel(action)}...`);
+      const targetLabel =
+        targetOrderIndex === undefined
+          ? 'the convoy'
+          : `position ${targetOrderIndex}`;
+      setStatus(`Sending ${actionLabel(action)} to ${targetLabel}...`);
       await sendActiveBushMeshConvoyCommand(
         channelIndex,
         localBushMeshNodeId,
         action,
+        {targetOrderIndex, etaMinutes},
       );
-      setStatus(`Convoy command sent: ${actionLabel(action)}.`);
+      setStatus(
+        `Convoy command sent: ${actionLabel(action)} → ${targetLabel}${
+          etaMinutes === undefined ? '' : ` • ETA ${etaMinutes} min`
+        }.`,
+      );
     } catch (error) {
       setStatus(
         error instanceof Error ? error.message : 'Convoy command failed.',
@@ -242,6 +290,14 @@ export function ConvoyScreen(): React.JSX.Element {
 
   const snapshot = convoy.snapshot;
   const localLocation = convoy.telemetry.location;
+  const localLocationAgeMs =
+    convoy.telemetry.locationCapturedAtMs === undefined
+      ? null
+      : Math.max(0, Date.now() - convoy.telemetry.locationCapturedAtMs);
+  const localLocationFresh =
+    localLocation !== undefined &&
+    localLocationAgeMs !== null &&
+    localLocationAgeMs <= 90_000;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -379,6 +435,13 @@ export function ConvoyScreen(): React.JSX.Element {
                     ? 'No location captured yet.'
                     : 'Native location service unavailable.'}
               </Text>
+              {localLocationAgeMs !== null ? (
+                <Text
+                  style={localLocationFresh ? styles.metaText : styles.warningText}>
+                  GPS fix {ageLabel(localLocationAgeMs)} old
+                  {localLocationFresh ? '' : ' • stale; not sent over LoRa'}
+                </Text>
+              ) : null}
               {convoy.telemetry.speedKph !== undefined ? (
                 <Text style={styles.metaText}>
                   Speed {convoy.telemetry.speedKph.toFixed(1)} km/h
@@ -424,9 +487,52 @@ export function ConvoyScreen(): React.JSX.Element {
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Quick convoy commands</Text>
         <Text style={styles.sectionBody}>
-          These are compact command codes, not free-text messages. They are
-          sequence-numbered and duplicate-suppressed on receiving BushMesh apps.
+          Compact command codes can broadcast to the whole convoy or target one
+          vehicle position. Target and ETA are optional and only add a few
+          varint bytes when used.
         </Text>
+
+        <View style={styles.commandOptionsRow}>
+          <View style={styles.commandOptionField}>
+            <Text style={styles.fieldLabel}>Target position (optional)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="number-pad"
+              value={targetOrderText}
+              onChangeText={setTargetOrderText}
+              placeholder="Blank = all"
+              placeholderTextColor={colors.textMuted}
+            />
+          </View>
+          <View style={styles.commandOptionField}>
+            <Text style={styles.fieldLabel}>ETA minutes (optional)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="number-pad"
+              value={etaMinutesText}
+              onChangeText={setEtaMinutesText}
+              placeholder="e.g. 10"
+              placeholderTextColor={colors.textMuted}
+            />
+          </View>
+        </View>
+
+        {targetOrderText || etaMinutesText ? (
+          <TouchableOpacity
+            style={styles.clearTargetButton}
+            onPress={() => {
+              setTargetOrderText('');
+              setEtaMinutesText('');
+              setStatus('Command target cleared; next action will broadcast.');
+            }}>
+            <Text style={styles.clearTargetButtonText}>Clear target / ETA</Text>
+          </TouchableOpacity>
+        ) : (
+          <Text style={styles.helpText}>
+            No target selected: the next command is convoy-wide.
+          </Text>
+        )}
+
         <View style={styles.commandGrid}>
           {commandOptions.map(action => {
             const busy = sendingCommand === action;
@@ -476,7 +582,7 @@ export function ConvoyScreen(): React.JSX.Element {
               <Text style={styles.memberMeta}>
                 From {nodeLabel(entry.command.originNodeId)}
                 {entry.command.targetOrderIndex === undefined
-                  ? ''
+                  ? ' • All vehicles'
                   : ` • Position ${entry.command.targetOrderIndex}`}
                 {entry.command.etaMinutes === undefined
                   ? ''
@@ -551,7 +657,19 @@ export function ConvoyScreen(): React.JSX.Element {
             <View key={member.status.nodeId} style={styles.memberCard}>
               <View style={styles.rowBetween}>
                 <Text style={styles.memberName}>{nodeLabel(member.status.nodeId)}</Text>
-                <Text style={styles.memberHealth}>{healthLabel(member.health)}</Text>
+                <View style={styles.memberActions}>
+                  <Text style={styles.memberHealth}>{healthLabel(member.health)}</Text>
+                  <TouchableOpacity
+                    style={styles.targetButton}
+                    onPress={() => {
+                      setTargetOrderText(String(member.status.orderIndex));
+                      setStatus(
+                        `Command target set to convoy position ${member.status.orderIndex}.`,
+                      );
+                    }}>
+                    <Text style={styles.targetButtonText}>Target</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
               <Text style={styles.memberMeta}>
                 Position {member.status.orderIndex} • {roleLabel(member.status.role)}
@@ -563,9 +681,13 @@ export function ConvoyScreen(): React.JSX.Element {
                   : ` • ${member.status.batteryPercent}%`}
               </Text>
               {member.status.location ? (
-                <Text style={styles.memberMeta}>
+                <Text style={member.locationFresh ? styles.memberMeta : styles.warningText}>
                   {member.status.location.latitude.toFixed(5)}, {' '}
                   {member.status.location.longitude.toFixed(5)}
+                  {member.locationAgeMs === null
+                    ? ''
+                    : ` • GPS ${ageLabel(member.locationAgeMs)} old`}
+                  {member.locationFresh ? '' : ' • stale'}
                 </Text>
               ) : null}
               {member.gapFromPreviousMetres !== null ? (
@@ -627,6 +749,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   helpText: {color: colors.textMuted, fontSize: 11, lineHeight: 17, marginTop: 8},
+  warningText: {color: colors.warning, fontSize: 11, lineHeight: 17, marginTop: 5},
   roleGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 8},
   roleButton: {
     borderRadius: 10,
@@ -680,6 +803,19 @@ const styles = StyleSheet.create({
   disabled: {opacity: 0.4},
   statusText: {color: colors.accent, fontSize: 12, lineHeight: 18, marginTop: 10},
   metaText: {color: colors.textMuted, fontSize: 11, lineHeight: 17, marginTop: 6},
+  commandOptionsRow: {flexDirection: 'row', gap: 10},
+  commandOptionField: {flex: 1},
+  clearTargetButton: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: colors.background,
+  },
+  clearTargetButtonText: {color: colors.textSecondary, fontSize: 10, fontWeight: '900'},
   commandGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12},
   commandButton: {
     width: '48%',
@@ -736,7 +872,16 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   memberName: {flex: 1, color: colors.textPrimary, fontSize: 14, fontWeight: '900'},
+  memberActions: {flexDirection: 'row', alignItems: 'center', gap: 7},
   memberHealth: {color: colors.accent, fontSize: 11, fontWeight: '900'},
+  targetButton: {
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: 9,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  targetButtonText: {color: colors.accent, fontSize: 9, fontWeight: '900'},
   memberMeta: {color: colors.textSecondary, fontSize: 11, lineHeight: 17, marginTop: 5},
   dangerText: {color: colors.danger, fontSize: 11, fontWeight: '900', marginTop: 5},
   emptyText: {color: colors.textMuted, fontSize: 13, lineHeight: 19, marginTop: 12},
