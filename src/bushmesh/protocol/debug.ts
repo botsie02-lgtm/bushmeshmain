@@ -1,5 +1,6 @@
-import {BushMeshPacketType, BushMeshCompressionProfile} from './codec';
+import {BushMeshCompressionProfile, BushMeshPacketType} from './codec';
 import {decodeFragment} from './fragmentation';
+import {getBushMeshPacketDefinition} from './packetTypes';
 import {decodeBushMeshTypedPacket} from './typedPackets';
 import {decodeBushMeshWire} from './transport';
 
@@ -34,8 +35,9 @@ export function bytesToBushMeshHex(bytes: number[]): string {
 export function inspectBushMeshPacket(bytes: number[]): BushMeshPacketInspection {
   const decoded = decodeBushMeshWire(bytes);
   const envelope = decoded.envelope;
+  const packetDefinition = getBushMeshPacketDefinition(envelope.type);
   const packetTypeName =
-    BushMeshPacketType[envelope.type as BushMeshPacketType] ?? `Unknown(${envelope.type})`;
+    packetDefinition?.name ?? `Unknown(${envelope.type})`;
   const compressionName =
     BushMeshCompressionProfile[envelope.compression as BushMeshCompressionProfile] ??
     `Unknown(${envelope.compression})`;
