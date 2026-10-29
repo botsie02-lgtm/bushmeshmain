@@ -11,6 +11,7 @@ import {nativeFileExport} from '../native/NativeFileExport';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
 import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
+import {useFieldEventTrace} from '../state/FieldEventTraceContext';
 import {useOfflineMaps} from '../state/OfflineMapContext';
 import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
@@ -37,6 +38,14 @@ function reportFilename(capturedAt: string): string {
   return `Bushmesh_Field_Report_${safeTimestamp}.json`;
 }
 
+function formatTraceTime(timestampMs: number): string {
+  return new Date(timestampMs).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 export function FieldDiagnosticsScreen(): React.JSX.Element {
   const {
     connectionStatus,
@@ -50,6 +59,7 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
   } = useBushMesh();
   const {vehicles, localPosition} = useConvoy();
   const {incidents} = useConvoyRecovery();
+  const {events: traceEvents, clearTrace} = useFieldEventTrace();
   const {
     snapshot: radio,
     nativeRuntime,
@@ -146,6 +156,20 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
 
   const health = useMemo(() => assessFieldDiagnostics(report), [report]);
   const serialized = useMemo(() => serializeFieldDiagnosticsReport(report), [report]);
+  const supportBundle = useMemo(
+    () =>
+      `${JSON.stringify(
+        {
+          bundleVersion: 1,
+          report,
+          health,
+          eventTrace: traceEvents,
+        },
+        null,
+        2,
+      )}\n`,
+    [health, report, traceEvents],
+  );
   const exportSupported = nativeFileExport.isSupported();
 
   const captureNewSnapshot = () => {
@@ -163,7 +187,7 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
     try {
       const result = await nativeFileExport.saveJson(
         reportFilename(report.capturedAt),
-        serialized,
+        supportBundle,
       );
       setExportStatus(`Saved ${result.displayName} to ${result.location}.`);
     } catch (error) {
@@ -323,6 +347,46 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
       </View>
 
       <View style={styles.card}>
+        <View style={styles.traceHeader}>
+          <View style={styles.traceHeaderCopy}>
+            <Text style={styles.cardTitle}>Recent field events</Text>
+            <Text style={styles.traceHint}>
+              State changes only. No message contents or channel secrets are logged.
+            </Text>
+          </View>
+          {traceEvents.length > 0 ? (
+            <TouchableOpacity style={styles.clearTraceButton} onPress={clearTrace}>
+              <Text style={styles.clearTraceText}>CLEAR</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        {traceEvents.length === 0 ? (
+          <Text style={styles.traceEmpty}>No state transitions recorded yet.</Text>
+        ) : (
+          traceEvents.slice(0, 12).map(event => (
+            <View key={event.id} style={styles.traceRow}>
+              <View
+                style={[
+                  styles.traceDot,
+                  event.severity === 'action'
+                    ? styles.traceDotAction
+                    : event.severity === 'watch'
+                      ? styles.traceDotWatch
+                      : styles.traceDotInfo,
+                ]}
+              />
+              <View style={styles.traceCopy}>
+                <Text style={styles.traceMeta}>
+                  {formatTraceTime(event.occurredAtMs)} · {event.category.toUpperCase()} · {event.code}
+                </Text>
+                <Text style={styles.traceDetail}>{event.detail}</Text>
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+
+      <View style={styles.card}>
         <Text style={styles.cardTitle}>Redacted report preview</Text>
         <Text style={styles.preview} selectable>
           {serialized}
@@ -404,6 +468,26 @@ const styles = StyleSheet.create({
   statusLabel: {color: colors.textMuted, fontSize: 9, fontWeight: '800'},
   statusValue: {flex: 1, color: colors.textSecondary, fontSize: 9, fontWeight: '800', textAlign: 'right'},
   warningText: {color: colors.warning},
+  traceHeader: {flexDirection: 'row', alignItems: 'flex-start', gap: 10},
+  traceHeaderCopy: {flex: 1, minWidth: 0},
+  traceHint: {color: colors.textMuted, fontSize: 8, lineHeight: 12, marginTop: -3},
+  clearTraceButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  clearTraceText: {color: colors.textMuted, fontSize: 8, fontWeight: '900'},
+  traceEmpty: {color: colors.textMuted, fontSize: 9, marginTop: 8},
+  traceRow: {flexDirection: 'row', gap: 8, marginTop: 10},
+  traceDot: {width: 7, height: 7, borderRadius: 4, marginTop: 3},
+  traceDotAction: {backgroundColor: colors.danger},
+  traceDotWatch: {backgroundColor: colors.warning},
+  traceDotInfo: {backgroundColor: colors.accent},
+  traceCopy: {flex: 1, minWidth: 0},
+  traceMeta: {color: colors.textMuted, fontSize: 7, fontWeight: '800'},
+  traceDetail: {color: colors.textSecondary, fontSize: 9, lineHeight: 13, marginTop: 2},
   preview: {
     color: colors.textMuted,
     fontSize: 8,
