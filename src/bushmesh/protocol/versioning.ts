@@ -1,9 +1,9 @@
 import {
   BUSHMESH_PROTOCOL_VERSION,
-  BushMeshPacketType,
   DecodedBushMeshEnvelope,
   assertIntegerInRange,
 } from './codec';
+import {getBushMeshPacketDefinition} from './packetTypes';
 
 export const BUSHMESH_MIN_SUPPORTED_PROTOCOL_VERSION = 1;
 export const BUSHMESH_MAX_SUPPORTED_PROTOCOL_VERSION = BUSHMESH_PROTOCOL_VERSION;
@@ -28,32 +28,48 @@ export type BushMeshProtocolMigration = {
   migrate: (wireBytes: number[]) => number[];
 };
 
-/**
- * The wire envelope allocates two version bits, therefore protocol versions are
- * intentionally limited to 0..3 unless a future outer framing revision expands
- * that field.
- */
-export function negotiateBushMeshProtocolVersion(
+/** The v1 envelope allocates two bits to the protocol version. */
+export const BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION = 3;
+
+export function negotiateBushMeshProtocolRanges(
+  localMinVersion: number,
+  localMaxVersion: number,
   remoteMinVersion: number,
   remoteMaxVersion: number,
 ): BushMeshProtocolCompatibility {
-  assertIntegerInRange(remoteMinVersion, 0, 3, 'Remote minimum protocol version');
-  assertIntegerInRange(remoteMaxVersion, remoteMinVersion, 3, 'Remote maximum protocol version');
-
-  const minimum = Math.max(
-    BUSHMESH_MIN_SUPPORTED_PROTOCOL_VERSION,
+  assertIntegerInRange(
+    localMinVersion,
+    0,
+    BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION,
+    'Local minimum protocol version',
+  );
+  assertIntegerInRange(
+    localMaxVersion,
+    localMinVersion,
+    BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION,
+    'Local maximum protocol version',
+  );
+  assertIntegerInRange(
     remoteMinVersion,
+    0,
+    BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION,
+    'Remote minimum protocol version',
   );
-  const maximum = Math.min(
-    BUSHMESH_MAX_SUPPORTED_PROTOCOL_VERSION,
+  assertIntegerInRange(
     remoteMaxVersion,
+    remoteMinVersion,
+    BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION,
+    'Remote maximum protocol version',
   );
+
+  const minimum = Math.max(localMinVersion, remoteMinVersion);
+  const maximum = Math.min(localMaxVersion, remoteMaxVersion);
 
   if (minimum > maximum) {
     return {
       compatible: false,
       negotiatedVersion: null,
-      reason: `No overlapping BushMesh protocol version (local ${BUSHMESH_MIN_SUPPORTED_PROTOCOL_VERSION}-${BUSHMESH_MAX_SUPPORTED_PROTOCOL_VERSION}, remote ${remoteMinVersion}-${remoteMaxVersion}).`,
+      reason: `No overlapping BushMesh protocol version (local ${localMinVersion}-${localMaxVersion}, remote ${remoteMinVersion}-${remoteMaxVersion}).`,
     };
   }
 
@@ -64,14 +80,24 @@ export function negotiateBushMeshProtocolVersion(
   };
 }
 
+export function negotiateBushMeshProtocolVersion(
+  remoteMinVersion: number,
+  remoteMaxVersion: number,
+): BushMeshProtocolCompatibility {
+  return negotiateBushMeshProtocolRanges(
+    BUSHMESH_MIN_SUPPORTED_PROTOCOL_VERSION,
+    BUSHMESH_MAX_SUPPORTED_PROTOCOL_VERSION,
+    remoteMinVersion,
+    remoteMaxVersion,
+  );
+}
+
 /**
- * Packet type allocation for the six-bit type field.
+ * Packet allocation for the six-bit packet type field.
  *
- * 0x00       invalid / never transmit
- * 0x01-0x0E current v1 core types
- * 0x0F-0x1F reserved for future standardized core types
- * 0x20-0x2F experimental BushMesh extensions; never release-critical by default
- * 0x30-0x3F vendor/private extensions; must be capability-gated
+ * Registered v1 packet definitions are authoritative. Unallocated 0x01-0x1f
+ * values remain reserved for standardized core use; 0x20-0x2f are experimental
+ * and 0x30-0x3f are vendor/private extensions.
  */
 export function classifyBushMeshPacketType(
   type: number,
@@ -82,18 +108,20 @@ export function classifyBushMeshPacketType(
     return BushMeshPacketTypeClass.Invalid;
   }
 
-  if (type >= BushMeshPacketType.Message && type <= BushMeshPacketType.Routed) {
+  const definition = getBushMeshPacketDefinition(type);
+  if (definition?.stability === 'core') {
     return BushMeshPacketTypeClass.Core;
+  }
+  if (definition?.stability === 'reserved-core') {
+    return BushMeshPacketTypeClass.ReservedCore;
   }
 
   if (type <= 0x1f) {
     return BushMeshPacketTypeClass.ReservedCore;
   }
-
   if (type <= 0x2f) {
     return BushMeshPacketTypeClass.Experimental;
   }
-
   return BushMeshPacketTypeClass.VendorPrivate;
 }
 
@@ -122,7 +150,7 @@ export function assertBushMeshEnvelopeCompatibility(
       throw new Error('BushMesh packet type 0 is invalid.');
     case BushMeshPacketTypeClass.ReservedCore:
       throw new Error(
-        `BushMesh packet type 0x${envelope.type.toString(16).padStart(2, '0')} is reserved for a future standardized extension.`,
+        `BushMesh packet type 0x${envelope.type.toString(16).padStart(2, '0')} is reserved for a future standardized schema.`,
       );
     case BushMeshPacketTypeClass.Experimental:
       if (options?.allowExperimentalPacketTypes === true) {
@@ -143,15 +171,25 @@ export function assertBushMeshEnvelopeCompatibility(
 
 /**
  * Ordered migration registry for future on-device upgrades. Migrations are
- * intentionally explicit and one version step at a time; there is no implicit
- * "best effort" reinterpretation of an unknown wire schema.
+ * explicit and one version step at a time; unknown wire schemas are never
+ * reinterpreted on a best-effort basis.
  */
 export class BushMeshProtocolMigrationRegistry {
   private readonly migrations = new Map<number, BushMeshProtocolMigration>();
 
   register(migration: BushMeshProtocolMigration): void {
-    assertIntegerInRange(migration.fromVersion, 0, 3, 'Migration source version');
-    assertIntegerInRange(migration.toVersion, 0, 3, 'Migration target version');
+    assertIntegerInRange(
+      migration.fromVersion,
+      0,
+      BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION,
+      'Migration source version',
+    );
+    assertIntegerInRange(
+      migration.toVersion,
+      0,
+      BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION,
+      'Migration target version',
+    );
 
     if (migration.toVersion !== migration.fromVersion + 1) {
       throw new Error('BushMesh migrations must advance exactly one protocol version.');
