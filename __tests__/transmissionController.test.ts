@@ -1,12 +1,25 @@
-import {
-  BushMeshQuickActionCode,
-  decodeBushMeshPosition,
-  decodeBushMeshQuickAction,
-} from '../src/bushmesh/protocol';
 import {BushMeshTransmissionController} from '../src/radio/BushMeshTransmissionController';
+import type {OutboundDatagramEnvelope} from '../src/radio/OutboundDatagram';
+
+function envelope(
+  overrides?: Partial<OutboundDatagramEnvelope>,
+): OutboundDatagramEnvelope {
+  return {
+    channelIndex: 0,
+    dataType: 0xff00,
+    payload: Uint8Array.from([1, 9, 2, 3]),
+    priority: 'message',
+    expiresAtMs: null,
+    retryPolicy: {maxAttempts: 5},
+    identityRef: '001122334455',
+    description: 'pre-encoded runtime datagram',
+    createdAtMs: 1_000,
+    ...overrides,
+  };
+}
 
 describe('BushMeshTransmissionController', () => {
-  test('encodes quick actions and reports radio acceptance truthfully', async () => {
+  test('queues and transmits already-encoded runtime output unchanged', async () => {
     const controller = new BushMeshTransmissionController();
     const sends: Array<{
       channelIndex: number;
@@ -18,88 +31,59 @@ describe('BushMeshTransmissionController', () => {
       sends.push({channelIndex, dataType, payload: Uint8Array.from(payload)});
     });
 
-    controller.enqueueQuickAction(
-      2,
-      {
-        senderId: 'AABBCCDDEEFF',
-        sequence: 7,
-        timestampSeconds: 1_800_000_000,
-        action: BushMeshQuickActionCode.Hazard,
-        latitude: -37.8,
-        longitude: 145.2,
-        ttlSeconds: 900,
-      },
-      10_000,
+    controller.enqueueOutbound(
+      envelope({
+        channelIndex: 2,
+        dataType: 77,
+        payload: Uint8Array.from([8, 7, 6, 5]),
+      }),
     );
 
-    const result = await controller.drainOnce(10_000);
+    const result = await controller.drainOnce(1_000);
 
     expect(result.outcome).toBe('accepted');
-    expect(result.entry?.state).toBe('accepted');
-    expect(sends).toHaveLength(1);
-    expect(sends[0].channelIndex).toBe(2);
-    expect(sends[0].dataType).toBe(0xff00);
-
-    const decoded = decodeBushMeshQuickAction(sends[0].payload);
-    expect(decoded.action).toBe(BushMeshQuickActionCode.Hazard);
-    expect(decoded.senderId).toBe('AABBCCDDEEFF');
+    expect(sends).toEqual([
+      {
+        channelIndex: 2,
+        dataType: 77,
+        payload: Uint8Array.from([8, 7, 6, 5]),
+      },
+    ]);
   });
 
-  test('safety actions jump ahead of queued positions', async () => {
+  test('priority ordering is unchanged for neutral envelopes', async () => {
     const controller = new BushMeshTransmissionController();
-    const sentTypes: number[] = [];
+    const sentDescriptions: string[] = [];
 
-    controller.setSender(async (_channelIndex, _dataType, payload) => {
-      sentTypes.push(payload[1]);
+    controller.setSender(async () => {
+      const inflight = controller
+        .list()
+        .find(entry => entry.state === 'inflight');
+      if (inflight) {
+        sentDescriptions.push(inflight.description);
+      }
     });
 
-    controller.enqueuePosition(
-      0,
-      {
-        senderId: '001122334455',
-        sequence: 1,
-        timestampSeconds: 100,
-        latitude: -37.8,
-        longitude: 145.2,
-      },
-      1_000,
+    controller.enqueueOutbound(
+      envelope({priority: 'position', description: 'position', createdAtMs: 1_000}),
     );
-
-    controller.enqueueQuickAction(
-      0,
-      {
-        senderId: '001122334455',
-        sequence: 2,
-        timestampSeconds: 101,
-        action: BushMeshQuickActionCode.Stop,
-      },
-      1_001,
+    controller.enqueueOutbound(
+      envelope({priority: 'safety', description: 'safety', createdAtMs: 1_001}),
     );
 
     await controller.drainOnce(2_000);
-    expect(sentTypes).toEqual([2]);
+    expect(sentDescriptions).toEqual(['safety']);
   });
 
-  test('expired quick actions are cancelled before radio transmission', async () => {
+  test('expired traffic is cancelled before radio transmission', async () => {
     const controller = new BushMeshTransmissionController();
     let sendCount = 0;
     controller.setSender(async () => {
       sendCount += 1;
     });
 
-    const entry = controller.enqueueQuickAction(
-      0,
-      {
-        senderId: '001122334455',
-        sequence: 3,
-        timestampSeconds: 1,
-        action: BushMeshQuickActionCode.Stop,
-        ttlSeconds: 2,
-      },
-      1_000,
-    );
+    controller.enqueueOutbound(envelope({expiresAtMs: 3_000}));
 
-    expect(entry.expiresAtMs).toBe(3_000);
     expect(await controller.drainOnce(3_000)).toEqual({
       entry: null,
       outcome: 'idle',
@@ -109,92 +93,47 @@ describe('BushMeshTransmissionController', () => {
     expect(controller.list()[0].lastError).toContain('Expired');
   });
 
-  test('newer queued positions supersede stale positions for the same radio and channel', async () => {
-    const controller = new BushMeshTransmissionController();
-    const sentSequences: number[] = [];
-
-    controller.setSender(async (_channelIndex, _dataType, payload) => {
-      sentSequences.push(decodeBushMeshPosition(payload).sequence);
-    });
-
-    controller.enqueuePosition(
-      0,
-      {
-        senderId: '001122334455',
-        sequence: 10,
-        timestampSeconds: 100,
-        latitude: -37.8,
-        longitude: 145.2,
-      },
-      1_000,
-    );
-
-    controller.enqueuePosition(
-      0,
-      {
-        senderId: '001122334455',
-        sequence: 11,
-        timestampSeconds: 110,
-        latitude: -37.79,
-        longitude: 145.21,
-      },
-      1_100,
-    );
-
-    const entries = controller.list();
-    expect(entries.filter(entry => entry.state === 'cancelled')).toHaveLength(1);
-    expect(entries.filter(entry => entry.state === 'queued')).toHaveLength(1);
-
-    await controller.drainOnce(2_000);
-    expect(sentSequences).toEqual([11]);
-  });
-
-  test('transport failures retain the packet for retry', async () => {
+  test('transport failures retain the packet for the same retry schedule', async () => {
     const controller = new BushMeshTransmissionController();
     controller.setSender(async () => {
       throw new Error('radio offline');
     });
 
-    const queued = controller.enqueueQuickAction(
-      1,
-      {
-        senderId: '112233445566',
-        sequence: 5,
-        timestampSeconds: 100,
-        action: BushMeshQuickActionCode.Regroup,
-      },
-      5_000,
-    );
+    const queued = controller.enqueueOutbound(envelope());
+    const first = await controller.drainOnce(1_000);
 
-    const first = await controller.drainOnce(5_000);
     expect(first.outcome).toBe('retrying');
     expect(first.entry?.state).toBe('queued');
     expect(first.entry?.lastError).toBe('radio offline');
     expect(first.entry?.attempts).toBe(1);
-
-    expect(await controller.drainOnce(6_999)).toEqual({
+    expect(first.entry?.nextAttemptAtMs).toBe(3_000);
+    expect(await controller.drainOnce(2_999)).toEqual({
       entry: null,
       outcome: 'idle',
     });
-
     expect(controller.list().find(entry => entry.id === queued.id)?.state).toBe(
       'queued',
     );
   });
 
+  test('max-attempt policy is supplied by the runtime envelope', async () => {
+    const controller = new BushMeshTransmissionController();
+    controller.setSender(async () => {
+      throw new Error('still offline');
+    });
+    controller.enqueueOutbound(envelope({retryPolicy: {maxAttempts: 2}}));
+
+    expect((await controller.drainOnce(1_000)).outcome).toBe('retrying');
+    const second = await controller.drainOnce(3_000);
+
+    expect(second.outcome).toBe('failed');
+    expect(second.entry?.state).toBe('failed');
+    expect(second.entry?.attempts).toBe(2);
+  });
+
   test('queued work remains queued while no transport is registered', async () => {
     const controller = new BushMeshTransmissionController();
-    const entry = controller.enqueuePosition(
-      0,
-      {
-        senderId: '001122334455',
-        sequence: 1,
-        timestampSeconds: 100,
-        latitude: 0,
-        longitude: 0,
-      },
-      1_000,
-    );
+    const entry = controller.enqueueOutbound(envelope());
 
     const result = await controller.drainOnce(1_000);
     expect(result.outcome).toBe('retrying');

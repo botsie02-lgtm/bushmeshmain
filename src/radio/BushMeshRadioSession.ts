@@ -1,7 +1,5 @@
 import {BushMeshFormationShare} from '../bushmesh/formationProtocol';
-import {
-  BushMeshPositionRequest,
-} from '../bushmesh/positionRequestProtocol';
+import {BushMeshPositionRequest} from '../bushmesh/positionRequestProtocol';
 import {
   BushMeshPosition,
   BushMeshQuickActionCode,
@@ -13,6 +11,8 @@ import {
   BushMeshTransmissionController,
   TransmissionAttemptResult,
 } from './BushMeshTransmissionController';
+import {LegacyBushMeshOutboundAdapter} from './LegacyBushMeshOutboundAdapter';
+import type {OutboundDatagramEnvelope} from './OutboundDatagram';
 import {
   BushMeshRadioProfile,
   cloneBushMeshRadioProfile,
@@ -60,6 +60,13 @@ export type QueuePositionRequestInput = Omit<
   channelIndex: number;
 };
 
+export type QueueOutboundDatagramInput = Omit<
+  OutboundDatagramEnvelope,
+  'identityRef'
+> & {
+  identityRef?: string | null;
+};
+
 export type BushMeshTransportOwner = object;
 
 type SessionListener = () => void;
@@ -68,12 +75,13 @@ type SessionListener = () => void;
  * Observable single-radio session for the React Native process.
  *
  * Transport ownership prevents an old/reconnecting client from clearing or
- * reclaiming a newer connection. A temporarily disconnected owner can suspend
- * its sender while keeping the foreground runtime requested, then resume only
- * if no newer client has replaced that owner.
+ * reclaiming a newer connection. Protocol runtimes may enqueue already-encoded
+ * datagrams through queueOutboundDatagram; legacy packet helpers remain as a
+ * compatibility facade until the canonical runtime replaces them.
  */
 export class BushMeshRadioSession {
   private readonly controller: BushMeshTransmissionController;
+  private readonly legacyOutbound: LegacyBushMeshOutboundAdapter;
   private readonly listeners = new Set<SessionListener>();
   private readonly compatibilityOwner: BushMeshTransportOwner = {};
   private transportOwner: BushMeshTransportOwner | null = null;
@@ -84,6 +92,7 @@ export class BushMeshRadioSession {
 
   constructor(controller = new BushMeshTransmissionController()) {
     this.controller = controller;
+    this.legacyOutbound = new LegacyBushMeshOutboundAdapter(controller);
   }
 
   subscribe(listener: SessionListener): () => void {
@@ -120,11 +129,6 @@ export class BushMeshRadioSession {
     this.emit();
   }
 
-  /**
-   * Temporarily removes the live sender while retaining this owner as the
-   * desired radio session. This keeps the Android foreground runtime alive
-   * during reconnect backoff without allowing the outbox to drain offline.
-   */
   suspendTransportForOwner(owner: BushMeshTransportOwner): boolean {
     if (this.transportOwner !== owner) {
       return false;
@@ -137,11 +141,6 @@ export class BushMeshRadioSession {
     return true;
   }
 
-  /**
-   * Restores a suspended transport only when the same client still owns the
-   * session. If another radio has since claimed Bushmesh, the stale reconnect
-   * attempt is rejected instead of stealing the active session back.
-   */
   resumeTransportForOwner(
     owner: BushMeshTransportOwner,
     sender: BushMeshDatagramSender,
@@ -219,9 +218,18 @@ export class BushMeshRadioSession {
     }
   }
 
+  queueOutboundDatagram(input: QueueOutboundDatagramInput): BushMeshOutboxEntry {
+    const identityRef =
+      input.identityRef === undefined ? this.requireIdentity() : input.identityRef;
+    const entry = this.controller.enqueueOutbound({...input, identityRef});
+    this.emit();
+    return entry;
+  }
+
+  /** @deprecated Replace with canonical-runtime encoded outbound datagrams. */
   queueQuickAction(input: QueueQuickActionInput): BushMeshOutboxEntry {
     const senderId = this.requireIdentity();
-    const entry = this.controller.enqueueQuickAction(input.channelIndex, {
+    const entry = this.legacyOutbound.enqueueQuickAction(input.channelIndex, {
       senderId,
       sequence: input.sequence,
       timestampSeconds: input.timestampSeconds,
@@ -235,10 +243,11 @@ export class BushMeshRadioSession {
     return entry;
   }
 
+  /** @deprecated Replace with canonical-runtime encoded outbound datagrams. */
   queuePosition(input: QueuePositionInput): BushMeshOutboxEntry {
     const senderId = this.requireIdentity();
     const {channelIndex, ...position} = input;
-    const entry = this.controller.enqueuePosition(channelIndex, {
+    const entry = this.legacyOutbound.enqueuePosition(channelIndex, {
       ...position,
       senderId,
     });
@@ -246,10 +255,11 @@ export class BushMeshRadioSession {
     return entry;
   }
 
+  /** @deprecated Replace with canonical-runtime encoded outbound datagrams. */
   queueFormationShare(input: QueueFormationShareInput): BushMeshOutboxEntry {
     const senderId = this.requireIdentity();
     const {channelIndex, ...share} = input;
-    const entry = this.controller.enqueueFormationShare(channelIndex, {
+    const entry = this.legacyOutbound.enqueueFormationShare(channelIndex, {
       ...share,
       senderId,
     });
@@ -257,10 +267,11 @@ export class BushMeshRadioSession {
     return entry;
   }
 
+  /** @deprecated Replace with canonical-runtime encoded outbound datagrams. */
   queuePositionRequest(input: QueuePositionRequestInput): BushMeshOutboxEntry {
     const senderId = this.requireIdentity();
     const {channelIndex, ...request} = input;
-    const entry = this.controller.enqueuePositionRequest(channelIndex, {
+    const entry = this.legacyOutbound.enqueuePositionRequest(channelIndex, {
       ...request,
       senderId,
     });
@@ -268,10 +279,6 @@ export class BushMeshRadioSession {
     return entry;
   }
 
-  /**
-   * Replaces the runtime outbox during cold-start recovery. Call before a radio
-   * transport is allowed to drain queued traffic.
-   */
   restoreOutbox(entries: BushMeshOutboxEntry[]): void {
     this.controller.restoreEntries(entries);
     this.lastAttempt = null;
