@@ -1,9 +1,8 @@
+import {BushMeshPacketType} from './codec';
 import {
-  BushMeshCompressionProfile,
-  BushMeshPacketType,
-  BushMeshPriority,
-} from './codec';
-import {decodeFragmentAck, encodeFragmentAck} from './fragmentation';
+  decodeBushMeshAckWire,
+  encodeBushMeshFragmentAckWire,
+} from './acknowledgement';
 import {
   BushMeshRetransmissionEngine,
   DueRetransmission,
@@ -12,7 +11,6 @@ import {
   BushMeshFrameAcceptResult,
   BushMeshWireReassembler,
   decodeBushMeshWire,
-  encodeBushMeshWire,
 } from './transport';
 
 export type BushMeshReliabilityReceiveResult = {
@@ -74,21 +72,14 @@ export class BushMeshReliabilityController {
       }
     }
 
-    const ackPayload = encodeFragmentAck(
-      progress.messageId,
-      progress.fragmentCount,
-      receivedFragments,
-    );
-    const ackWireBytes = encodeBushMeshWire({
-      type: BushMeshPacketType.Ack,
-      priority: BushMeshPriority.DirectMessage,
-      compression: BushMeshCompressionProfile.Raw,
-      messageId: progress.messageId,
-      ackRequested: false,
-      payload: ackPayload,
-    });
-
-    return {receive, ackWireBytes};
+    return {
+      receive,
+      ackWireBytes: encodeBushMeshFragmentAckWire(
+        progress.messageId,
+        progress.fragmentCount,
+        receivedFragments,
+      ),
+    };
   }
 
   acceptAckWire(ackWireBytes: number[]): {
@@ -97,12 +88,12 @@ export class BushMeshReliabilityController {
     receivedFragments: number[];
     missingFragments: number[];
   } {
-    const decoded = decodeBushMeshWire(ackWireBytes);
-    if (decoded.envelope.type !== BushMeshPacketType.Ack) {
-      throw new Error('Reliability controller expected an ACK packet.');
+    const ackPacket = decodeBushMeshAckWire(ackWireBytes);
+    if (ackPacket.kind !== 'fragment') {
+      throw new Error('Reliability controller expected a fragment ACK packet.');
     }
 
-    const ack = decodeFragmentAck(decoded.envelope.payload);
+    const ack = ackPacket.value;
     const acknowledgedFragments = this.retransmissions.applyAck(ack);
     return {
       messageId: ack.messageId,
