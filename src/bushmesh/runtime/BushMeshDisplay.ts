@@ -85,6 +85,11 @@ function renderTyped(packet: BushMeshTypedPacket): string | null {
         ? `BushMesh PONG ${packet.value.nonce}`
         : `BushMesh PING ${packet.value.nonce}`;
 
+    case 'ack':
+      return packet.value.kind === 'delivery'
+        ? `Delivery acknowledgement for message ${packet.value.value.messageId}`
+        : `Fragment acknowledgement for message ${packet.value.value.messageId}`;
+
     case 'route':
       return `Route update • destination ${packet.value.destinationNodeId.toString(16).padStart(8, '0')} • ${packet.value.hopCount} hop(s) • quality ${Math.round(packet.value.pathQuality)}%`;
 
@@ -117,9 +122,6 @@ function renderTyped(packet: BushMeshTypedPacket): string | null {
         : `Sync range request • namespace ${packet.value.namespace} • ${packet.value.ranges.length} range(s)`;
 
     case 'convoy':
-      // Convoy heartbeats are machine-oriented state updates. Rendering every
-      // heartbeat into channel chat would create a message every few seconds,
-      // so the Convoy screen consumes them silently through BushMeshConvoyHub.
       return null;
 
     case 'file':
