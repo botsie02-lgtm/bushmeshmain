@@ -1,7 +1,6 @@
 import {Buffer} from 'buffer';
 
 import {
-  BUSHMESH_PROTOCOL_VERSION,
   BushMeshCompressionProfile,
   BushMeshEnvelope,
   BushMeshPacketType,
@@ -26,6 +25,7 @@ import {
   compareDictionaryCompression,
   decodeDictionaryText,
 } from './textDictionary';
+import {assertBushMeshEnvelopeCompatibility} from './versioning';
 
 export const BUSHMESH_WIRE_MAGIC = [0xb5, 0x4d] as const;
 export const BUSHMESH_TEXT_CARRIER_PREFIX = '~BM1:';
@@ -55,14 +55,11 @@ export function decodeBushMeshWire(bytes: number[]): DecodedBushMeshWireMessage 
     bytes[0] !== BUSHMESH_WIRE_MAGIC[0] ||
     bytes[1] !== BUSHMESH_WIRE_MAGIC[1]
   ) {
-    throw new Error('Not a Bushmesh wire message.');
+    throw new Error('Not a BushMesh wire message.');
   }
 
   const envelope = decodeEnvelope(bytes.slice(2));
-
-  if (envelope.version !== BUSHMESH_PROTOCOL_VERSION) {
-    throw new Error(`Unsupported Bushmesh protocol version ${envelope.version}.`);
-  }
+  assertBushMeshEnvelopeCompatibility(envelope);
 
   const decoded: DecodedBushMeshWireMessage = {
     envelope,
@@ -172,7 +169,7 @@ export function encodeBushMeshTextCarrier(wireBytes: number[]): string {
 
 export function decodeBushMeshTextCarrier(text: string): number[] {
   if (!text.startsWith(BUSHMESH_TEXT_CARRIER_PREFIX)) {
-    throw new Error('Not a Bushmesh text carrier.');
+    throw new Error('Not a BushMesh text carrier.');
   }
 
   const base64Url = text.slice(BUSHMESH_TEXT_CARRIER_PREFIX.length);
