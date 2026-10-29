@@ -1,3 +1,9 @@
+/**
+ * Broad source-compatibility barrel for the current React Native application.
+ *
+ * New integrations should import the transport-neutral API from `./public`.
+ * Current app/native/MeshCore orchestration is grouped in `./compatibility`.
+ */
 export * from './BushMeshAdaptivePayloadPolicy';
 export * from './BushMeshAirtimeController';
 export * from './BushMeshAirtimeTransport';
