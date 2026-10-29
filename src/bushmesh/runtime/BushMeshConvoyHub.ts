@@ -23,6 +23,7 @@ export type BushMeshConvoyLocalConfig = {
 
 export type BushMeshConvoyLocalTelemetry = {
   location?: CompactLocation;
+  locationCapturedAtMs?: number;
   speedKph?: number;
   headingDegrees?: number;
   batteryPercent?: number;
@@ -54,6 +55,8 @@ const seenCommandKeys = new Map<string, number>();
 
 const NORMAL_LOCATION_ANCHOR_MS = 60_000;
 const HAZARD_LOCATION_ANCHOR_MS = 20_000;
+const MAX_LOCAL_LOCATION_AGE_MS = 90_000;
+const MAX_LOCATION_FUTURE_SKEW_MS = 30_000;
 const LOCATION_CHANGE_THRESHOLD_METRES = 2;
 const MAX_DELTA_COMPONENT_METRES = 20_000;
 const SPEED_CHANGE_THRESHOLD_KPH = 1.5;
@@ -90,6 +93,34 @@ function notify(): void {
   for (const listener of listeners) {
     listener();
   }
+}
+
+function assertWholeNumberInRange(
+  value: number,
+  min: number,
+  max: number,
+  label: string,
+): void {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${label} must be a whole number from ${min} to ${max}.`);
+  }
+}
+
+function assertFiniteInRange(
+  value: number,
+  min: number,
+  max: number,
+  label: string,
+): void {
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`${label} must be from ${min} to ${max}.`);
+  }
+}
+
+function validateLocation(location: CompactLocation): void {
+  assertFiniteInRange(location.latitude, -90, 90, 'Convoy latitude');
+  assertFiniteInRange(location.longitude, -180, 180, 'Convoy longitude');
+  assertWholeNumberInRange(location.precision, 0, 3, 'Convoy location precision');
 }
 
 function commandKey(command: BushMeshConvoyActionControl): string {
@@ -138,11 +169,24 @@ function resetOutboundCompressionState(): void {
   outboundBatteryAt = null;
 }
 
+export function isBushMeshConvoyLocationFresh(now = Date.now()): boolean {
+  if (!telemetry.location || telemetry.locationCapturedAtMs === undefined) {
+    return false;
+  }
+
+  const ageMs = now - telemetry.locationCapturedAtMs;
+  return ageMs >= -MAX_LOCATION_FUTURE_SKEW_MS && ageMs <= MAX_LOCAL_LOCATION_AGE_MS;
+}
+
 function convoyLocationFields(
   now: number,
 ): Pick<BushMeshConvoyStatus, 'location' | 'locationDelta'> {
   const current = telemetry.location;
-  if (!current) {
+  if (!current || !isBushMeshConvoyLocationFresh(now)) {
+    // Once the phone fix is stale, discard the delta anchor too. The first good
+    // fix after GPS recovery must be an absolute self-healing coordinate.
+    outboundLocationAnchor = null;
+    outboundLocationAnchorAt = null;
     return {};
   }
 
@@ -203,8 +247,10 @@ function convoySparseTelemetryFields(
   const motionRefreshMs = telemetry.hazard
     ? HAZARD_MOTION_REFRESH_MS
     : NORMAL_MOTION_REFRESH_MS;
+  const motionFresh = isBushMeshConvoyLocationFresh(now);
 
   if (
+    motionFresh &&
     telemetry.speedKph !== undefined &&
     (outboundSpeedKph === undefined ||
       outboundSpeedAt === null ||
@@ -218,6 +264,7 @@ function convoySparseTelemetryFields(
   }
 
   if (
+    motionFresh &&
     telemetry.headingDegrees !== undefined &&
     (outboundHeadingDegrees === undefined ||
       outboundHeadingAt === null ||
@@ -252,15 +299,9 @@ export function configureBushMeshConvoy(
 ): BushMeshConvoyLocalConfig {
   const merged = {...config, ...next};
 
-  if (!Number.isInteger(merged.convoyId) || merged.convoyId < 0 || merged.convoyId > 0xffffffff) {
-    throw new Error('Convoy ID must be a uint32 value.');
-  }
-  if (!Number.isInteger(merged.orderIndex) || merged.orderIndex < 0 || merged.orderIndex > 0xffff) {
-    throw new Error('Convoy position must be from 0 to 65535.');
-  }
-  if (!Number.isInteger(merged.role) || merged.role < 0 || merged.role > 7) {
-    throw new Error('Convoy role must be from 0 to 7.');
-  }
+  assertWholeNumberInRange(merged.convoyId, 0, 0xffffffff, 'Convoy ID');
+  assertWholeNumberInRange(merged.orderIndex, 0, 0xffff, 'Vehicle position');
+  assertWholeNumberInRange(merged.role, 0, 7, 'Convoy role');
   if (!Number.isFinite(merged.heartbeatIntervalMs) || merged.heartbeatIntervalMs < 2_000) {
     throw new Error('Convoy heartbeat interval must be at least two seconds.');
   }
@@ -281,17 +322,73 @@ export function configureBushMeshConvoy(
 export function updateBushMeshConvoyTelemetry(
   update: BushMeshConvoyLocalTelemetry,
 ): BushMeshConvoyLocalTelemetry {
+  if (update.location) {
+    validateLocation(update.location);
+  }
+  if (update.locationCapturedAtMs !== undefined && !Number.isFinite(update.locationCapturedAtMs)) {
+    throw new Error('Convoy location timestamp must be finite.');
+  }
+  if (update.speedKph !== undefined) {
+    assertFiniteInRange(update.speedKph, 0, 6553.5, 'Convoy speed');
+  }
+  if (update.headingDegrees !== undefined) {
+    if (
+      !Number.isFinite(update.headingDegrees) ||
+      update.headingDegrees < 0 ||
+      update.headingDegrees >= 360
+    ) {
+      throw new Error('Convoy heading must be from 0 to less than 360 degrees.');
+    }
+  }
+  if (update.batteryPercent !== undefined) {
+    assertWholeNumberInRange(
+      update.batteryPercent,
+      0,
+      100,
+      'Convoy battery percentage',
+    );
+  }
+  if (update.stopped !== undefined && typeof update.stopped !== 'boolean') {
+    throw new Error('Convoy stopped state must be boolean.');
+  }
+  if (update.hazard !== undefined && typeof update.hazard !== 'boolean') {
+    throw new Error('Convoy hazard state must be boolean.');
+  }
+
+  const location = update.location
+    ? {...update.location}
+    : telemetry.location
+      ? {...telemetry.location}
+      : undefined;
+  const locationCapturedAtMs = update.location
+    ? update.locationCapturedAtMs ?? Date.now()
+    : telemetry.locationCapturedAtMs;
+
   telemetry = {
     ...telemetry,
     ...update,
-    location: update.location
-      ? {...update.location}
-      : telemetry.location
-        ? {...telemetry.location}
-        : undefined,
+    location,
+    locationCapturedAtMs,
   };
   notify();
   return bushMeshConvoyTelemetry();
+}
+
+export function clearBushMeshConvoyLocalLocation(): void {
+  telemetry = {
+    ...telemetry,
+    location: undefined,
+    locationCapturedAtMs: undefined,
+    speedKph: undefined,
+    headingDegrees: undefined,
+  };
+  outboundLocationAnchor = null;
+  outboundLocationAnchorAt = null;
+  outboundSpeedKph = undefined;
+  outboundSpeedAt = null;
+  outboundHeadingDegrees = undefined;
+  outboundHeadingAt = null;
+  notify();
 }
 
 export function bushMeshConvoyTelemetry(): BushMeshConvoyLocalTelemetry {
@@ -305,6 +402,8 @@ export function nextBushMeshConvoyStatus(
   nodeId: number,
   now = Date.now(),
 ): BushMeshConvoyStatus {
+  assertWholeNumberInRange(nodeId, 0, 0xffffffff, 'Convoy node ID');
+
   const locationFields = convoyLocationFields(now);
   const sparseTelemetryFields = convoySparseTelemetryFields(now);
   const status: BushMeshConvoyStatus = {
@@ -333,6 +432,20 @@ export function nextBushMeshConvoyCommand(
   action: BushMeshConvoyAction | number,
   options?: {targetOrderIndex?: number; etaMinutes?: number; now?: number},
 ): BushMeshConvoyActionControl {
+  assertWholeNumberInRange(originNodeId, 0, 0xffffffff, 'Convoy command origin');
+  assertWholeNumberInRange(action, 1, 255, 'Convoy action');
+  if (options?.targetOrderIndex !== undefined) {
+    assertWholeNumberInRange(
+      options.targetOrderIndex,
+      0,
+      0xffff,
+      'Convoy target position',
+    );
+  }
+  if (options?.etaMinutes !== undefined) {
+    assertWholeNumberInRange(options.etaMinutes, 0, 0xffff, 'Convoy action ETA');
+  }
+
   const command: BushMeshConvoyActionControl = {
     command: BushMeshControlCommand.ConvoyAction,
     convoyId: config.convoyId,
@@ -350,6 +463,16 @@ export function nextBushMeshConvoyCommand(
 
   rememberCommand(command, options?.now ?? Date.now(), true);
   return command;
+}
+
+export function convoyCommandAppliesToLocalPosition(
+  command: BushMeshConvoyActionControl,
+): boolean {
+  return (
+    command.convoyId === config.convoyId &&
+    (command.targetOrderIndex === undefined ||
+      command.targetOrderIndex === config.orderIndex)
+  );
 }
 
 export function acceptBushMeshConvoyCommandRemote(
