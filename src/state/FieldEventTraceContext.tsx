@@ -21,7 +21,16 @@ export type FieldTraceCategory =
   | 'location'
   | 'convoy'
   | 'maps'
-  | 'persistence';
+  | 'persistence'
+  | 'test';
+
+export type FieldTestMarker =
+  | 'test-start'
+  | 'airplane-mode-on'
+  | 'airplane-mode-off'
+  | 'radio-handoff'
+  | 'node-power-cycle'
+  | 'test-end';
 
 export type FieldTraceEvent = {
   id: string;
@@ -34,11 +43,21 @@ export type FieldTraceEvent = {
 
 type FieldEventTraceContextValue = {
   events: FieldTraceEvent[];
+  addTestMarker: (marker: FieldTestMarker) => void;
   clearTrace: () => void;
 };
 
 const FieldEventTraceContext = createContext<FieldEventTraceContextValue | null>(null);
 const MAX_TRACE_EVENTS = 80;
+
+const TEST_MARKER_DETAILS: Record<FieldTestMarker, string> = {
+  'test-start': 'Operator marked the start of a field verification run.',
+  'airplane-mode-on': 'Operator marked airplane mode enabled for an offline verification step.',
+  'airplane-mode-off': 'Operator marked airplane mode disabled after an offline verification step.',
+  'radio-handoff': 'Operator marked an intentional radio ownership/handoff step.',
+  'node-power-cycle': 'Operator marked an intentional MeshCore node power cycle.',
+  'test-end': 'Operator marked the end of a field verification run.',
+};
 
 function traceId(code: string, nowMs: number): string {
   return `${nowMs}:${code}:${Math.random().toString(16).slice(2, 8)}`;
@@ -87,6 +106,18 @@ export function FieldEventTraceProvider({
       setEvents(current => [event, ...current].slice(0, MAX_TRACE_EVENTS));
     },
     [],
+  );
+
+  const addTestMarker = useCallback(
+    (marker: FieldTestMarker) => {
+      append(
+        'test',
+        'info',
+        `test-marker-${marker}`,
+        TEST_MARKER_DETAILS[marker],
+      );
+    },
+    [append],
   );
 
   useEffect(() => {
@@ -251,8 +282,8 @@ export function FieldEventTraceProvider({
   }, []);
 
   const value = useMemo<FieldEventTraceContextValue>(
-    () => ({events, clearTrace}),
-    [events, clearTrace],
+    () => ({events, addTestMarker, clearTrace}),
+    [events, addTestMarker, clearTrace],
   );
 
   return (
