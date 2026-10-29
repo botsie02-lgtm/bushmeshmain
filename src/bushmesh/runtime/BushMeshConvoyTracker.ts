@@ -45,6 +45,7 @@ type StoredMember = {
   status: BushMeshConvoyStatus;
   locationAnchor?: CompactLocation;
   lastLocationAt?: number;
+  locationUnavailable: boolean;
   expectedIntervalMs?: number;
   firstSeenAt: number;
   lastSeenAt: number;
@@ -154,16 +155,24 @@ export class BushMeshConvoyTracker {
       : undefined;
     let location = status.location ? {...status.location} : undefined;
     let lastLocationAt = existing?.lastLocationAt;
+    let locationUnavailable = existing?.locationUnavailable ?? false;
 
-    if (location) {
+    if (status.locationUnavailable) {
+      // Preserve the last-known coordinate for user context, but drop the delta
+      // anchor immediately so it cannot be used for routing or later deltas.
+      locationAnchor = undefined;
+      locationUnavailable = true;
+    } else if (location) {
       // Absolute coordinates are periodic self-healing anchors. All compact
       // deltas until the next anchor are measured from this coordinate rather
       // than the previous heartbeat, so dropped packets do not corrupt state.
       locationAnchor = {...location};
       lastLocationAt = receivedAt;
+      locationUnavailable = false;
     } else if (status.locationDelta && locationAnchor) {
       location = applyConvoyLocationDelta(locationAnchor, status.locationDelta);
       lastLocationAt = receivedAt;
+      locationUnavailable = false;
     }
 
     // Optional telemetry fields are sparse by design. Preserve the most recent
@@ -176,6 +185,7 @@ export class BushMeshConvoyTracker {
         location ??
         (existing?.status.location ? {...existing.status.location} : undefined),
       locationDelta: undefined,
+      locationUnavailable: locationUnavailable || undefined,
       speedKph: status.speedKph ?? existing?.status.speedKph,
       headingDegrees:
         status.headingDegrees ?? existing?.status.headingDegrees,
@@ -187,6 +197,7 @@ export class BushMeshConvoyTracker {
       status: mergedStatus,
       locationAnchor,
       lastLocationAt,
+      locationUnavailable,
       expectedIntervalMs: learnedHeartbeatInterval(existing, receivedAt),
       firstSeenAt: existing?.firstSeenAt ?? receivedAt,
       lastSeenAt: receivedAt,
@@ -227,6 +238,7 @@ export class BushMeshConvoyTracker {
         ? null
         : Math.max(0, now - member.lastLocationAt);
       const locationFresh =
+        !member.locationUnavailable &&
         member.status.location !== undefined &&
         locationAgeMs !== null &&
         locationAgeMs <= locationFreshThresholdMs(member);
@@ -301,6 +313,7 @@ export class BushMeshConvoyTracker {
             ? {...member.status.location}
             : undefined,
           locationDelta: undefined,
+          locationUnavailable: member.locationUnavailable || undefined,
         },
         firstSeenAt: member.firstSeenAt,
         lastSeenAt: member.lastSeenAt,
