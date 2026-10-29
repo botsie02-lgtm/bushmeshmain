@@ -4,6 +4,7 @@ import {
   decodeVarUint,
   encodeVarUint,
 } from './codec';
+import {BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION} from './versioning';
 
 export enum BushMeshCapability {
   DictionaryText = 1 << 0,
@@ -70,13 +71,13 @@ export function encodeNodeHello(hello: BushMeshNodeHello): number[] {
   assertIntegerInRange(
     hello.protocolMinVersion,
     0,
-    15,
+    BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION,
     'Minimum protocol version',
   );
   assertIntegerInRange(
     hello.protocolMaxVersion,
     hello.protocolMinVersion,
-    15,
+    BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION,
     'Maximum protocol version',
   );
 
@@ -116,6 +117,16 @@ export function decodeNodeHello(bytes: number[]): BushMeshNodeHello {
 
   const versionByte = bytes[0];
   const roleFlags = bytes[1];
+  const protocolMinVersion = versionByte >> 4;
+  const protocolMaxVersion = versionByte & 0x0f;
+  if (
+    protocolMinVersion > BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION ||
+    protocolMaxVersion > BUSHMESH_MAX_ENVELOPE_PROTOCOL_VERSION ||
+    protocolMinVersion > protocolMaxVersion
+  ) {
+    throw new Error('Node hello contains an unsupported protocol version range.');
+  }
+
   const nodeId = decodeVarUint(bytes, 2);
   const capabilities = decodeVarUint(bytes, nodeId.nextOffset);
   const hasBattery = (roleFlags & 0x01) !== 0;
@@ -148,8 +159,8 @@ export function decodeNodeHello(bytes: number[]): BushMeshNodeHello {
     nodeId: nodeId.value,
     capabilities: capabilities.value,
     role: (roleFlags >> 1) & 0x0f,
-    protocolMinVersion: versionByte >> 4,
-    protocolMaxVersion: versionByte & 0x0f,
+    protocolMinVersion,
+    protocolMaxVersion,
   };
 
   if (batteryPercent !== undefined) {
