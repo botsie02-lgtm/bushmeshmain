@@ -32,12 +32,20 @@ export function bytesToBushMeshHex(bytes: number[]): string {
   return bytes.map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 }
 
+function humanizePacketName(name: string): string {
+  return name
+    .split('-')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 export function inspectBushMeshPacket(bytes: number[]): BushMeshPacketInspection {
   const decoded = decodeBushMeshWire(bytes);
   const envelope = decoded.envelope;
   const packetDefinition = getBushMeshPacketDefinition(envelope.type);
-  const packetTypeName =
-    packetDefinition?.name ?? `Unknown(${envelope.type})`;
+  const packetTypeName = packetDefinition
+    ? humanizePacketName(packetDefinition.name)
+    : `Unknown(${envelope.type})`;
   const compressionName =
     BushMeshCompressionProfile[envelope.compression as BushMeshCompressionProfile] ??
     `Unknown(${envelope.compression})`;
