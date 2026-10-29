@@ -1,3 +1,4 @@
+export * from './acknowledgement';
 export * from './airtime';
 export * from './capabilityPolicy';
 export * from './codec';
