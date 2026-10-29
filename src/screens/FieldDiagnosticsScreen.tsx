@@ -1,19 +1,12 @@
 import React, {useMemo, useState} from 'react';
 import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
-import {getConvoyFreshness} from '../convoy/convoy';
 import {assessFieldDiagnostics} from '../diagnostics/diagnosticHealth';
-import {
-  createFieldDiagnosticsReport,
-  serializeFieldDiagnosticsReport,
-} from '../diagnostics/fieldDiagnostics';
+import {serializeFieldDiagnosticsReport} from '../diagnostics/fieldDiagnostics';
+import {prepareFieldSupportExport} from '../diagnostics/supportExportCoordinator';
+import {useFieldDiagnosticsReport} from '../diagnostics/useFieldDiagnosticsReport';
 import {nativeFileExport} from '../native/NativeFileExport';
-import {useBushMesh} from '../state/BushMeshContext';
-import {useConvoy} from '../state/ConvoyContext';
-import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
 import {useFieldEventTrace} from '../state/FieldEventTraceContext';
-import {useOfflineMaps} from '../state/OfflineMapContext';
-import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
 
 function StatusRow({
@@ -33,11 +26,6 @@ function StatusRow({
   );
 }
 
-function reportFilename(capturedAt: string): string {
-  const safeTimestamp = capturedAt.replace(/[:.]/g, '-');
-  return `Bushmesh_Field_Report_${safeTimestamp}.json`;
-}
-
 function formatTraceTime(timestampMs: number): string {
   return new Date(timestampMs).toLocaleTimeString([], {
     hour: '2-digit',
@@ -47,134 +35,20 @@ function formatTraceTime(timestampMs: number): string {
 }
 
 export function FieldDiagnosticsScreen(): React.JSX.Element {
-  const {
-    connectionStatus,
-    channels,
-    activeChannelIndex,
-    channelMessages,
-    contacts,
-    deviceStatus,
-    contactPersistenceStatus,
-    messagePersistenceStatus,
-  } = useBushMesh();
-  const {vehicles, localPosition} = useConvoy();
-  const {incidents} = useConvoyRecovery();
   const {events: traceEvents, clearTrace} = useFieldEventTrace();
-  const {
-    snapshot: radio,
-    nativeRuntime,
-    persistenceStatus: outboxPersistenceStatus,
-  } = useRadioSession();
-  const {coverage, mapPersistenceStatus} = useOfflineMaps();
   const [capturedAtMs, setCapturedAtMs] = useState(Date.now());
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
-
-  const report = useMemo(() => {
-    let staleVehicleCount = 0;
-    let lostVehicleCount = 0;
-    vehicles.forEach(vehicle => {
-      const freshness = getConvoyFreshness(vehicle.receivedAtMs, capturedAtMs);
-      if (freshness === 'stale') {
-        staleVehicleCount += 1;
-      } else if (freshness === 'lost') {
-        lostVehicleCount += 1;
-      }
-    });
-
-    const activeRecoveryIncidentCount = incidents.filter(
-      incident => incident.status === 'active',
-    ).length;
-
-    return createFieldDiagnosticsReport({
-      capturedAtMs,
-      appConnectionStatus: connectionStatus,
-      radioTransportReady: radio.transportReady,
-      radioIdentityRef: radio.identityRef,
-      radioProfile: radio.radioProfile
-        ? {
-            frequencyMhz: radio.radioProfile.frequencyMhz,
-            spreadingFactor: radio.radioProfile.modem?.spreadingFactor ?? null,
-            bandwidthKhz: radio.radioProfile.modem?.bandwidthKhz ?? null,
-            codingRate: radio.radioProfile.modem?.codingRate ?? null,
-            txPowerDbm: radio.radioProfile.txPower,
-          }
-        : null,
-      radioRuntimeRequested: radio.runtimeRequested,
-      nativeRuntimeRunning: nativeRuntime.running,
-      nativeRuntimeOwnership: nativeRuntime.ownership,
-      queuedCount: radio.queuedCount,
-      inflightCount: radio.inflightCount,
-      acceptedCount: radio.acceptedCount,
-      failedCount: radio.failedCount,
-      cancelledCount: radio.cancelledCount,
-      activeChannelIndex,
-      channelCount: channels.length,
-      messageCount: channelMessages.length,
-      contactCount: contacts.length,
-      batteryMv: deviceStatus?.batteryMv ?? null,
-      storagePercent: deviceStatus?.storagePercent ?? null,
-      localPosition,
-      convoyVehicleCount: vehicles.length,
-      staleVehicleCount,
-      lostVehicleCount,
-      activeRecoveryIncidentCount,
-      recoveredIncidentCount: incidents.length - activeRecoveryIncidentCount,
-      readyMapPackCount: coverage.readyPackIds.length,
-      tripCoverageComplete: coverage.complete,
-      tripCoveredPointCount: coverage.coveredPointCount,
-      tripTotalPointCount: coverage.totalPointCount,
-      contactPersistenceStatus,
-      messagePersistenceStatus,
-      outboxPersistenceStatus,
-      mapPersistenceStatus,
-    });
-  }, [
-    capturedAtMs,
-    connectionStatus,
-    channels.length,
-    activeChannelIndex,
-    channelMessages.length,
-    contacts.length,
-    deviceStatus?.batteryMv,
-    deviceStatus?.storagePercent,
-    contactPersistenceStatus,
-    messagePersistenceStatus,
-    vehicles,
-    localPosition,
-    incidents,
-    radio,
-    nativeRuntime.running,
-    nativeRuntime.ownership,
-    outboxPersistenceStatus,
-    coverage.readyPackIds.length,
-    coverage.complete,
-    coverage.coveredPointCount,
-    coverage.totalPointCount,
-    mapPersistenceStatus,
-  ]);
-
+  const [lastSupportCode, setLastSupportCode] = useState<string | null>(null);
+  const report = useFieldDiagnosticsReport(capturedAtMs);
   const health = useMemo(() => assessFieldDiagnostics(report), [report]);
   const serialized = useMemo(() => serializeFieldDiagnosticsReport(report), [report]);
-  const supportBundle = useMemo(
-    () =>
-      `${JSON.stringify(
-        {
-          bundleVersion: 1,
-          report,
-          health,
-          eventTrace: traceEvents,
-        },
-        null,
-        2,
-      )}\n`,
-    [health, report, traceEvents],
-  );
   const exportSupported = nativeFileExport.isSupported();
 
   const captureNewSnapshot = () => {
     setCapturedAtMs(Date.now());
     setExportStatus(null);
+    setLastSupportCode(null);
   };
 
   const exportReport = async () => {
@@ -185,11 +59,18 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
     setExporting(true);
     setExportStatus(null);
     try {
+      const prepared = await prepareFieldSupportExport({
+        report,
+        eventTrace: traceEvents,
+      });
       const result = await nativeFileExport.saveJson(
-        reportFilename(report.capturedAt),
-        supportBundle,
+        prepared.filename,
+        prepared.serialized,
       );
-      setExportStatus(`Saved ${result.displayName} to ${result.location}.`);
+      setLastSupportCode(prepared.supportCode);
+      setExportStatus(
+        `Saved ${result.displayName} to ${result.location}. Support code ${prepared.supportCode}.`,
+      );
     } catch (error) {
       setExportStatus(
         error instanceof Error
@@ -226,10 +107,17 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
             }}
             disabled={!exportSupported || exporting}>
             <Text style={styles.exportText}>
-              {exporting ? 'EXPORTING…' : exportSupported ? 'EXPORT JSON' : 'EXPORT ANDROID ONLY'}
+              {exporting
+                ? 'EXPORTING…'
+                : exportSupported
+                  ? 'EXPORT SUPPORT JSON'
+                  : 'EXPORT ANDROID ONLY'}
             </Text>
           </TouchableOpacity>
         </View>
+        {lastSupportCode ? (
+          <Text style={styles.supportCode}>LAST EXPORT · {lastSupportCode}</Text>
+        ) : null}
         {exportStatus ? <Text style={styles.exportStatus}>{exportStatus}</Text> : null}
       </View>
 
@@ -306,7 +194,10 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Field state</Text>
-        <StatusRow label="Channels" value={`${report.data.channelCount} known · active ${report.data.activeChannelIndex ?? 'none'}`} />
+        <StatusRow
+          label="Channels"
+          value={`${report.data.channelCount} known · active ${report.data.activeChannelIndex ?? 'none'}`}
+        />
         <StatusRow label="Stored messages" value={String(report.data.messageCount)} />
         <StatusRow label="Contacts" value={String(report.data.contactCount)} />
         <StatusRow
@@ -426,7 +317,8 @@ const styles = StyleSheet.create({
   },
   exportButtonDisabled: {opacity: 0.45},
   exportText: {color: colors.background, fontSize: 8, fontWeight: '900'},
-  exportStatus: {color: colors.textSecondary, fontSize: 9, lineHeight: 13, marginTop: 8},
+  supportCode: {color: colors.accent, fontSize: 9, fontWeight: '900', marginTop: 9},
+  exportStatus: {color: colors.textSecondary, fontSize: 9, lineHeight: 13, marginTop: 6},
   healthCard: {
     borderRadius: 18,
     borderWidth: 1,
