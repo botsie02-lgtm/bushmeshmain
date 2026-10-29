@@ -6,6 +6,7 @@ import {
   NativeMeshCoreOwnershipSnapshot,
   nativeMeshCoreSessionCoordinator,
 } from '../meshcore/NativeMeshCoreSessionCoordinator';
+import {FieldDiagnosticsCaptureProvider} from '../state/FieldDiagnosticsCaptureContext';
 import {FieldEventTraceProvider} from '../state/FieldEventTraceContext';
 import {colors} from '../theme/colors';
 import {DeviceScreen} from './DeviceScreen';
@@ -40,79 +41,81 @@ export function DeviceHubScreen(): React.JSX.Element {
 
   return (
     <FieldEventTraceProvider>
-      <View style={styles.screen}>
-        <View style={styles.modeBar}>
-          <TouchableOpacity
-            style={[
-              styles.modeButton,
-              mode === 'background' && styles.modeButtonActive,
-            ]}
-            onPress={() => setMode('background')}>
-            <Text
+      <FieldDiagnosticsCaptureProvider>
+        <View style={styles.screen}>
+          <View style={styles.modeBar}>
+            <TouchableOpacity
               style={[
-                styles.modeText,
-                mode === 'background' && styles.modeTextActive,
-              ]}>
-              Background Radio
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.modeButton,
-              mode === 'report' && styles.modeButtonActive,
-            ]}
-            onPress={() => setMode('report')}>
-            <Text
+                styles.modeButton,
+                mode === 'background' && styles.modeButtonActive,
+              ]}
+              onPress={() => setMode('background')}>
+              <Text
+                style={[
+                  styles.modeText,
+                  mode === 'background' && styles.modeTextActive,
+                ]}>
+                Background Radio
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
               style={[
-                styles.modeText,
-                mode === 'report' && styles.modeTextActive,
-              ]}>
-              Field Report
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.modeButton,
-              mode === 'legacy' && styles.modeButtonActive,
-              nativeOwnsRadio && styles.modeButtonDisabled,
-            ]}
-            onPress={selectLegacy}
-            disabled={nativeOwnsRadio}>
-            <Text
+                styles.modeButton,
+                mode === 'report' && styles.modeButtonActive,
+              ]}
+              onPress={() => setMode('report')}>
+              <Text
+                style={[
+                  styles.modeText,
+                  mode === 'report' && styles.modeTextActive,
+                ]}>
+                Field Report
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
               style={[
-                styles.modeText,
-                mode === 'legacy' && styles.modeTextActive,
-                nativeOwnsRadio && styles.modeTextDisabled,
-              ]}>
-              BLE Diagnostics
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {nativeOwnsRadio && mode === 'background' ? (
-          <View style={styles.ownershipNotice}>
-            <Text style={styles.ownershipText}>
-              Android radio ownership is {ownership.state}. Stop background radio
-              before opening legacy BLE diagnostics.
-            </Text>
+                styles.modeButton,
+                mode === 'legacy' && styles.modeButtonActive,
+                nativeOwnsRadio && styles.modeButtonDisabled,
+              ]}
+              onPress={selectLegacy}
+              disabled={nativeOwnsRadio}>
+              <Text
+                style={[
+                  styles.modeText,
+                  mode === 'legacy' && styles.modeTextActive,
+                  nativeOwnsRadio && styles.modeTextDisabled,
+                ]}>
+                BLE Diagnostics
+              </Text>
+            </TouchableOpacity>
           </View>
-        ) : null}
 
-        <View style={styles.content}>
-          {mode === 'background' ? (
-            <NativeRadioSetupScreen />
-          ) : mode === 'report' ? (
-            <View style={styles.reportMode}>
-              <FieldSupportSnapshot />
-              <View style={styles.reportDetails}>
-                <FieldDiagnosticsScreen />
-              </View>
+          {nativeOwnsRadio && mode === 'background' ? (
+            <View style={styles.ownershipNotice}>
+              <Text style={styles.ownershipText}>
+                Android radio ownership is {ownership.state}. Stop background radio
+                before opening legacy BLE diagnostics.
+              </Text>
             </View>
-          ) : (
-            <DeviceScreen />
-          )}
+          ) : null}
+
+          <View style={styles.content}>
+            {mode === 'background' ? (
+              <NativeRadioSetupScreen />
+            ) : mode === 'report' ? (
+              <View style={styles.reportMode}>
+                <FieldSupportSnapshot />
+                <View style={styles.reportDetails}>
+                  <FieldDiagnosticsScreen />
+                </View>
+              </View>
+            ) : (
+              <DeviceScreen />
+            )}
+          </View>
         </View>
-      </View>
+      </FieldDiagnosticsCaptureProvider>
     </FieldEventTraceProvider>
   );
 }
