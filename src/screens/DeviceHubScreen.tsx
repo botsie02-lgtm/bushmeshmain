@@ -2,6 +2,7 @@ import React, {useEffect, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {FieldSupportSnapshot} from '../components/FieldSupportSnapshot';
+import {FieldTriageCard} from '../components/FieldTriageCard';
 import {
   NativeMeshCoreOwnershipSnapshot,
   nativeMeshCoreSessionCoordinator,
@@ -104,6 +105,7 @@ export function DeviceHubScreen(): React.JSX.Element {
           ) : mode === 'report' ? (
             <View style={styles.reportMode}>
               <FieldSupportSnapshot />
+              <FieldTriageCard />
               <View style={styles.reportDetails}>
                 <FieldDiagnosticsScreen />
               </View>
