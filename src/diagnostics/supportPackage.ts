@@ -10,6 +10,7 @@ import {
   createFieldSupportBundle,
 } from './supportBundle';
 import {assertFieldSupportBundlePrivacy} from './supportBundlePrivacy';
+import {FieldTriagePlan, buildFieldTriagePlan} from './triagePlan';
 
 export const BUSHMESH_SUPPORT_PACKAGE_VERSION = 1;
 
@@ -20,6 +21,7 @@ export type BushMeshSupportPackage = {
   runtime: SupportRuntimeMetadata | null;
   bundle: BushMeshFieldSupportBundle;
   checklist: FieldChecklist;
+  triage: FieldTriagePlan;
   comparison: DiagnosticSnapshotDiff | null;
 };
 
@@ -35,6 +37,7 @@ export function createBushMeshSupportPackage(input: {
   const generatedAtMs = input.generatedAtMs ?? Date.now();
   const health = input.health ?? assessFieldDiagnostics(input.report);
   const checklist = buildFieldChecklist(input.report, health);
+  const triage = buildFieldTriagePlan(checklist);
   const bundle = createFieldSupportBundle({
     report: input.report,
     health,
@@ -52,6 +55,7 @@ export function createBushMeshSupportPackage(input: {
     runtime: input.runtime ? {...input.runtime} : null,
     bundle,
     checklist,
+    triage,
     comparison: input.comparison ?? null,
   };
 }
