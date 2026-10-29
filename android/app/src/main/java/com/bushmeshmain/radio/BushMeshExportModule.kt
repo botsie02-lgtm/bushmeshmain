@@ -1,7 +1,6 @@
 package com.bushmeshmain.radio
 
 import android.content.ContentValues
-import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -20,16 +19,50 @@ class BushMeshExportModule(
 
   companion object {
     private const val GPX_MIME = "application/gpx+xml"
+    private const val JSON_MIME = "application/json"
   }
 
   override fun getName(): String = "BushMeshExport"
 
   @ReactMethod
   fun saveGpx(displayName: String, content: String, promise: Promise) {
+    saveTextExport(
+      displayName = displayName,
+      content = content,
+      extension = ".gpx",
+      mimeType = GPX_MIME,
+      fallbackName = "Bushmesh_Track.gpx",
+      errorCode = "BUSHMESH_GPX_EXPORT_FAILED",
+      promise = promise,
+    )
+  }
+
+  @ReactMethod
+  fun saveJson(displayName: String, content: String, promise: Promise) {
+    saveTextExport(
+      displayName = displayName,
+      content = content,
+      extension = ".json",
+      mimeType = JSON_MIME,
+      fallbackName = "Bushmesh_Field_Report.json",
+      errorCode = "BUSHMESH_JSON_EXPORT_FAILED",
+      promise = promise,
+    )
+  }
+
+  private fun saveTextExport(
+    displayName: String,
+    content: String,
+    extension: String,
+    mimeType: String,
+    fallbackName: String,
+    errorCode: String,
+    promise: Promise,
+  ) {
     try {
-      val safeName = sanitizeFilename(displayName)
+      val safeName = sanitizeFilename(displayName, extension, fallbackName)
       val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        saveViaMediaStore(safeName, content)
+        saveViaMediaStore(safeName, content, mimeType)
       } else {
         saveToAppExternalDocuments(safeName, content)
       }
@@ -41,18 +74,19 @@ class BushMeshExportModule(
       }
       promise.resolve(response)
     } catch (error: Exception) {
-      promise.reject("BUSHMESH_GPX_EXPORT_FAILED", error.message, error)
+      promise.reject(errorCode, error.message, error)
     }
   }
 
   private fun saveViaMediaStore(
     displayName: String,
     content: String,
+    mimeType: String,
   ): Pair<Uri, String> {
     val resolver = reactContext.contentResolver
     val values = ContentValues().apply {
       put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-      put(MediaStore.MediaColumns.MIME_TYPE, GPX_MIME)
+      put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
       put(
         MediaStore.MediaColumns.RELATIVE_PATH,
         Environment.DIRECTORY_DOWNLOADS + "/Bushmesh",
@@ -61,13 +95,13 @@ class BushMeshExportModule(
     }
 
     val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-      ?: throw IllegalStateException("Android could not create the GPX export file.")
+      ?: throw IllegalStateException("Android could not create the Bushmesh export file.")
 
     try {
       resolver.openOutputStream(uri, "w")?.use { stream ->
         stream.write(content.toByteArray(StandardCharsets.UTF_8))
         stream.flush()
-      } ?: throw IllegalStateException("Android could not open the GPX export file.")
+      } ?: throw IllegalStateException("Android could not open the Bushmesh export file.")
 
       val published = ContentValues().apply {
         put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -92,13 +126,17 @@ class BushMeshExportModule(
     return Pair(Uri.fromFile(file), file.parent ?: "Bushmesh")
   }
 
-  private fun sanitizeFilename(value: String): String {
+  private fun sanitizeFilename(
+    value: String,
+    extension: String,
+    fallbackName: String,
+  ): String {
     val base = value
       .trim()
       .replace(Regex("[^A-Za-z0-9._-]"), "_")
       .take(120)
-      .ifBlank { "Bushmesh_Track.gpx" }
+      .ifBlank { fallbackName }
 
-    return if (base.lowercase().endsWith(".gpx")) base else "$base.gpx"
+    return if (base.lowercase().endsWith(extension)) base else "$base$extension"
   }
 }
