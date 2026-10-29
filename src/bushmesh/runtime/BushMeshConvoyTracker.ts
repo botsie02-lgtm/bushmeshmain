@@ -13,6 +13,8 @@ export type BushMeshConvoyMember = {
   lastSeenAt: number;
   health: BushMeshConvoyMemberHealth;
   gapFromPreviousMetres: number | null;
+  locationAgeMs: number | null;
+  locationFresh: boolean;
 };
 
 export type BushMeshConvoyIssue = {
@@ -42,6 +44,7 @@ export type BushMeshConvoySnapshot = {
 type StoredMember = {
   status: BushMeshConvoyStatus;
   locationAnchor?: CompactLocation;
+  lastLocationAt?: number;
   expectedIntervalMs?: number;
   firstSeenAt: number;
   lastSeenAt: number;
@@ -51,6 +54,8 @@ const EARTH_RADIUS_METRES = 6_371_000;
 const MIN_INTERVAL_SAMPLE_MS = 1000;
 const MAX_INTERVAL_SAMPLE_MS = 2 * 60 * 1000;
 const INTERVAL_EWMA_OLD_WEIGHT = 0.7;
+const MIN_LOCATION_FRESH_MS = 90_000;
+const MAX_LOCATION_FRESH_MS = 5 * 60 * 1000;
 
 function radians(value: number): number {
   return (value * Math.PI) / 180;
@@ -102,6 +107,17 @@ function learnedHeartbeatInterval(
   );
 }
 
+function locationFreshThresholdMs(member: StoredMember): number {
+  if (member.expectedIntervalMs === undefined) {
+    return MIN_LOCATION_FRESH_MS;
+  }
+
+  return Math.min(
+    MAX_LOCATION_FRESH_MS,
+    Math.max(MIN_LOCATION_FRESH_MS, Math.round(member.expectedIntervalMs * 3)),
+  );
+}
+
 export class BushMeshConvoyTracker {
   private readonly membersByConvoy = new Map<number, Map<number, StoredMember>>();
 
@@ -137,14 +153,17 @@ export class BushMeshConvoyTracker {
       ? {...existing.locationAnchor}
       : undefined;
     let location = status.location ? {...status.location} : undefined;
+    let lastLocationAt = existing?.lastLocationAt;
 
     if (location) {
       // Absolute coordinates are periodic self-healing anchors. All compact
       // deltas until the next anchor are measured from this coordinate rather
       // than the previous heartbeat, so dropped packets do not corrupt state.
       locationAnchor = {...location};
+      lastLocationAt = receivedAt;
     } else if (status.locationDelta && locationAnchor) {
       location = applyConvoyLocationDelta(locationAnchor, status.locationDelta);
+      lastLocationAt = receivedAt;
     }
 
     // Optional telemetry fields are sparse by design. Preserve the most recent
@@ -167,6 +186,7 @@ export class BushMeshConvoyTracker {
     convoy.set(status.nodeId, {
       status: mergedStatus,
       locationAnchor,
+      lastLocationAt,
       expectedIntervalMs: learnedHeartbeatInterval(existing, receivedAt),
       firstSeenAt: existing?.firstSeenAt ?? receivedAt,
       lastSeenAt: receivedAt,
@@ -203,10 +223,18 @@ export class BushMeshConvoyTracker {
           : ageMs >= staleThresholdMs
             ? 'stale'
             : 'active';
+      const locationAgeMs = member.lastLocationAt === undefined
+        ? null
+        : Math.max(0, now - member.lastLocationAt);
+      const locationFresh =
+        member.status.location !== undefined &&
+        locationAgeMs !== null &&
+        locationAgeMs <= locationFreshThresholdMs(member);
 
       let gapFromPreviousMetres: number | null = null;
       if (
         health !== 'lost' &&
+        locationFresh &&
         member.status.location &&
         previousWithLocation?.status.location
       ) {
@@ -228,7 +256,7 @@ export class BushMeshConvoyTracker {
         }
       }
 
-      if (health !== 'lost' && member.status.location) {
+      if (health !== 'lost' && locationFresh && member.status.location) {
         previousWithLocation = member;
       }
 
@@ -278,6 +306,8 @@ export class BushMeshConvoyTracker {
         lastSeenAt: member.lastSeenAt,
         health,
         gapFromPreviousMetres,
+        locationAgeMs,
+        locationFresh,
       });
     }
 
