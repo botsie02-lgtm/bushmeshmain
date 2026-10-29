@@ -59,6 +59,7 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
   const convoyState = useBushMeshConvoyState();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sendingRef = useRef(false);
+  const refreshingLocationRef = useRef(false);
   const restoredRef = useRef(false);
 
   useEffect(() => {
@@ -102,12 +103,17 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
     };
 
     const refreshLocalPosition = async () => {
-      if (!isBushMeshNativeLocationAvailable()) {
+      if (
+        refreshingLocationRef.current ||
+        !isBushMeshNativeLocationAvailable()
+      ) {
         return;
       }
 
+      refreshingLocationRef.current = true;
       try {
         const state = getBushMeshConvoyState();
+        const baseIntervalMs = recommendedBushMeshConvoyHeartbeatMs();
         const position = await getBushMeshNativePosition({
           // Reuse a reasonably fresh fix so hazard cadence does not force GPS
           // hardware to produce a brand-new location every three seconds.
@@ -115,7 +121,12 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
             5000,
             Math.min(30_000, state.config.heartbeatIntervalMs),
           ),
-          timeoutMs: 5000,
+          // Automatic GPS refresh is opportunistic. It must never occupy more
+          // than roughly half of an urgent heartbeat interval.
+          timeoutMs: Math.max(
+            1000,
+            Math.min(5000, Math.round(baseIntervalMs * 0.5)),
+          ),
         });
 
         if (cancelled) {
@@ -133,6 +144,8 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
         // or timeout must not prevent the radio heartbeat from being sent. The
         // convoy hub independently expires old fixes so a stale coordinate is
         // never rebroadcast forever after GPS disappears.
+      } finally {
+        refreshingLocationRef.current = false;
       }
     };
 
@@ -156,13 +169,13 @@ export function BushMeshConvoyLifecycle(): React.JSX.Element | null {
         return;
       }
 
+      // Start GPS work for the next heartbeat, but never block this heartbeat on
+      // permission prompts, a tunnel/no-fix state, or a slow location provider.
+      void refreshLocalPosition();
+
       if (!sendingRef.current) {
         sendingRef.current = true;
         try {
-          await refreshLocalPosition();
-          if (cancelled) {
-            return;
-          }
           const status = nextBushMeshConvoyStatus(localBushMeshNodeId);
           await sendActiveBushMeshConvoyStatus(channelIndex, status);
         } catch {
