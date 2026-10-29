@@ -1,19 +1,38 @@
-import React, {useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {assessFieldDiagnostics} from '../diagnostics/diagnosticHealth';
+import {fieldDiagnosticSession} from '../diagnostics/diagnosticSession';
 import {buildFieldChecklist} from '../diagnostics/fieldChecklist';
+import {DiagnosticSnapshotDiff} from '../diagnostics/snapshotDiff';
 import {fieldReportSupportCode} from '../diagnostics/supportCode';
 import {useFieldDiagnosticsReport} from '../diagnostics/useFieldDiagnosticsReport';
 import {colors} from '../theme/colors';
 
 export function FieldSupportSnapshot(): React.JSX.Element {
   const [capturedAtMs, setCapturedAtMs] = useState(Date.now());
+  const [comparison, setComparison] = useState<DiagnosticSnapshotDiff | null>(null);
+  const [captureCount, setCaptureCount] = useState(0);
   const report = useFieldDiagnosticsReport(capturedAtMs);
+  const reportRef = useRef(report);
+  reportRef.current = report;
+
   const health = useMemo(() => assessFieldDiagnostics(report), [report]);
   const checklist = useMemo(() => buildFieldChecklist(report, health), [health, report]);
   const supportCode = useMemo(() => fieldReportSupportCode(report), [report]);
   const blocked = checklist.items.filter(item => item.state === 'blocked').slice(0, 3);
+
+  useEffect(() => {
+    const snapshot = fieldDiagnosticSession.capture(reportRef.current);
+    setComparison(snapshot.diff);
+    setCaptureCount(snapshot.captureCount);
+  }, [capturedAtMs]);
+
+  const captureNow = () => {
+    setCapturedAtMs(Date.now());
+  };
+
+  const topChanges = comparison?.changes.slice(0, 3) ?? [];
 
   return (
     <View style={styles.card}>
@@ -21,11 +40,10 @@ export function FieldSupportSnapshot(): React.JSX.Element {
         <View style={styles.headerCopy}>
           <Text style={styles.eyebrow}>SUPPORT SNAPSHOT</Text>
           <Text style={styles.code}>{supportCode}</Text>
+          <Text style={styles.captureMeta}>CAPTURE {captureCount}</Text>
         </View>
-        <TouchableOpacity
-          style={styles.refreshButton}
-          onPress={() => setCapturedAtMs(Date.now())}>
-          <Text style={styles.refreshText}>REFRESH</Text>
+        <TouchableOpacity style={styles.refreshButton} onPress={captureNow}>
+          <Text style={styles.refreshText}>CAPTURE</Text>
         </TouchableOpacity>
       </View>
 
@@ -45,6 +63,37 @@ export function FieldSupportSnapshot(): React.JSX.Element {
       </View>
 
       <Text style={styles.summary}>{health.summary}</Text>
+
+      {topChanges.length > 0 ? (
+        <View style={styles.changeCard}>
+          <Text style={styles.changeTitle}>
+            SINCE PREVIOUS CAPTURE · {comparison?.actionCount ?? 0} action ·{' '}
+            {comparison?.watchCount ?? 0} watch
+          </Text>
+          {topChanges.map(change => (
+            <View key={change.code} style={styles.changeRow}>
+              <View
+                style={[
+                  styles.changeDot,
+                  change.severity === 'action'
+                    ? styles.changeDotAction
+                    : change.severity === 'watch'
+                      ? styles.changeDotWatch
+                      : styles.changeDotInfo,
+                ]}
+              />
+              <View style={styles.changeCopy}>
+                <Text style={styles.changeName}>{change.title}</Text>
+                <Text style={styles.changeDetail}>{change.detail}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : captureCount > 1 ? (
+        <Text style={styles.noChangeText}>
+          No tracked field-state changes since the previous explicit capture.
+        </Text>
+      ) : null}
 
       {blocked.length > 0 ? (
         <View style={styles.blockedList}>
@@ -88,6 +137,7 @@ const styles = StyleSheet.create({
   headerCopy: {flex: 1, minWidth: 0},
   eyebrow: {color: colors.accent, fontSize: 8, fontWeight: '900', letterSpacing: 1},
   code: {color: colors.textPrimary, fontSize: 18, fontWeight: '900', marginTop: 2},
+  captureMeta: {color: colors.textMuted, fontSize: 7, fontWeight: '900', marginTop: 2},
   refreshButton: {
     borderRadius: 999,
     borderWidth: 1,
@@ -110,6 +160,24 @@ const styles = StyleSheet.create({
   blockedText: {color: colors.danger},
   countLabel: {color: colors.textMuted, fontSize: 7, fontWeight: '900', marginTop: 1},
   summary: {color: colors.textSecondary, fontSize: 9, lineHeight: 13, marginTop: 10},
+  changeCard: {
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSoft,
+    padding: 9,
+  },
+  changeTitle: {color: colors.textPrimary, fontSize: 8, fontWeight: '900'},
+  changeRow: {flexDirection: 'row', gap: 7, marginTop: 7},
+  changeDot: {width: 7, height: 7, borderRadius: 4, marginTop: 3},
+  changeDotAction: {backgroundColor: colors.danger},
+  changeDotWatch: {backgroundColor: colors.warning},
+  changeDotInfo: {backgroundColor: colors.accent},
+  changeCopy: {flex: 1, minWidth: 0},
+  changeName: {color: colors.textPrimary, fontSize: 8, fontWeight: '900'},
+  changeDetail: {color: colors.textSecondary, fontSize: 8, lineHeight: 12, marginTop: 1},
+  noChangeText: {color: colors.success, fontSize: 8, fontWeight: '800', marginTop: 10},
   blockedList: {gap: 8, marginTop: 10},
   blockedRow: {flexDirection: 'row', gap: 8},
   blockedDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.danger, marginTop: 4},
