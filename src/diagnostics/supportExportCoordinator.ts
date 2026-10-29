@@ -25,7 +25,7 @@ export async function prepareFieldSupportExport(input: {
   report: BushMeshFieldDiagnosticsReport;
   eventTrace: SupportBundleTraceEvent[];
 }): Promise<PreparedFieldSupportExport> {
-  const session = fieldDiagnosticSession.capture(input.report);
+  const session = fieldDiagnosticSession.getSnapshot();
   const runtime = await loadSupportRuntimeMetadata();
   const supportPackage = createBushMeshSupportPackage({
     report: input.report,
