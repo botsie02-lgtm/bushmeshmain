@@ -116,6 +116,7 @@ export async function getBushMeshNativePosition(options?: {
     optionalFinite(result.accuracyMetres) ?? 1000,
   );
   const timestampMs = optionalFinite(result.timestampMs) ?? Date.now();
+  const speed = optionalFinite(result.speedKph);
   const heading = optionalFinite(result.headingDegrees);
   const position: BushMeshNativePosition = {
     location: {
@@ -126,7 +127,10 @@ export async function getBushMeshNativePosition(options?: {
     accuracyMetres,
     timestampMs,
     altitudeMetres: optionalFinite(result.altitudeMetres),
-    speedKph: optionalFinite(result.speedKph),
+    speedKph:
+      speed !== undefined && speed >= 0 && speed <= 6553.5
+        ? speed
+        : undefined,
     headingDegrees:
       heading !== undefined && heading >= 0 && heading < 360
         ? heading
