@@ -1,4 +1,8 @@
 import {DiagnosticHealthAssessment, assessFieldDiagnostics} from './diagnosticHealth';
+import {
+  DiagnosticEventCorrelation,
+  correlateFieldEvents,
+} from './eventCorrelation';
 import {FieldChecklist, buildFieldChecklist} from './fieldChecklist';
 import {BushMeshFieldDiagnosticsReport} from './fieldDiagnostics';
 import {SupportRuntimeMetadata} from './runtimeMetadata';
@@ -22,6 +26,7 @@ export type BushMeshSupportPackage = {
   bundle: BushMeshFieldSupportBundle;
   checklist: FieldChecklist;
   triage: FieldTriagePlan;
+  correlations: DiagnosticEventCorrelation[];
   comparison: DiagnosticSnapshotDiff | null;
 };
 
@@ -38,6 +43,7 @@ export function createBushMeshSupportPackage(input: {
   const health = input.health ?? assessFieldDiagnostics(input.report);
   const checklist = buildFieldChecklist(input.report, health);
   const triage = buildFieldTriagePlan(checklist);
+  const correlations = correlateFieldEvents(input.eventTrace);
   const bundle = createFieldSupportBundle({
     report: input.report,
     health,
@@ -56,6 +62,7 @@ export function createBushMeshSupportPackage(input: {
     bundle,
     checklist,
     triage,
+    correlations,
     comparison: input.comparison ?? null,
   };
 }
