@@ -1,11 +1,12 @@
 import React, {useMemo, useState} from 'react';
 import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
+import {getConvoyFreshness} from '../convoy/convoy';
+import {assessFieldDiagnostics} from '../diagnostics/diagnosticHealth';
 import {
   createFieldDiagnosticsReport,
   serializeFieldDiagnosticsReport,
 } from '../diagnostics/fieldDiagnostics';
-import {getConvoyFreshness} from '../convoy/convoy';
 import {nativeFileExport} from '../native/NativeFileExport';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
@@ -143,6 +144,7 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
     mapPersistenceStatus,
   ]);
 
+  const health = useMemo(() => assessFieldDiagnostics(report), [report]);
   const serialized = useMemo(() => serializeFieldDiagnosticsReport(report), [report]);
   const exportSupported = nativeFileExport.isSupported();
 
@@ -205,6 +207,49 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
           </TouchableOpacity>
         </View>
         {exportStatus ? <Text style={styles.exportStatus}>{exportStatus}</Text> : null}
+      </View>
+
+      <View
+        style={[
+          styles.healthCard,
+          health.severity === 'action'
+            ? styles.healthAction
+            : health.severity === 'watch'
+              ? styles.healthWatch
+              : styles.healthOk,
+        ]}>
+        <Text
+          style={[
+            styles.healthEyebrow,
+            health.severity === 'action'
+              ? styles.healthActionText
+              : health.severity === 'watch'
+                ? styles.healthWatchText
+                : styles.healthOkText,
+          ]}>
+          {health.severity === 'action'
+            ? 'ACTION NEEDED'
+            : health.severity === 'watch'
+              ? 'WATCH'
+              : 'FIELD HEALTH OK'}
+        </Text>
+        <Text style={styles.healthSummary}>{health.summary}</Text>
+        {health.issues.map(issue => (
+          <View key={issue.code} style={styles.issueRow}>
+            <View
+              style={[
+                styles.issueDot,
+                issue.severity === 'action'
+                  ? styles.issueDotAction
+                  : styles.issueDotWatch,
+              ]}
+            />
+            <View style={styles.issueCopy}>
+              <Text style={styles.issueTitle}>{issue.title}</Text>
+              <Text style={styles.issueDetail}>{issue.detail}</Text>
+            </View>
+          </View>
+        ))}
       </View>
 
       <View style={styles.card}>
@@ -318,6 +363,27 @@ const styles = StyleSheet.create({
   exportButtonDisabled: {opacity: 0.45},
   exportText: {color: colors.background, fontSize: 8, fontWeight: '900'},
   exportStatus: {color: colors.textSecondary, fontSize: 9, lineHeight: 13, marginTop: 8},
+  healthCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 14,
+    backgroundColor: colors.surface,
+  },
+  healthAction: {borderColor: colors.danger},
+  healthWatch: {borderColor: colors.warning},
+  healthOk: {borderColor: colors.success},
+  healthEyebrow: {fontSize: 9, fontWeight: '900', letterSpacing: 1},
+  healthActionText: {color: colors.danger},
+  healthWatchText: {color: colors.warning},
+  healthOkText: {color: colors.success},
+  healthSummary: {color: colors.textPrimary, fontSize: 12, fontWeight: '800', lineHeight: 17, marginTop: 4},
+  issueRow: {flexDirection: 'row', gap: 8, marginTop: 10},
+  issueDot: {width: 7, height: 7, borderRadius: 4, marginTop: 4},
+  issueDotAction: {backgroundColor: colors.danger},
+  issueDotWatch: {backgroundColor: colors.warning},
+  issueCopy: {flex: 1, minWidth: 0},
+  issueTitle: {color: colors.textPrimary, fontSize: 10, fontWeight: '900'},
+  issueDetail: {color: colors.textSecondary, fontSize: 9, lineHeight: 13, marginTop: 2},
   card: {
     borderRadius: 18,
     borderWidth: 1,
