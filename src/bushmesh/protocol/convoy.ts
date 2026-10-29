@@ -29,6 +29,8 @@ export type BushMeshConvoyStatus = {
   role: BushMeshConvoyRole | number;
   location?: CompactLocation;
   locationDelta?: LocationDelta;
+  /** Explicitly invalidates a previously known location until a new absolute fix arrives. */
+  locationUnavailable?: boolean;
   speedKph?: number;
   headingDegrees?: number;
   batteryPercent?: number;
@@ -43,6 +45,7 @@ const FLAG_BATTERY = 1 << 3;
 const FLAG_STOPPED = 1 << 4;
 const FLAG_HAZARD = 1 << 5;
 const FLAG_LOCATION_DELTA = 1 << 6;
+const FLAG_LOCATION_UNAVAILABLE = 1 << 7;
 
 const EARTH_RADIUS_METRES = 6_371_000;
 const METRES_PER_DEGREE_LATITUDE = (Math.PI * EARTH_RADIUS_METRES) / 180;
@@ -129,6 +132,11 @@ export function encodeConvoyStatus(status: BushMeshConvoyStatus): number[] {
   if (status.location && status.locationDelta) {
     throw new Error('Convoy status cannot contain both absolute and delta location.');
   }
+  if (status.locationUnavailable && (status.location || status.locationDelta)) {
+    throw new Error(
+      'Convoy status cannot mark location unavailable while carrying location data.',
+    );
+  }
 
   let flags = 0;
   const optional: number[] = [];
@@ -146,6 +154,8 @@ export function encodeConvoyStatus(status: BushMeshConvoyStatus): number[] {
       ...encodeSignedVarInt(status.locationDelta.northMetres),
       ...encodeSignedVarInt(status.locationDelta.eastMetres),
     );
+  } else if (status.locationUnavailable) {
+    flags |= FLAG_LOCATION_UNAVAILABLE;
   }
 
   if (status.speedKph !== undefined) {
@@ -212,6 +222,12 @@ export function decodeConvoyStatus(bytes: number[]): BushMeshConvoyStatus {
   if ((flags & FLAG_LOCATION) !== 0 && (flags & FLAG_LOCATION_DELTA) !== 0) {
     throw new Error('Convoy status contains both absolute and delta location.');
   }
+  if (
+    (flags & FLAG_LOCATION_UNAVAILABLE) !== 0 &&
+    ((flags & FLAG_LOCATION) !== 0 || (flags & FLAG_LOCATION_DELTA) !== 0)
+  ) {
+    throw new Error('Convoy status marks location unavailable while carrying location data.');
+  }
   cursor += 2;
 
   let location: CompactLocation | undefined;
@@ -271,7 +287,7 @@ export function decodeConvoyStatus(bytes: number[]): BushMeshConvoyStatus {
     throw new Error('Unexpected bytes after convoy status.');
   }
 
-  return {
+  const status: BushMeshConvoyStatus = {
     convoyId: convoyId.value,
     nodeId: nodeId.value,
     sequence: sequence.value,
@@ -285,4 +301,10 @@ export function decodeConvoyStatus(bytes: number[]): BushMeshConvoyStatus {
     stopped: (flags & FLAG_STOPPED) !== 0,
     hazard: (flags & FLAG_HAZARD) !== 0,
   };
+
+  if ((flags & FLAG_LOCATION_UNAVAILABLE) !== 0) {
+    status.locationUnavailable = true;
+  }
+
+  return status;
 }
