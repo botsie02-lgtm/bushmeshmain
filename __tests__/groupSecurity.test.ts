@@ -65,7 +65,7 @@ describe('group/convoy key handling', () => {
     const {aGroups, bGroups, group} = await setupGroup();
     const envelope = await aGroups.encrypt(group.groupId, utf8('convoy update'), context);
     const plaintext = await bGroups.decrypt(envelope, context);
-    expect(new TextDecoder().decode(plaintext)).toBe('convoy update');
+    expect(plaintext).toEqual(utf8('convoy update'));
   });
 
   test('rejects group replay across manager recovery', async () => {
