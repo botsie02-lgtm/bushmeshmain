@@ -1,24 +1,22 @@
 import {
-  BUSHMESH_WIRE_MAGIC,
+  BushMeshCarrierMode,
+  BushMeshInboundTransportFrame,
   BushMeshMessageIdGenerator,
   BushMeshPacketType,
   BushMeshPeerPolicy,
+  BushMeshPreparedTransportFrame,
   BushMeshPriority,
   BushMeshReliabilityController,
   BushMeshTypedPacket,
   DecodedBushMeshWireMessage,
+  decodeBushMeshInboundTransportFrame,
   decodeBushMeshTypedPacket,
   decodeBushMeshWire,
   encodeBushMeshTextCarrier,
+  prepareBushMeshPeerTextFrames,
+  prepareBushMeshTextFrames,
+  prepareBushMeshWireFrames,
 } from '../protocol';
-import {
-  BushMeshChannelTransport,
-  PreparedBushMeshChannelFrame,
-  prepareBushMeshPeerTextChannelFrames,
-  prepareBushMeshTextChannelFrames,
-  prepareBushMeshWireChannelFrames,
-  tryDecodeBushMeshChannelFrame,
-} from '../../meshcore/meshcoreBushMeshBridge';
 import {BushMeshFragmentCheckpointRuntime} from './BushMeshFragmentCheckpointRuntime';
 import {getBushMeshPersistentStore} from './BushMeshPersistentStore';
 import {
@@ -26,7 +24,15 @@ import {
   BushMeshTransportQueueSnapshot,
 } from './BushMeshTransportQueue';
 
+const LEGACY_DEFAULT_MAX_PAYLOAD_BYTES = 133;
+
 export type BushMeshRuntimeTransport = {
+  /**
+   * Maximum payload accepted by the hardware/link adapter. New adapters should
+   * always provide this explicitly. The legacy fallback remains only so the
+   * current MeshCore application keeps its existing behaviour during migration.
+   */
+  maxPayloadBytes?: number;
   sendTextChannelMessage: (
     channelIndex: number,
     message: string,
@@ -47,7 +53,7 @@ export type BushMeshRuntimeSendResult = {
   messageId: number;
   frameCount: number;
   fragmented: boolean;
-  transport: BushMeshChannelTransport;
+  transport: BushMeshCarrierMode;
 };
 
 export type BushMeshRuntimeStats = {
@@ -72,7 +78,7 @@ export type BushMeshNetworkRuntimeEvents = {
 
 type OutboundFragmentedMessage = {
   channelIndex: number;
-  transport: BushMeshChannelTransport;
+  transport: BushMeshCarrierMode;
 };
 
 export class BushMeshNetworkRuntime {
@@ -217,8 +223,9 @@ export class BushMeshNetworkRuntime {
     }
 
     const messageId = options?.messageId ?? this.nextMessageId();
+    const maxPayloadBytes = this.maxPayloadBytes(options?.maxPayloadBytes);
     const frames = options?.peerPolicy
-      ? prepareBushMeshPeerTextChannelFrames(
+      ? prepareBushMeshPeerTextFrames(
           cleanText,
           messageId,
           options.peerPolicy,
@@ -227,17 +234,17 @@ export class BushMeshNetworkRuntime {
             ackRequested: options.ackRequested,
             storeAndForward: options.storeAndForward,
             ttlHops: options.ttlHops,
-            maxPayloadBytes: options.maxPayloadBytes,
+            maxPayloadBytes,
           },
         )
-      : prepareBushMeshTextChannelFrames(cleanText, messageId, {
-          transport: 'text-safe',
+      : prepareBushMeshTextFrames(cleanText, messageId, {
+          carrier: 'text-safe',
           priority: options?.priority,
           ackRequested: options?.ackRequested,
           storeAndForward: options?.storeAndForward,
           ttlHops: options?.ttlHops,
           semantic: options?.semantic,
-          maxPayloadBytes: options?.maxPayloadBytes,
+          maxPayloadBytes,
         });
 
     return this.sendPreparedFrames(channelIndex, messageId, frames, 'message');
@@ -247,7 +254,7 @@ export class BushMeshNetworkRuntime {
     channelIndex: number,
     wireBytes: number[],
     options?: {
-      transport?: BushMeshChannelTransport;
+      transport?: BushMeshCarrierMode;
       maxPayloadBytes?: number;
       allowFragmentation?: boolean;
     },
@@ -255,20 +262,27 @@ export class BushMeshNetworkRuntime {
     const decoded = decodeBushMeshWire(wireBytes);
     const messageId = decoded.envelope.messageId;
     const priority = decoded.envelope.priority as BushMeshPriority;
-    const frames = prepareBushMeshWireChannelFrames(wireBytes, messageId, {
-      transport: options?.transport ?? 'text-safe',
+    const frames = prepareBushMeshWireFrames(wireBytes, messageId, {
+      carrier: options?.transport ?? 'text-safe',
       priority,
-      maxPayloadBytes: options?.maxPayloadBytes,
+      maxPayloadBytes: this.maxPayloadBytes(options?.maxPayloadBytes),
       allowFragmentation: options?.allowFragmentation,
     });
 
     return this.sendPreparedFrames(channelIndex, messageId, frames, 'wire packet');
   }
 
-  async acceptMeshCoreFrame(bytes: number[], now = Date.now()): Promise<boolean> {
-    const channelFrame = tryDecodeBushMeshChannelFrame(bytes);
+  /**
+   * Accepts a BushMesh payload extracted by a hardware/link adapter. The core
+   * runtime does not parse MeshCore, BLE, serial, or any other vendor framing.
+   */
+  async acceptFrame(
+    frame: BushMeshInboundTransportFrame,
+    now = Date.now(),
+  ): Promise<boolean> {
+    const inbound = decodeBushMeshInboundTransportFrame(frame);
 
-    if (!channelFrame) {
+    if (!inbound) {
       this.statsState.ignoredFrames += 1;
       this.emitStats();
       return false;
@@ -277,9 +291,9 @@ export class BushMeshNetworkRuntime {
     this.statsState.receivedFrames += 1;
 
     try {
-      if (channelFrame.decoded.envelope.type === BushMeshPacketType.Ack) {
+      if (inbound.decoded.envelope.type === BushMeshPacketType.Ack) {
         const ack = this.reliability.acceptAckWire(
-          channelFrame.decoded.wireBytes,
+          inbound.decoded.wireBytes,
         );
         this.statsState.ackFramesReceived += 1;
 
@@ -312,18 +326,15 @@ export class BushMeshNetworkRuntime {
       }
 
       const received = this.reliability.acceptIncomingWire(
-        channelFrame.decoded.wireBytes,
+        inbound.decoded.wireBytes,
         now,
       );
 
       if (received.ackWireBytes && this.autoAckFragments) {
-        const incomingTransport = this.detectIncomingTransport(
-          channelFrame.payloadBytes,
-        );
         await this.sendWireBytes(
-          channelFrame.channelIndex,
+          inbound.channelIndex,
           received.ackWireBytes,
-          incomingTransport,
+          inbound.carrier ?? 'text-safe',
         );
         this.statsState.ackFramesSent += 1;
       }
@@ -333,7 +344,7 @@ export class BushMeshNetworkRuntime {
         const typed = decodeBushMeshTypedPacket(decoded.wireBytes);
         this.statsState.receivedMessages += 1;
         this.events.onMessage?.({
-          channelIndex: channelFrame.channelIndex,
+          channelIndex: inbound.channelIndex,
           decoded,
           typed,
         });
@@ -413,13 +424,13 @@ export class BushMeshNetworkRuntime {
   private async sendPreparedFrames(
     channelIndex: number,
     messageId: number,
-    frames: PreparedBushMeshChannelFrame[],
+    frames: BushMeshPreparedTransportFrame[],
     label: string,
   ): Promise<BushMeshRuntimeSendResult> {
     const fragmented = frames.some(frame => frame.fragmented);
 
     if (fragmented) {
-      const transport = frames[0]?.transport ?? 'text-safe';
+      const transport = frames[0]?.carrier ?? 'text-safe';
       this.reliability.registerOutgoingFragments(
         messageId,
         frames.map(frame => frame.wireBytes),
@@ -457,7 +468,7 @@ export class BushMeshNetworkRuntime {
     this.statsState.sentFrames += frames.length;
     this.emitStats();
 
-    const transport = frames[0]?.transport ?? 'text-safe';
+    const transport = frames[0]?.carrier ?? 'text-safe';
     this.events.onStatus?.(
       `BushMesh ${label} ${messageId} sent as ${frames.length} ${transport} frame(s).`,
     );
@@ -472,12 +483,12 @@ export class BushMeshNetworkRuntime {
 
   private async sendPreparedFrame(
     channelIndex: number,
-    frame: PreparedBushMeshChannelFrame,
+    frame: BushMeshPreparedTransportFrame,
   ): Promise<void> {
     const priority = decodeBushMeshWire(frame.wireBytes).envelope.priority;
 
     await this.transportQueue.enqueue(priority, async () => {
-      if (frame.transport === 'binary') {
+      if (frame.carrier === 'binary') {
         if (!this.transport.sendBinaryChannelPayload) {
           throw new Error('Binary BushMesh transport is not available.');
         }
@@ -500,7 +511,7 @@ export class BushMeshNetworkRuntime {
   private async sendWireBytes(
     channelIndex: number,
     wireBytes: number[],
-    transport: BushMeshChannelTransport,
+    transport: BushMeshCarrierMode,
   ): Promise<void> {
     const priority = decodeBushMeshWire(wireBytes).envelope.priority;
 
@@ -517,13 +528,17 @@ export class BushMeshNetworkRuntime {
     });
   }
 
-  private detectIncomingTransport(
-    payloadBytes: number[],
-  ): BushMeshChannelTransport {
-    return payloadBytes[0] === BUSHMESH_WIRE_MAGIC[0] &&
-      payloadBytes[1] === BUSHMESH_WIRE_MAGIC[1]
-      ? 'binary'
-      : 'text-safe';
+  private maxPayloadBytes(override?: number): number {
+    const value =
+      override ??
+      this.transport.maxPayloadBytes ??
+      LEGACY_DEFAULT_MAX_PAYLOAD_BYTES;
+
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error('BushMesh transport payload limit must be a positive integer.');
+    }
+
+    return value;
   }
 
   private emitStats(): void {
