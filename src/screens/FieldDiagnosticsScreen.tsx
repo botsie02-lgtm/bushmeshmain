@@ -2,6 +2,7 @@ import React, {useMemo, useState} from 'react';
 import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {FieldCorrelationCard} from '../components/FieldCorrelationCard';
+import {FieldScenarioCard} from '../components/FieldScenarioCard';
 import {FieldTestMarkersCard} from '../components/FieldTestMarkersCard';
 import {FieldTestRunCard} from '../components/FieldTestRunCard';
 import {FieldTriageCard} from '../components/FieldTriageCard';
@@ -243,6 +244,7 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
         <StatusRow label="Maps" value={report.persistence.maps.toUpperCase()} />
       </View>
 
+      <FieldScenarioCard />
       <FieldTestRunCard />
       <FieldTestMarkersCard />
 
