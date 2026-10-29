@@ -13,6 +13,10 @@ import {
   FieldTestRunSummary,
   summarizeLatestFieldTestRun,
 } from './fieldTestRun';
+import {
+  PhoneRuntimeHealthAssessment,
+  assessPhoneRuntimeHealth,
+} from './phoneRuntimeHealth';
 import {SupportRuntimeMetadata} from './runtimeMetadata';
 import {DiagnosticSnapshotDiff} from './snapshotDiff';
 import {fieldReportSupportCode} from './supportCode';
@@ -32,6 +36,7 @@ export type BushMeshSupportPackage = {
   supportCode: string;
   generatedAt: string;
   runtime: SupportRuntimeMetadata | null;
+  runtimeHealth: PhoneRuntimeHealthAssessment;
   bundle: BushMeshFieldSupportBundle;
   checklist: FieldChecklist;
   triage: FieldTriagePlan;
@@ -57,6 +62,8 @@ export function createBushMeshSupportPackage(input: {
   const correlations = correlateFieldEvents(input.eventTrace);
   const testRun = summarizeLatestFieldTestRun(input.eventTrace, generatedAtMs);
   const scenarios = evaluateFieldScenarios(input.eventTrace);
+  const runtime = input.runtime ? {...input.runtime} : null;
+  const runtimeHealth = assessPhoneRuntimeHealth(runtime);
   const bundle = createFieldSupportBundle({
     report: input.report,
     health,
@@ -71,7 +78,8 @@ export function createBushMeshSupportPackage(input: {
     packageVersion: BUSHMESH_SUPPORT_PACKAGE_VERSION,
     supportCode: fieldReportSupportCode(input.report),
     generatedAt: new Date(generatedAtMs).toISOString(),
-    runtime: input.runtime ? {...input.runtime} : null,
+    runtime,
+    runtimeHealth,
     bundle,
     checklist,
     triage,
