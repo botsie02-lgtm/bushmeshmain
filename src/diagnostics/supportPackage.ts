@@ -1,7 +1,8 @@
 import {DiagnosticHealthAssessment, assessFieldDiagnostics} from './diagnosticHealth';
-import {DiagnosticSnapshotDiff} from './snapshotDiff';
 import {FieldChecklist, buildFieldChecklist} from './fieldChecklist';
 import {BushMeshFieldDiagnosticsReport} from './fieldDiagnostics';
+import {SupportRuntimeMetadata} from './runtimeMetadata';
+import {DiagnosticSnapshotDiff} from './snapshotDiff';
 import {fieldReportSupportCode} from './supportCode';
 import {
   BushMeshFieldSupportBundle,
@@ -16,6 +17,7 @@ export type BushMeshSupportPackage = {
   packageVersion: number;
   supportCode: string;
   generatedAt: string;
+  runtime: SupportRuntimeMetadata | null;
   bundle: BushMeshFieldSupportBundle;
   checklist: FieldChecklist;
   comparison: DiagnosticSnapshotDiff | null;
@@ -26,6 +28,7 @@ export function createBushMeshSupportPackage(input: {
   eventTrace: SupportBundleTraceEvent[];
   comparison?: DiagnosticSnapshotDiff | null;
   health?: DiagnosticHealthAssessment;
+  runtime?: SupportRuntimeMetadata | null;
   traceCapacity?: number;
   generatedAtMs?: number;
 }): BushMeshSupportPackage {
@@ -46,6 +49,7 @@ export function createBushMeshSupportPackage(input: {
     packageVersion: BUSHMESH_SUPPORT_PACKAGE_VERSION,
     supportCode: fieldReportSupportCode(input.report),
     generatedAt: new Date(generatedAtMs).toISOString(),
+    runtime: input.runtime ? {...input.runtime} : null,
     bundle,
     checklist,
     comparison: input.comparison ?? null,
