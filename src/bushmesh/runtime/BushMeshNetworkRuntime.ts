@@ -1,5 +1,6 @@
 import {
   BushMeshCarrierMode,
+  BushMeshCompressionProfile,
   BushMeshInboundTransportFrame,
   BushMeshMessageIdGenerator,
   BushMeshPacketType,
@@ -291,7 +292,11 @@ export class BushMeshNetworkRuntime {
     this.statsState.receivedFrames += 1;
 
     try {
-      if (inbound.decoded.envelope.type === BushMeshPacketType.Ack) {
+      const isFragmentAck =
+        inbound.decoded.envelope.type === BushMeshPacketType.Ack &&
+        inbound.decoded.envelope.compression === BushMeshCompressionProfile.Raw;
+
+      if (isFragmentAck) {
         const ack = this.reliability.acceptAckWire(
           inbound.decoded.wireBytes,
         );
