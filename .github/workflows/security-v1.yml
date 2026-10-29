@@ -9,6 +9,7 @@ on:
       - 'src/security/**'
       - '__tests__/**'
       - 'docs/SECURITY_*.md'
+      - '.eslintrc.security.js'
       - '.github/workflows/security-v1.yml'
   workflow_dispatch:
 
@@ -35,7 +36,7 @@ jobs:
         run: npx tsc --noEmit
       - name: Lint security contract
         run: >-
-          npx eslint
+          npx eslint -c .eslintrc.security.js
           src/security
           __tests__/directSession.test.ts
           __tests__/groupSecurity.test.ts
