@@ -1,7 +1,7 @@
-import {FieldTraceEvent} from '../state/FieldEventTraceContext';
 import {fieldDiagnosticSession} from './diagnosticSession';
 import {BushMeshFieldDiagnosticsReport} from './fieldDiagnostics';
 import {loadSupportRuntimeMetadata} from './runtimeMetadata';
+import {SupportBundleTraceEvent} from './supportBundle';
 import {
   BushMeshSupportPackage,
   createBushMeshSupportPackage,
@@ -23,7 +23,7 @@ function exportFilename(capturedAt: string, supportCode: string): string {
 
 export async function prepareFieldSupportExport(input: {
   report: BushMeshFieldDiagnosticsReport;
-  eventTrace: FieldTraceEvent[];
+  eventTrace: SupportBundleTraceEvent[];
 }): Promise<PreparedFieldSupportExport> {
   const session = fieldDiagnosticSession.capture(input.report);
   const runtime = await loadSupportRuntimeMetadata();
