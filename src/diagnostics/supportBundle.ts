@@ -1,5 +1,6 @@
 import {DiagnosticHealthAssessment} from './diagnosticHealth';
 import {BushMeshFieldDiagnosticsReport} from './fieldDiagnostics';
+import {assertFieldSupportBundlePrivacy} from './supportBundlePrivacy';
 
 export const BUSHMESH_FIELD_SUPPORT_BUNDLE_VERSION = 1;
 
@@ -70,5 +71,6 @@ export function createFieldSupportBundle(input: {
 export function serializeFieldSupportBundle(
   bundle: BushMeshFieldSupportBundle,
 ): string {
+  assertFieldSupportBundlePrivacy(bundle);
   return `${JSON.stringify(bundle, null, 2)}\n`;
 }
