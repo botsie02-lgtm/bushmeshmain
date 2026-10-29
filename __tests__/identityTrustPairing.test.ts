@@ -1,4 +1,4 @@
-import {toBase64Url} from '../src/security/bytes';
+import {fromBase64Url, toBase64Url} from '../src/security/bytes';
 import {SecurityError} from '../src/security/errors';
 import {IdentityManager} from '../src/security/identity';
 import {PairingService} from '../src/security/pairing';
@@ -113,7 +113,9 @@ describe('identity, trust, rotation and pairing', () => {
     const challenge = node.crypto.randomBytes(32);
     const proof = await pairing.createProof(challenge);
     await expect(pairing.verifyProof(proof, challenge)).resolves.toBeUndefined();
-    const tampered = {...proof, signature: proof.signature.slice(0, -1) + 'A'};
+    const tamperedSignature = fromBase64Url(proof.signature, 64);
+    tamperedSignature[0] = (tamperedSignature[0] + 1) % 256;
+    const tampered = {...proof, signature: toBase64Url(tamperedSignature)};
     await expect(pairing.verifyProof(tampered, challenge)).rejects.toBeInstanceOf(SecurityError);
     await expect(pairing.verifyProof(proof, node.crypto.randomBytes(32))).rejects.toMatchObject({
       code: 'AUTHENTICATION_FAILED',
