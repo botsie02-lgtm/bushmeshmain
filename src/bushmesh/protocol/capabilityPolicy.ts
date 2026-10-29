@@ -19,6 +19,7 @@ import {
   compareDictionaryCompression,
 } from './textDictionary';
 import {encodeBushMeshWire} from './transport';
+import {negotiateBushMeshProtocolRanges} from './versioning';
 
 export type BushMeshPeerPolicy = {
   compatible: boolean;
@@ -47,30 +48,31 @@ export function negotiateBushMeshPeerPolicy(
   remote: BushMeshNodeHello,
   options?: BushMeshPeerPolicyOptions,
 ): BushMeshPeerPolicy {
-  const minimum = Math.max(local.protocolMinVersion, remote.protocolMinVersion);
-  const maximum = Math.min(local.protocolMaxVersion, remote.protocolMaxVersion);
-  const protocolVersion = minimum <= maximum ? maximum : null;
-  const capabilities = negotiateBushMeshCapabilities(
-    local.capabilities,
-    remote.capabilities,
+  const compatibility = negotiateBushMeshProtocolRanges(
+    local.protocolMinVersion,
+    local.protocolMaxVersion,
+    remote.protocolMinVersion,
+    remote.protocolMaxVersion,
   );
-  const supportsCurrentVersion =
-    protocolVersion !== null &&
-    BUSHMESH_PROTOCOL_VERSION >= minimum &&
-    BUSHMESH_PROTOCOL_VERSION <= maximum;
+  const protocolVersion = compatibility.negotiatedVersion;
+  const capabilities = compatibility.compatible
+    ? negotiateBushMeshCapabilities(local.capabilities, remote.capabilities)
+    : 0;
   const canUseBinary =
+    compatibility.compatible &&
     options?.allowExperimentalBinary === true &&
     hasBushMeshCapability(capabilities, BushMeshCapability.BinaryTransport);
   const localDictionaryVersion =
     local.dictionaryVersion ?? BUSHMESH_TEXT_DICTIONARY_VERSION;
   const remoteDictionaryVersion = remote.dictionaryVersion;
   const dictionaryVersionMatches =
+    compatibility.compatible &&
     remoteDictionaryVersion !== undefined &&
     remoteDictionaryVersion === localDictionaryVersion;
 
   return {
-    compatible: supportsCurrentVersion,
-    protocolVersion: supportsCurrentVersion ? BUSHMESH_PROTOCOL_VERSION : null,
+    compatible: compatibility.compatible,
+    protocolVersion,
     capabilities,
     transport: canUseBinary ? 'binary' : 'text-safe',
     allowSemantic: hasBushMeshCapability(
@@ -134,8 +136,8 @@ export function encodeTextForBushMeshPeer(
     ttlHops?: number;
   },
 ): BushMeshPeerEncodedText {
-  if (!policy.compatible) {
-    throw new Error('Remote node does not support the current Bushmesh protocol version.');
+  if (!policy.compatible || policy.protocolVersion === null) {
+    throw new Error('Remote node does not support a compatible BushMesh protocol version.');
   }
 
   const rawBytes = Array.from(Buffer.from(text, 'utf8'));
