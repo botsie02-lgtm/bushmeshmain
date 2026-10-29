@@ -1,6 +1,7 @@
 import React, {useEffect, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
+import {FieldSupportSnapshot} from '../components/FieldSupportSnapshot';
 import {
   NativeMeshCoreOwnershipSnapshot,
   nativeMeshCoreSessionCoordinator,
@@ -101,7 +102,12 @@ export function DeviceHubScreen(): React.JSX.Element {
           {mode === 'background' ? (
             <NativeRadioSetupScreen />
           ) : mode === 'report' ? (
-            <FieldDiagnosticsScreen />
+            <View style={styles.reportMode}>
+              <FieldSupportSnapshot />
+              <View style={styles.reportDetails}>
+                <FieldDiagnosticsScreen />
+              </View>
+            </View>
           ) : (
             <DeviceScreen />
           )}
@@ -152,4 +158,6 @@ const styles = StyleSheet.create({
   },
   ownershipText: {color: colors.textSecondary, fontSize: 11, lineHeight: 16},
   content: {flex: 1},
+  reportMode: {flex: 1},
+  reportDetails: {flex: 1},
 });
