@@ -25,6 +25,7 @@ export * from './forwarding';
 export * from './fragmentation';
 export * from './frameSafety';
 export * from './frameTransport';
+export * from './inventoryIdentity';
 export * from './linkMetrics';
 export * from './location';
 export * from './locationState';
