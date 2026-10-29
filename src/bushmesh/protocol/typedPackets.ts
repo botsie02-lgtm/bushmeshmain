@@ -3,6 +3,7 @@ import {
   BushMeshPacketType,
   BushMeshPriority,
 } from './codec';
+import {BushMeshAckPacket, decodeBushMeshAckWire} from './acknowledgement';
 import {
   BushMeshControlPacket,
   decodeControlPacket,
@@ -67,6 +68,7 @@ export type BushMeshTypedPacket =
   | {kind: 'telemetry'; wire: DecodedBushMeshWireMessage; value: BushMeshTelemetry}
   | {kind: 'device-info'; wire: DecodedBushMeshWireMessage; value: BushMeshNodeHello}
   | {kind: 'ping'; wire: DecodedBushMeshWireMessage; value: BushMeshPing}
+  | {kind: 'ack'; wire: DecodedBushMeshWireMessage; value: BushMeshAckPacket}
   | {
       kind: 'route';
       wire: DecodedBushMeshWireMessage;
@@ -219,8 +221,6 @@ export function encodeBushMeshConvoyWire(
       : BushMeshPriority.Location,
     compression: BushMeshCompressionProfile.Raw,
     messageId,
-    // A hazard status should request confirmation where the current transport
-    // can provide it; routine heartbeats stay acknowledgement-free.
     ackRequested: options?.ackRequested ?? hazard,
     payload: encodeConvoyStatus(status),
   });
@@ -291,6 +291,8 @@ export function decodeBushMeshTypedPacket(bytes: number[]): BushMeshTypedPacket 
       };
     case BushMeshPacketType.Ping:
       return {kind: 'ping', wire, value: decodePing(wire.envelope.payload)};
+    case BushMeshPacketType.Ack:
+      return {kind: 'ack', wire, value: decodeBushMeshAckWire(bytes)};
     case BushMeshPacketType.Route:
       return {
         kind: 'route',
