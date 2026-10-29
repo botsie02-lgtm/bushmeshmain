@@ -1,22 +1,9 @@
-export const BUSHMESH_PROTOCOL_VERSION = 1;
+import {BushMeshPacketType} from './packetTypes';
 
-export enum BushMeshPacketType {
-  Message = 0x01,
-  Location = 0x02,
-  Distress = 0x03,
-  Weather = 0x04,
-  Battery = 0x05,
-  DeviceInfo = 0x06,
-  Ping = 0x07,
-  Route = 0x08,
-  File = 0x09,
-  Command = 0x0a,
-  Fragment = 0x0b,
-  Ack = 0x0c,
-  Sync = 0x0d,
-  Routed = 0x0e,
-  Convoy = 0x0f,
-}
+export {BushMeshPacketType} from './packetTypes';
+export type {BushMeshPacketDefinition, BushMeshPacketStability} from './packetTypes';
+
+export const BUSHMESH_PROTOCOL_VERSION = 1;
 
 export enum BushMeshPriority {
   Emergency = 0,
