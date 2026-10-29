@@ -1,6 +1,8 @@
 import React, {useMemo, useState} from 'react';
 import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
+import {FieldCorrelationCard} from '../components/FieldCorrelationCard';
+import {FieldTriageCard} from '../components/FieldTriageCard';
 import {assessFieldDiagnostics} from '../diagnostics/diagnosticHealth';
 import {serializeFieldDiagnosticsReport} from '../diagnostics/fieldDiagnostics';
 import {prepareFieldSupportExport} from '../diagnostics/supportExportCoordinator';
@@ -163,6 +165,9 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
           </View>
         ))}
       </View>
+
+      <FieldTriageCard />
+      <FieldCorrelationCard />
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Radio</Text>
