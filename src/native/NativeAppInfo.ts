@@ -7,6 +7,10 @@ export type BushMeshAppRuntimeInfo = {
   apiLevel: number;
   primaryAbi: string;
   debugBuild: boolean;
+  phoneBatteryPercent: number | null;
+  charging: boolean | null;
+  powerSaveMode: boolean | null;
+  thermalStatus: number | null;
 };
 
 type NativeAppInfoModule = {
@@ -14,6 +18,18 @@ type NativeAppInfoModule = {
 };
 
 const module = NativeModules.BushMeshAppInfo as NativeAppInfoModule | undefined;
+
+function nullableBoolean(value: unknown): boolean | null {
+  return value === null || value === undefined
+    ? null
+    : typeof value === 'boolean'
+      ? value
+      : null;
+}
+
+function nullableFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
 
 function parseRuntimeInfo(value: unknown): BushMeshAppRuntimeInfo {
   if (!value || typeof value !== 'object') {
@@ -34,6 +50,9 @@ function parseRuntimeInfo(value: unknown): BushMeshAppRuntimeInfo {
     throw new Error('Android returned incomplete Bushmesh app metadata.');
   }
 
+  const phoneBatteryPercent = nullableFiniteNumber(record.phoneBatteryPercent);
+  const thermalStatus = nullableFiniteNumber(record.thermalStatus);
+
   return {
     platform: 'android',
     versionName: record.versionName,
@@ -41,6 +60,18 @@ function parseRuntimeInfo(value: unknown): BushMeshAppRuntimeInfo {
     apiLevel: Math.max(0, Math.floor(record.apiLevel)),
     primaryAbi: record.primaryAbi,
     debugBuild: record.debugBuild,
+    phoneBatteryPercent:
+      phoneBatteryPercent !== null &&
+      phoneBatteryPercent >= 0 &&
+      phoneBatteryPercent <= 100
+        ? Math.round(phoneBatteryPercent)
+        : null,
+    charging: nullableBoolean(record.charging),
+    powerSaveMode: nullableBoolean(record.powerSaveMode),
+    thermalStatus:
+      thermalStatus !== null && thermalStatus >= 0
+        ? Math.floor(thermalStatus)
+        : null,
   };
 }
 
