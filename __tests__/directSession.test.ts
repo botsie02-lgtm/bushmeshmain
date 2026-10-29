@@ -51,7 +51,7 @@ describe('secure direct-message sessions', () => {
     expect(aSession.sessionId).toBe(bSession.sessionId);
     const envelope = await aSessions.encrypt(aSession.sessionId, utf8('hello bush'), context);
     const plaintext = await bSessions.decrypt(envelope, context);
-    expect(new TextDecoder().decode(plaintext)).toBe('hello bush');
+    expect(plaintext).toEqual(utf8('hello bush'));
   });
 
   test('rejects replay after successful authentication and after manager recovery', async () => {
