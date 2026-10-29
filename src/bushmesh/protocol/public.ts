@@ -11,6 +11,7 @@ export * from './versioning';
 export * from './transport';
 export * from './frameTransport';
 export * from './typedPackets';
+export * from './acknowledgement';
 export * from './capabilityPolicy';
 export * from './discovery';
 export * from './discoverySession';
