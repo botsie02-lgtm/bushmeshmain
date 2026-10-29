@@ -6,6 +6,10 @@ import {
 import {FieldChecklist, buildFieldChecklist} from './fieldChecklist';
 import {BushMeshFieldDiagnosticsReport} from './fieldDiagnostics';
 import {
+  FieldScenarioResult,
+  evaluateFieldScenarios,
+} from './fieldScenarios';
+import {
   FieldTestRunSummary,
   summarizeLatestFieldTestRun,
 } from './fieldTestRun';
@@ -33,6 +37,7 @@ export type BushMeshSupportPackage = {
   triage: FieldTriagePlan;
   correlations: DiagnosticEventCorrelation[];
   testRun: FieldTestRunSummary | null;
+  scenarios: FieldScenarioResult[];
   comparison: DiagnosticSnapshotDiff | null;
 };
 
@@ -51,6 +56,7 @@ export function createBushMeshSupportPackage(input: {
   const triage = buildFieldTriagePlan(checklist);
   const correlations = correlateFieldEvents(input.eventTrace);
   const testRun = summarizeLatestFieldTestRun(input.eventTrace, generatedAtMs);
+  const scenarios = evaluateFieldScenarios(input.eventTrace);
   const bundle = createFieldSupportBundle({
     report: input.report,
     health,
@@ -71,6 +77,7 @@ export function createBushMeshSupportPackage(input: {
     triage,
     correlations,
     testRun,
+    scenarios,
     comparison: input.comparison ?? null,
   };
 
