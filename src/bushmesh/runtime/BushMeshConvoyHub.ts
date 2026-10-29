@@ -120,7 +120,14 @@ function assertFiniteInRange(
 function validateLocation(location: CompactLocation): void {
   assertFiniteInRange(location.latitude, -90, 90, 'Convoy latitude');
   assertFiniteInRange(location.longitude, -180, 180, 'Convoy longitude');
-  assertWholeNumberInRange(location.precision, 0, 3, 'Convoy location precision');
+  if (location.precision !== undefined) {
+    assertWholeNumberInRange(
+      location.precision,
+      0,
+      3,
+      'Convoy location precision',
+    );
+  }
 }
 
 function commandKey(command: BushMeshConvoyActionControl): string {
