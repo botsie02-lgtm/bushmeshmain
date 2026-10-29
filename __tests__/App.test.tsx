@@ -20,7 +20,13 @@ jest.mock('react-native-ble-plx', () => ({
 import App from '../App';
 
 test('renders correctly', async () => {
+  let renderer: ReactTestRenderer.ReactTestRenderer | null = null;
+
   await ReactTestRenderer.act(() => {
-    ReactTestRenderer.create(<App />);
+    renderer = ReactTestRenderer.create(<App />);
+  });
+
+  await ReactTestRenderer.act(() => {
+    renderer?.unmount();
   });
 });
