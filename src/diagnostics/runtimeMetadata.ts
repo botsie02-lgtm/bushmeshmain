@@ -7,6 +7,10 @@ export type SupportRuntimeMetadata = {
   platformApiLevel: number | null;
   architecture: string | null;
   debugBuild: boolean | null;
+  phoneBatteryPercent: number | null;
+  charging: boolean | null;
+  powerSaveMode: boolean | null;
+  thermalStatus: number | null;
 };
 
 export async function loadSupportRuntimeMetadata(): Promise<SupportRuntimeMetadata> {
@@ -19,6 +23,10 @@ export async function loadSupportRuntimeMetadata(): Promise<SupportRuntimeMetada
       platformApiLevel: null,
       architecture: null,
       debugBuild: null,
+      phoneBatteryPercent: null,
+      charging: null,
+      powerSaveMode: null,
+      thermalStatus: null,
     };
   }
 
@@ -29,5 +37,9 @@ export async function loadSupportRuntimeMetadata(): Promise<SupportRuntimeMetada
     platformApiLevel: info.apiLevel,
     architecture: info.primaryAbi || null,
     debugBuild: info.debugBuild,
+    phoneBatteryPercent: info.phoneBatteryPercent,
+    charging: info.charging,
+    powerSaveMode: info.powerSaveMode,
+    thermalStatus: info.thermalStatus,
   };
 }
