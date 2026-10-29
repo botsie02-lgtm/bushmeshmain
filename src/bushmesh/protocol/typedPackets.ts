@@ -117,7 +117,7 @@ export function encodeBushMeshTelemetryWire(
   options?: {ackRequested?: boolean},
 ): number[] {
   return encodeBushMeshWire({
-    type: BushMeshPacketType.Battery,
+    type: BushMeshPacketType.Telemetry,
     priority: BushMeshPriority.Telemetry,
     compression: BushMeshCompressionProfile.Raw,
     messageId,
@@ -277,7 +277,7 @@ export function decodeBushMeshTypedPacket(bytes: number[]): BushMeshTypedPacket 
         },
       };
     }
-    case BushMeshPacketType.Battery:
+    case BushMeshPacketType.Telemetry:
       return {
         kind: 'telemetry',
         wire,
