@@ -14,6 +14,7 @@ import {
   createFieldSupportBundle,
 } from './supportBundle';
 import {assertFieldSupportBundlePrivacy} from './supportBundlePrivacy';
+import {assertSupportPackageLimits} from './supportPackageLimits';
 import {FieldTriagePlan, buildFieldTriagePlan} from './triagePlan';
 
 export const BUSHMESH_SUPPORT_PACKAGE_VERSION = 1;
@@ -54,7 +55,7 @@ export function createBushMeshSupportPackage(input: {
 
   assertFieldSupportBundlePrivacy(bundle);
 
-  return {
+  const supportPackage: BushMeshSupportPackage = {
     packageVersion: BUSHMESH_SUPPORT_PACKAGE_VERSION,
     supportCode: fieldReportSupportCode(input.report),
     generatedAt: new Date(generatedAtMs).toISOString(),
@@ -65,13 +66,17 @@ export function createBushMeshSupportPackage(input: {
     correlations,
     comparison: input.comparison ?? null,
   };
+
+  assertSupportPackageLimits(supportPackage);
+  return supportPackage;
 }
 
 export function serializeBushMeshSupportPackage(
   supportPackage: BushMeshSupportPackage,
 ): string {
   // Re-audit immediately before serialization so callers cannot mutate the
-  // embedded bundle after construction and bypass the export privacy gate.
+  // embedded bundle after construction and bypass either safety boundary.
   assertFieldSupportBundlePrivacy(supportPackage.bundle);
+  assertSupportPackageLimits(supportPackage);
   return `${JSON.stringify(supportPackage, null, 2)}\n`;
 }
