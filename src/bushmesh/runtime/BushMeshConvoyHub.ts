@@ -187,14 +187,17 @@ export function isBushMeshConvoyLocationFresh(now = Date.now()): boolean {
 
 function convoyLocationFields(
   now: number,
-): Pick<BushMeshConvoyStatus, 'location' | 'locationDelta'> {
+): Pick<
+  BushMeshConvoyStatus,
+  'location' | 'locationDelta' | 'locationUnavailable'
+> {
   const current = telemetry.location;
   if (!current || !isBushMeshConvoyLocationFresh(now)) {
-    // Once the phone fix is stale, discard the delta anchor too. The first good
-    // fix after GPS recovery must be an absolute self-healing coordinate.
+    // Explicit invalidation lets receivers immediately stop using an old fix in
+    // gap/routing calculations. It costs only the spare bit in the flags byte.
     outboundLocationAnchor = null;
     outboundLocationAnchorAt = null;
-    return {};
+    return {locationUnavailable: true};
   }
 
   const anchorIntervalMs = telemetry.hazard
