@@ -1,15 +1,22 @@
 import {Buffer} from 'buffer';
 
 import {assertIntegerInRange} from './codec';
-import {BushMeshSyncNamespace} from './syncProtocol';
 
-function fnv1a32(bytes: number[]): number {
+export function hashBushMeshInventoryBytes(bytes: number[]): number {
   let hash = 0x811c9dc5;
-  for (const byte of bytes) {
+  for (const [index, byte] of bytes.entries()) {
+    if (!Number.isInteger(byte) || byte < 0 || byte > 255) {
+      throw new Error(`Inventory hash byte ${index} is invalid.`);
+    }
     hash ^= byte;
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return hash >>> 0;
+}
+
+/** Deterministic compact ID for a stable inventory key. */
+export function hashBushMeshInventoryKey(value: string): number {
+  return hashBushMeshInventoryBytes(Array.from(Buffer.from(value, 'utf8')));
 }
 
 /**
@@ -19,7 +26,7 @@ function fnv1a32(bytes: number[]): number {
  * item appear as a new missing ID without transmitting a full inventory.
  */
 export function createBushMeshVersionedInventoryId(
-  namespace: BushMeshSyncNamespace | number,
+  namespace: number,
   entityKey: string,
   revision: string | number,
 ): number {
@@ -30,11 +37,9 @@ export function createBushMeshVersionedInventoryId(
     throw new Error('Inventory entity key cannot be empty.');
   }
 
-  const revisionText = String(revision);
-  const bytes = Array.from(
-    Buffer.from(`${namespace}\u0000${key}\u0000${revisionText}`, 'utf8'),
+  return hashBushMeshInventoryKey(
+    `${namespace}\u0000${key}\u0000${String(revision)}`,
   );
-  return fnv1a32(bytes);
 }
 
 /**
@@ -49,11 +54,5 @@ export function createBushMeshInventoryRevision(
       ? Array.from(Buffer.from(value, 'utf8'))
       : [...value];
 
-  for (const [index, byte] of bytes.entries()) {
-    if (!Number.isInteger(byte) || byte < 0 || byte > 255) {
-      throw new Error(`Inventory revision byte ${index} is invalid.`);
-    }
-  }
-
-  return fnv1a32(bytes);
+  return hashBushMeshInventoryBytes(bytes);
 }
