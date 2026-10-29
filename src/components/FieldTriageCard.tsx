@@ -1,15 +1,14 @@
-import React, {useMemo, useState} from 'react';
+import React, {useMemo} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {assessFieldDiagnostics} from '../diagnostics/diagnosticHealth';
 import {buildFieldChecklist} from '../diagnostics/fieldChecklist';
 import {buildFieldTriagePlan} from '../diagnostics/triagePlan';
-import {useFieldDiagnosticsReport} from '../diagnostics/useFieldDiagnosticsReport';
+import {useFieldDiagnosticsCapture} from '../state/FieldDiagnosticsCaptureContext';
 import {colors} from '../theme/colors';
 
 export function FieldTriageCard(): React.JSX.Element {
-  const [capturedAtMs, setCapturedAtMs] = useState(Date.now());
-  const report = useFieldDiagnosticsReport(capturedAtMs);
+  const {report, capture} = useFieldDiagnosticsCapture();
   const health = useMemo(() => assessFieldDiagnostics(report), [report]);
   const checklist = useMemo(() => buildFieldChecklist(report, health), [health, report]);
   const triage = useMemo(() => buildFieldTriagePlan(checklist), [checklist]);
@@ -24,10 +23,8 @@ export function FieldTriageCard(): React.JSX.Element {
             {triage.ready ? 'Field configuration is not blocked' : 'Repair order for this snapshot'}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.refreshButton}
-          onPress={() => setCapturedAtMs(Date.now())}>
-          <Text style={styles.refreshText}>REFRESH</Text>
+        <TouchableOpacity style={styles.refreshButton} onPress={capture}>
+          <Text style={styles.refreshText}>CAPTURE</Text>
         </TouchableOpacity>
       </View>
 
