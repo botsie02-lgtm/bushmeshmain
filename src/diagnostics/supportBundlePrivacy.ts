@@ -7,14 +7,15 @@ export type SupportBundlePrivacyAudit = {
 
 const FORBIDDEN_KEY_PATTERNS = [
   /(^|_)secret$/i,
-  /channelSecret/i,
-  /messageText/i,
-  /messageBody/i,
-  /contactName/i,
-  /fullPublicKey/i,
-  /privateKey/i,
-  /password/i,
-  /token$/i,
+  /^channelSecret$/i,
+  /^messageText$/i,
+  /^messageBody$/i,
+  /^contactName$/i,
+  /^fullPublicKey$/i,
+  /^privateKey$/i,
+  /^password$/i,
+  /(^|_)authToken$/i,
+  /(^|_)accessToken$/i,
 ];
 
 function decimalPlaces(value: number): number {
