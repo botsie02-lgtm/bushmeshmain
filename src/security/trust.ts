@@ -6,6 +6,8 @@ import {identityRotationPayload} from './transcripts';
 import type {DeviceIdentity, IdentityRotationProof, PeerTrustRecord} from './types';
 import {IdentityManager} from './identity';
 
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
 export class PeerTrustManager {
   constructor(
     private readonly crypto: CryptoProvider,
@@ -18,7 +20,11 @@ export class PeerTrustManager {
     await this.identityManager.assertIdentityIntegrity(identity);
     const peers = await this.metadata.listPeers();
     const byDevice = peers.find(peer => peer.deviceId === identity.deviceId);
-    const byFingerprint = peers.find(peer => peer.identity.fingerprint === identity.fingerprint);
+    const byFingerprint = peers.find(
+      peer =>
+        peer.identity.fingerprint === identity.fingerprint ||
+        peer.fingerprintHistory.includes(identity.fingerprint),
+    );
 
     if (byFingerprint && byFingerprint.deviceId !== identity.deviceId) {
       throw new SecurityError(
@@ -97,6 +103,9 @@ export class PeerTrustManager {
 
   async applyRotation(proof: IdentityRotationProof): Promise<PeerTrustRecord> {
     const record = await this.requirePeer(proof.nextIdentity.deviceId);
+    if (record.trustState === 'revoked') {
+      throw new SecurityError('PEER_REVOKED', 'Rotation from a revoked peer is not accepted');
+    }
     if (record.identity.fingerprint !== proof.previousFingerprint) {
       throw new SecurityError('AUTHENTICATION_FAILED', 'Rotation does not match current peer fingerprint');
     }
@@ -105,6 +114,19 @@ export class PeerTrustManager {
     }
     if (proof.nextIdentity.keyEpoch !== record.identity.keyEpoch + 1) {
       throw new SecurityError('INVALID_INPUT', 'Rotation key epoch is not sequential');
+    }
+    if (proof.nextIdentity.rotatedAt !== proof.rotatedAt) {
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Rotation timestamp is not bound to next identity');
+    }
+    if (
+      !Number.isSafeInteger(proof.rotatedAt) ||
+      proof.rotatedAt < record.identity.createdAt ||
+      proof.rotatedAt > this.clock.now() + MAX_CLOCK_SKEW_MS
+    ) {
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Rotation timestamp is invalid');
+    }
+    if (record.identity.rotatedAt !== undefined && proof.rotatedAt <= record.identity.rotatedAt) {
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Rotation timestamp did not advance');
     }
     await this.identityManager.assertIdentityIntegrity(proof.nextIdentity);
 

@@ -7,10 +7,18 @@ export class NonceManager {
 
   async next(scope: string, prefixBase64Url: string): Promise<{counter: bigint; nonce: Uint8Array}> {
     const prefix = fromBase64Url(prefixBase64Url, 4);
-    const counter = await this.metadata.reserveNonceCounter(scope);
+    const highWatermark = await this.metadata.getNonceHighWatermark(scope);
+    const counter = await this.metadata.reserveNonceCounter(scope, highWatermark);
+    if (counter <= highWatermark) {
+      throw new SecurityError(
+        'COUNTER_ROLLBACK',
+        'Nonce reservation did not advance beyond the persisted high-watermark',
+      );
+    }
     if (counter > 0xffffffffffffffffn) {
       throw new SecurityError('NONCE_EXHAUSTED', 'Nonce counter exhausted');
     }
+    await this.metadata.advanceNonceHighWatermark(scope, counter);
     return {counter, nonce: concatBytes(prefix, u64be(counter))};
   }
 

@@ -6,7 +6,7 @@ import {
   toBase64Url,
   wipe,
 } from './bytes';
-import {SecurityError} from './errors';
+import {isSecurityError, SecurityError} from './errors';
 import {IdentityManager} from './identity';
 import {NonceManager, ReplayProtector} from './nonceReplay';
 import type {CryptoProvider, SecureSecretStore, SecurityClock, SecurityMetadataStore} from './ports';
@@ -28,6 +28,7 @@ import {PeerTrustManager} from './trust';
 import {VersionPolicy} from './versionPolicy';
 
 const HANDSHAKE_MAX_AGE_MS = 120_000;
+const MAX_CLOCK_SKEW_MS = 5_000;
 const DEFAULT_SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 
 function offerUnsigned(offer: SessionOffer): Omit<SessionOffer, 'signature'> {
@@ -61,7 +62,7 @@ export class DirectSessionManager {
   async createOffer(peerDeviceId: string): Promise<SessionOffer> {
     await this.trust.assertTrusted(peerDeviceId);
     const localIdentity = await this.identity.current();
-    const ephemeral = await this.crypto.generateAgreementKeyPair();
+    const ephemeral = await this.crypto.generateAgreementKeyPair('session-ephemeral');
     const handshakeId = `bmh1_${toBase64Url(this.crypto.randomBytes(16))}`;
     const unsigned: Omit<SessionOffer, 'signature'> = {
       handshakeId,
@@ -76,21 +77,20 @@ export class DirectSessionManager {
     };
     const signature = await this.identity.sign(sessionOfferPayload(unsigned));
     const offer: SessionOffer = {...unsigned, signature: toBase64Url(signature)};
-    const privateKeyRef = `handshake/${handshakeId}/ephemeral`;
     const pending: PendingHandshakeRecord = {
       handshakeId,
       peerDeviceId,
       offer,
-      privateKeyRef,
+      privateKeyHandle: ephemeral.privateKeyHandle,
       createdAt: this.clock.now(),
       expiresAt: this.clock.now() + HANDSHAKE_MAX_AGE_MS,
     };
     try {
-      await this.secrets.setSecret(privateKeyRef, ephemeral.privateKey);
       await this.metadata.setPendingHandshake(pending);
       return offer;
-    } finally {
-      wipe(ephemeral.privateKey);
+    } catch (error) {
+      await this.crypto.deletePrivateKey(ephemeral.privateKeyHandle);
+      throw error;
     }
   }
 
@@ -117,7 +117,15 @@ export class DirectSessionManager {
     const selectedProtocolVersion = this.versions.negotiateProtocol(
       offer.supportedProtocolVersions,
     );
-    const ephemeral = await this.crypto.generateAgreementKeyPair();
+    const consumed = await this.metadata.consumeHandshakeId(
+      offer.handshakeId,
+      this.clock.now() + HANDSHAKE_MAX_AGE_MS,
+    );
+    if (!consumed) {
+      throw new SecurityError('REPLAY_DETECTED', 'Session offer handshake ID was already consumed');
+    }
+
+    const ephemeral = await this.crypto.generateAgreementKeyPair('session-ephemeral');
     const responseUnsignedValue: Omit<SessionResponse, 'signature'> = {
       handshakeId: offer.handshakeId,
       responder: localIdentity,
@@ -140,7 +148,7 @@ export class DirectSessionManager {
     let shared: Uint8Array | undefined;
     try {
       shared = await this.crypto.deriveSharedSecret(
-        ephemeral.privateKey,
+        ephemeral.privateKeyHandle,
         fromBase64Url(offer.ephemeralAgreementPublicKey, 32),
       );
       const {initiatorSendKey, responderSendKey, sessionId} = await this.deriveSessionKeys(
@@ -162,7 +170,7 @@ export class DirectSessionManager {
       return {response, session};
     } finally {
       wipe(shared);
-      wipe(ephemeral.privateKey);
+      await this.crypto.deletePrivateKey(ephemeral.privateKeyHandle);
     }
   }
 
@@ -176,6 +184,7 @@ export class DirectSessionManager {
       throw new SecurityError('EXPIRED_KEY', 'Pending session handshake expired');
     }
     const offer = pending.offer;
+    await this.assertResponse(response, offer);
     if (
       response.initiatorDeviceId !== offer.initiator.deviceId ||
       response.responder.deviceId !== pending.peerDeviceId
@@ -202,14 +211,13 @@ export class DirectSessionManager {
       throw new SecurityError('AUTHENTICATION_FAILED', 'Session response signature is invalid');
     }
 
-    const ephemeralPrivate = await this.secrets.getSecret(pending.privateKeyRef);
-    if (!ephemeralPrivate) {
+    if (!(await this.crypto.hasPrivateKey(pending.privateKeyHandle))) {
       throw new SecurityError('KEY_NOT_FOUND', 'Pending ephemeral key is unavailable');
     }
     let shared: Uint8Array | undefined;
     try {
       shared = await this.crypto.deriveSharedSecret(
-        ephemeralPrivate,
+        pending.privateKeyHandle,
         fromBase64Url(response.ephemeralAgreementPublicKey, 32),
       );
       const {initiatorSendKey, responderSendKey, sessionId} = await this.deriveSessionKeys(
@@ -232,7 +240,6 @@ export class DirectSessionManager {
       return session;
     } finally {
       wipe(shared);
-      wipe(ephemeralPrivate);
     }
   }
 
@@ -269,6 +276,11 @@ export class DirectSessionManager {
         counter: counter.toString(),
         ciphertext: toBase64Url(ciphertext),
       };
+    } catch (error) {
+      if (isSecurityError(error, 'COUNTER_ROLLBACK')) {
+        await this.retireSession(session.sessionId, 'revoked');
+      }
+      throw error;
     } finally {
       wipe(key);
     }
@@ -321,6 +333,20 @@ export class DirectSessionManager {
     }
   }
 
+  async assertPeerSession(
+    sessionId: string,
+    peerDeviceId: string,
+    peerFingerprint?: string,
+  ): Promise<void> {
+    const session = await this.requireUsableSession(sessionId);
+    if (
+      session.peerDeviceId !== peerDeviceId ||
+      (peerFingerprint !== undefined && session.peerFingerprint !== peerFingerprint)
+    ) {
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Direct session is bound to another peer');
+    }
+  }
+
   async retireSession(sessionId: string, state: 'rotated' | 'revoked'): Promise<void> {
     const session = await this.requireSession(sessionId);
     await this.metadata.setSession({...session, state});
@@ -328,16 +354,42 @@ export class DirectSessionManager {
     await this.secrets.deleteSecret(session.receiveKeyRef);
   }
 
+  async retireSessionsForPeer(
+    peerDeviceId: string,
+    state: 'rotated' | 'revoked',
+  ): Promise<number> {
+    const sessions = await this.metadata.listSessions(peerDeviceId);
+    let retired = 0;
+    for (const session of sessions) {
+      if (session.state === state) {
+        continue;
+      }
+      await this.metadata.setSession({...session, state});
+      await this.secrets.deleteSecret(session.sendKeyRef);
+      await this.secrets.deleteSecret(session.receiveKeyRef);
+      retired += 1;
+    }
+    return retired;
+  }
+
+  async revokeSessionsForPeer(peerDeviceId: string): Promise<number> {
+    return this.retireSessionsForPeer(peerDeviceId, 'revoked');
+  }
+
+  async rotateSessionsForPeer(peerDeviceId: string): Promise<number> {
+    return this.retireSessionsForPeer(peerDeviceId, 'rotated');
+  }
+
   async abortPending(handshakeId: string): Promise<void> {
     const pending = await this.metadata.getPendingHandshake(handshakeId);
     if (pending) {
-      await this.secrets.deleteSecret(pending.privateKeyRef);
+      await this.crypto.deletePrivateKey(pending.privateKeyHandle);
       await this.metadata.deletePendingHandshake(handshakeId);
     }
   }
 
   private async assertOffer(offer: SessionOffer): Promise<void> {
-    if (!offer.handshakeId.startsWith('bmh1_')) {
+    if (!/^bmh1_[A-Za-z0-9_-]{16,128}$/.test(offer.handshakeId)) {
       throw new SecurityError('INVALID_INPUT', 'Malformed handshake ID');
     }
     await this.identity.assertIdentityIntegrity(offer.initiator);
@@ -346,10 +398,27 @@ export class DirectSessionManager {
     fromBase64Url(offer.sendNoncePrefix, 4);
     fromBase64Url(offer.signature, 64);
     if (
-      offer.issuedAt > this.clock.now() + 5_000 ||
+      offer.issuedAt > this.clock.now() + MAX_CLOCK_SKEW_MS ||
       this.clock.now() - offer.issuedAt > HANDSHAKE_MAX_AGE_MS
     ) {
       throw new SecurityError('AUTHENTICATION_FAILED', 'Session offer is outside its validity window');
+    }
+  }
+
+  private async assertResponse(response: SessionResponse, offer: SessionOffer): Promise<void> {
+    if (response.handshakeId !== offer.handshakeId) {
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Session response handshake mismatch');
+    }
+    fromBase64Url(response.ephemeralAgreementPublicKey, 32);
+    fromBase64Url(response.nonce, 32);
+    fromBase64Url(response.sendNoncePrefix, 4);
+    fromBase64Url(response.signature, 64);
+    if (
+      response.issuedAt < offer.issuedAt - MAX_CLOCK_SKEW_MS ||
+      response.issuedAt > this.clock.now() + MAX_CLOCK_SKEW_MS ||
+      this.clock.now() - response.issuedAt > HANDSHAKE_MAX_AGE_MS
+    ) {
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Session response is outside its validity window');
     }
   }
 

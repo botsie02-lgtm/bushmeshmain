@@ -1,5 +1,7 @@
+import {toBase64Url, wipe} from './bytes';
 import {SecurityError} from './errors';
-import type {CryptoProvider, GeneratedKeyPair} from './ports';
+import type {CryptoProvider, GeneratedKeyPair, SecureSecretStore} from './ports';
+import type {PrivateKeyAlgorithm, PrivateKeyHandle, PrivateKeyPurpose} from './types';
 
 interface CryptoKeyPairLike {
   publicKey: unknown;
@@ -34,6 +36,46 @@ export interface WebCryptoLike {
   getRandomValues<T extends Uint8Array>(value: T): T;
 }
 
+/**
+ * Optional DEVELOPMENT/TEST persistence used only because WebCrypto does not
+ * provide a portable persistent private-key alias API. Production providers
+ * should not implement this interface; they should keep keys non-exportable.
+ */
+export interface WebCryptoKeyPersistence {
+  savePrivateKey(handle: PrivateKeyHandle, pkcs8: Uint8Array): Promise<void>;
+  loadPrivateKey(handle: PrivateKeyHandle): Promise<Uint8Array | null>;
+  deletePrivateKey(handle: PrivateKeyHandle): Promise<void>;
+}
+
+/** DEVELOPMENT/TEST ONLY: persists exportable PKCS#8 bytes behind SecureSecretStore. */
+export class SecretStoreWebCryptoKeyPersistence implements WebCryptoKeyPersistence {
+  constructor(
+    private readonly secrets: SecureSecretStore,
+    private readonly prefix = 'dev/webcrypto-private/',
+  ) {}
+
+  async savePrivateKey(handle: PrivateKeyHandle, pkcs8: Uint8Array): Promise<void> {
+    await this.secrets.setSecret(this.ref(handle), pkcs8);
+  }
+
+  async loadPrivateKey(handle: PrivateKeyHandle): Promise<Uint8Array | null> {
+    return this.secrets.getSecret(this.ref(handle));
+  }
+
+  async deletePrivateKey(handle: PrivateKeyHandle): Promise<void> {
+    await this.secrets.deleteSecret(this.ref(handle));
+  }
+
+  private ref(handle: PrivateKeyHandle): string {
+    return `${this.prefix}${handle.provider}/${handle.id}`;
+  }
+}
+
+interface CachedPrivateKey {
+  algorithm: PrivateKeyAlgorithm;
+  key: unknown;
+}
+
 function asKeyPair(value: unknown): CryptoKeyPairLike {
   const pair = value as Partial<CryptoKeyPairLike>;
   if (!pair || !pair.publicKey || !pair.privateKey) {
@@ -42,8 +84,15 @@ function asKeyPair(value: unknown): CryptoKeyPairLike {
   return pair as CryptoKeyPairLike;
 }
 
+const PROVIDER_ID = 'webcrypto-v1';
+
 export class WebCryptoProvider implements CryptoProvider {
-  constructor(private readonly crypto: WebCryptoLike) {}
+  private readonly privateKeys = new Map<string, CachedPrivateKey>();
+
+  constructor(
+    private readonly crypto: WebCryptoLike,
+    private readonly persistence?: WebCryptoKeyPersistence,
+  ) {}
 
   randomBytes(length: number): Uint8Array {
     if (!Number.isSafeInteger(length) || length <= 0) {
@@ -76,35 +125,44 @@ export class WebCryptoProvider implements CryptoProvider {
     return new Uint8Array(bits);
   }
 
-  async generateSigningKeyPair(): Promise<GeneratedKeyPair> {
-    const pair = asKeyPair(await this.crypto.subtle.generateKey({name: 'Ed25519'}, true, [
-      'sign',
-      'verify',
-    ]));
-    return {
-      publicKey: new Uint8Array(await this.crypto.subtle.exportKey('raw', pair.publicKey)),
-      privateKey: new Uint8Array(await this.crypto.subtle.exportKey('pkcs8', pair.privateKey)),
-    };
+  async generateSigningKeyPair(
+    purpose: Extract<PrivateKeyPurpose, 'identity-signing'>,
+  ): Promise<GeneratedKeyPair> {
+    if (purpose !== 'identity-signing') {
+      throw new SecurityError('INVALID_INPUT', 'Invalid signing-key purpose');
+    }
+    return this.generateKeyPair('Ed25519', purpose, ['sign', 'verify']);
   }
 
-  async generateAgreementKeyPair(): Promise<GeneratedKeyPair> {
-    const pair = asKeyPair(await this.crypto.subtle.generateKey({name: 'X25519'}, true, [
-      'deriveBits',
-    ]));
-    return {
-      publicKey: new Uint8Array(await this.crypto.subtle.exportKey('raw', pair.publicKey)),
-      privateKey: new Uint8Array(await this.crypto.subtle.exportKey('pkcs8', pair.privateKey)),
-    };
+  async generateAgreementKeyPair(
+    purpose: Extract<PrivateKeyPurpose, 'identity-agreement' | 'session-ephemeral'>,
+  ): Promise<GeneratedKeyPair> {
+    return this.generateKeyPair('X25519', purpose, ['deriveBits']);
   }
 
-  async sign(privateKeyPkcs8: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
-    const key = await this.crypto.subtle.importKey(
-      'pkcs8',
-      privateKeyPkcs8,
-      {name: 'Ed25519'},
-      false,
-      ['sign'],
-    );
+  async hasPrivateKey(handle: PrivateKeyHandle): Promise<boolean> {
+    try {
+      await this.resolvePrivateKey(handle);
+      return true;
+    } catch (error) {
+      if (error instanceof SecurityError && error.code === 'KEY_NOT_FOUND') {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async deletePrivateKey(handle: PrivateKeyHandle): Promise<void> {
+    this.assertHandle(handle);
+    this.privateKeys.delete(handle.id);
+    await this.persistence?.deletePrivateKey(handle);
+  }
+
+  async sign(handle: PrivateKeyHandle, message: Uint8Array): Promise<Uint8Array> {
+    if (handle.algorithm !== 'Ed25519' || handle.purpose !== 'identity-signing') {
+      throw new SecurityError('INVALID_INPUT', 'Signing requires an Ed25519 identity-signing handle');
+    }
+    const key = await this.resolvePrivateKey(handle);
     return new Uint8Array(await this.crypto.subtle.sign({name: 'Ed25519'}, key, message));
   }
 
@@ -131,19 +189,16 @@ export class WebCryptoProvider implements CryptoProvider {
   }
 
   async deriveSharedSecret(
-    privateKeyPkcs8: Uint8Array,
+    handle: PrivateKeyHandle,
     peerPublicKeyRaw: Uint8Array,
   ): Promise<Uint8Array> {
+    if (handle.algorithm !== 'X25519') {
+      throw new SecurityError('INVALID_INPUT', 'Key agreement requires an X25519 handle');
+    }
     if (peerPublicKeyRaw.length !== 32) {
       throw new SecurityError('INVALID_INPUT', 'X25519 public key must be 32 bytes');
     }
-    const privateKey = await this.crypto.subtle.importKey(
-      'pkcs8',
-      privateKeyPkcs8,
-      {name: 'X25519'},
-      false,
-      ['deriveBits'],
-    );
+    const privateKey = await this.resolvePrivateKey(handle);
     const publicKey = await this.crypto.subtle.importKey(
       'raw',
       peerPublicKeyRaw,
@@ -201,6 +256,75 @@ export class WebCryptoProvider implements CryptoProvider {
         throw error;
       }
       throw new SecurityError('AUTHENTICATION_FAILED', 'Ciphertext authentication failed');
+    }
+  }
+
+  private async generateKeyPair(
+    algorithm: PrivateKeyAlgorithm,
+    purpose: PrivateKeyPurpose,
+    usages: string[],
+  ): Promise<GeneratedKeyPair> {
+    const pair = asKeyPair(await this.crypto.subtle.generateKey({name: algorithm}, true, usages));
+    const handle: PrivateKeyHandle = {
+      provider: PROVIDER_ID,
+      id: `wck1_${toBase64Url(this.randomBytes(18))}`,
+      algorithm,
+      purpose,
+    };
+    this.privateKeys.set(handle.id, {algorithm, key: pair.privateKey});
+    if (this.persistence) {
+      const exported = new Uint8Array(await this.crypto.subtle.exportKey('pkcs8', pair.privateKey));
+      try {
+        await this.persistence.savePrivateKey(handle, exported);
+      } finally {
+        wipe(exported);
+      }
+    }
+    return {
+      publicKey: new Uint8Array(await this.crypto.subtle.exportKey('raw', pair.publicKey)),
+      privateKeyHandle: handle,
+    };
+  }
+
+  private async resolvePrivateKey(handle: PrivateKeyHandle): Promise<unknown> {
+    this.assertHandle(handle);
+    const cached = this.privateKeys.get(handle.id);
+    if (cached) {
+      if (cached.algorithm !== handle.algorithm) {
+        throw new SecurityError('KEY_NOT_FOUND', 'Private-key handle algorithm mismatch');
+      }
+      return cached.key;
+    }
+    if (!this.persistence) {
+      throw new SecurityError('KEY_NOT_FOUND', 'Private key is not loaded by this WebCrypto provider');
+    }
+    const pkcs8 = await this.persistence.loadPrivateKey(handle);
+    if (!pkcs8) {
+      throw new SecurityError('KEY_NOT_FOUND', 'Private-key handle cannot be resolved');
+    }
+    try {
+      const usages = handle.algorithm === 'Ed25519' ? ['sign'] : ['deriveBits'];
+      const key = await this.crypto.subtle.importKey(
+        'pkcs8',
+        pkcs8,
+        {name: handle.algorithm},
+        false,
+        usages,
+      );
+      this.privateKeys.set(handle.id, {algorithm: handle.algorithm, key});
+      return key;
+    } finally {
+      wipe(pkcs8);
+    }
+  }
+
+  private assertHandle(handle: PrivateKeyHandle): void {
+    if (
+      handle.provider !== PROVIDER_ID ||
+      !/^wck1_[A-Za-z0-9_-]{16,64}$/.test(handle.id) ||
+      (handle.algorithm !== 'Ed25519' && handle.algorithm !== 'X25519')
+    ) {
+      throw new SecurityError('KEY_NOT_FOUND', 'Private-key handle does not belong to this provider');
     }
   }
 

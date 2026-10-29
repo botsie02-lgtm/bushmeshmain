@@ -33,7 +33,16 @@ async function establish(sessionLifetimeMs = 60_000) {
   const offer = await aSessions.createOffer(bIdentity.deviceId);
   const accepted = await bSessions.acceptOffer(offer);
   const aSession = await aSessions.finalizeOffer(accepted.response);
-  return {a, b, aSessions, bSessions, aSession, bSession: accepted.session, offer, response: accepted.response};
+  return {
+    a,
+    b,
+    aSessions,
+    bSessions,
+    aSession,
+    bSession: accepted.session,
+    offer,
+    response: accepted.response,
+  };
 }
 
 describe('secure direct-message sessions', () => {
@@ -45,11 +54,22 @@ describe('secure direct-message sessions', () => {
     expect(new TextDecoder().decode(plaintext)).toBe('hello bush');
   });
 
-  test('rejects replay after successful authentication', async () => {
-    const {aSessions, bSessions, aSession} = await establish();
+  test('rejects replay after successful authentication and after manager recovery', async () => {
+    const {aSessions, b, bSessions, aSession} = await establish();
     const envelope = await aSessions.encrypt(aSession.sessionId, utf8('once'), context);
     await expect(bSessions.decrypt(envelope, context)).resolves.toBeDefined();
-    await expect(bSessions.decrypt(envelope, context)).rejects.toMatchObject({code: 'REPLAY_DETECTED'});
+    const recovered = new DirectSessionManager(
+      b.crypto,
+      b.secrets,
+      b.metadata,
+      b.identity,
+      b.trust,
+      b.versions,
+      b.clock,
+    );
+    await expect(recovered.decrypt(envelope, context)).rejects.toMatchObject({
+      code: 'REPLAY_DETECTED',
+    });
   });
 
   test('modified ciphertext fails without poisoning replay state', async () => {
@@ -76,6 +96,7 @@ describe('secure direct-message sessions', () => {
     const {a, b, aSessions, bSessions, aSession} = await establish();
     const aIdentity = await a.identity.current();
     await b.trust.revoke(aIdentity.deviceId, 'lost device');
+    await bSessions.revokeSessionsForPeer(aIdentity.deviceId);
     const envelope = await aSessions.encrypt(aSession.sessionId, utf8('blocked'), context);
     await expect(bSessions.decrypt(envelope, context)).rejects.toMatchObject({code: 'PEER_REVOKED'});
   });
@@ -94,12 +115,18 @@ describe('secure direct-message sessions', () => {
     ).rejects.toMatchObject({code: 'ROTATED_KEY'});
   });
 
-  test('nonce counters survive manager recovery and never reuse under a key', async () => {
+  test('nonce counters survive manager recovery and concurrent reservations are unique', async () => {
     const {a, aSessions, aSession} = await establish();
-    const first = await aSessions.encrypt(aSession.sessionId, utf8('one'), context);
-    const second = await aSessions.encrypt(aSession.sessionId, utf8('two'), context);
-    expect(first.counter).toBe('1');
-    expect(second.counter).toBe('2');
+    const firstBatch = await Promise.all(
+      Array.from({length: 32}, (_, index) =>
+        aSessions.encrypt(aSession.sessionId, utf8(`m-${index}`), context),
+      ),
+    );
+    const counters = firstBatch.map(message => BigInt(message.counter));
+    expect(new Set(counters.map(String)).size).toBe(32);
+    expect(counters.map(Number).sort((x, y) => x - y)).toEqual(
+      Array.from({length: 32}, (_, index) => index + 1),
+    );
 
     const recovered = new DirectSessionManager(
       a.crypto,
@@ -110,8 +137,76 @@ describe('secure direct-message sessions', () => {
       a.versions,
       a.clock,
     );
-    const third = await recovered.encrypt(aSession.sessionId, utf8('three'), context);
-    expect(third.counter).toBe('3');
+    const next = await recovered.encrypt(aSession.sessionId, utf8('after restart'), context);
+    expect(next.counter).toBe('33');
+  });
+
+  test('counter rollback is a fail-closed security event that revokes the session', async () => {
+    const {a, aSessions, aSession} = await establish();
+    await aSessions.encrypt(aSession.sessionId, utf8('one'), context);
+    await aSessions.encrypt(aSession.sessionId, utf8('two'), context);
+    a.metadata.unsafeSetNonceCounter(aSession.sendNonceScope, 1n);
+
+    await expect(
+      aSessions.encrypt(aSession.sessionId, utf8('must not reuse'), context),
+    ).rejects.toMatchObject({code: 'COUNTER_ROLLBACK'});
+    expect((await a.metadata.getSession(aSession.sessionId))?.state).toBe('revoked');
+    await expect(
+      aSessions.encrypt(aSession.sessionId, utf8('retired'), context),
+    ).rejects.toMatchObject({code: 'PEER_REVOKED'});
+  });
+
+  test('duplicate session offer is consumed exactly once', async () => {
+    const a = createSecurityNode();
+    const b = createSecurityNode();
+    await mutuallyTrust(a, b);
+    const aSessions = new DirectSessionManager(
+      a.crypto, a.secrets, a.metadata, a.identity, a.trust, a.versions, a.clock,
+    );
+    const bSessions = new DirectSessionManager(
+      b.crypto, b.secrets, b.metadata, b.identity, b.trust, b.versions, b.clock,
+    );
+    const offer = await aSessions.createOffer((await b.identity.current()).deviceId);
+    await bSessions.acceptOffer(offer);
+    await expect(bSessions.acceptOffer(offer)).rejects.toMatchObject({code: 'REPLAY_DETECTED'});
+  });
+
+  test('malformed response timestamp is rejected before session establishment', async () => {
+    const a = createSecurityNode();
+    const b = createSecurityNode();
+    await mutuallyTrust(a, b);
+    const aSessions = new DirectSessionManager(
+      a.crypto, a.secrets, a.metadata, a.identity, a.trust, a.versions, a.clock,
+    );
+    const bSessions = new DirectSessionManager(
+      b.crypto, b.secrets, b.metadata, b.identity, b.trust, b.versions, b.clock,
+    );
+    const offer = await aSessions.createOffer((await b.identity.current()).deviceId);
+    const {response} = await bSessions.acceptOffer(offer);
+    const future = {...response, issuedAt: a.clock.now() + 5_001};
+    await expect(aSessions.finalizeOffer(future)).rejects.toMatchObject({
+      code: 'AUTHENTICATION_FAILED',
+    });
+  });
+
+  test('retires all sessions for a peer after revocation or rotation', async () => {
+    const a = createSecurityNode();
+    const b = createSecurityNode();
+    const {bIdentity} = await mutuallyTrust(a, b);
+    const aSessions = new DirectSessionManager(
+      a.crypto, a.secrets, a.metadata, a.identity, a.trust, a.versions, a.clock,
+    );
+    const bSessions = new DirectSessionManager(
+      b.crypto, b.secrets, b.metadata, b.identity, b.trust, b.versions, b.clock,
+    );
+    for (let i = 0; i < 2; i += 1) {
+      const offer = await aSessions.createOffer(bIdentity.deviceId);
+      const accepted = await bSessions.acceptOffer(offer);
+      await aSessions.finalizeOffer(accepted.response);
+    }
+    expect((await a.metadata.listSessions(bIdentity.deviceId)).length).toBe(2);
+    expect(await aSessions.rotateSessionsForPeer(bIdentity.deviceId)).toBe(2);
+    expect((await a.metadata.listSessions(bIdentity.deviceId)).every(s => s.state === 'rotated')).toBe(true);
   });
 
   test('malformed counter and protocol context are rejected', async () => {

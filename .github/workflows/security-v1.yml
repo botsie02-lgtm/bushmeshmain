@@ -1,0 +1,40 @@
+name: Security v1
+
+on:
+  push:
+    branches:
+      - foundation/security-identity-v1
+  pull_request:
+    paths:
+      - 'src/security/**'
+      - '__tests__/**'
+      - 'docs/SECURITY_*.md'
+      - '.github/workflows/security-v1.yml'
+  workflow_dispatch:
+
+jobs:
+  security-v1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.11.0'
+          cache: npm
+      - run: npm ci
+      - name: Jest
+        run: npm test -- --runInBand
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Lint security contract
+        run: >-
+          npx eslint
+          src/security
+          __tests__/directSession.test.ts
+          __tests__/groupSecurity.test.ts
+          __tests__/identityTrustPairing.test.ts
+          __tests__/securityPersistenceHardening.test.ts
+          __tests__/securityTestHelpers.ts
+          __tests__/securityVectors.test.ts
+          --max-warnings=0

@@ -34,6 +34,7 @@ export function identityRotationPayload(
     fromBase64Url(next.agreementPublicKey, 32),
     u32be(next.keyEpoch),
     utf8(String(proof.rotatedAt)),
+    utf8(String(next.rotatedAt ?? 0)),
   ]);
 }
 

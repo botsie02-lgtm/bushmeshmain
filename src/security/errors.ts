@@ -1,5 +1,6 @@
 export type SecurityErrorCode =
   | 'AUTHENTICATION_FAILED'
+  | 'COUNTER_ROLLBACK'
   | 'DOWNGRADE_DETECTED'
   | 'DUPLICATE_IDENTITY'
   | 'EXPIRED_KEY'

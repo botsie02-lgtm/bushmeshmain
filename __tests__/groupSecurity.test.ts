@@ -1,13 +1,24 @@
 import {utf8} from '../src/security/bytes';
 import {GroupKeyManager} from '../src/security/group';
+import {DirectSessionManager} from '../src/security/session';
 import {createSecurityNode, mutuallyTrust} from './securityTestHelpers';
 
-const context = {protocolVersion: 1, authenticatedHeader: utf8('group-header')};
+const context = {protocolVersion: 1, authenticatedHeader: utf8('group-key-or-message-header')};
 
 async function setupGroup() {
   const a = createSecurityNode();
   const b = createSecurityNode();
   const {aIdentity, bIdentity} = await mutuallyTrust(a, b);
+  const aSessions = new DirectSessionManager(
+    a.crypto, a.secrets, a.metadata, a.identity, a.trust, a.versions, a.clock,
+  );
+  const bSessions = new DirectSessionManager(
+    b.crypto, b.secrets, b.metadata, b.identity, b.trust, b.versions, b.clock,
+  );
+  const offer = await aSessions.createOffer(bIdentity.deviceId);
+  const accepted = await bSessions.acceptOffer(offer);
+  const aSession = await aSessions.finalizeOffer(accepted.response);
+
   const aGroups = new GroupKeyManager(
     a.crypto, a.secrets, a.metadata, a.identity, a.trust, a.versions, a.clock,
   );
@@ -18,14 +29,38 @@ async function setupGroup() {
     {deviceId: aIdentity.deviceId, role: 'leader'},
     {deviceId: bIdentity.deviceId, role: 'member'},
   ]);
-  const active = group.keyEpochs.find(epoch => epoch.epoch === group.currentEpoch)!;
-  const key = await a.secrets.getSecret(active.keyRef);
-  expect(key).not.toBeNull();
-  await bGroups.installGroupKey(group, key!);
-  return {a, b, aIdentity, bIdentity, aGroups, bGroups, group};
+  const wrapped = await aGroups.wrapActiveKeyForPeer(
+    group.groupId,
+    bIdentity.deviceId,
+    aSession.sessionId,
+    aSessions,
+    context,
+  );
+  const installed = await bGroups.installWrappedGroupKey(wrapped, bSessions, context);
+  return {
+    a,
+    b,
+    aIdentity,
+    bIdentity,
+    aSessions,
+    bSessions,
+    aSession,
+    aGroups,
+    bGroups,
+    group,
+    installed,
+    wrapped,
+  };
 }
 
 describe('group/convoy key handling', () => {
+  test('distributes a group epoch only through an authenticated direct session', async () => {
+    const {group, installed} = await setupGroup();
+    expect(installed.groupId).toBe(group.groupId);
+    expect(installed.currentEpoch).toBe(group.currentEpoch);
+    expect(installed.members).toEqual(group.members);
+  });
+
   test('encrypts group traffic with per-sender derived keys', async () => {
     const {aGroups, bGroups, group} = await setupGroup();
     const envelope = await aGroups.encrypt(group.groupId, utf8('convoy update'), context);
@@ -33,11 +68,16 @@ describe('group/convoy key handling', () => {
     expect(new TextDecoder().decode(plaintext)).toBe('convoy update');
   });
 
-  test('rejects group replay', async () => {
-    const {aGroups, bGroups, group} = await setupGroup();
+  test('rejects group replay across manager recovery', async () => {
+    const {b, aGroups, bGroups, group} = await setupGroup();
     const envelope = await aGroups.encrypt(group.groupId, utf8('position'), context);
     await bGroups.decrypt(envelope, context);
-    await expect(bGroups.decrypt(envelope, context)).rejects.toMatchObject({code: 'REPLAY_DETECTED'});
+    const recovered = new GroupKeyManager(
+      b.crypto, b.secrets, b.metadata, b.identity, b.trust, b.versions, b.clock,
+    );
+    await expect(recovered.decrypt(envelope, context)).rejects.toMatchObject({
+      code: 'REPLAY_DETECTED',
+    });
   });
 
   test('revoked peer traffic is rejected', async () => {
@@ -54,14 +94,22 @@ describe('group/convoy key handling', () => {
     await expect(aGroups.decrypt(oldEnvelope, context)).rejects.toMatchObject({code: 'ROTATED_KEY'});
   });
 
-  test('revoking a member rotates the group key', async () => {
-    const {aGroups, bIdentity, group} = await setupGroup();
+  test('revoking a member rotates the group key and blocks future key distribution', async () => {
+    const {aGroups, aSessions, aSession, bIdentity, group} = await setupGroup();
     const updated = await aGroups.revokeMember(group.groupId, bIdentity.deviceId);
     expect(updated.currentEpoch).toBe(2);
     expect(updated.members.find(member => member.deviceId === bIdentity.deviceId)?.state).toBe(
       'revoked',
     );
-    expect(updated.keyEpochs.find(epoch => epoch.epoch === 1)?.state).toBe('rotated');
+    await expect(
+      aGroups.wrapActiveKeyForPeer(
+        group.groupId,
+        bIdentity.deviceId,
+        aSession.sessionId,
+        aSessions,
+        context,
+      ),
+    ).rejects.toMatchObject({code: 'PEER_REVOKED'});
   });
 
   test('modified group ciphertext is rejected', async () => {
@@ -71,5 +119,28 @@ describe('group/convoy key handling', () => {
     await expect(
       bGroups.decrypt({...envelope, ciphertext: envelope.ciphertext.slice(0, -1) + last}, context),
     ).rejects.toMatchObject({code: 'AUTHENTICATION_FAILED'});
+  });
+
+  test('replayed wrapped distribution is rejected', async () => {
+    const {bGroups, bSessions, wrapped} = await setupGroup();
+    await expect(
+      bGroups.installWrappedGroupKey({...wrapped, epoch: wrapped.epoch + 1}, bSessions, context),
+    ).rejects.toMatchObject({code: 'REPLAY_DETECTED'});
+  });
+
+  test('group nonce-counter rollback revokes the affected epoch key', async () => {
+    const {a, aIdentity, aGroups, group} = await setupGroup();
+    await aGroups.encrypt(group.groupId, utf8('one'), context);
+    await aGroups.encrypt(group.groupId, utf8('two'), context);
+    const scope = `group/${group.groupId}/epoch-1/sender/${aIdentity.deviceId}`;
+    a.metadata.unsafeSetNonceCounter(scope, 1n);
+    await expect(aGroups.encrypt(group.groupId, utf8('reuse'), context)).rejects.toMatchObject({
+      code: 'COUNTER_ROLLBACK',
+    });
+    const failed = await a.metadata.getGroup(group.groupId);
+    expect(failed?.keyEpochs.find(epoch => epoch.epoch === 1)?.state).toBe('revoked');
+    await expect(aGroups.encrypt(group.groupId, utf8('blocked'), context)).rejects.toMatchObject({
+      code: 'KEY_NOT_FOUND',
+    });
   });
 });

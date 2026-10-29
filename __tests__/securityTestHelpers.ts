@@ -1,4 +1,8 @@
-import {WebCryptoProvider, type WebCryptoLike} from '../src/security/webCryptoProvider';
+import {
+  SecretStoreWebCryptoKeyPersistence,
+  WebCryptoProvider,
+  type WebCryptoLike,
+} from '../src/security/webCryptoProvider';
 import {IdentityManager} from '../src/security/identity';
 import {PeerTrustManager} from '../src/security/trust';
 import {VersionPolicy} from '../src/security/versionPolicy';
@@ -21,16 +25,24 @@ export class TestClock implements SecurityClock {
 }
 
 export function createSecurityNode(clock = new TestClock()) {
-  const crypto = new WebCryptoProvider(nodeWebCrypto);
   const secrets = new InMemorySecretStore();
   const metadata = new InMemorySecurityMetadataStore();
-  const identity = new IdentityManager(crypto, secrets, metadata, clock);
+  const keyPersistence = new SecretStoreWebCryptoKeyPersistence(secrets);
+  const crypto = new WebCryptoProvider(nodeWebCrypto, keyPersistence);
+  const identity = new IdentityManager(crypto, metadata, clock);
   const versions = new VersionPolicy([1], [1], 1, 1);
   const trust = new PeerTrustManager(crypto, metadata, identity, clock);
-  return {crypto, secrets, metadata, identity, versions, trust, clock};
+  return {crypto, secrets, metadata, keyPersistence, identity, versions, trust, clock};
 }
 
-export async function mutuallyTrust(a: ReturnType<typeof createSecurityNode>, b: ReturnType<typeof createSecurityNode>) {
+export function recreateCrypto(node: ReturnType<typeof createSecurityNode>) {
+  return new WebCryptoProvider(nodeWebCrypto, node.keyPersistence);
+}
+
+export async function mutuallyTrust(
+  a: ReturnType<typeof createSecurityNode>,
+  b: ReturnType<typeof createSecurityNode>,
+) {
   const aIdentity = await a.identity.loadOrCreate();
   const bIdentity = await b.identity.loadOrCreate();
   await a.trust.observe(bIdentity);

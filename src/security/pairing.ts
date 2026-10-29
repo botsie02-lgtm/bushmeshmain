@@ -34,14 +34,19 @@ export class PairingService {
     expectedChallenge: Uint8Array,
     maxAgeMs = 120_000,
   ): Promise<void> {
+    if (expectedChallenge.length < 16 || !Number.isSafeInteger(maxAgeMs) || maxAgeMs <= 0) {
+      throw new SecurityError('INVALID_INPUT', 'Invalid pairing verification parameters');
+    }
     const challenge = fromBase64Url(proof.challenge);
     if (challenge.length !== expectedChallenge.length) {
       throw new SecurityError('AUTHENTICATION_FAILED', 'Pairing challenge mismatch');
     }
+    let mismatch = 0;
     for (let i = 0; i < challenge.length; i += 1) {
-      if (challenge[i] !== expectedChallenge[i]) {
-        throw new SecurityError('AUTHENTICATION_FAILED', 'Pairing challenge mismatch');
-      }
+      mismatch |= challenge[i] ^ expectedChallenge[i];
+    }
+    if (mismatch !== 0) {
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Pairing challenge mismatch');
     }
     if (proof.issuedAt > this.clock.now() + 5_000 || this.clock.now() - proof.issuedAt > maxAgeMs) {
       throw new SecurityError('AUTHENTICATION_FAILED', 'Pairing proof is outside its validity window');

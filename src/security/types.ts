@@ -3,6 +3,29 @@ export type ProtocolVersion = number;
 export type TrustState = 'unverified' | 'trusted' | 'revoked';
 export type SessionState = 'active' | 'rotated' | 'expired' | 'revoked';
 export type GroupKeyState = 'active' | 'rotated' | 'revoked';
+export type PrivateKeyAlgorithm = 'Ed25519' | 'X25519';
+export type PrivateKeyPurpose =
+  | 'identity-signing'
+  | 'identity-agreement'
+  | 'session-ephemeral';
+
+/**
+ * Serializable reference to private key material owned by a CryptoProvider.
+ * No private key bytes are carried in this object.
+ */
+export interface PrivateKeyHandle {
+  provider: string;
+  id: string;
+  algorithm: PrivateKeyAlgorithm;
+  purpose: PrivateKeyPurpose;
+}
+
+export interface LocalIdentityKeyHandles {
+  keyEpoch: number;
+  signingPrivateKey: PrivateKeyHandle;
+  agreementPrivateKey: PrivateKeyHandle;
+  createdAt: number;
+}
 
 export interface DeviceIdentity {
   identityVersion: 1;
@@ -73,7 +96,7 @@ export interface PendingHandshakeRecord {
   handshakeId: string;
   peerDeviceId: string;
   offer: SessionOffer;
-  privateKeyRef: string;
+  privateKeyHandle: PrivateKeyHandle;
   createdAt: number;
   expiresAt: number;
 }
@@ -145,6 +168,24 @@ export interface EncryptedGroupMessage {
   senderDeviceId: string;
   counter: string;
   ciphertext: string;
+}
+
+/**
+ * Transport-neutral container. The actual group key exists only inside the
+ * authenticated direct-session ciphertext carried by encryptedPayload.
+ */
+export interface WrappedGroupKeyDistribution {
+  distributionVersion: 1;
+  groupId: string;
+  epoch: number;
+  senderDeviceId: string;
+  senderFingerprint: string;
+  recipientDeviceId: string;
+  recipientFingerprint: string;
+  securityVersion: SecurityVersion;
+  protocolVersion: ProtocolVersion;
+  sessionId: string;
+  encryptedPayload: EncryptedDirectMessage;
 }
 
 export interface SecurityProtocolContext {

@@ -4,6 +4,7 @@ import type {
   DeviceIdentity,
   DirectSessionRecord,
   GroupRecord,
+  LocalIdentityKeyHandles,
   PeerTrustRecord,
   PendingHandshakeRecord,
 } from '../types';
@@ -38,14 +39,22 @@ interface ReplayState {
   bitmap: bigint;
 }
 
-/** TEST/DEVELOPMENT ONLY. Production nonce/replay operations must be durable and atomic. */
+/**
+ * TEST/DEVELOPMENT ONLY. The separate nonceCounters and nonceHighWatermarks
+ * maps intentionally model two persistence domains so rollback detection can be
+ * tested. Production implementations must provide equivalent atomic/durable
+ * semantics with a platform-appropriate protected high-watermark.
+ */
 export class InMemorySecurityMetadataStore implements SecurityMetadataStore {
   private identity: DeviceIdentity | null = null;
+  private identityKeyHandles: LocalIdentityKeyHandles | null = null;
   private readonly peers = new Map<string, PeerTrustRecord>();
   private readonly pending = new Map<string, PendingHandshakeRecord>();
+  private readonly consumedHandshakes = new Map<string, number>();
   private readonly sessions = new Map<string, DirectSessionRecord>();
   private readonly groups = new Map<string, GroupRecord>();
   private readonly nonceCounters = new Map<string, bigint>();
+  private readonly nonceHighWatermarks = new Map<string, bigint>();
   private readonly replayStates = new Map<string, ReplayState>();
 
   async getIdentity(): Promise<DeviceIdentity | null> {
@@ -54,6 +63,14 @@ export class InMemorySecurityMetadataStore implements SecurityMetadataStore {
 
   async setIdentity(identity: DeviceIdentity): Promise<void> {
     this.identity = clone(identity);
+  }
+
+  async getIdentityKeyHandles(): Promise<LocalIdentityKeyHandles | null> {
+    return this.identityKeyHandles ? clone(this.identityKeyHandles) : null;
+  }
+
+  async setIdentityKeyHandles(handles: LocalIdentityKeyHandles): Promise<void> {
+    this.identityKeyHandles = clone(handles);
   }
 
   async listPeers(): Promise<PeerTrustRecord[]> {
@@ -82,9 +99,23 @@ export class InMemorySecurityMetadataStore implements SecurityMetadataStore {
     this.pending.delete(handshakeId);
   }
 
+  async consumeHandshakeId(handshakeId: string, expiresAt: number): Promise<boolean> {
+    if (this.consumedHandshakes.has(handshakeId)) {
+      return false;
+    }
+    this.consumedHandshakes.set(handshakeId, expiresAt);
+    return true;
+  }
+
   async getSession(sessionId: string): Promise<DirectSessionRecord | null> {
     const record = this.sessions.get(sessionId);
     return record ? clone(record) : null;
+  }
+
+  async listSessions(peerDeviceId?: string): Promise<DirectSessionRecord[]> {
+    return [...this.sessions.values()]
+      .filter(record => peerDeviceId === undefined || record.peerDeviceId === peerDeviceId)
+      .map(clone);
   }
 
   async setSession(record: DirectSessionRecord): Promise<void> {
@@ -100,8 +131,28 @@ export class InMemorySecurityMetadataStore implements SecurityMetadataStore {
     this.groups.set(record.groupId, clone(record));
   }
 
-  async reserveNonceCounter(scope: string): Promise<bigint> {
+  async getNonceHighWatermark(scope: string): Promise<bigint> {
+    return this.nonceHighWatermarks.get(scope) ?? 0n;
+  }
+
+  async advanceNonceHighWatermark(scope: string, counter: bigint): Promise<void> {
+    if (counter < 0n || counter > 0xffffffffffffffffn) {
+      throw new SecurityError('INVALID_INPUT', 'Nonce high-watermark is outside u64 range');
+    }
+    const current = this.nonceHighWatermarks.get(scope) ?? 0n;
+    if (counter > current) {
+      this.nonceHighWatermarks.set(scope, counter);
+    }
+  }
+
+  async reserveNonceCounter(scope: string, minimumHighWatermark: bigint): Promise<bigint> {
     const current = this.nonceCounters.get(scope) ?? 0n;
+    if (current < minimumHighWatermark) {
+      throw new SecurityError(
+        'COUNTER_ROLLBACK',
+        `Nonce counter for ${scope} rolled back below its protected high-watermark`,
+      );
+    }
     if (current >= 0xffffffffffffffffn) {
       throw new SecurityError('NONCE_EXHAUSTED', 'Nonce counter exhausted');
     }
@@ -124,8 +175,8 @@ export class InMemorySecurityMetadataStore implements SecurityMetadataStore {
     const mask = (1n << window) - 1n;
     if (counter > current.maxSeen) {
       const shift = counter - current.maxSeen;
-      current.bitmap = ((shift >= window ? 0n : current.bitmap << shift) | 1n) & mask;
-      current.maxSeen = counter;
+      const bitmap = ((shift >= window ? 0n : current.bitmap << shift) | 1n) & mask;
+      this.replayStates.set(scope, {maxSeen: counter, bitmap});
       return true;
     }
 
@@ -137,7 +188,22 @@ export class InMemorySecurityMetadataStore implements SecurityMetadataStore {
     if ((current.bitmap & bit) !== 0n) {
       return false;
     }
-    current.bitmap |= bit;
+    this.replayStates.set(scope, {maxSeen: current.maxSeen, bitmap: current.bitmap | bit});
     return true;
+  }
+
+  /** Test-only fault injection for rollback/recovery scenarios. */
+  unsafeSetNonceCounter(scope: string, value: bigint): void {
+    this.nonceCounters.set(scope, value);
+  }
+
+  /** Test-only fault injection for rollback/recovery scenarios. */
+  unsafeSetNonceHighWatermark(scope: string, value: bigint): void {
+    this.nonceHighWatermarks.set(scope, value);
+  }
+
+  /** Test-only fault injection for stale replay-window scenarios. */
+  unsafeSetReplayState(scope: string, maxSeen: bigint, bitmap: bigint): void {
+    this.replayStates.set(scope, {maxSeen, bitmap});
   }
 }
