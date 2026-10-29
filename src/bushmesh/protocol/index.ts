@@ -16,6 +16,7 @@ export * from './fileTransferSender';
 export * from './forwarding';
 export * from './fragmentation';
 export * from './frameSafety';
+export * from './frameTransport';
 export * from './linkMetrics';
 export * from './location';
 export * from './locationState';
