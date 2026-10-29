@@ -1,13 +1,9 @@
 import {
-  BushMeshCompressionProfile,
-  BushMeshPacketType,
-  BushMeshPriority,
   assertBytes,
   assertIntegerInRange,
   decodeVarUint,
   encodeVarUint,
 } from './codec';
-import {encodeBushMeshWire} from './transport';
 
 export enum BushMeshDeliveryAckStatus {
   Delivered = 0,
@@ -20,6 +16,7 @@ export type BushMeshDeliveryAck = {
   status: BushMeshDeliveryAckStatus | number;
 };
 
+/** Payload codec for the delivery-ACK variant of packet type ACK (0x0c). */
 export function encodeDeliveryAckPayload(ack: BushMeshDeliveryAck): number[] {
   assertIntegerInRange(ack.messageId, 0, 0xffffffff, 'Acknowledged message ID');
   assertIntegerInRange(ack.status, 0, 255, 'Delivery ACK status');
@@ -45,23 +42,4 @@ export function decodeDeliveryAckPayload(bytes: number[]): BushMeshDeliveryAck {
     messageId: messageId.value,
     status,
   };
-}
-
-export function encodeBushMeshDeliveryAckWire(
-  acknowledgedMessageId: number,
-  ackPacketMessageId: number,
-  status: BushMeshDeliveryAckStatus | number = BushMeshDeliveryAckStatus.Delivered,
-): number[] {
-  return encodeBushMeshWire({
-    type: BushMeshPacketType.Ack,
-    priority: BushMeshPriority.DirectMessage,
-    compression: BushMeshCompressionProfile.Command,
-    messageId: ackPacketMessageId,
-    ackRequested: false,
-    storeAndForward: false,
-    payload: encodeDeliveryAckPayload({
-      messageId: acknowledgedMessageId,
-      status,
-    }),
-  });
 }
