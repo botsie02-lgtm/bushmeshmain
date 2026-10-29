@@ -6,8 +6,7 @@ import {
   BUSHMESH_FIELD_SUPPORT_BUNDLE_VERSION,
   BushMeshFieldSupportBundle,
 } from './supportBundle';
-import {assertFieldSupportBundlePrivacy} from './supportBundlePrivacy';
-import {assertSupportPackageLimits} from './supportPackageLimits';
+import {assertBushMeshSupportPackageValid} from './supportPackageValidation';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -77,9 +76,9 @@ function validateBundleShape(value: unknown): BushMeshFieldSupportBundle {
  * Parses an exported diagnostics package as untrusted input.
  *
  * This performs the structural checks needed before handing the package to
- * version-specific support tooling, then re-runs the same privacy and size
- * gates used during export. Imported diagnostics are not authenticated and do
- * not prove device identity.
+ * version-specific support tooling, then applies the centralized privacy,
+ * size and internal-consistency gates. Imported diagnostics are not
+ * authenticated and do not prove device identity.
  */
 export function parseBushMeshSupportPackage(json: string): BushMeshSupportPackage {
   if (typeof json !== 'string' || json.trim() === '') {
@@ -135,7 +134,6 @@ export function parseBushMeshSupportPackage(json: string): BushMeshSupportPackag
     bundle,
   } as unknown as BushMeshSupportPackage;
 
-  assertFieldSupportBundlePrivacy(supportPackage.bundle);
-  assertSupportPackageLimits(supportPackage);
+  assertBushMeshSupportPackageValid(supportPackage);
   return supportPackage;
 }
