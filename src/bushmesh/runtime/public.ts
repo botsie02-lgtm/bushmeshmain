@@ -25,8 +25,19 @@ export * from './BushMeshSyncPlanner';
 export * from './BushMeshTransportQueue';
 export * from './BushMeshVoicePipeline';
 
-// Runtime responsibility currently implemented in protocol/ for historical
-// reasons. Re-export here so application code has a stable canonical home while
-// the legacy file locations remain source-compatible.
+// These state machines still live physically under protocol/ for historical
+// source compatibility. Runtime is their canonical public home.
 export * from '../protocol/deliveryQueue';
 export * from '../protocol/deliveryRuntime';
+export * from '../protocol/discoverySession';
+export * from '../protocol/fileTransferSender';
+export * from '../protocol/forwarding';
+export * from '../protocol/linkMetrics';
+export * from '../protocol/locationState';
+export * from '../protocol/messageIdentity';
+export * from '../protocol/persistence';
+export * from '../protocol/reliabilityController';
+export * from '../protocol/retransmission';
+export * from '../protocol/routeFreshness';
+export * from '../protocol/routing';
+export * from '../protocol/scheduler';
