@@ -6,6 +6,7 @@ import {
   serializeFieldDiagnosticsReport,
 } from '../diagnostics/fieldDiagnostics';
 import {getConvoyFreshness} from '../convoy/convoy';
+import {nativeFileExport} from '../native/NativeFileExport';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
 import {useConvoyRecovery} from '../state/ConvoyRecoveryContext';
@@ -30,6 +31,11 @@ function StatusRow({
   );
 }
 
+function reportFilename(capturedAt: string): string {
+  const safeTimestamp = capturedAt.replace(/[:.]/g, '-');
+  return `Bushmesh_Field_Report_${safeTimestamp}.json`;
+}
+
 export function FieldDiagnosticsScreen(): React.JSX.Element {
   const {
     connectionStatus,
@@ -48,11 +54,10 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
     nativeRuntime,
     persistenceStatus: outboxPersistenceStatus,
   } = useRadioSession();
-  const {
-    coverage,
-    mapPersistenceStatus,
-  } = useOfflineMaps();
+  const {coverage, mapPersistenceStatus} = useOfflineMaps();
   const [capturedAtMs, setCapturedAtMs] = useState(Date.now());
+  const [exporting, setExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
 
   const report = useMemo(() => {
     let staleVehicleCount = 0;
@@ -139,6 +144,36 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
   ]);
 
   const serialized = useMemo(() => serializeFieldDiagnosticsReport(report), [report]);
+  const exportSupported = nativeFileExport.isSupported();
+
+  const captureNewSnapshot = () => {
+    setCapturedAtMs(Date.now());
+    setExportStatus(null);
+  };
+
+  const exportReport = async () => {
+    if (!exportSupported || exporting) {
+      return;
+    }
+
+    setExporting(true);
+    setExportStatus(null);
+    try {
+      const result = await nativeFileExport.saveJson(
+        reportFilename(report.capturedAt),
+        serialized,
+      );
+      setExportStatus(`Saved ${result.displayName} to ${result.location}.`);
+    } catch (error) {
+      setExportStatus(
+        error instanceof Error
+          ? `Export failed: ${error.message}`
+          : 'Export failed unexpectedly.',
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <ScrollView
@@ -151,9 +186,25 @@ export function FieldDiagnosticsScreen(): React.JSX.Element {
         <Text style={styles.body}>
           This report deliberately excludes message text, channel secrets, contact names, full radio identities and exact GPS coordinates. It is intended for troubleshooting Bushmesh hardware and field behavior.
         </Text>
-        <TouchableOpacity style={styles.refreshButton} onPress={() => setCapturedAtMs(Date.now())}>
-          <Text style={styles.refreshText}>CAPTURE NEW SNAPSHOT</Text>
-        </TouchableOpacity>
+        <View style={styles.heroActions}>
+          <TouchableOpacity style={styles.refreshButton} onPress={captureNewSnapshot}>
+            <Text style={styles.refreshText}>CAPTURE NEW SNAPSHOT</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.exportButton,
+              (!exportSupported || exporting) && styles.exportButtonDisabled,
+            ]}
+            onPress={() => {
+              exportReport().catch(() => undefined);
+            }}
+            disabled={!exportSupported || exporting}>
+            <Text style={styles.exportText}>
+              {exporting ? 'EXPORTING…' : exportSupported ? 'EXPORT JSON' : 'EXPORT ANDROID ONLY'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+        {exportStatus ? <Text style={styles.exportStatus}>{exportStatus}</Text> : null}
       </View>
 
       <View style={styles.card}>
@@ -249,9 +300,8 @@ const styles = StyleSheet.create({
   eyebrow: {color: colors.accent, fontSize: 9, fontWeight: '900', letterSpacing: 1},
   title: {color: colors.textPrimary, fontSize: 21, fontWeight: '900', marginTop: 4},
   body: {color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 8},
+  heroActions: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12},
   refreshButton: {
-    alignSelf: 'flex-start',
-    marginTop: 12,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.accent,
@@ -259,6 +309,15 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   refreshText: {color: colors.accent, fontSize: 8, fontWeight: '900'},
+  exportButton: {
+    borderRadius: 999,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  exportButtonDisabled: {opacity: 0.45},
+  exportText: {color: colors.background, fontSize: 8, fontWeight: '900'},
+  exportStatus: {color: colors.textSecondary, fontSize: 9, lineHeight: 13, marginTop: 8},
   card: {
     borderRadius: 18,
     borderWidth: 1,
