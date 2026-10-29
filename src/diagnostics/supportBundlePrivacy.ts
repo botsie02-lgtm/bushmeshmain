@@ -1,4 +1,4 @@
-import {BushMeshFieldSupportBundle} from './supportBundle';
+import type {BushMeshFieldSupportBundle} from './supportBundle';
 
 export type SupportBundlePrivacyAudit = {
   safe: boolean;
