@@ -28,6 +28,12 @@ class BushMeshRadioService : Service() {
     private const val PREFS_NAME = "bushmesh_radio_service"
     private const val PREF_NATIVE_ADDRESS = "native_device_address"
     private const val PREF_NATIVE_LABEL = "native_device_label"
+
+    fun hasPersistedNativeTarget(context: Context): Boolean {
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      return !prefs.getString(PREF_NATIVE_ADDRESS, null).isNullOrBlank() ||
+        !prefs.getString(PREF_NATIVE_LABEL, null).isNullOrBlank()
+    }
   }
 
   private val nativeBle: MeshCoreNativeBleRuntime by lazy {
@@ -103,8 +109,14 @@ class BushMeshRadioService : Service() {
         ACTION_STOP -> {
           carInboxNotifier.stop()
           BushMeshRadioServiceState.releaseRadio()
-          clearPersistedNativeTarget()
+          // Cancel reconnect work and clear the in-memory desired target before
+          // touching disk. A reconnect callback racing this command will then see
+          // no desired address and cannot re-establish the just-stopped radio.
           nativeBle.disconnect()
+          // Stop acknowledgement in JS checks this persisted bit, so commit the
+          // tiny preference removal synchronously before shutdown can be observed
+          // as complete. A later sticky service restart must not recover this target.
+          clearPersistedNativeTarget()
         }
 
         ACTION_REQUEST_LOCATION -> BushMeshRadioServiceState.requestLocation()
@@ -193,7 +205,7 @@ class BushMeshRadioService : Service() {
       .edit()
       .remove(PREF_NATIVE_ADDRESS)
       .remove(PREF_NATIVE_LABEL)
-      .apply()
+      .commit()
   }
 
   private fun startForegroundForCurrentState(action: String?) {
