@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -6,98 +6,39 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {BleManager, Device} from 'react-native-ble-plx';
+import {Device} from 'react-native-ble-plx';
 
-import {requestBlePermissions} from '../ble/blePermissions';
 import {
   NativeMeshCoreOwnershipSnapshot,
   nativeMeshCoreSessionCoordinator,
 } from '../meshcore/NativeMeshCoreSessionCoordinator';
-import {NativeMeshCoreResponse} from '../meshcore/NativeMeshCoreSession';
-import {nativeRadioService} from '../native/NativeRadioService';
-import {
-  BushMeshChannel,
-  BushMeshContact,
-  useBushMesh,
-} from '../state/BushMeshContext';
+import {useRadioConnection} from '../state/RadioConnectionContext';
 import {colors} from '../theme/colors';
 
 const initialOwnership: NativeMeshCoreOwnershipSnapshot =
   nativeMeshCoreSessionCoordinator.getSnapshot();
 
-function lineValue(lines: string[] | undefined, prefix: string): string | null {
-  const line = lines?.find(candidate => candidate.startsWith(prefix));
-  if (!line) {
-    return null;
-  }
-  const value = line.slice(prefix.length).trim();
-  return value.length > 0 ? value : null;
-}
-
-function channelFromResponse(response: NativeMeshCoreResponse): BushMeshChannel | null {
-  const lines = response.parsed?.lines;
-  const channelIndex = lineValue(lines, 'Channel Index:');
-  const channelName = lineValue(lines, 'Channel Name:');
-  const secret = lineValue(lines, 'Secret:');
-
-  if (channelIndex === null || channelName === null) {
-    return null;
-  }
-
-  return {
-    channelIndex,
-    channelName,
-    secret: secret ?? 'Unknown',
-  };
-}
-
-function contactFromParsed(contact: {
-  publicKey: string;
-  publicKeyPrefix: string;
-  type: number;
-  flags: number;
-  outPathLength: number;
-  name: string;
-  lastAdvert: number | null;
-  latitude: number | null;
-  longitude: number | null;
-  lastModified: number | null;
-}): BushMeshContact {
-  return {...contact};
-}
-
 function deviceLabel(device: Device): string {
   return device.name ?? device.localName ?? 'Unnamed BLE device';
 }
 
+/**
+ * Background-radio setup intentionally uses the application-lifetime scanner
+ * owned by AppRadioConnectionService. This screen never creates a BleManager or
+ * a JavaScript GATT connection. Selecting a discovered address first stops the
+ * shared scan, then hands that address directly to the Android-native runtime.
+ */
 export function NativeRadioSetupScreen(): React.JSX.Element {
-  const managerRef = useRef<BleManager | null>(null);
-  if (!managerRef.current) {
-    managerRef.current = new BleManager();
-  }
-
   const {
-    channels,
-    setConnectionStatus,
-    setConnectedDeviceName,
-    setChannels,
-    setSendChannelMessageHandler,
-    setSyncContactsHandler,
-    setDeviceStatus,
-    setContacts,
-    addLocalChannelMessage,
-  } = useBushMesh();
-
-  const channelsRef = useRef(channels);
-  useEffect(() => {
-    channelsRef.current = channels;
-  }, [channels]);
-
+    snapshot,
+    nativeHandoffSupported,
+    startScan,
+    stopScan,
+    handoffDiscoveredDeviceToAndroid,
+    disconnect,
+  } = useRadioConnection();
   const [ownership, setOwnership] =
     useState<NativeMeshCoreOwnershipSnapshot>(initialOwnership);
-  const [devices, setDevices] = useState<Device[]>([]);
-  const [isScanning, setIsScanning] = useState(false);
-  const [isStarting, setIsStarting] = useState(false);
   const [setupStatus, setSetupStatus] = useState(
     'Scan for a MeshCore companion node, then let Android own the radio connection.',
   );
@@ -109,22 +50,17 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
     });
   }, []);
 
-  useEffect(() => {
-    return () => {
-      managerRef.current?.stopDeviceScan();
-      managerRef.current?.destroy();
-      managerRef.current = null;
-    };
-  }, []);
-
-  const nativeSupported = nativeRadioService.isSupported();
   const nativeBusy =
-    ownership.state === 'taking-over' || ownership.state === 'stopping' || isStarting;
-  const nativeActive = ownership.state === 'active';
+    ownership.state === 'taking-over' ||
+    ownership.state === 'stopping' ||
+    snapshot.status === 'Connecting';
+  const nativeActive =
+    ownership.state === 'active' || snapshot.connectionOwner === 'android-native';
+  const isScanning = snapshot.status === 'Scanning';
 
   const sortedDevices = useMemo(
     () =>
-      [...devices].sort((a, b) => {
+      [...snapshot.devices].sort((a, b) => {
         const aNamed = deviceLabel(a) === 'Unnamed BLE device' ? 1 : 0;
         const bNamed = deviceLabel(b) === 'Unnamed BLE device' ? 1 : 0;
         if (aNamed !== bNamed) {
@@ -132,77 +68,22 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
         }
         return deviceLabel(a).localeCompare(deviceLabel(b));
       }),
-    [devices],
+    [snapshot.devices],
   );
 
-  const stopScan = () => {
-    managerRef.current?.stopDeviceScan();
-    setIsScanning(false);
-  };
-
   const scan = async () => {
-    if (!nativeSupported || nativeBusy || nativeActive) {
+    if (!nativeHandoffSupported || nativeBusy || nativeActive) {
       return;
     }
 
     setSetupError(null);
-    const granted = await requestBlePermissions();
-    if (!granted) {
-      setSetupError('Bluetooth scan/connect permissions are required.');
-      return;
-    }
-
-    const manager = managerRef.current;
-    if (!manager) {
-      setSetupError('Bluetooth manager is unavailable.');
-      return;
-    }
-
-    setDevices([]);
-    setIsScanning(true);
     setSetupStatus('Scanning for nearby Bluetooth devices…');
-
-    manager.startDeviceScan(null, null, (error, device) => {
-      if (error) {
-        stopScan();
-        setSetupError(error.message);
-        return;
-      }
-      if (!device) {
-        return;
-      }
-
-      setDevices(current => {
-        const existing = current.find(item => item.id === device.id);
-        return existing
-          ? current.map(item => (item.id === device.id ? device : item))
-          : [...current, device];
-      });
-    });
-
-    setTimeout(() => {
-      manager.stopDeviceScan();
-      setIsScanning(false);
-    }, 12_000);
-  };
-
-  const handleNativeFrame = (response: NativeMeshCoreResponse) => {
-    if (response.parsed?.batteryInfo) {
-      setDeviceStatus(response.parsed.batteryInfo);
-    }
-
-    const incoming = response.parsed?.channelMessage;
-    if (incoming) {
-      const channel = channelsRef.current.find(
-        item => item.channelIndex === incoming.channelIndex,
+    try {
+      await startScan();
+    } catch (error) {
+      setSetupError(
+        error instanceof Error ? error.message : 'Bluetooth scan could not start.',
       );
-      addLocalChannelMessage({
-        channelIndex: incoming.channelIndex,
-        channelName: channel?.channelName ?? `Channel ${incoming.channelIndex}`,
-        text: incoming.text,
-        direction: 'received',
-        status: 'confirmed',
-      });
     }
   };
 
@@ -211,64 +92,20 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
       return;
     }
 
+    // Stop is synchronous from the JS scanner's perspective: it invalidates
+    // callbacks/timers before Android is asked to open its GATT connection.
     stopScan();
-    setIsStarting(true);
     setSetupError(null);
     setSetupStatus(`Handing ${deviceLabel(device)} to the Android radio service…`);
 
     try {
-      const session = await nativeMeshCoreSessionCoordinator.start(
-        device.id,
-        deviceLabel(device),
-        {
-          onStatus: message => setSetupStatus(message),
-          onError: message => setSetupError(message),
-          onFrame: handleNativeFrame,
-        },
-      );
-
-      const battery = await session.getBatteryStatus();
-      if (battery.parsed?.batteryInfo) {
-        setDeviceStatus(battery.parsed.batteryInfo);
-      }
-
-      const channelResponses = await session.probeChannels();
-      const loadedChannels = channelResponses
-        .map(channelFromResponse)
-        .filter((channel): channel is BushMeshChannel => channel !== null);
-      setChannels(loadedChannels);
-
-      const loadedContacts = (await session.syncContacts()).map(contactFromParsed);
-      setContacts(loadedContacts);
-
-      setSendChannelMessageHandler(async (channelIndex, message) => {
-        await session.sendChannelMessage(channelIndex, message);
-      });
-      setSyncContactsHandler(async () => {
-        const refreshed = (await session.syncContacts()).map(contactFromParsed);
-        setContacts(refreshed);
-        return refreshed;
-      });
-
-      const queued = await session.syncQueuedMessages(20);
-      queued.forEach(handleNativeFrame);
-
-      setConnectedDeviceName(deviceLabel(device));
-      setConnectionStatus('Connected');
-      setSetupStatus(
-        'Android owns the MeshCore link. The foreground service can reconnect and recover queued Bushmesh traffic after a JS process restart.',
-      );
+      await handoffDiscoveredDeviceToAndroid(device);
     } catch (error) {
-      setConnectionStatus('Disconnected');
-      setSendChannelMessageHandler(null);
-      setSyncContactsHandler(null);
       setSetupError(
         error instanceof Error
           ? error.message
           : 'Android background radio setup failed.',
       );
-    } finally {
-      setIsStarting(false);
     }
   };
 
@@ -280,12 +117,7 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
     setSetupError(null);
     setSetupStatus('Stopping Android-owned MeshCore session…');
     try {
-      await nativeMeshCoreSessionCoordinator.stop();
-      setSendChannelMessageHandler(null);
-      setSyncContactsHandler(null);
-      setConnectionStatus('Disconnected');
-      setConnectedDeviceName(null);
-      setDeviceStatus(null);
+      await disconnect();
       setSetupStatus('Background radio stopped. You can scan for another node.');
     } catch (error) {
       setSetupError(
@@ -295,6 +127,12 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
       );
     }
   };
+
+  const displayedError =
+    ownership.errorMessage ??
+    setupError ??
+    (snapshot.status === 'Error' ? snapshot.statusDetail : null);
+  const displayedStatus = ownership.statusMessage ?? snapshot.statusDetail ?? setupStatus;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -319,14 +157,15 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
         <View style={styles.statusRow}>
           <Text style={styles.label}>Radio</Text>
           <Text style={styles.value}>
-            {ownership.deviceLabel ?? ownership.deviceAddress ?? 'None'}
+            {ownership.deviceLabel ??
+              ownership.deviceAddress ??
+              snapshot.connectedDeviceLabel ??
+              'None'}
           </Text>
         </View>
-        <Text style={styles.statusText}>
-          {ownership.statusMessage ?? setupStatus}
-        </Text>
-        {ownership.errorMessage || setupError ? (
-          <Text style={styles.errorText}>{ownership.errorMessage ?? setupError}</Text>
+        <Text style={styles.statusText}>{displayedStatus}</Text>
+        {displayedError ? (
+          <Text style={styles.errorText}>{displayedError}</Text>
         ) : null}
       </View>
 
@@ -341,19 +180,19 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
         <TouchableOpacity
           style={[styles.button, styles.primaryButton]}
           onPress={scan}
-          disabled={!nativeSupported || nativeBusy}>
+          disabled={!nativeHandoffSupported || nativeBusy || isScanning}>
           <Text style={styles.primaryButtonText}>
             {isScanning ? 'Scanning…' : 'Scan for MeshCore radio'}
           </Text>
         </TouchableOpacity>
       )}
 
-      {!nativeSupported ? (
+      {!nativeHandoffSupported ? (
         <View style={styles.warningCard}>
           <Text style={styles.warningTitle}>Android native runtime unavailable</Text>
           <Text style={styles.body}>
-            Background BLE ownership is currently Android-only. Legacy BLE
-            diagnostics remain available in the other Device mode.
+            Background BLE ownership is currently Android-only. BLE diagnostics
+            remain available in the other Device mode.
           </Text>
         </View>
       ) : null}
@@ -363,13 +202,16 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
           <Text style={styles.sectionTitle}>Nearby devices</Text>
           <Text style={styles.sectionHint}>
             Choose your MeshCore companion node. Android will connect directly;
-            this scanner does not open a competing BLE-PLX GATT connection.
+            the application scanner does not open a competing BLE-PLX GATT
+            connection.
           </Text>
           {sortedDevices.map(device => (
             <TouchableOpacity
               key={device.id}
               style={styles.deviceRow}
-              onPress={() => startNativeRadio(device)}
+              onPress={() => {
+                startNativeRadio(device).catch(() => undefined);
+              }}
               disabled={nativeBusy}>
               <View style={styles.deviceCopy}>
                 <Text style={styles.deviceName}>{deviceLabel(device)}</Text>
@@ -384,8 +226,8 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
       <View style={styles.noticeCard}>
         <Text style={styles.noticeTitle}>Current validation state</Text>
         <Text style={styles.body}>
-          The ownership path is implemented, but it has not yet been field-tested
-          against your Heltec hardware. Radio acceptance still means MeshCore
+          Android-native ownership uses the same application-lifetime discovery
+          service as BLE diagnostics. Radio acceptance still means MeshCore
           accepted a packet for transmission; it does not prove peer delivery.
         </Text>
       </View>
