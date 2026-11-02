@@ -9,6 +9,7 @@ on:
       - 'src/bushmesh/runtime/**'
       - 'src/bushmesh/protocol/**'
       - '__tests__/bushmeshNetworkSimulator.test.ts'
+      - 'tsconfig.network-simulator-v1.json'
       - '.github/workflows/network-simulator-v1.yml'
   pull_request:
     paths:
@@ -16,6 +17,7 @@ on:
       - 'src/bushmesh/runtime/**'
       - 'src/bushmesh/protocol/**'
       - '__tests__/bushmeshNetworkSimulator.test.ts'
+      - 'tsconfig.network-simulator-v1.json'
       - '.github/workflows/network-simulator-v1.yml'
 
 jobs:
@@ -29,4 +31,5 @@ jobs:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
+      - run: npx tsc -p tsconfig.network-simulator-v1.json --noEmit
       - run: npm test -- --runInBand __tests__/bushmeshNetworkSimulator.test.ts
