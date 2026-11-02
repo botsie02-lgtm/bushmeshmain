@@ -6,9 +6,9 @@
  * application layers should prefer `./public` and provide hardware, identity,
  * persistence and lifecycle adapters explicitly.
  *
- * BushMeshRuntimeHub is intentionally excluded on integration/bushmesh-v1:
- * radio-core owns carrier/application composition and supplies the canonical
- * datagram runtime through integration-owned adapters instead.
+ * BushMeshRuntimeHub and helpers that require it are intentionally excluded on
+ * integration/bushmesh-v1: radio-core owns carrier/application composition and
+ * supplies the canonical datagram runtime through integration-owned adapters.
  */
 export * from './BushMeshNetworkRuntime';
 export * from './BushMeshNodeRuntime';
@@ -24,7 +24,6 @@ export * from './BushMeshLiveStateHub';
 export * from './BushMeshLocalLocationHub';
 export * from './BushMeshNativeLocation';
 export * from './BushMeshNativeVoice';
-export * from './BushMeshPeerActions';
 export * from './BushMeshPersistentStore';
 export * from './BushMeshReliableSender';
 export * from './BushMeshStoreForwardRuntime';
