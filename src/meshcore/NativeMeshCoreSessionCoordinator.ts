@@ -34,14 +34,6 @@ const initialSnapshot: NativeMeshCoreOwnershipSnapshot = {
   lastFrame: null,
 };
 
-/**
- * Owns the process-side half of the RN -> Android radio handoff.
- *
- * The caller must release any BLE-PLX connection before calling start(). This
- * coordinator then owns exactly one native MeshCore protocol session until
- * stop() completes. Keeping the lifecycle centralized prevents two UI surfaces
- * from independently claiming the same Android GATT runtime.
- */
 export class NativeMeshCoreSessionCoordinator {
   private session: NativeMeshCoreSession | null = null;
   private listeners = new Set<Listener>();
@@ -61,6 +53,14 @@ export class NativeMeshCoreSessionCoordinator {
         ? {
             ...this.snapshot.lastFrame,
             bytes: [...this.snapshot.lastFrame.bytes],
+            receivedDatagram: this.snapshot.lastFrame.receivedDatagram
+              ? {
+                  ...this.snapshot.lastFrame.receivedDatagram,
+                  payload: Uint8Array.from(
+                    this.snapshot.lastFrame.receivedDatagram.payload,
+                  ),
+                }
+              : null,
           }
         : null,
     };
@@ -134,8 +134,8 @@ export class NativeMeshCoreSessionCoordinator {
         this.emit();
         this.events.onFrame?.(response);
       },
-      onBushMeshMessage: message => {
-        this.events.onBushMeshMessage?.(message);
+      onReceivedDatagram: datagram => {
+        this.events.onReceivedDatagram?.(datagram);
       },
     });
 
@@ -143,9 +143,7 @@ export class NativeMeshCoreSessionCoordinator {
     const lifecycle = session
       .start('BushMesh')
       .then(() => {
-        if (this.session !== session) {
-          return;
-        }
+        if (this.session !== session) return;
         this.setSnapshot({
           ...this.snapshot,
           state: 'active',
@@ -158,13 +156,11 @@ export class NativeMeshCoreSessionCoordinator {
           error instanceof Error
             ? error.message
             : 'Native MeshCore radio takeover failed.';
-        if (this.session === session) {
-          this.session = null;
-        }
+        if (this.session === session) this.session = null;
         try {
           await session.stop();
         } catch {
-          // Preserve the original takeover error.
+          // Preserve original takeover error.
         }
         this.setSnapshot({
           state: 'error',
@@ -177,9 +173,7 @@ export class NativeMeshCoreSessionCoordinator {
         throw error;
       })
       .finally(() => {
-        if (this.lifecyclePromise === lifecycle) {
-          this.lifecyclePromise = null;
-        }
+        if (this.lifecyclePromise === lifecycle) this.lifecyclePromise = null;
       });
 
     this.lifecyclePromise = lifecycle;
@@ -192,7 +186,7 @@ export class NativeMeshCoreSessionCoordinator {
       try {
         await this.lifecyclePromise;
       } catch {
-        // A failed start is already reflected in coordinator state.
+        // Failed start already reflected in state.
       }
     }
 
@@ -221,28 +215,18 @@ export class NativeMeshCoreSessionCoordinator {
           ? error.message
           : 'Native MeshCore radio shutdown failed.';
       this.events = {};
-      this.setSnapshot({
-        ...initialSnapshot,
-        state: 'error',
-        errorMessage: message,
-      });
+      this.setSnapshot({...initialSnapshot, state: 'error', errorMessage: message});
       throw error;
     }
   }
 
   private updateStatus(message: string): void {
-    this.snapshot = {
-      ...this.snapshot,
-      statusMessage: message,
-    };
+    this.snapshot = {...this.snapshot, statusMessage: message};
     this.emit();
   }
 
   private updateError(message: string): void {
-    this.snapshot = {
-      ...this.snapshot,
-      errorMessage: message,
-    };
+    this.snapshot = {...this.snapshot, errorMessage: message};
     this.emit();
   }
 
