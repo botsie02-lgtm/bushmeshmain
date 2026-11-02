@@ -6,9 +6,9 @@ import {
   decodeNodeHello,
   encodeNodeHello,
   negotiateBushMeshProtocolRanges,
-  prepareBushMeshWireFrames,
   encodeBushMeshWire,
 } from '../src/bushmesh/protocol/public';
+import {prepareBushMeshWireFrames} from '../src/bushmesh/protocol/frameTransport';
 
 describe('BushMesh canonical protocol registry', () => {
   it('allocates each canonical packet ID once', () => {
