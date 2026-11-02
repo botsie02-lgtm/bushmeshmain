@@ -72,6 +72,8 @@ export class BushMeshTransmissionController {
       expiresAtMs: envelope.expiresAtMs,
       createdAtMs,
       maxAttempts: envelope.retryPolicy.maxAttempts,
+      transport: envelope.transport,
+      opaqueMetadata: envelope.opaqueMetadata,
     });
   }
 
