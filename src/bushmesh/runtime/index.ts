@@ -3,6 +3,8 @@
  *
  * New integrations should import the transport-neutral API from `./public`.
  * Current app/native/MeshCore orchestration is grouped in `./compatibility`.
+ * The protocol-branch BushMeshRuntimeHub is intentionally omitted on the
+ * integration branch because radio-core owns carrier/application composition.
  */
 export * from './integration';
 export * from './BushMeshDatagramRuntime';
@@ -51,7 +53,6 @@ export * from './BushMeshPersistentStore';
 export * from './BushMeshPersistentSync';
 export * from './BushMeshReliableSender';
 export * from './BushMeshRouteDecisionEngine';
-export * from './BushMeshRuntimeHub';
 export * from './BushMeshRuntimeServices';
 export * from './BushMeshStoreForwardRuntime';
 export * from './BushMeshSyncManager';
