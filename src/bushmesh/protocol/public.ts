@@ -75,6 +75,15 @@ export type {
 } from './transport';
 
 export {
+  decodeBushMeshAckWire,
+  encodeBushMeshDeliveryAckPacketWire,
+  encodeBushMeshFragmentAckWire,
+} from './acknowledgement';
+export type {BushMeshAckPacket} from './acknowledgement';
+export {BushMeshDeliveryAckStatus} from './messageAck';
+export type {BushMeshDeliveryAck} from './messageAck';
+
+export {
   decodeBushMeshTypedPacket,
   encodeBushMeshControlWire,
   encodeBushMeshConvoyWire,
