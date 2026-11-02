@@ -149,7 +149,7 @@ describe('identity, trust, rotation and pairing', () => {
     const proof = await pairing.createProof(challenge);
     await expect(pairing.verifyProof(proof, challenge)).resolves.toBeUndefined();
     const signatureBytes = fromBase64Url(proof.signature, 64);
-    signatureBytes[0] ^= 1;
+    signatureBytes[0] = signatureBytes[0] === 255 ? 254 : signatureBytes[0] + 1;
     const tampered = {...proof, signature: toBase64Url(signatureBytes)};
     await expect(pairing.verifyProof(tampered, challenge)).rejects.toBeInstanceOf(SecurityError);
     await expect(pairing.verifyProof(proof, node.crypto.randomBytes(32))).rejects.toMatchObject({
