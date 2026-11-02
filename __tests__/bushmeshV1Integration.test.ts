@@ -8,7 +8,7 @@ import {
   encodeBushMeshDistressWire,
   encodeBushMeshWire,
 } from '../src/bushmesh/protocol/public';
-import {BUSHMESH_MESHCORE_DEV_DATA_TYPE} from '../src/bushmesh/protocol';
+import {BUSHMESH_MESHCORE_DEV_DATA_TYPE} from '../src/bushmesh/legacyProtocol';
 import {
   BushMeshV1RuntimeService,
 } from '../src/integration/BushMeshV1RuntimeService';
