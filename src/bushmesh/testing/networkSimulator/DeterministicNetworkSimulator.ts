@@ -1,4 +1,5 @@
-import {BushMeshDatagramRuntime} from '../../runtime/public';
+import {Buffer} from 'buffer';
+
 import type {
   BushMeshInboundResult,
   BushMeshOutboundDatagram,
@@ -14,7 +15,7 @@ import type {
   BushMeshTransportAvailability,
   BushMeshTransportAvailabilityPort,
 } from '../../runtime/public';
-import {createBushMeshSecurityProtocolContext} from '../../protocol/public';
+import {BushMeshDatagramRuntime} from '../../runtime/public';
 
 export type SimulatorNodeId = number;
 
@@ -183,121 +184,145 @@ const PRIORITY_RANK: Record<BushMeshOutboundDatagram['priority'], number> = {
   bulk: 4,
 };
 
-function probability(value: number, label: string): number {
+function assertProbability(value: number, label: string): number {
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new Error(`${label} must be a finite probability from 0 to 1.`);
   }
   return value;
 }
 
-function positive(value: number, label: string): number {
+function assertPositive(value: number, label: string): number {
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`${label} must be finite and greater than zero.`);
   }
   return value;
 }
 
-function asciiBytes(value: string): number[] {
-  return Array.from(value).map(character => character.charCodeAt(0) & 0x7f);
+function toBase64Url(bytes: Uint8Array): string {
+  return Buffer.from(bytes)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
 }
 
-function asciiString(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(value => String.fromCharCode(value))
-    .join('');
+function fromBase64Url(value: string): Uint8Array {
+  const padding = (4 - (value.length % 4)) % 4;
+  return Uint8Array.from(
+    Buffer.from(
+      value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat(padding),
+      'base64',
+    ),
+  );
 }
 
-function encodeAssociation(
-  association: Exclude<BushMeshSecurityAssociation, {kind: 'none'}>,
-): number[] {
-  let kind: number;
-  let id: string;
-  if (association.kind === 'direct-session') {
-    kind = 1;
-    id = association.sessionId;
-  } else if (association.kind === 'group') {
-    kind = 2;
-    id = association.groupId;
-  } else {
-    kind = 3;
-    id = association.deviceId;
+function encodeFakeCiphertext(plaintext: Uint8Array): string {
+  if (plaintext.length > 0xffff) {
+    throw new Error('Fake Security plaintext exceeds test-provider framing limit.');
   }
-  const bytes = asciiBytes(id);
-  if (bytes.length > 255) {
-    throw new Error('Fake Security association id is too long.');
+  const framed = [
+    0x46,
+    0x4b,
+    (plaintext.length >>> 8) & 0xff,
+    plaintext.length & 0xff,
+    ...Array.from(plaintext),
+  ];
+  while (framed.length < 16) {
+    framed.push(0);
   }
-  return [kind, bytes.length, ...bytes];
+  return toBase64Url(Uint8Array.from(framed));
 }
 
-function decodeAssociation(bytes: Uint8Array): {
-  association: BushMeshSecurityAssociation;
-  offset: number;
-} {
-  const kind = bytes[3];
-  const length = bytes[4];
-  if (kind === undefined || length === undefined || bytes.length < 5 + length) {
-    throw new Error('Malformed fake Security envelope.');
+function decodeFakeCiphertext(ciphertext: string): Uint8Array {
+  const framed = fromBase64Url(ciphertext);
+  if (framed.length < 16 || framed[0] !== 0x46 || framed[1] !== 0x4b) {
+    throw new Error('Malformed fake Security ciphertext.');
   }
-  const id = asciiString(bytes.slice(5, 5 + length));
-  if (kind === 1) {
-    return {
-      association: {kind: 'direct-session', sessionId: id},
-      offset: 5 + length,
-    };
+  const length = (framed[2] << 8) | framed[3];
+  if (4 + length > framed.length) {
+    throw new Error('Truncated fake Security ciphertext.');
   }
-  if (kind === 2) {
-    return {association: {kind: 'group', groupId: id}, offset: 5 + length};
-  }
-  if (kind === 3) {
-    return {association: {kind: 'identity', deviceId: id}, offset: 5 + length};
-  }
-  throw new Error('Unknown fake Security association kind.');
+  return framed.slice(4, 4 + length);
 }
 
 /**
- * Test-only implementation of the frozen runtime Security seam. It intentionally
- * performs no cryptography; its job is to exercise the adapter boundary and
- * canonical protocol AAD without importing Security v1 internals.
+ * Deterministic test provider for the canonical Security adapter seam.
+ *
+ * It performs no cryptography. It returns/consumes the transport-neutral
+ * protected object owned by Security v1, while BushMeshDatagramRuntime keeps
+ * ownership of B5 53 serialization, authenticated routing metadata and AAD.
  */
 export class FakeBushMeshSecurityAdapter implements BushMeshSecurityAdapter {
   async protect(
     request: BushMeshSecurityProtectionRequest,
   ): Promise<BushMeshSecurityProtectionResult> {
-    return {
-      datagramPayload: Uint8Array.from([
-        0xfa,
-        0xce,
-        0x01,
-        ...encodeAssociation(request.association),
-        ...Array.from(request.plaintextWireBytes),
-      ]),
-      protectedPayload: {
-        fake: true,
-        association: request.association.kind,
-        trafficClass: request.trafficClass,
-      },
-      securityVersion: 1,
-    };
+    const ciphertext = encodeFakeCiphertext(request.plaintextWireBytes);
+
+    if (request.association.kind === 'direct-session') {
+      return {
+        protectedPayload: {
+          kind: 'direct',
+          message: {
+            securityVersion: 1,
+            protocolVersion: request.context.protocolVersion,
+            sessionId: request.association.sessionId,
+            keyEpoch: 1,
+            counter: '1',
+            ciphertext,
+          },
+        },
+        securityVersion: 1,
+      };
+    }
+
+    if (request.association.kind === 'group') {
+      return {
+        protectedPayload: {
+          kind: 'group',
+          message: {
+            securityVersion: 1,
+            protocolVersion: request.context.protocolVersion,
+            groupId: request.association.groupId,
+            epoch: 1,
+            senderDeviceId: `sim-node-${request.routing.sourceNodeId ?? 0}`,
+            counter: '1',
+            ciphertext,
+          },
+        },
+        securityVersion: 1,
+      };
+    }
+
+    throw new Error(
+      'Fake Security only protects direct-session and group associations.',
+    );
   }
 
   async unprotect(
     request: BushMeshSecurityUnprotectionRequest,
   ): Promise<BushMeshSecurityUnprotectionResult> {
-    const bytes = request.datagramPayload;
-    if (bytes[0] !== 0xfa || bytes[1] !== 0xce || bytes[2] !== 0x01) {
-      throw new Error('Fake Security protected payload marker missing.');
-    }
-    const decoded = decodeAssociation(bytes);
-    const plaintextWireBytes = bytes.slice(decoded.offset);
-    const context = createBushMeshSecurityProtocolContext(
-      Array.from(plaintextWireBytes),
+    const plaintextWireBytes = decodeFakeCiphertext(
+      request.protectedPayload.message.ciphertext,
     );
+
+    if (request.protectedPayload.kind === 'direct') {
+      return {
+        plaintextWireBytes,
+        association: {
+          kind: 'direct-session',
+          sessionId: request.protectedPayload.message.sessionId,
+        },
+        securityVersion: request.protectedPayload.message.securityVersion,
+      };
+    }
+
     return {
       plaintextWireBytes,
-      authenticatedHeader: Uint8Array.from(context.authenticatedHeader),
-      protectedPayload: {fake: true},
-      association: decoded.association,
-      securityVersion: 1,
+      association: {
+        kind: 'group',
+        groupId: request.protectedPayload.message.groupId,
+      },
+      securityVersion: request.protectedPayload.message.securityVersion,
     };
   }
 }
@@ -325,8 +350,8 @@ export class DeterministicRandom {
     return min + (max - min) * this.next();
   }
 
-  chance(chance: number): boolean {
-    return this.next() < chance;
+  chance(probability: number): boolean {
+    return this.next() < probability;
   }
 }
 
@@ -365,6 +390,7 @@ export class VirtualBushMeshClock implements BushMeshRuntimeClock {
     if (!Number.isFinite(targetMs) || targetMs < this.currentMs) {
       throw new Error('Virtual clock cannot move backwards.');
     }
+
     while (true) {
       const next = Array.from(this.timers.entries())
         .filter(([, timer]) => timer.atMs <= targetMs)
@@ -377,6 +403,7 @@ export class VirtualBushMeshClock implements BushMeshRuntimeClock {
       this.currentMs = timer.atMs;
       timer.handler();
     }
+
     this.currentMs = targetMs;
   }
 }
@@ -442,8 +469,10 @@ export class VirtualBushMeshNode {
     lastFixAtMs: null,
     staleReported: false,
   };
+
   present = true;
   lastInboundResult: BushMeshInboundResult | null = null;
+
   private runtime: BushMeshDatagramRuntime;
   private readonly clock: VirtualBushMeshClock;
 
@@ -498,6 +527,8 @@ export class VirtualBushMeshNode {
       retryIntent: options.retryIntent,
       identityAssociation: options.identityAssociation,
       trafficClass: options.trafficClass,
+      securityRouting: options.securityRouting,
+      emergencySecurityPolicy: options.emergencySecurityPolicy,
       label: options.label,
     });
   }
@@ -524,7 +555,7 @@ export class VirtualBushMeshNode {
   }
 }
 
-function newMetrics(): DeterministicNetworkMetrics {
+function createMetrics(): DeterministicNetworkMetrics {
   return {
     attemptedDatagrams: 0,
     transmissionAttempts: 0,
@@ -564,7 +595,7 @@ export class DeterministicBushMeshNetworkSimulator {
   readonly seed: number;
   readonly clock: VirtualBushMeshClock;
   readonly random: DeterministicRandom;
-  readonly metrics: DeterministicNetworkMetrics = newMetrics();
+  readonly metrics: DeterministicNetworkMetrics = createMetrics();
   readonly trace: SimulatorTraceEvent[] = [];
   readonly timeline: SimulatorTraceEvent[] = [];
 
@@ -634,16 +665,22 @@ export class DeterministicBushMeshNetworkSimulator {
     current: Required<DeterministicNetworkLinkConfig> = DEFAULT_LINK,
   ): Required<DeterministicNetworkLinkConfig> {
     const next = {...current, ...patch};
-    next.lossRate = probability(next.lossRate, 'lossRate');
-    next.duplicationRate = probability(next.duplicationRate, 'duplicationRate');
-    next.reorderChance = probability(next.reorderChance, 'reorderChance');
-    next.dutyCycle = positive(next.dutyCycle, 'dutyCycle');
+    next.lossRate = assertProbability(next.lossRate, 'lossRate');
+    next.duplicationRate = assertProbability(
+      next.duplicationRate,
+      'duplicationRate',
+    );
+    next.reorderChance = assertProbability(next.reorderChance, 'reorderChance');
+    next.dutyCycle = assertPositive(next.dutyCycle, 'dutyCycle');
     if (next.dutyCycle > 1) {
       throw new Error('dutyCycle must not exceed 1.');
     }
-    next.bitrateBps = positive(next.bitrateBps, 'bitrateBps');
-    next.maxPayloadBytes = positive(next.maxPayloadBytes, 'maxPayloadBytes');
-    next.maxQueueBytes = positive(next.maxQueueBytes, 'maxQueueBytes');
+    next.bitrateBps = assertPositive(next.bitrateBps, 'bitrateBps');
+    next.maxPayloadBytes = assertPositive(
+      next.maxPayloadBytes,
+      'maxPayloadBytes',
+    );
+    next.maxQueueBytes = assertPositive(next.maxQueueBytes, 'maxQueueBytes');
     return next;
   }
 
@@ -658,12 +695,14 @@ export class DeterministicBushMeshNetworkSimulator {
     const existing = this.links.get(key);
     const previous = existing?.config ?? DEFAULT_LINK;
     const config = this.normalizeLinkConfig(patch, previous);
+
     if (
       existing &&
       (previous.rssiDbm !== config.rssiDbm || previous.snrDb !== config.snrDb)
     ) {
       this.metrics.linkQualityChanges += 1;
     }
+
     this.links.set(key, {
       config,
       queue: existing?.queue ?? [],
@@ -818,10 +857,12 @@ export class DeterministicBushMeshNetworkSimulator {
       (sum, item) => sum + item.datagram.payload.length,
       0,
     );
+
     for (const link of this.links.values()) {
       depth += link.queue.length;
       bytes += link.queueBytes;
     }
+
     this.metrics.currentQueueDepth = depth;
     this.metrics.currentQueueBytes = bytes;
     this.metrics.maxQueueDepth = Math.max(this.metrics.maxQueueDepth, depth);
@@ -838,7 +879,8 @@ export class DeterministicBushMeshNetworkSimulator {
     this.node(to);
     const packetId = this.nextPacketId++;
     this.metrics.attemptedDatagrams += 1;
-    const item: QueuedTransmission = {
+
+    this.enqueueOrDefer({
       packetId,
       from,
       to,
@@ -848,8 +890,8 @@ export class DeterministicBushMeshNetworkSimulator {
       storeIfUnavailable: options.storeIfUnavailable ?? false,
       convergenceKey: options.convergenceKey,
       recoveredFromDeferred: false,
-    };
-    this.enqueueOrDefer(item);
+    });
+
     return packetId;
   }
 
@@ -881,6 +923,7 @@ export class DeterministicBushMeshNetworkSimulator {
         this.updateQueueMetrics();
         return;
       }
+
       this.metrics.failedDatagrams += 1;
       this.metrics.droppedUnavailable += 1;
       this.recordDrop(item, link ? 'transport-unavailable' : 'link-unconfigured');
@@ -900,6 +943,7 @@ export class DeterministicBushMeshNetworkSimulator {
       );
       return;
     }
+
     if (link.queueBytes + item.datagram.payload.length > link.config.maxQueueBytes) {
       this.metrics.failedDatagrams += 1;
       this.metrics.droppedCongestion += 1;
@@ -919,6 +963,7 @@ export class DeterministicBushMeshNetworkSimulator {
         left.packetId - right.packetId
       );
     });
+
     this.record({
       kind: 'queued',
       from: item.from,
@@ -943,10 +988,10 @@ export class DeterministicBushMeshNetworkSimulator {
 
     if (!this.isAvailable(from, to)) {
       this.enqueueOrDefer(item);
-      // Do not leave later work stranded behind a packet that became unavailable.
       this.pumpLink(from, to);
       return;
     }
+
     if (
       item.datagram.expiresAtMs !== null &&
       item.datagram.expiresAtMs <= this.clock.now()
@@ -961,6 +1006,7 @@ export class DeterministicBushMeshNetworkSimulator {
     link.busy = true;
     this.metrics.transmissionAttempts += 1;
     this.metrics.totalTransmittedBytes += item.datagram.payload.length;
+
     const airtimeMs =
       (item.datagram.payload.length * 8 * 1000) / link.config.bitrateBps +
       link.config.airtimeOverheadMs;
@@ -1007,6 +1053,7 @@ export class DeterministicBushMeshNetworkSimulator {
       this.enqueueOrDefer(item);
       return;
     }
+
     if (this.random.chance(link.config.lossRate)) {
       this.metrics.droppedLoss += 1;
       const retryIntent = item.datagram.retryIntent;
@@ -1049,6 +1096,7 @@ export class DeterministicBushMeshNetworkSimulator {
       delayMs += this.random.between(0, link.config.reorderExtraDelayMs);
     }
     delayMs = Math.max(0, delayMs);
+
     this.schedule(
       this.clock.now() + delayMs,
       () => this.deliver(item, link, false),
@@ -1080,6 +1128,7 @@ export class DeterministicBushMeshNetworkSimulator {
       }
       return;
     }
+
     if (
       item.datagram.expiresAtMs !== null &&
       item.datagram.expiresAtMs <= this.clock.now()
@@ -1107,7 +1156,6 @@ export class DeterministicBushMeshNetworkSimulator {
         pathLength: 1,
       },
       diagnosticLabel: item.datagram.diagnostics.label,
-      securityProtected: item.datagram.diagnostics.protected,
     });
 
     const peerKey = this.peerKey(item.to, item.from);
@@ -1126,6 +1174,7 @@ export class DeterministicBushMeshNetworkSimulator {
       });
       return;
     }
+
     if (result.status === 'rejected') {
       this.metrics.runtimeRejected += 1;
       if (!duplicate) {
@@ -1141,6 +1190,7 @@ export class DeterministicBushMeshNetworkSimulator {
       });
       return;
     }
+
     if (duplicate) {
       this.record({
         kind: 'duplicate',
@@ -1165,6 +1215,7 @@ export class DeterministicBushMeshNetworkSimulator {
       this.metrics.convergenceDeliveries[item.convergenceKey] =
         (this.metrics.convergenceDeliveries[item.convergenceKey] ?? 0) + 1;
     }
+
     this.record({
       kind: 'delivered',
       from: item.from,
@@ -1190,6 +1241,7 @@ export class DeterministicBushMeshNetworkSimulator {
     if (this.deferred.length === 0) {
       return;
     }
+
     const retained: QueuedTransmission[] = [];
     for (const item of this.deferred.splice(0)) {
       if (this.isAvailable(item.from, item.to)) {
@@ -1225,15 +1277,13 @@ export class DeterministicBushMeshNetworkSimulator {
         found = path;
         break;
       }
+
       for (const candidate of this.nodes.keys()) {
-        if (visited.has(candidate)) {
-          continue;
-        }
-        // Only explicitly configured directed links participate in topology.
-        if (!this.configuredLink(tail, candidate)) {
-          continue;
-        }
-        if (!this.isAvailable(tail, candidate)) {
+        if (
+          visited.has(candidate) ||
+          !this.configuredLink(tail, candidate) ||
+          !this.isAvailable(tail, candidate)
+        ) {
           continue;
         }
         visited.add(candidate);
@@ -1299,6 +1349,7 @@ export class DeterministicBushMeshNetworkSimulator {
     if (!Number.isFinite(targetMs) || targetMs < this.clock.now()) {
       throw new Error('Simulator virtual time cannot move backwards.');
     }
+
     while (true) {
       this.scheduled.sort(
         (left, right) => left.atMs - right.atMs || left.id - right.id,
@@ -1311,6 +1362,7 @@ export class DeterministicBushMeshNetworkSimulator {
       this.clock.advanceTo(event.atMs);
       await event.action();
     }
+
     this.clock.advanceTo(targetMs);
     this.expireStaleObservations();
     this.updateQueueMetrics();
@@ -1319,6 +1371,7 @@ export class DeterministicBushMeshNetworkSimulator {
   async runUntilIdle(maxEvents = 100_000): Promise<void> {
     let processed = 0;
     this.resumeAllLinks();
+
     while (this.scheduled.length > 0) {
       if (processed >= maxEvents) {
         throw new Error(
@@ -1332,6 +1385,7 @@ export class DeterministicBushMeshNetworkSimulator {
       this.resumeAllLinks();
       processed += 1;
     }
+
     this.updateQueueMetrics();
   }
 
