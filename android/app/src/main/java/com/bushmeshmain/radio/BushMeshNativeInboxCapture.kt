@@ -3,9 +3,9 @@ package com.bushmeshmain.radio
 import android.content.Context
 
 /**
- * Captures complete Bushmesh MeshCore channel-data frames while Android owns the
- * background lease. It never consumes the BLE runtime buffer; foreground JS can
- * still receive live frames when attached.
+ * Captures complete MeshCore channel-data frames while Android owns the
+ * background lease. It deliberately does not inspect application data types or
+ * payload bytes; foreground runtime consumers decide what protocol owns them.
  */
 class BushMeshNativeInboxCapture(
   context: Context,
@@ -13,7 +13,6 @@ class BushMeshNativeInboxCapture(
 ) {
   companion object {
     private const val MESHCORE_CHANNEL_DATA_RECV = 0x1b
-    private const val BUSHMESH_DEV_DATA_TYPE = 0xff00
     private const val CHANNEL_DATA_HEADER_BYTES = 9
   }
 
@@ -70,12 +69,6 @@ class BushMeshNativeInboxCapture(
       return
     }
     if ((frame[0].toInt() and 0xff) != MESHCORE_CHANNEL_DATA_RECV) {
-      return
-    }
-
-    val dataType =
-      (frame[6].toInt() and 0xff) or ((frame[7].toInt() and 0xff) shl 8)
-    if (dataType != BUSHMESH_DEV_DATA_TYPE) {
       return
     }
 
