@@ -20,16 +20,19 @@ jobs:
       - name: Preserve LinkState identity across quality updates
         run: |
           python3 - <<'PY'
+          import re
           from pathlib import Path
           path = Path('src/bushmesh/testing/networkSimulator/DeterministicNetworkSimulator.ts')
           text = path.read_text()
-          old = '''    this.links.set(key, {
-              config,
-              queue: existing?.queue ?? [],
-              queueBytes: existing?.queueBytes ?? 0,
-              busy: existing?.busy ?? false,
-            });'''
-          new = '''    if (existing) {
+          pattern = re.compile(
+              r"    this\.links\.set\(key, \{\n"
+              r"\s+config,\n"
+              r"\s+queue: existing\?\.queue \?\? \[\],\n"
+              r"\s+queueBytes: existing\?\.queueBytes \?\? 0,\n"
+              r"\s+busy: existing\?\.busy \?\? false,\n"
+              r"\s+\}\);"
+          )
+          replacement = '''    if (existing) {
               // Scheduled transmission completions retain this object identity.
               // Mutating config prevents a live RSSI/SNR update from stranding
               // the replacement link in a permanently busy state.
@@ -42,9 +45,10 @@ jobs:
                 busy: false,
               });
             }'''
-          if old not in text:
-              raise SystemExit('Expected LinkState replacement block was not found')
-          path.write_text(text.replace(old, new, 1))
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'Expected one LinkState replacement block, replaced {count}')
+          path.write_text(text)
           PY
       - name: Commit simulator-only fix
         run: |
