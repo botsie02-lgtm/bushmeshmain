@@ -247,16 +247,24 @@ describe('canonical direct/message end-to-end vertical slice', () => {
       protection: protection(setup),
     });
     const container = decodeBushMeshSecurityContainer(entry.payload);
-    if (container.kind !== 'protected-direct') {
-      throw new Error('Expected protected-direct test container.');
+    const protectedPayload = container.protectedPayload;
+    const sourceNodeId = container.routing.sourceNodeId;
+    const destinationNodeId = container.routing.destinationNodeId;
+    if (
+      container.kind !== 'protected-direct' ||
+      protectedPayload.kind !== 'direct' ||
+      sourceNodeId === undefined ||
+      destinationNodeId === undefined
+    ) {
+      throw new Error('Expected complete protected-direct test container.');
     }
     const tampered = encodeBushMeshProtectedDirectContainer({
       routing: {
-        sourceNodeId: container.routing.sourceNodeId,
-        destinationNodeId: (container.routing.destinationNodeId ?? 0) + 1,
+        sourceNodeId,
+        destinationNodeId: destinationNodeId + 1,
       },
       authenticatedHeader: container.authenticatedHeader,
-      message: container.protectedPayload.message,
+      message: protectedPayload.message,
     });
 
     await expect(
