@@ -11,7 +11,7 @@ import {subscribeBushMeshInboundMessages} from '../bushmesh/inboundBus';
 import {
   BushMeshMessageType,
   BushMeshQuickActionCode,
-} from '../bushmesh/protocol';
+} from '../bushmesh/legacyProtocol';
 import {Coordinate} from '../convoy/convoy';
 import {
   OperationalMarker,
