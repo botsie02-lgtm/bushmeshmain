@@ -1,4 +1,4 @@
-import {BushMeshIdentityRef} from '../bushmesh/protocol';
+import {BushMeshIdentityRef} from '../bushmesh/legacyProtocol';
 import {BushMeshFormationShare} from './formationProtocol';
 
 export type FormationProposalTrust = 'normal-review' | 'caution-review';
