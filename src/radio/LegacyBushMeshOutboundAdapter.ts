@@ -5,7 +5,7 @@ import {
   BushMeshQuickActionCode,
   encodeBushMeshPosition,
   encodeBushMeshQuickAction,
-} from '../bushmesh/protocol';
+} from '../bushmesh/legacyProtocol';
 import {
   BUSHMESH_FORMATION_MESSAGE_TYPE,
   BushMeshFormationShare,
