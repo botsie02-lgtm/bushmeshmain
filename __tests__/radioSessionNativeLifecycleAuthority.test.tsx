@@ -209,11 +209,9 @@ describe('RadioSessionProvider native lifecycle authority', () => {
     expect(stop).not.toHaveBeenCalled();
   });
 
-  it('observes a legitimately persisted native target after process recovery without reasserting it', async () => {
-    const recovered = nativeStatus({
-      running: true,
+  it('reserves a persisted native target while Android restores process recovery state', async () => {
+    const recovered = reactNativeStatus({
       persistedNativeTargetPresent: true,
-      nativeBleState: 'reconnecting',
     });
     const {service, coordinator, start, stop} = createLifecycleHarness(recovered);
 
@@ -224,7 +222,10 @@ describe('RadioSessionProvider native lifecycle authority', () => {
     );
 
     expect(observed).toMatchObject({
-      ownership: 'native-service',
+      ownership: 'react-native-session',
+      radioRequested: false,
+      deviceAddress: null,
+      nativeBleDeviceAddress: null,
       persistedNativeTargetPresent: true,
     });
     expect(start).not.toHaveBeenCalled();
