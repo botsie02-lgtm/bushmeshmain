@@ -12,10 +12,12 @@ react {
     // root = file("../../")
     //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
     // reactNativeDir = file("../../node_modules/react-native")
+    //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
     // codegenDir = file("../../node_modules/@react-native/codegen")
     // cliFile = file(../node_modules/react-native/cli.js)
 
     /* Variants */
+    //   The list of variants that are debuggable. For those variants that are debuggable. By default it is just 'debug'.
     // debuggableVariants = ["liteDebug", "liteDebugOptimized", "prodDebug", "prodDebugOptimized"]
 
     /* Bundling */
@@ -84,8 +86,7 @@ dependencies {
     implementation("com.facebook.react:react-android")
 
     // Android Auto messaging notifications are built on NotificationCompat,
-    // MessagingStyle, Person and RemoteInput from AndroidX Core. 1.17.0 is the
-    // compatible line for the current compileSdk 36 / AGP toolchain.
+    // MessagingStyle, Person and RemoteInput from AndroidX Core.
     implementation("androidx.core:core-ktx:1.17.0")
 
     if (hermesEnabled.toBoolean()) {
