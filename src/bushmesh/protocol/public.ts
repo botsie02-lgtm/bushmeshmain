@@ -106,11 +106,49 @@ export {
 } from './securityBoundary';
 export type {
   BushMeshAuthenticatedHeaderFields,
+  BushMeshEmergencySecurityPolicy,
   BushMeshSecurityProtocolContext,
   BushMeshSecurityRequirement,
   BushMeshSecurityTrafficClass,
   BushMeshSecurityTreatment,
 } from './securityBoundary';
+
+export {
+  BUSHMESH_SECURITY_CONTAINER_VERSION,
+  BUSHMESH_SECURITY_MAX_AUTHENTICATED_HEADER_BYTES,
+  BUSHMESH_SECURITY_MAX_CHALLENGE_BYTES,
+  BUSHMESH_SECURITY_MAX_CIPHERTEXT_BYTES,
+  BUSHMESH_SECURITY_MAX_CONTAINER_BYTES,
+  BUSHMESH_SECURITY_MAX_IDENTIFIER_BYTES,
+  BUSHMESH_SECURITY_MAX_VERSION_COUNT,
+  BUSHMESH_SECURITY_WIRE_MAGIC,
+  BushMeshSecurityContainerKind,
+  classifyBushMeshDatagramPayload,
+  decodeBushMeshSecurityContainer,
+  encodeBushMeshIdentityRotationProofContainer,
+  encodeBushMeshPairingProofContainer,
+  encodeBushMeshProtectedDirectContainer,
+  encodeBushMeshProtectedGroupContainer,
+  encodeBushMeshSessionOfferContainer,
+  encodeBushMeshSessionResponseContainer,
+  encodeBushMeshWrappedGroupKeyDistributionContainer,
+} from './securityWire';
+export type {
+  BushMeshDatagramPayloadClassification,
+  BushMeshDecodedProtectedSecurityContainer,
+  BushMeshDecodedSecurityContainer,
+  BushMeshDecodedSecurityControlContainer,
+  BushMeshEncryptedDirectMessage,
+  BushMeshEncryptedGroupMessage,
+  BushMeshIdentityRotationProof,
+  BushMeshPairingProof,
+  BushMeshProtectedPayload,
+  BushMeshSecurityDeviceIdentity,
+  BushMeshSecurityRoutingContext,
+  BushMeshSessionOffer,
+  BushMeshSessionResponse,
+  BushMeshWrappedGroupKeyDistribution,
+} from './securityWire';
 
 // Stable payload object types referenced by the typed wire helpers above.
 export type {CompactLocation, LocationDelta} from './location';

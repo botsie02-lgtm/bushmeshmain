@@ -10,13 +10,17 @@ export type {
   BushMeshDatagramRuntimeOptions,
   BushMeshInboundAccepted,
   BushMeshInboundDuplicate,
+  BushMeshInboundProtocolAccepted,
   BushMeshInboundRejected,
   BushMeshInboundResult,
+  BushMeshInboundSecurityControlAccepted,
   BushMeshOutboundPreparationOptions,
+  BushMeshSecurityControlOutboundOptions,
 } from './BushMeshDatagramRuntime';
 
 export {systemBushMeshRuntimeClock} from './integration';
 export type {
+  BushMeshEmergencySecurityOptions,
   BushMeshInboundDatagram,
   BushMeshInboundLinkMetadata,
   BushMeshOutboundDatagram,

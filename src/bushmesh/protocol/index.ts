@@ -42,6 +42,7 @@ export * from './routedPayload';
 export * from './routing';
 export * from './scheduler';
 export * from './securityBoundary';
+export * from './securityWire';
 export * from './semantic';
 export * from './semanticText';
 export * from './smallPayloads';

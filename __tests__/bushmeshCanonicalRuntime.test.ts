@@ -1,3 +1,5 @@
+import {Buffer} from 'buffer';
+
 import {
   BushMeshDatagramRuntime,
   BushMeshRuntimeClock,
@@ -9,7 +11,6 @@ import {
 import {
   BushMeshPacketType,
   BushMeshPriority,
-  createBushMeshSecurityProtocolContext,
   encodeBushMeshWire,
 } from '../src/bushmesh/protocol/public';
 
@@ -65,7 +66,18 @@ function messageWire(messageId = 55, version = 1): number[] {
   });
 }
 
-function inbound(payload: number[], options?: {sourceNodeId?: number; protected?: boolean}) {
+function distressWire(messageId = 88): number[] {
+  return encodeBushMeshWire({
+    type: BushMeshPacketType.Distress,
+    priority: BushMeshPriority.Emergency,
+    messageId,
+    ackRequested: true,
+    storeAndForward: true,
+    payload: [0x01],
+  });
+}
+
+function inbound(payload: number[], options?: {sourceNodeId?: number}) {
   return {
     channelIndex: 2,
     dataType: 0x42,
@@ -74,49 +86,90 @@ function inbound(payload: number[], options?: {sourceNodeId?: number; protected?
     transport: 'lora',
     source: 'live' as const,
     sourceNodeId: options?.sourceNodeId,
-    securityProtected: options?.protected,
     link: {rssiDbm: -91, snrDb: 7.5, pathLength: 1},
   };
 }
 
-function fakeSecurity(options?: {failUnprotect?: boolean; corruptAad?: boolean}): BushMeshSecurityAdapter {
+function toBase64Url(bytes: Uint8Array): string {
+  return Buffer.from(bytes)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function fromBase64Url(value: string): Uint8Array {
+  const padding = (4 - (value.length % 4)) % 4;
+  return Uint8Array.from(
+    Buffer.from(
+      value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat(padding),
+      'base64',
+    ),
+  );
+}
+
+function fakeSecurity(options?: {failUnprotect?: boolean}): BushMeshSecurityAdapter {
   return {
     async protect(request) {
-      return {
-        datagramPayload: Uint8Array.from([
-          0xa5,
-          ...Array.from(request.plaintextWireBytes),
-        ]),
-        protectedPayload: {
-          kind: request.association.kind,
-          contextVersion: request.context.protocolVersion,
-        },
-        securityVersion: 1,
-      };
+      const ciphertext = toBase64Url(request.plaintextWireBytes);
+      if (request.association.kind === 'direct-session') {
+        return {
+          protectedPayload: {
+            kind: 'direct' as const,
+            message: {
+              securityVersion: 1,
+              protocolVersion: request.context.protocolVersion,
+              sessionId: request.association.sessionId,
+              keyEpoch: 1,
+              counter: '1',
+              ciphertext,
+            },
+          },
+          securityVersion: 1,
+        };
+      }
+      if (request.association.kind === 'group') {
+        return {
+          protectedPayload: {
+            kind: 'group' as const,
+            message: {
+              securityVersion: 1,
+              protocolVersion: request.context.protocolVersion,
+              groupId: request.association.groupId,
+              epoch: 1,
+              senderDeviceId: 'bm1_sender',
+              counter: '1',
+              ciphertext,
+            },
+          },
+          securityVersion: 1,
+        };
+      }
+      throw new Error('fake Security adapter only supports direct/group payloads');
     },
     async unprotect(request) {
       if (options?.failUnprotect) {
         throw new Error('fake authentication failed');
       }
-      if (request.datagramPayload[0] !== 0xa5) {
-        throw new Error('fake protected payload marker missing');
-      }
-      const plaintextWireBytes = request.datagramPayload.slice(1);
-      const context = createBushMeshSecurityProtocolContext(
-        Array.from(plaintextWireBytes),
+      const plaintextWireBytes = fromBase64Url(
+        request.protectedPayload.message.ciphertext,
       );
-      const authenticatedHeader = Uint8Array.from(context.authenticatedHeader);
-      if (options?.corruptAad && authenticatedHeader.length > 0) {
-        authenticatedHeader[authenticatedHeader.length - 1] ^= 0x01;
+      if (request.protectedPayload.kind === 'direct') {
+        return {
+          plaintextWireBytes,
+          association: {
+            kind: 'direct-session' as const,
+            sessionId: request.protectedPayload.message.sessionId,
+            peerDeviceId: 'peer-1',
+          },
+          securityVersion: 1,
+        };
       }
       return {
         plaintextWireBytes,
-        authenticatedHeader,
-        protectedPayload: {kind: 'direct'},
         association: {
-          kind: 'direct-session' as const,
-          sessionId: 'session-1',
-          peerDeviceId: 'peer-1',
+          kind: 'group' as const,
+          groupId: request.protectedPayload.message.groupId,
         },
         securityVersion: 1,
       };
@@ -183,7 +236,7 @@ describe('BushMesh canonical datagram runtime', () => {
     expect(reconnected.diagnostics.transportAvailable).toBe(true);
   });
 
-  it('uses a Security v1 adapter for direct traffic and validates canonical AAD on receive', async () => {
+  it('serializes Security v1 direct objects itself and validates canonical routing AAD on receive', async () => {
     const runtime = new BushMeshDatagramRuntime({security: fakeSecurity()});
     const prepared = await runtime.prepareOutbound(messageWire(9), {
       channelIndex: 4,
@@ -195,48 +248,103 @@ describe('BushMesh canonical datagram runtime', () => {
         sessionId: 'session-1',
         peerDeviceId: 'peer-1',
       },
+      securityRouting: {sourceNodeId: 1, destinationNodeId: 2},
     });
 
-    expect(Array.from(prepared.payload).slice(0, 1)).toEqual([0xa5]);
+    expect(Array.from(prepared.payload).slice(0, 4)).toEqual([
+      0xb5,
+      0x53,
+      0x01,
+      0x01,
+    ]);
     expect(prepared.diagnostics.protected).toBe(true);
+    expect(prepared.diagnostics.securityMode).toBe('protected-direct');
     expect(prepared.retryIntent).toEqual({
       mode: 'protocol-managed',
       maxTransportAttempts: 1,
     });
 
     const result = await runtime.acceptInbound({
-      ...inbound(Array.from(prepared.payload), {sourceNodeId: 9, protected: true}),
+      ...inbound(Array.from(prepared.payload)),
       receivedAtMs: 1200,
     });
     expect(result.status).toBe('accepted');
-    if (result.status === 'accepted') {
+    if (result.status === 'accepted' && result.kind === 'protocol') {
       expect(result.protected).toBe(true);
       expect(result.securityAssociation).toMatchObject({
         kind: 'direct-session',
         sessionId: 'session-1',
       });
+      expect(result.securityRouting).toEqual({
+        sourceNodeId: 1,
+        destinationNodeId: 2,
+      });
       expect(result.decoded.envelope.messageId).toBe(9);
     }
   });
 
-  it('fails closed when security verification fails or authenticates the wrong header', async () => {
+  it('fails closed when Security verification fails or outer routing metadata is tampered', async () => {
+    const encoder = new BushMeshDatagramRuntime({security: fakeSecurity()});
+    const prepared = await encoder.prepareOutbound(messageWire(10), {
+      channelIndex: 1,
+      dataType: 0x42,
+      transport: 'lora',
+      trafficClass: 'direct-message',
+      identityAssociation: {kind: 'direct-session', sessionId: 'session-1'},
+      securityRouting: {sourceNodeId: 1, destinationNodeId: 2},
+    });
+
     const failed = new BushMeshDatagramRuntime({
       security: fakeSecurity({failUnprotect: true}),
     });
     expect(
-      await failed.acceptInbound(
-        inbound([0xa5, ...messageWire(10)], {protected: true}),
-      ),
+      await failed.acceptInbound(inbound(Array.from(prepared.payload))),
     ).toMatchObject({status: 'rejected', reason: 'security-failed'});
 
-    const wrongAad = new BushMeshDatagramRuntime({
-      security: fakeSecurity({corruptAad: true}),
+    const tampered = Array.from(prepared.payload);
+    // Header layout: B5 53 01 01, routing flags 03, source varuint, destination varuint.
+    tampered[5] = 3;
+    const verifier = new BushMeshDatagramRuntime({security: fakeSecurity()});
+    expect(await verifier.acceptInbound(inbound(tampered))).toMatchObject({
+      status: 'rejected',
+      reason: 'security-failed',
     });
-    expect(
-      await wrongAad.acceptInbound(
-        inbound([0xa5, ...messageWire(11)], {protected: true}),
-      ),
-    ).toMatchObject({status: 'rejected', reason: 'security-failed'});
+  });
+
+  it('requires explicit emergency fallback and never silently downgrades failed protected traffic', async () => {
+    const strict = new BushMeshDatagramRuntime();
+    await expect(
+      strict.prepareOutbound(distressWire(), {
+        channelIndex: 1,
+        dataType: 0x42,
+        transport: 'lora',
+      }),
+    ).rejects.toThrow(/forbidden/i);
+    expect(await strict.acceptInbound(inbound(distressWire()))).toMatchObject({
+      status: 'rejected',
+      reason: 'security-required',
+    });
+
+    const fallback = new BushMeshDatagramRuntime({
+      emergencySecurityPolicy: 'allow-unauthenticated-fallback',
+    });
+    const prepared = await fallback.prepareOutbound(distressWire(89), {
+      channelIndex: 1,
+      dataType: 0x42,
+      transport: 'lora',
+    });
+    expect(prepared.diagnostics.securityMode).toBe(
+      'unauthenticated-emergency-fallback',
+    );
+    const accepted = await fallback.acceptInbound(
+      inbound(Array.from(prepared.payload), {sourceNodeId: 5}),
+    );
+    expect(accepted).toMatchObject({
+      status: 'accepted',
+      kind: 'protocol',
+      protected: false,
+      securityMode: 'unauthenticated-emergency-fallback',
+    });
   });
 
   it('refuses direct or group protected traffic without the required association/adapter', async () => {
@@ -251,13 +359,19 @@ describe('BushMesh canonical datagram runtime', () => {
       }),
     ).rejects.toThrow(/direct-session/);
 
+    const convoyWire = encodeBushMeshWire({
+      type: BushMeshPacketType.Convoy,
+      priority: BushMeshPriority.Location,
+      messageId: 13,
+      payload: [0x01],
+    });
     await expect(
-      runtime.prepareOutbound(messageWire(13), {
+      runtime.prepareOutbound(convoyWire, {
         channelIndex: 1,
         dataType: 0x42,
         transport: 'lora',
-        trafficClass: 'convoy-group',
         identityAssociation: {kind: 'group', groupId: 'convoy-1'},
+        securityRouting: {sourceNodeId: 1, groupId: 'convoy-1'},
       }),
     ).rejects.toThrow(/security adapter/i);
   });

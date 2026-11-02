@@ -1,7 +1,12 @@
 import type {
+  BushMeshEmergencySecurityPolicy,
   BushMeshSecurityProtocolContext,
   BushMeshSecurityTrafficClass,
 } from '../protocol/securityBoundary';
+import type {
+  BushMeshProtectedPayload,
+  BushMeshSecurityRoutingContext,
+} from '../protocol/securityWire';
 
 export type BushMeshOutboundPriority =
   | 'safety'
@@ -27,10 +32,18 @@ export type BushMeshSecurityAssociation =
   | {kind: 'none'};
 
 export type BushMeshOutboundDiagnostics = {
-  protocolVersion: number;
-  packetType: number;
-  messageId: number;
+  wireKind: 'protocol' | 'security-control';
+  protocolVersion?: number;
+  packetType?: number;
+  messageId?: number;
+  securityContainerKind?: number;
   protected: boolean;
+  securityMode:
+    | 'plain'
+    | 'protected-direct'
+    | 'protected-group'
+    | 'security-control'
+    | 'unauthenticated-emergency-fallback';
   fragmented?: boolean;
   fragmentIndex?: number;
   fragmentCount?: number;
@@ -41,6 +54,7 @@ export type BushMeshOutboundDiagnostics = {
 /**
  * Canonical BushMesh runtime result handed to radio-core or another carrier.
  * The payload is already encoded and must be treated as opaque by the radio.
+ * `dataType` is carrier-specific integration metadata, never a BushMesh packet ID.
  */
 export type BushMeshOutboundDatagram = {
   channelIndex: number;
@@ -69,11 +83,11 @@ export type BushMeshInboundDatagram = {
   transport: string;
   source: 'live' | 'background-replay';
   link?: BushMeshInboundLinkMetadata;
+  /** Immediate/known BushMesh source when supplied by a carrier. Protected traffic uses authenticated logical routing source for semantic dedup. */
   sourceNodeId?: number;
   radioIdentityRef?: string | null;
   transportDeviceId?: string | null;
   diagnosticLabel?: string | null;
-  securityProtected?: boolean;
 };
 
 export type BushMeshTransportAvailability = {
@@ -111,20 +125,24 @@ export const systemBushMeshRuntimeClock: BushMeshRuntimeClock = {
 export type BushMeshSecurityProtectionRequest = {
   plaintextWireBytes: Uint8Array;
   context: BushMeshSecurityProtocolContext;
+  routing: BushMeshSecurityRoutingContext;
   association: Exclude<BushMeshSecurityAssociation, {kind: 'none'}>;
   trafficClass: BushMeshSecurityTrafficClass;
 };
 
 export type BushMeshSecurityProtectionResult = {
-  /** Final bytes handed to the radio adapter after Security v1 wrapping. */
-  datagramPayload: Uint8Array;
-  /** Opaque Security v1 protected object retained only for integration diagnostics. */
-  protectedPayload: unknown;
+  /**
+   * Transport-neutral Security v1 object. BushMesh, not Security, serializes it
+   * into the canonical B5 53 protected container.
+   */
+  protectedPayload: BushMeshProtectedPayload;
   securityVersion?: number;
 };
 
 export type BushMeshSecurityUnprotectionRequest = {
-  datagramPayload: Uint8Array;
+  protectedPayload: BushMeshProtectedPayload;
+  context: BushMeshSecurityProtocolContext;
+  routing: BushMeshSecurityRoutingContext;
   channelIndex: number;
   dataType: number;
   transport: string;
@@ -133,9 +151,6 @@ export type BushMeshSecurityUnprotectionRequest = {
 
 export type BushMeshSecurityUnprotectionResult = {
   plaintextWireBytes: Uint8Array;
-  /** The exact AAD header used by Security v1 during verification/decryption. */
-  authenticatedHeader: Uint8Array;
-  protectedPayload: unknown;
   association: BushMeshSecurityAssociation;
   securityVersion?: number;
 };
@@ -143,6 +158,9 @@ export type BushMeshSecurityUnprotectionResult = {
 /**
  * Adapter implemented by the final application when Security v1 is integrated.
  * BushMesh never receives private keys or implements cryptography itself.
+ *
+ * Security returns/consumes its transport-neutral protected objects; canonical
+ * on-wire serialization remains protocol-owned.
  */
 export interface BushMeshSecurityAdapter {
   protect(
@@ -152,3 +170,7 @@ export interface BushMeshSecurityAdapter {
     request: BushMeshSecurityUnprotectionRequest,
   ): Promise<BushMeshSecurityUnprotectionResult>;
 }
+
+export type BushMeshEmergencySecurityOptions = {
+  policy?: BushMeshEmergencySecurityPolicy;
+};
