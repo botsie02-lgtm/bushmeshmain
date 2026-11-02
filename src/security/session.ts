@@ -268,6 +268,7 @@ export class DirectSessionManager {
         context.authenticatedHeader,
       );
       const ciphertext = await this.crypto.aeadEncrypt(key, nonce, plaintext, aad);
+      await this.requireUsableSession(session.sessionId);
       return {
         securityVersion: session.securityVersion,
         protocolVersion: session.protocolVersion,
@@ -324,6 +325,7 @@ export class DirectSessionManager {
         aad,
       );
       await this.replayProtector.assertFresh(session.receiveReplayScope, counter);
+      await this.requireUsableSession(session.sessionId);
       return plaintext;
     } catch (error) {
       wipe(plaintext);
