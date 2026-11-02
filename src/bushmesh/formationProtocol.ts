@@ -1,7 +1,7 @@
 import {
   BUSHMESH_PROTOCOL_VERSION,
   BushMeshIdentityRef,
-} from './protocol';
+} from './legacyProtocol';
 
 /**
  * Reserved inside Bushmesh protocol v1 for explicit convoy formation sharing.
