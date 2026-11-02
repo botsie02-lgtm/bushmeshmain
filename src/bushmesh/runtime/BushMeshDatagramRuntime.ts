@@ -119,13 +119,17 @@ function validateRetryIntent(intent: BushMeshRetryIntent): void {
     intent.maxTransportAttempts < 1 ||
     intent.maxTransportAttempts > 255
   ) {
-    throw new Error('BushMesh transport retry attempts must be an integer from 1 to 255.');
+    throw new Error(
+      'BushMesh transport retry attempts must be an integer from 1 to 255.',
+    );
   }
   if (
     intent.mode !== 'transport-retry' &&
     intent.maxTransportAttempts !== 1
   ) {
-    throw new Error('Protocol-managed/none retry intent must use one transport attempt.');
+    throw new Error(
+      'Protocol-managed/none retry intent must use one transport attempt.',
+    );
   }
 }
 
@@ -147,7 +151,9 @@ function validateAssociationForTraffic(
     treatment.requirement === 'required-direct-session' &&
     association.kind !== 'direct-session'
   ) {
-    throw new Error(`${trafficClass} requires a direct-session security association.`);
+    throw new Error(
+      `${trafficClass} requires a direct-session security association.`,
+    );
   }
   if (
     treatment.requirement === 'required-group' &&
@@ -162,6 +168,48 @@ function classifyDecodeError(error: unknown): BushMeshInboundRejected['reason'] 
   return message.includes('Unsupported BushMesh protocol version')
     ? 'unsupported-version'
     : 'malformed';
+}
+
+function assertFiniteOptional(value: number | undefined, label: string): void {
+  if (value !== undefined && !Number.isFinite(value)) {
+    throw new Error(`${label} must be finite when supplied.`);
+  }
+}
+
+function validateInboundDatagram(datagram: BushMeshInboundDatagram): void {
+  assertIntegerInRange(datagram.channelIndex, 0, 0xffffffff, 'Channel index');
+  assertIntegerInRange(datagram.dataType, 0, 0xffff, 'Datagram data type');
+  if (!Number.isFinite(datagram.receivedAtMs) || datagram.receivedAtMs < 0) {
+    throw new Error('Received timestamp must be a non-negative finite number.');
+  }
+  if (!datagram.transport.trim()) {
+    throw new Error('Inbound transport discriminator cannot be empty.');
+  }
+  if (datagram.sourceNodeId !== undefined) {
+    assertIntegerInRange(datagram.sourceNodeId, 0, 0xffffffff, 'Source node ID');
+  }
+  assertFiniteOptional(datagram.link?.rssiDbm, 'RSSI');
+  assertFiniteOptional(datagram.link?.snrDb, 'SNR');
+  assertFiniteOptional(datagram.link?.pathLength, 'Path length');
+  if (
+    datagram.link?.pathLength !== undefined &&
+    (!Number.isInteger(datagram.link.pathLength) || datagram.link.pathLength < 0)
+  ) {
+    throw new Error('Path length must be a non-negative integer when supplied.');
+  }
+}
+
+function malformedInbound(
+  datagram: BushMeshInboundDatagram,
+  error: unknown,
+): BushMeshInboundRejected {
+  return {
+    status: 'rejected',
+    datagram,
+    reason: 'malformed',
+    error:
+      error instanceof Error ? error.message : 'Malformed BushMesh datagram.',
+  };
 }
 
 /**
@@ -194,14 +242,15 @@ export class BushMeshDatagramRuntime {
     if (this.initialized) {
       return this.recentMessages.size();
     }
-    this.initialized = true;
 
     if (!this.persistence) {
+      this.initialized = true;
       return 0;
     }
 
     const stored = await this.persistence.getItem(this.dedupSnapshotKey);
     if (!stored) {
+      this.initialized = true;
       return 0;
     }
 
@@ -209,22 +258,31 @@ export class BushMeshDatagramRuntime {
     try {
       parsed = JSON.parse(stored);
     } catch {
-      throw new Error('Stored BushMesh runtime dedup snapshot is not valid JSON.');
+      throw new Error(
+        'Stored BushMesh runtime dedup snapshot is not valid JSON.',
+      );
     }
 
     if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Stored BushMesh runtime dedup snapshot has invalid shape.');
+      throw new Error(
+        'Stored BushMesh runtime dedup snapshot has invalid shape.',
+      );
     }
     const snapshot = parsed as Partial<DedupSnapshot>;
-    if (snapshot.version !== DEDUP_SNAPSHOT_VERSION || !Array.isArray(snapshot.entries)) {
+    if (
+      snapshot.version !== DEDUP_SNAPSHOT_VERSION ||
+      !Array.isArray(snapshot.entries)
+    ) {
       throw new Error('Unsupported BushMesh runtime dedup snapshot.');
     }
 
-    return this.recentMessages.restore(
+    const restored = this.recentMessages.restore(
       snapshot.entries as BushMeshSeenMessageSnapshot[],
       this.clock.now(),
       true,
     );
+    this.initialized = true;
+    return restored;
   }
 
   transportAvailability(): BushMeshTransportAvailability | null {
@@ -239,7 +297,9 @@ export class BushMeshDatagramRuntime {
     assertIntegerInRange(options.channelIndex, 0, 0xffffffff, 'Channel index');
     assertIntegerInRange(options.dataType, 0, 0xffff, 'Datagram data type');
     if (!options.transport.trim()) {
-      throw new Error('BushMesh outbound transport discriminator cannot be empty.');
+      throw new Error(
+        'BushMesh outbound transport discriminator cannot be empty.',
+      );
     }
 
     const plainBytes = Array.from(wireBytes);
@@ -250,7 +310,9 @@ export class BushMeshDatagramRuntime {
       expiresAtMs !== null &&
       (!Number.isFinite(expiresAtMs) || expiresAtMs < now)
     ) {
-      throw new Error('BushMesh outbound expiry must be null or a future timestamp.');
+      throw new Error(
+        'BushMesh outbound expiry must be null or a future timestamp.',
+      );
     }
 
     const retryIntent =
@@ -265,10 +327,14 @@ export class BushMeshDatagramRuntime {
 
     if (association.kind !== 'none') {
       if (!options.trafficClass) {
-        throw new Error('Protected BushMesh traffic requires an explicit traffic class.');
+        throw new Error(
+          'Protected BushMesh traffic requires an explicit traffic class.',
+        );
       }
       if (!this.security) {
-        throw new Error('BushMesh security adapter is required for protected traffic.');
+        throw new Error(
+          'BushMesh security adapter is required for protected traffic.',
+        );
       }
       const context = createBushMeshSecurityProtocolContext(plainBytes);
       const result = await this.security.protect({
@@ -308,7 +374,15 @@ export class BushMeshDatagramRuntime {
     };
   }
 
-  async acceptInbound(datagram: BushMeshInboundDatagram): Promise<BushMeshInboundResult> {
+  async acceptInbound(
+    datagram: BushMeshInboundDatagram,
+  ): Promise<BushMeshInboundResult> {
+    try {
+      validateInboundDatagram(datagram);
+    } catch (error) {
+      return malformedInbound(datagram, error);
+    }
+
     let wireBytes: number[];
     let association: BushMeshSecurityAssociation = {kind: 'none'};
     let protectedPayload = false;
@@ -339,7 +413,9 @@ export class BushMeshDatagramRuntime {
             unprotected.authenticatedHeader,
           )
         ) {
-          throw new Error('Security adapter authenticated a non-canonical BushMesh header.');
+          throw new Error(
+            'Security adapter authenticated a non-canonical BushMesh header.',
+          );
         }
         association = unprotected.association;
         protectedPayload = true;
@@ -348,7 +424,10 @@ export class BushMeshDatagramRuntime {
           status: 'rejected',
           datagram,
           reason: 'security-failed',
-          error: error instanceof Error ? error.message : 'BushMesh security verification failed.',
+          error:
+            error instanceof Error
+              ? error.message
+              : 'BushMesh security verification failed.',
         };
       }
     } else {
@@ -365,17 +444,21 @@ export class BushMeshDatagramRuntime {
         status: 'rejected',
         datagram,
         reason: classifyDecodeError(error),
-        error: error instanceof Error ? error.message : 'BushMesh datagram decode failed.',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'BushMesh datagram decode failed.',
       };
     }
 
     if (datagram.sourceNodeId !== undefined) {
-      assertIntegerInRange(datagram.sourceNodeId, 0, 0xffffffff, 'Source node ID');
       const identity = {
         sourceNodeId: datagram.sourceNodeId,
         messageId: decoded.envelope.messageId,
       };
-      if (this.recentMessages.checkAndRemember(identity, datagram.receivedAtMs)) {
+      if (
+        this.recentMessages.checkAndRemember(identity, datagram.receivedAtMs)
+      ) {
         return {
           status: 'duplicate',
           datagram,
