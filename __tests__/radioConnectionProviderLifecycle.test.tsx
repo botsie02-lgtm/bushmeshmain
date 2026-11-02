@@ -116,8 +116,8 @@ describe('RadioConnectionProvider application lifetime', () => {
       ]);
       bushMesh!.setContacts([
         {
-          publicKey: 'pk',
-          publicKeyPrefix: 'pk',
+          publicKey: 'a'.repeat(64),
+          publicKeyPrefix: 'a'.repeat(12),
           name: 'Peer',
           type: 1,
           flags: 0,
