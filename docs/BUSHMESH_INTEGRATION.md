@@ -1,10 +1,14 @@
-# BushMesh canonical integration boundary
+# BushMesh Protocol v1 canonical integration contract
 
-This branch owns the canonical BushMesh protocol and runtime seam. Radio-core owns hardware/radio lifecycle and accepts opaque encoded datagrams. Security v1 owns identities, trust, sessions, group keys, nonces/replay and cryptography. MeshCore is only a compatibility carrier.
+Branch: `feature/bushmesh-lora-protocol`
+
+Status: **software-level Protocol v1 / Security v1 / radio integration contract frozen.** Hardware behavior remains separately gated.
+
+BushMesh owns the application protocol/runtime. Radio-core owns hardware/radio lifecycle and transports already encoded opaque datagrams. Security v1 owns identities, trust, sessions, group keys, cryptography, nonces/replay and local rotation/revocation state. MeshCore is a compatibility carrier only.
 
 ## Canonical imports
 
-Normal application integration should import from:
+Normal application integration:
 
 ```ts
 import {
@@ -14,107 +18,276 @@ import {
 } from '../src/bushmesh';
 ```
 
-Advanced protocol/firmware code may use `src/bushmesh/protocol/public.ts`. Transport/runtime integrators may use `src/bushmesh/runtime/public.ts`. Do not build new code against the broad `protocol/index.ts` or `runtime/index.ts` barrels; those are compatibility surfaces for the existing branch.
+Firmware/protocol implementations use `src/bushmesh/protocol/public.ts`. Runtime/radio/security integrators use `src/bushmesh/runtime/public.ts`. Do not build new integrations against the broad `protocol/index.ts`, `runtime/index.ts` or current React Native compatibility hubs.
 
-## Canonical app-facing runtime
+## Runtime seam
 
-`BushMeshDatagramRuntime` is the stable seam. It deliberately has no radio `send()` method and imports neither radio-core nor MeshCore.
+`BushMeshDatagramRuntime` has no radio `send()` method and imports neither radio-core nor MeshCore. It accepts injected:
 
-It accepts injected abstractions for:
+- `BushMeshRuntimeClock`
+- `BushMeshRuntimePersistence`
+- `BushMeshTransportAvailabilityPort`
+- `BushMeshSecurityAdapter`
 
-- runtime clock/timers (`BushMeshRuntimeClock`)
-- key/value persistence (`BushMeshRuntimePersistence`)
-- transport availability (`BushMeshTransportAvailabilityPort`)
-- Security v1 adaptation (`BushMeshSecurityAdapter`)
+It produces `BushMeshOutboundDatagram` and consumes `BushMeshInboundDatagram`.
 
-It produces `BushMeshOutboundDatagram` and consumes `BushMeshInboundDatagram`. BushMesh owns packet decoding, version checks, typed dispatch and duplicate suppression. The radio layer treats `payload` as opaque bytes.
+Radio-core treats `payload` as opaque bytes. BushMesh owns payload classification, version checking, Security-container parsing, typed protocol decode and duplicate suppression.
 
-## Outbound radio mapping contract
+## Payload classification
 
-`BushMeshOutboundDatagram` maps directly to radio-core's neutral `OutboundDatagramEnvelope` without importing it:
+No carrier hint is required to distinguish protection state.
 
-| BushMesh | radio-core mapping |
+```text
+B5 4D -> ordinary BushMesh v1 packet / Fragment wrapper
+B5 53 01 01 -> protected direct container
+B5 53 01 02 -> protected group/convoy container
+B5 53 01 10..14 -> frozen Security v1 control container
+```
+
+Unknown magic, unknown kind or unsupported container version fails closed.
+
+The former `securityProtected` carrier hint is not part of the canonical inbound interface.
+
+## Outbound radio-core mapping
+
+BushMesh `BushMeshOutboundDatagram` maps to radio-core `OutboundDatagramEnvelope` without importing that type:
+
+| BushMesh | radio-core |
 | --- | --- |
 | `channelIndex` | `channelIndex` |
 | `dataType` | `dataType` |
-| `payload` | `payload` (already encoded; never reinterpret) |
-| `priority` | `priority` (`safety`, `control`, `message`, `position`, `bulk`) |
+| `payload` | `payload` exactly; opaque bytes |
+| `priority` | `priority` |
 | `expiresAtMs` | `expiresAtMs` |
 | `retryIntent.maxTransportAttempts` | `retryPolicy.maxAttempts` |
-| direct `sessionId`, group `groupId`, or identity association | `identityRef` chosen by the integration layer |
+| session/group/identity association | integration-selected `identityRef` |
 | `diagnostics.label` | `description` |
 | `createdAtMs` | `createdAtMs` |
 
-For `retryIntent.mode === 'protocol-managed'`, radio-core should normally use one transport attempt. BushMesh ACK/retransmission logic owns protocol reliability; radio-core must not create a second independent protocol retry loop.
+`dataType` is deliberately **carrier-specific integration metadata**. Protocol v1 assigns no universal numeric value. It must never be confused with the BushMesh packet type or the protected/plain discriminator.
 
-The final integration chooses the numeric `dataType` discriminator and channel mapping. Those values are carrier/integration metadata, not BushMesh wire packet IDs.
+For `retryIntent.mode === 'protocol-managed'`, radio-core normally makes one transport attempt. BushMesh protocol ACK/retransmission remains the protocol's responsibility; radio-core must not create a second independent reliability loop.
 
-## Inbound radio mapping contract
+## Inbound radio-core mapping
 
-Radio-core `ReceivedDatagram` fields map to `BushMeshInboundDatagram` as follows:
+Map carrier receive information to `BushMeshInboundDatagram`:
 
-- `channelIndex`, `dataType`, `payload`, `receivedAtMs`, `transport`, `source` map directly.
-- `link.rssiDbm`, `link.snrDb`, and `link.pathLength` map directly when available.
-- `radioIdentityRef`, `transportDeviceId`, and diagnostic labels may pass through unchanged.
-- an integration may additionally provide `sourceNodeId` when it has a canonical BushMesh node identity; this enables `(sourceNodeId, messageId)` duplicate suppression.
-- `securityProtected` is supplied by the final security/carrier integration once the protected-wire discriminator is frozen.
+- `channelIndex`
+- carrier-specific `dataType`
+- opaque `payload`
+- `receivedAtMs`
+- transport/bearer identifier
+- live/background-replay source
+- optional RSSI/SNR/path length
+- optional transport/radio identity references and diagnostic label
+- optional `sourceNodeId` when the carrier already knows a BushMesh node ID
 
-Radio-core must not parse BushMesh magic, envelope fields, packet types, fragments, ACKs or typed payloads.
+Radio-core must not parse `B5 4D`, `B5 53`, envelope fields, fragments, ACKs, routing or Security object layouts.
 
-## Security v1 boundary
+## Security v1 adapter contract
 
-`src/bushmesh/protocol/securityBoundary.ts` owns the canonical immutable authenticated-header bytes supplied to Security v1 as `SecurityProtocolContext.authenticatedHeader`.
+The final application provides `BushMeshSecurityAdapter`. It bridges to `foundation/security-identity-v1`; it does not own wire serialization.
 
-AAD schema v1 is:
+### Outbound protected traffic
 
-1. domain/schema prefix `42 4D 41 01` (`BMA`, version 1),
-2. the protocol envelope's version + packet type byte,
-3. priority + compression + ACK/store-forward flags byte,
-4. canonical VarUint message ID.
+BushMesh supplies Security:
 
-Mutable hop TTL/path counters are **not** included. Routers may decrement them without invalidating end-to-end security.
+```text
+plaintextWireBytes  // complete logical B5 4D packet
+SecurityProtocolContext {
+  protocolVersion,
+  authenticatedHeader
+}
+routing            // logical source/destination/group selectors
+association        // direct-session or group
+trafficClass
+```
 
-`BushMeshSecurityAdapter` is implemented by the final application integration. BushMesh passes plaintext wire bytes, the canonical protocol context, a traffic class and an association (`direct-session`, `group`, or identity). The adapter calls Security v1 and returns final protected datagram bytes plus the opaque Security protected object. On inbound protected traffic the adapter returns plaintext BushMesh wire bytes and the exact authenticated header used; BushMesh recomputes and compares the canonical header before dispatch.
+Security v1 returns its transport-neutral object:
 
-BushMesh never receives private keys and does not implement encryption, key derivation, nonce management, replay protection, trust, rotation or revocation.
+- direct: `EncryptedDirectMessage`
+- group/convoy: `EncryptedGroupMessage`
 
-### Security treatment audit
+BushMesh then serializes that object into the frozen `B5 53` container.
 
-- direct `Message` traffic: direct-session protection required.
-- private group `Message` traffic: group protection required.
-- `Convoy` group traffic: group protection required.
-- `Distress`: security is policy-dependent; authenticated emergency traffic is preferred when context exists, but unauthenticated fallback behavior remains a safety/product decision.
-- pairing/session establishment: Security v1 object exists; BushMesh transport schema is not yet assigned/frozen.
-- wrapped group-key distribution: Security v1 object exists; BushMesh transport schema is not yet assigned/frozen.
-- identity rotation and peer revocation/session retirement: Security v1 objects/actions exist; BushMesh transport schemas are not yet assigned/frozen.
+Security does not return final carrier bytes. BushMesh does not receive private keys.
 
-These security-control objects must not be hidden inside unrelated `Command` or `DeviceInfo` payloads merely to avoid defining their final transport schema.
+### Inbound protected traffic
 
-## Protocol-v1 authority
+BushMesh parses the complete `B5 53` container, supplies its Security object + canonical AAD context to Security v1, receives plaintext `B5 4D` bytes only after Security succeeds, then recomputes AAD from the decrypted packet plus authenticated outer routing selectors.
 
-`src/bushmesh/protocol/packetTypes.ts` remains the authoritative packet allocation table. `versioning.ts` owns the two-bit envelope version range and compatibility. `capabilityPolicy.ts` owns negotiated feature policy and now detects loss of previously accepted capabilities/version as a downgrade signal; the trust/security layer decides whether such a downgrade is legitimate after an explicit re-pair/reconfiguration.
+Any mismatch is `security-failed`. There is no fallback to a weaker mode after authentication/replay/version failure.
 
-ACK `0x0C` retains two schemas distinguished by compression: `Raw` is selective fragment ACK; `Command` is delivery ACK. Weather `0x04` remains reserved. Telemetry `0x05` is canonical; `Battery` is only a source alias.
+## Final AAD v1
 
-Golden byte vectors are in `__tests__/bushmeshGoldenVectors.test.ts` and are intended for firmware cross-implementation tests.
+Exact bytes:
 
-## Decisions still not frozen
+```text
+42 4D 41 01
+[protocolVersion:2 | packetType:6]
+[priority:3 | compression:3 | ACK:1 | storeForward:1]
+messageId VarUint
+routingFlags u8
+[sourceNodeId VarUint]
+[destinationNodeId VarUint]
+[groupId VarUint length + UTF-8]
+```
 
-The following must be resolved before declaring the complete app + firmware protocol/security vectors final:
+Routing flags:
 
-- the on-wire protected-payload container/discriminator that carries Security v1 `EncryptedDirectMessage` and `EncryptedGroupMessage` objects while leaving enough immutable header information available for AAD before decrypt;
-- dedicated transport schemas/packet allocation for pairing/session establishment, group-key distribution, identity rotation and revocation/session retirement;
-- emergency unauthenticated/authenticated fallback policy and whether any emergency mode requires signatures without confidentiality;
-- the integration-level numeric `dataType` used by radio-core/carriers for BushMesh and for protected-vs-plain traffic;
-- whether source/destination routing identities become part of a future immutable authenticated routing header;
-- Weather (`0x04`) payload schema;
-- hardware confirmation of raw binary payload preservation through MeshCore/Heltec firmware (text-safe compatibility remains adapter-only fallback).
+- bit 0 source node ID
+- bit 1 destination node ID
+- bit 2 group ID
+- bits 3..7 invalid in v1
 
-## Integration rules
+### Immutable identity decision
 
-1. Do not import radio-core or Security branch implementations into canonical BushMesh modules.
-2. Do not let radio-core interpret BushMesh packet layouts.
-3. Do not let MeshCore define BushMesh MTU/fragment/compression/version/security semantics.
-4. Add standardized packet IDs only through `packetTypes.ts` and add deterministic vectors for frozen schemas.
-5. Use the canonical AAD builder for every Security v1 protected exchange; never construct ad-hoc AAD in adapters.
-6. Treat capability loss as a downgrade signal until the trust/security layer explicitly accepts the new peer state.
+Logical router-visible source/destination/group identity **is authenticated** when exposed outside ciphertext. This prevents a relay/attacker from changing who a protected payload appears to be from, who it is logically addressed to, or which group it is routed as while retaining valid ciphertext.
+
+Security v1 also authenticates Security-owned session/group/sender fields internally.
+
+### Mutable fields deliberately excluded
+
+- TTL
+- hop/path length
+- next hop / relay path
+- RSSI/SNR
+- carrier/channel implementation metadata
+- retry attempt state
+- local timestamps
+- post-protection Fragment headers/CRC/index/count
+
+Routers may mutate these without invalidating end-to-end Security.
+
+## Frozen Security v1 transport kinds
+
+`B5 53 01 <kind>`:
+
+| Kind | Security v1 object |
+| --- | --- |
+| `01` | `EncryptedDirectMessage` |
+| `02` | `EncryptedGroupMessage` |
+| `10` | `PairingProof` |
+| `11` | `SessionOffer` |
+| `12` | `SessionResponse` |
+| `13` | `WrappedGroupKeyDistribution` |
+| `14` | `IdentityRotationProof` |
+| `15` | reserved/undefined; rejected by Protocol v1 |
+
+The complete positional field encoding and size limits are specified in `BUSHMESH_PROTOCOL.md` and implemented by `src/bushmesh/protocol/securityWire.ts`.
+
+### Revocation/session retirement decision
+
+Security v1 intentionally defines peer revocation/session retirement as **local trust/session state**, not as a network authority message. Therefore Protocol v1 has no revocation-control wire object. A future fleet/authority revocation protocol requires a separately authenticated trust model and new versioned schema. Never reinterpret `Command`, `DeviceInfo` or reserved kind `0x15` as remote revocation in v1.
+
+## Emergency/distress policy
+
+Runtime default: `require-authentication`.
+
+### Security context available
+
+Use it. Direct/group Security protection is applied according to the intended recipient/group.
+
+### Context temporarily unavailable
+
+Default behavior is to **refuse unauthenticated send/accept** rather than silently weaken security.
+
+A product that explicitly chooses availability over authenticity may configure `allow-unauthenticated-fallback`. In that mode it may deliberately send/accept an ordinary `B5 4D` Distress packet, but the runtime labels it `unauthenticated-emergency-fallback`. Such traffic proves neither sender identity nor group membership.
+
+### Security operation fails
+
+Authentication, downgrade, replay, counter rollback, revocation, expiration or other Security failure never triggers automatic fallback. A new explicit send decision is required.
+
+This is intentionally conservative: emergency spoofing can cause serious harm, so unauthenticated reachability is an opt-in safety/product decision rather than an implicit protocol behavior.
+
+## Protection / fragmentation / ACK ordering
+
+Frozen v1 order:
+
+```text
+logical B5 4D packet
+ -> canonical AAD
+ -> Security v1 protect
+ -> BushMesh B5 53 serialization
+ -> optional BushMesh Fragment packets
+ -> radio-core opaque transport
+
+receive Fragment packets
+ -> byte-level reassembly
+ -> complete B5 4D or B5 53 datagram
+ -> Security verification/decrypt if B5 53
+ -> recompute/compare AAD
+ -> typed decode/delivery
+ -> whole-message delivery ACK if applicable
+```
+
+Selective fragment ACK confirms receipt of fragment bytes only. Fragment CRC is corruption detection only. Neither is proof of Security authentication or logical delivery.
+
+`BushMeshDatagramFragmentReassembler` is the canonical byte-level reassembly primitive. A BushMesh integration must reassemble before handing the complete logical payload to security/decode dispatch; radio-core does not implement BushMesh fragmentation.
+
+## Security control dispatch
+
+Security control containers are signed/protected Security objects, not ordinary BushMesh application packets. `BushMeshDatagramRuntime.acceptInbound()` surfaces them as an accepted `kind: 'security-control'` result. The application then passes the decoded structural object to the matching Security v1 service:
+
+- `PairingProof` -> pairing verification/trust UX
+- `SessionOffer` -> direct session offer acceptance
+- `SessionResponse` -> direct session finalization
+- `WrappedGroupKeyDistribution` -> group key installation
+- `IdentityRotationProof` -> trust rotation handling
+
+BushMesh only validates deterministic wire structure. Security remains authoritative for cryptographic verification, freshness, replay and trust.
+
+## Protocol version/downgrade rules
+
+- Protocol envelope version is 1 for the frozen contract.
+- Security-container version is 1.
+- Each Security-control body schema is 1.
+- Unsupported versions are rejected, never interpreted as v1.
+- Unknown/trailing v1 fields are rejected; v1 is fixed positional, not extensible TLV.
+- Signed Security handshake version negotiation remains Security-owned.
+- `capabilityPolicy.ts` detects loss of previously accepted protocol capabilities as a downgrade signal; Security/trust policy decides whether explicit re-pair/reconfiguration makes the change legitimate.
+
+## Public modules another branch must use
+
+Application:
+
+- `src/bushmesh/index.ts`
+
+Protocol/firmware:
+
+- `src/bushmesh/protocol/public.ts`
+- `src/bushmesh/protocol/securityWire.ts`
+- `src/bushmesh/protocol/securityBoundary.ts`
+- `src/bushmesh/protocol/packetTypes.ts`
+- `src/bushmesh/protocol/versioning.ts`
+
+Runtime integration:
+
+- `src/bushmesh/runtime/public.ts`
+- `src/bushmesh/runtime/integration.ts`
+- `src/bushmesh/runtime/BushMeshDatagramRuntime.ts`
+
+Do not integrate against MeshCore bridge types or broad compatibility barrels.
+
+## Golden-vector authority
+
+Firmware cross-implementation vectors live in:
+
+- `__tests__/bushmeshGoldenVectors.test.ts`
+- `__tests__/bushmeshSecurityWireV1.test.ts`
+
+Any firmware or alternate runtime claiming Protocol v1 compatibility should reproduce those bytes exactly.
+
+## Hardware-pending only
+
+The software contract is frozen without pretending to know hardware behavior. Still pending real Heltecs:
+
+- raw binary preservation including NUL/high-bit bytes
+- actual carrier MTU/payload ceilings
+- real RF loss/reordering and selective retransmission behavior
+- reported RSSI/SNR/path semantics
+- congestion/ACK interactions across multiple radios
+- emergency pre-emption under actual radio scheduling
+- long-duration routing/store-forward behavior
+
+Text-safe MeshCore carriage remains a compatibility path until raw binary is proven on hardware. None of these hardware measurements may silently change Protocol v1 bytes; a wire-breaking change requires a future version.

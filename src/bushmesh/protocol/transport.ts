@@ -20,6 +20,7 @@ import {
   encodeSemanticMessage,
   renderSemanticMessage,
 } from './semantic';
+import {classifyBushMeshDatagramPayload} from './securityWire';
 import {tryParseSemanticText} from './semanticText';
 import {
   compareDictionaryCompression,
@@ -205,13 +206,25 @@ export function tryDecodeBushMeshChannelPayload(
   return null;
 }
 
-export function fragmentBushMeshWireMessage(
-  wireBytes: number[],
+/**
+ * Fragment a complete final BushMesh datagram payload. For protected traffic the
+ * caller MUST first serialize the B5 53 Security container, then fragment those
+ * bytes. Fragment wrappers are ordinary B5 4D packets and are not end-to-end
+ * Security AAD. Their CRC/ACK semantics cover fragment receipt/corruption only.
+ */
+export function fragmentBushMeshDatagramPayload(
+  datagramPayload: number[],
   messageId: number,
   maxFragmentDataBytes = 40,
   priority = BushMeshPriority.DirectMessage,
 ): number[][] {
-  return fragmentPayload(messageId, wireBytes, maxFragmentDataBytes).map(
+  const classification = classifyBushMeshDatagramPayload(datagramPayload);
+  if (classification.kind === 'unknown') {
+    throw new Error(
+      'BushMesh fragmentation requires a complete ordinary or Security-container datagram.',
+    );
+  }
+  return fragmentPayload(messageId, datagramPayload, maxFragmentDataBytes).map(
     fragment =>
       encodeBushMeshWire({
         type: BushMeshPacketType.Fragment,
@@ -224,35 +237,57 @@ export function fragmentBushMeshWireMessage(
   );
 }
 
-export type BushMeshFrameAcceptResult = {
+/** @deprecated Name retained for source compatibility; use fragmentBushMeshDatagramPayload. */
+export function fragmentBushMeshWireMessage(
+  wireBytes: number[],
+  messageId: number,
+  maxFragmentDataBytes = 40,
+  priority = BushMeshPriority.DirectMessage,
+): number[][] {
+  return fragmentBushMeshDatagramPayload(
+    wireBytes,
+    messageId,
+    maxFragmentDataBytes,
+    priority,
+  );
+}
+
+export type BushMeshDatagramFragmentAcceptResult = {
   complete: boolean;
-  decoded?: DecodedBushMeshWireMessage;
+  datagramPayload?: number[];
   reassembly?: ReassemblyProgress;
 };
 
-export class BushMeshWireReassembler {
+/**
+ * Canonical byte-level fragment reassembler. It deliberately does not decrypt
+ * or decode the completed logical datagram. Reassembly finishes before Security
+ * replay/authentication checks for B5 53 protected traffic.
+ */
+export class BushMeshDatagramFragmentReassembler {
   private readonly fragments: BushMeshFragmentReassembler;
 
   constructor(timeoutMs = 120000) {
     this.fragments = new BushMeshFragmentReassembler(timeoutMs);
   }
 
-  accept(wireBytes: number[], now = Date.now()): BushMeshFrameAcceptResult {
-    const decoded = decodeBushMeshWire(wireBytes);
-
+  accept(fragmentWireBytes: number[], now = Date.now()): BushMeshDatagramFragmentAcceptResult {
+    const decoded = decodeBushMeshWire(fragmentWireBytes);
     if (decoded.envelope.type !== BushMeshPacketType.Fragment) {
-      return {complete: true, decoded};
+      return {complete: true, datagramPayload: [...fragmentWireBytes]};
     }
 
     const reassembly = this.fragments.accept(decoded.envelope.payload, now);
-
     if (!reassembly.complete || !reassembly.data) {
       return {complete: false, reassembly};
     }
 
+    const classification = classifyBushMeshDatagramPayload(reassembly.data);
+    if (classification.kind === 'unknown') {
+      throw new Error('Reassembled fragments do not contain a valid BushMesh datagram.');
+    }
     return {
       complete: true,
-      decoded: decodeBushMeshWire(reassembly.data),
+      datagramPayload: [...reassembly.data],
       reassembly,
     };
   }
@@ -267,5 +302,61 @@ export class BushMeshWireReassembler {
 
   reset(messageId?: number): void {
     this.fragments.reset(messageId);
+  }
+}
+
+export type BushMeshFrameAcceptResult = {
+  complete: boolean;
+  decoded?: DecodedBushMeshWireMessage;
+  /** Complete ordinary or protected datagram bytes after fragment reassembly. */
+  datagramPayload?: number[];
+  reassembly?: ReassemblyProgress;
+};
+
+/**
+ * Compatibility reassembler. New integration code should use
+ * BushMeshDatagramFragmentReassembler and pass completed bytes to
+ * BushMeshDatagramRuntime.acceptInbound().
+ */
+export class BushMeshWireReassembler {
+  private readonly datagrams: BushMeshDatagramFragmentReassembler;
+
+  constructor(timeoutMs = 120000) {
+    this.datagrams = new BushMeshDatagramFragmentReassembler(timeoutMs);
+  }
+
+  accept(wireBytes: number[], now = Date.now()): BushMeshFrameAcceptResult {
+    const result = this.datagrams.accept(wireBytes, now);
+    if (!result.complete || !result.datagramPayload) {
+      return {complete: false, reassembly: result.reassembly};
+    }
+
+    const classification = classifyBushMeshDatagramPayload(result.datagramPayload);
+    if (classification.kind === 'ordinary-bushmesh') {
+      return {
+        complete: true,
+        decoded: decodeBushMeshWire(result.datagramPayload),
+        datagramPayload: result.datagramPayload,
+        reassembly: result.reassembly,
+      };
+    }
+
+    return {
+      complete: true,
+      datagramPayload: result.datagramPayload,
+      reassembly: result.reassembly,
+    };
+  }
+
+  getMissing(messageId: number): number[] | null {
+    return this.datagrams.getMissing(messageId);
+  }
+
+  pruneExpired(now = Date.now()): number[] {
+    return this.datagrams.pruneExpired(now);
+  }
+
+  reset(messageId?: number): void {
+    this.datagrams.reset(messageId);
   }
 }

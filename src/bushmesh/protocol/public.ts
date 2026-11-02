@@ -62,10 +62,15 @@ export type {
 
 export {
   BUSHMESH_WIRE_MAGIC,
+  BushMeshDatagramFragmentReassembler,
   decodeBushMeshWire,
   encodeBushMeshWire,
+  fragmentBushMeshDatagramPayload,
 } from './transport';
-export type {DecodedBushMeshWireMessage} from './transport';
+export type {
+  BushMeshDatagramFragmentAcceptResult,
+  DecodedBushMeshWireMessage,
+} from './transport';
 
 export {encodeBushMeshTextWire} from './messageEncoding';
 export type {BushMeshEncodedTextWire} from './messageEncoding';

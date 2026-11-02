@@ -60,7 +60,7 @@ describe('BushMesh protocol-v1 golden vectors', () => {
     );
   });
 
-  it('encodes immutable Security v1 AAD independently of mutable TTL', () => {
+  it('encodes immutable Security v1 AAD independently of mutable TTL and binds logical routing', () => {
     const base = {
       type: BushMeshPacketType.Message,
       priority: BushMeshPriority.DirectMessage,
@@ -75,8 +75,19 @@ describe('BushMesh protocol-v1 golden vectors', () => {
 
     const contextSix = createBushMeshSecurityProtocolContext(ttlSix);
     const contextOne = createBushMeshSecurityProtocolContext(ttlOne);
+    expect(hex(contextSix.authenticatedHeader)).toBe(
+      '42 4D 41 01 41 23 2A 00',
+    );
+    expect(hex(contextOne.authenticatedHeader)).toBe(
+      '42 4D 41 01 41 23 2A 00',
+    );
 
-    expect(hex(contextSix.authenticatedHeader)).toBe('42 4D 41 01 41 23 2A');
-    expect(hex(contextOne.authenticatedHeader)).toBe('42 4D 41 01 41 23 2A');
+    const routed = createBushMeshSecurityProtocolContext(ttlSix, {
+      sourceNodeId: 1,
+      destinationNodeId: 2,
+    });
+    expect(hex(routed.authenticatedHeader)).toBe(
+      '42 4D 41 01 41 23 2A 03 01 02',
+    );
   });
 });
