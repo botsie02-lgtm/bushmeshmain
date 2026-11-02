@@ -96,6 +96,9 @@ export class PeerTrustManager {
       throw new SecurityError('PEER_NOT_TRUSTED', `Peer ${deviceId} is not trusted`);
     }
     if (fingerprint !== undefined && record.identity.fingerprint !== fingerprint) {
+      if (record.fingerprintHistory.includes(fingerprint)) {
+        throw new SecurityError('ROTATED_KEY', 'Peer identity has rotated since this session was established');
+      }
       throw new SecurityError('AUTHENTICATION_FAILED', 'Peer fingerprint does not match trust record');
     }
     return record;
