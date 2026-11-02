@@ -10,6 +10,10 @@ import React, {
 
 import {BushMeshOutboxEntry} from '../bushmesh/outbox';
 import {BushMeshQuickActionCode} from '../bushmesh/protocol';
+import {
+  NativeMeshCoreOwnershipState,
+  nativeMeshCoreSessionCoordinator,
+} from '../meshcore/NativeMeshCoreSessionCoordinator';
 import {parseMeshCoreChannelDataFrame} from '../meshcore/meshcoreChannelData';
 import {meshCoreFrameToReceivedDatagram} from '../meshcore/MeshCoreReceivedDatagramAdapter';
 import {base64ToBytes} from '../meshcore/meshcorePackets';
@@ -47,6 +51,11 @@ export type OutboxPersistenceStatus =
   | 'unsupported'
   | 'error';
 
+export type RadioSessionNativeLifecycleDecision =
+  | 'observe-native-owner'
+  | 'start-react-native-session'
+  | 'stop-react-native-session';
+
 type RadioSessionContextValue = {
   snapshot: BushMeshRadioSessionSnapshot;
   outbox: BushMeshOutboxEntry[];
@@ -58,6 +67,16 @@ type RadioSessionContextValue = {
   queuePosition: (input: QueuePositionInput) => BushMeshOutboxEntry;
   drainOnce: () => Promise<TransmissionAttemptResult>;
 };
+
+type RadioSessionNativeLifecycleService = Pick<
+  typeof nativeRadioService,
+  'getStatus' | 'start' | 'stop'
+>;
+
+type RadioSessionNativeLifecycleCoordinator = Pick<
+  typeof nativeMeshCoreSessionCoordinator,
+  'getSnapshot'
+>;
 
 const RadioSessionContext = createContext<RadioSessionContextValue | null>(null);
 const OUTBOX_DRAIN_INTERVAL_MS = 1_000;
@@ -77,16 +96,59 @@ function activeEntriesForPersistence(
   );
 }
 
-async function yieldNativeRecoveryToForeground(): Promise<NativeRadioServiceStatus> {
-  const current = await nativeRadioService.getStatus();
+/**
+ * Native MeshCore ownership is commanded exclusively by the application radio
+ * ownership layer and NativeMeshCoreSessionCoordinator. RadioSessionProvider
+ * only owns the legacy React-Native-session keepalive. A non-idle coordinator
+ * state is treated as native ownership even before Android has published its
+ * native-service status, which closes takeover and shutdown transition races.
+ */
+export function decideRadioSessionNativeLifecycle(
+  runtimeRequested: boolean,
+  status: NativeRadioServiceStatus,
+  coordinatorState: NativeMeshCoreOwnershipState,
+): RadioSessionNativeLifecycleDecision {
   if (
-    current.ownership === 'native-service' &&
-    current.radioRequested === true
+    coordinatorState !== 'idle' ||
+    status.ownership === 'native-service'
   ) {
-    await nativeRadioService.start(current.deviceLabel ?? null);
-    return nativeRadioService.getStatus();
+    return 'observe-native-owner';
   }
-  return current;
+
+  return runtimeRequested
+    ? 'start-react-native-session'
+    : 'stop-react-native-session';
+}
+
+/**
+ * Synchronizes only the legacy React-Native-owned service lifecycle. Android
+ * native-service ownership is observation-only here; start/stop/target/reconnect
+ * authority belongs to AppRadioConnectionService + NativeMeshCoreSessionCoordinator.
+ */
+export async function syncNativeRuntimeForRadioSessionProvider(
+  runtimeRequested: boolean,
+  service: RadioSessionNativeLifecycleService = nativeRadioService,
+  coordinator: RadioSessionNativeLifecycleCoordinator =
+    nativeMeshCoreSessionCoordinator,
+): Promise<NativeRadioServiceStatus> {
+  const existing = await service.getStatus();
+  const decision = decideRadioSessionNativeLifecycle(
+    runtimeRequested,
+    existing,
+    coordinator.getSnapshot().state,
+  );
+
+  if (decision === 'observe-native-owner') {
+    return existing;
+  }
+
+  if (decision === 'start-react-native-session') {
+    await service.start(null);
+  } else {
+    await service.stop();
+  }
+
+  return service.getStatus();
 }
 
 /**
@@ -189,7 +251,10 @@ export function RadioSessionProvider({
 
       try {
         if (nativeRadioService.isSupported()) {
-          const status = await yieldNativeRecoveryToForeground();
+          // Process/background recovery is owned by Android. Foreground React
+          // only observes the recovered native owner and replays its inbox; it
+          // must not send START merely because a persisted target exists.
+          const status = await nativeRadioService.getStatus();
           if (active) {
             setNativeRuntime(status);
           }
@@ -269,24 +334,9 @@ export function RadioSessionProvider({
 
     const syncNativeRuntime = async () => {
       try {
-        let status: NativeRadioServiceStatus;
-
-        if (snapshot.runtimeRequested) {
-          await nativeRadioService.start(null);
-          status = await nativeRadioService.getStatus();
-        } else {
-          const existing = await nativeRadioService.getStatus();
-          if (
-            existing.ownership === 'native-service' &&
-            existing.radioRequested === true
-          ) {
-            await nativeRadioService.start(existing.deviceLabel ?? null);
-            status = await nativeRadioService.getStatus();
-          } else {
-            await nativeRadioService.stop();
-            status = await nativeRadioService.getStatus();
-          }
-        }
+        const status = await syncNativeRuntimeForRadioSessionProvider(
+          snapshot.runtimeRequested,
+        );
 
         if (active) {
           setNativeRuntime(status);
