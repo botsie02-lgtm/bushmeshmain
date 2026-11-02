@@ -15,6 +15,7 @@ import {DriveProvider} from '../state/DriveContext';
 import {FormationProposalProvider} from '../state/FormationProposalContext';
 import {LocationSessionProvider} from '../state/LocationSessionContext';
 import {OfflineMapProvider} from '../state/OfflineMapContext';
+import {RadioConnectionProvider} from '../state/RadioConnectionContext';
 import {RadioSessionProvider} from '../state/RadioSessionContext';
 import {RouteSessionProvider} from '../state/RouteSessionContext';
 import {SpeechProvider} from '../state/SpeechContext';
@@ -31,35 +32,37 @@ export function AppProviders({
 }): React.JSX.Element {
   return (
     <BushMeshProvider>
-      <LegacyBushMeshInboundBridge />
-      <NativeChannelMessageBridge />
-      <CarMessagingProvider>
-        <ConvoyProvider>
-          <RecoveryCheckpointGuard />
-          <ConvoyFormationProvider>
-            <ConvoyRecoveryProvider>
-              <DriveProvider>
-                <SpeechProvider>
-                  <SpeechAlertBridge />
-                  <RadioMessageSpeechBridge />
-                  <RadioSessionProvider>
-                    <FormationProposalProvider>
-                      <OfflineMapProvider>
-                        <LocationSessionProvider>
-                          <RouteSessionProvider>
-                            <PositionRequestResponder />
-                            {children}
-                          </RouteSessionProvider>
-                        </LocationSessionProvider>
-                      </OfflineMapProvider>
-                    </FormationProposalProvider>
-                  </RadioSessionProvider>
-                </SpeechProvider>
-              </DriveProvider>
-            </ConvoyRecoveryProvider>
-          </ConvoyFormationProvider>
-        </ConvoyProvider>
-      </CarMessagingProvider>
+      <RadioConnectionProvider>
+        <LegacyBushMeshInboundBridge />
+        <NativeChannelMessageBridge />
+        <CarMessagingProvider>
+          <ConvoyProvider>
+            <RecoveryCheckpointGuard />
+            <ConvoyFormationProvider>
+              <ConvoyRecoveryProvider>
+                <DriveProvider>
+                  <SpeechProvider>
+                    <SpeechAlertBridge />
+                    <RadioMessageSpeechBridge />
+                    <RadioSessionProvider>
+                      <FormationProposalProvider>
+                        <OfflineMapProvider>
+                          <LocationSessionProvider>
+                            <RouteSessionProvider>
+                              <PositionRequestResponder />
+                              {children}
+                            </RouteSessionProvider>
+                          </LocationSessionProvider>
+                        </OfflineMapProvider>
+                      </FormationProposalProvider>
+                    </RadioSessionProvider>
+                  </SpeechProvider>
+                </DriveProvider>
+              </ConvoyRecoveryProvider>
+            </ConvoyFormationProvider>
+          </ConvoyProvider>
+        </CarMessagingProvider>
+      </RadioConnectionProvider>
     </BushMeshProvider>
   );
 }
