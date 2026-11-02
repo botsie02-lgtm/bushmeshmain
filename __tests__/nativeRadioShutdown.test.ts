@@ -215,9 +215,9 @@ describe('NativeMeshCoreSessionCoordinator stop serialization', () => {
   }
 
   it('coalesces repeated stop calls and becomes idle only after confirmation', async () => {
-    let confirmStop: (() => void) | null = null;
+    const deferred = {resolve: () => undefined};
     const stopPromise = new Promise<void>(resolve => {
-      confirmStop = resolve;
+      deferred.resolve = resolve;
     });
     const sessionStop = jest.fn<Promise<void>, []>(() => stopPromise);
     const coordinator = new NativeMeshCoreSessionCoordinator();
@@ -228,7 +228,7 @@ describe('NativeMeshCoreSessionCoordinator stop serialization', () => {
     expect(coordinator.getSnapshot().state).toBe('stopping');
     expect(sessionStop).toHaveBeenCalledTimes(1);
 
-    confirmStop?.();
+    deferred.resolve();
     await Promise.all([first, second]);
 
     expect(sessionStop).toHaveBeenCalledTimes(1);
