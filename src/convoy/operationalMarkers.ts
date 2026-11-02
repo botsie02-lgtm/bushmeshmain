@@ -1,4 +1,4 @@
-import {BushMeshQuickActionCode} from '../bushmesh/protocol';
+import {BushMeshQuickActionCode} from '../bushmesh/legacyProtocol';
 
 export type OperationalMarkerType = 'stop' | 'hazard' | 'regroup' | 'help';
 
