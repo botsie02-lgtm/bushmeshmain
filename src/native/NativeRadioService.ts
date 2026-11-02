@@ -26,6 +26,7 @@ export type NativeRadioServiceStatus = {
   radioRequested?: boolean;
   locationRequested?: boolean;
   deviceLabel: string | null;
+  deviceAddress?: string | null;
   startedAtMs: number;
   ownership: 'react-native-session' | 'native-service' | string;
   nativeBleState?: NativeBleRuntimeState;
@@ -39,8 +40,17 @@ export type NativeRadioServiceStatus = {
   nativeBleBufferedFrames?: number;
   nativeBackgroundInboxCount?: number;
   nativeBackgroundChannelInboxCount?: number;
+  persistedNativeTargetPresent?: boolean;
   outboxLeaseOwner?: 'foreground' | 'background' | string;
   outboxLeaseEpoch?: number;
+};
+
+export type NativeRadioShutdownWaitOptions = {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  getStatus?: () => Promise<NativeRadioServiceStatus>;
+  now?: () => number;
+  delay?: (ms: number) => Promise<void>;
 };
 
 type NativeRadioServiceModule = {
@@ -69,6 +79,7 @@ const unsupportedStatus: NativeRadioServiceStatus = {
   radioRequested: false,
   locationRequested: false,
   deviceLabel: null,
+  deviceAddress: null,
   startedAtMs: 0,
   ownership: 'unsupported',
   nativeBleState: 'disconnected',
@@ -82,9 +93,13 @@ const unsupportedStatus: NativeRadioServiceStatus = {
   nativeBleBufferedFrames: 0,
   nativeBackgroundInboxCount: 0,
   nativeBackgroundChannelInboxCount: 0,
+  persistedNativeTargetPresent: false,
   outboxLeaseOwner: 'foreground',
   outboxLeaseEpoch: 0,
 };
+
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 6_000;
+const DEFAULT_SHUTDOWN_POLL_INTERVAL_MS = 100;
 
 function validBackgroundFrames(
   frames: NativeBackgroundInboxFrame[],
@@ -109,6 +124,66 @@ function validChannelInboxFrames(
       typeof frame.frameBase64 === 'string' &&
       frame.frameBase64.length > 0,
   );
+}
+
+export function isNativeRadioShutdownConfirmed(
+  status: NativeRadioServiceStatus,
+): boolean {
+  return (
+    status.radioRequested === false &&
+    status.ownership !== 'native-service' &&
+    !status.deviceAddress &&
+    !status.deviceLabel &&
+    status.nativeBleState === 'disconnected' &&
+    !status.nativeBleDeviceAddress &&
+    !status.nativeBleDeviceLabel &&
+    status.persistedNativeTargetPresent === false
+  );
+}
+
+function shutdownStatusSummary(status: NativeRadioServiceStatus): string {
+  return [
+    `radioRequested=${String(status.radioRequested)}`,
+    `ownership=${status.ownership}`,
+    `serviceTarget=${status.deviceAddress ?? status.deviceLabel ?? 'none'}`,
+    `nativeBleState=${status.nativeBleState ?? 'unknown'}`,
+    `nativeTarget=${status.nativeBleDeviceAddress ?? status.nativeBleDeviceLabel ?? 'none'}`,
+    `persistedTarget=${String(status.persistedNativeTargetPresent)}`,
+  ].join(', ');
+}
+
+export async function waitForNativeRadioShutdown(
+  options: NativeRadioShutdownWaitOptions = {},
+): Promise<NativeRadioServiceStatus> {
+  const timeoutMs = Math.max(
+    1,
+    Math.floor(options.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS),
+  );
+  const pollIntervalMs = Math.max(
+    1,
+    Math.floor(options.pollIntervalMs ?? DEFAULT_SHUTDOWN_POLL_INTERVAL_MS),
+  );
+  const getStatus = options.getStatus ?? (() => nativeRadioService.getStatus());
+  const now = options.now ?? Date.now;
+  const delay =
+    options.delay ??
+    ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const deadline = now() + timeoutMs;
+  let lastStatus = await getStatus();
+
+  while (!isNativeRadioShutdownConfirmed(lastStatus)) {
+    if (now() >= deadline) {
+      throw new Error(
+        `Android native radio did not confirm shutdown within ${timeoutMs}ms (${shutdownStatusSummary(
+          lastStatus,
+        )}).`,
+      );
+    }
+    await delay(pollIntervalMs);
+    lastStatus = await getStatus();
+  }
+
+  return lastStatus;
 }
 
 export const nativeRadioService = {
