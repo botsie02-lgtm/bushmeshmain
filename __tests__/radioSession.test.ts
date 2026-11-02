@@ -1,4 +1,4 @@
-import {BushMeshQuickActionCode} from '../src/bushmesh/protocol';
+import {BushMeshQuickActionCode} from '../src/bushmesh/legacyProtocol';
 import {BushMeshRadioSession} from '../src/radio/BushMeshRadioSession';
 
 describe('BushMeshRadioSession', () => {
