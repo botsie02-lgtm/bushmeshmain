@@ -1,0 +1,55 @@
+name: Apply simulator link-state identity fix
+
+on:
+  push:
+    branches:
+      - test/network-simulator-v1
+    paths:
+      - '.github/workflows/network-simulator-linkstate-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-link-state:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/network-simulator-v1
+      - name: Preserve LinkState identity across quality updates
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/bushmesh/testing/networkSimulator/DeterministicNetworkSimulator.ts')
+          text = path.read_text()
+          old = '''    this.links.set(key, {
+              config,
+              queue: existing?.queue ?? [],
+              queueBytes: existing?.queueBytes ?? 0,
+              busy: existing?.busy ?? false,
+            });'''
+          new = '''    if (existing) {
+              // Scheduled transmission completions retain this object identity.
+              // Mutating config prevents a live RSSI/SNR update from stranding
+              // the replacement link in a permanently busy state.
+              existing.config = config;
+            } else {
+              this.links.set(key, {
+                config,
+                queue: [],
+                queueBytes: 0,
+                busy: false,
+              });
+            }'''
+          if old not in text:
+              raise SystemExit('Expected LinkState replacement block was not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit simulator-only fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/bushmesh/testing/networkSimulator/DeterministicNetworkSimulator.ts
+          git commit -m "fix(sim): preserve busy link state identity"
+          git push origin HEAD:test/network-simulator-v1
