@@ -76,7 +76,7 @@ describe('secure direct-message sessions', () => {
     const {aSessions, bSessions, aSession} = await establish();
     const envelope = await aSessions.encrypt(aSession.sessionId, utf8('auth me'), context);
     const ciphertextBytes = fromBase64Url(envelope.ciphertext);
-    ciphertextBytes[0] ^= 1;
+    ciphertextBytes[0] = ciphertextBytes[0] === 255 ? 254 : ciphertextBytes[0] + 1;
     const tampered = {...envelope, ciphertext: toBase64Url(ciphertextBytes)};
     await expect(bSessions.decrypt(tampered, context)).rejects.toMatchObject({
       code: 'AUTHENTICATION_FAILED',
