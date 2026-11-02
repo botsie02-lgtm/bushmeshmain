@@ -1,7 +1,7 @@
 import {
   BUSHMESH_PROTOCOL_VERSION,
   BushMeshIdentityRef,
-} from './protocol';
+} from './legacyProtocol';
 
 /** Formation share owns 0x03. Recovery position requests use the next v1 type. */
 export const BUSHMESH_POSITION_REQUEST_MESSAGE_TYPE = 0x04;
