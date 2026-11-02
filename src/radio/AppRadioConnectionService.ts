@@ -142,6 +142,8 @@ export class AppRadioConnectionService {
   private scanTimer: ReturnType<typeof setTimeout> | null = null;
   private initializePromise: Promise<void> | null = null;
   private disposed = false;
+  private lifecycleGeneration = 0;
+  private scanGeneration = 0;
 
   constructor(deps: Partial<Dependencies> = {}) {
     this.deps = {
@@ -181,9 +183,13 @@ export class AppRadioConnectionService {
 
   async initialize(): Promise<void> {
     if (this.initializePromise) return this.initializePromise;
-    this.disposed = false;
+    if (this.disposed) {
+      this.disposed = false;
+      this.lifecycleGeneration += 1;
+    }
+    const generation = this.lifecycleGeneration;
     this.ensureManager();
-    const initialize = this.recoverNativeOwner().finally(() => {
+    const initialize = this.recoverNativeOwner(generation).finally(() => {
       if (this.initializePromise === initialize) this.initializePromise = null;
     });
     this.initializePromise = initialize;
@@ -191,21 +197,27 @@ export class AppRadioConnectionService {
   }
 
   async startScan(): Promise<void> {
-    const manager = this.ensureManager();
+    const lifecycleGeneration = this.lifecycleGeneration;
     this.patch({status: 'Requesting permissions', statusDetail: 'Checking Bluetooth permissions...'});
-    if (!(await this.deps.requestPermissions())) {
+    const granted = await this.deps.requestPermissions();
+    if (!this.isActiveLifecycle(lifecycleGeneration)) return;
+    if (!granted) {
       this.patch({status: 'Error', statusDetail: 'Bluetooth permissions were not granted.'});
       return;
     }
 
-    this.clearScanTimer();
-    manager.stopDeviceScan();
+    const manager = this.ensureManager();
+    this.cancelActiveScan();
+    this.stopManagerScan(manager);
+    const scanGeneration = ++this.scanGeneration;
     this.patch({devices: [], status: 'Scanning', statusDetail: 'Scanning for nearby BLE devices...'});
     manager.startDeviceScan(null, null, (error, device) => {
+      if (!this.isActiveScan(manager, lifecycleGeneration, scanGeneration)) return;
       if (error) {
-        manager.stopDeviceScan();
-        this.clearScanTimer();
-        this.patch({status: 'Error', statusDetail: error.message});
+        this.finishScan(manager, scanGeneration, {
+          status: 'Error',
+          statusDetail: error.message,
+        });
         return;
       }
       if (device && (device.name || device.localName)) {
@@ -218,23 +230,38 @@ export class AppRadioConnectionService {
     });
 
     this.scanTimer = setTimeout(() => {
+      if (!this.isActiveScan(manager, lifecycleGeneration, scanGeneration)) return;
       this.scanTimer = null;
-      manager.stopDeviceScan();
-      if (this.snapshot.status === 'Scanning') {
-        this.patch({status: 'Disconnected', statusDetail: 'Scan finished. Select a device to connect.'});
-      }
+      this.finishScan(manager, scanGeneration, {
+        status: 'Disconnected',
+        statusDetail: 'Scan finished. Select a device to connect.',
+      });
     }, 10_000);
   }
 
+  stopScan(): void {
+    const wasScanning = this.snapshot.status === 'Scanning';
+    this.cancelActiveScan();
+    this.stopManagerScan(this.manager);
+    if (wasScanning) {
+      this.patch({
+        status: 'Disconnected',
+        statusDetail: 'Scan stopped. Select a discovered device to continue.',
+      });
+    }
+  }
+
   async connectToDevice(device: Device): Promise<void> {
+    this.stopScan();
     const manager = this.ensureManager();
-    manager.stopDeviceScan();
-    this.clearScanTimer();
     this.patch({status: 'Connecting', statusDetail: `Connecting to ${device.name ?? device.localName}...`});
     try {
       const connected = await manager.connectToDevice(device.id);
+      if (this.disposed || this.manager !== manager) return;
       const readyDevice = await connected.discoverAllServicesAndCharacteristics();
+      if (this.disposed || this.manager !== manager) return;
       const discovery = await this.deps.discoverBle(readyDevice);
+      if (this.disposed || this.manager !== manager) return;
       const label = readyDevice.name ?? readyDevice.localName ?? 'Unknown device';
       this.connectedDevice = readyDevice;
       this.patch({
@@ -274,6 +301,68 @@ export class AppRadioConnectionService {
     }
   }
 
+  /**
+   * Hands a scan-only discovery directly to Android. No react-native-ble-plx
+   * GATT connection is created on this path, so native ownership never races a
+   * JavaScript connection for the same physical radio.
+   */
+  async handoffDiscoveredDeviceToAndroid(device: Device): Promise<void> {
+    if (!this.nativeHandoffSupported) {
+      this.patch({status: 'Error', statusDetail: 'Android native radio ownership is unavailable in this build.'});
+      return;
+    }
+    if (this.snapshot.connectionOwner !== 'none') {
+      this.patch({status: 'Error', statusDetail: 'Disconnect the current radio owner before starting Android ownership.'});
+      return;
+    }
+
+    this.stopScan();
+    const address = device.id;
+    const label = device.name ?? device.localName ?? 'MeshCore radio';
+    this.patch({
+      status: 'Connecting',
+      statusDetail: `Handing ${label} directly to Android...`,
+      connectedDeviceAddress: address,
+      connectedDeviceLabel: label,
+      connectionOwner: 'none',
+      meshCoreBle: null,
+      channels: [],
+      contacts: [],
+      deviceStatus: null,
+    });
+
+    try {
+      const session = await this.startNativeSession(address, label);
+      if (this.disposed) {
+        await this.deps.nativeCoordinator.stop().catch(() => undefined);
+        return;
+      }
+      this.nativeSession = session;
+      this.connectedDevice = null;
+      this.patch({
+        connectionOwner: 'android-native',
+        meshCoreBle: null,
+        status: 'Connected',
+      });
+      await this.runNativeStartupSync(session);
+      await this.refreshNativeDeviceState(session);
+    } catch (error) {
+      this.nativeSession = null;
+      this.connectedDevice = null;
+      this.patch({
+        status: 'Error',
+        statusDetail:
+          error instanceof Error
+            ? `Android radio handoff failed: ${error.message}`
+            : 'Android radio handoff failed.',
+        connectedDeviceAddress: null,
+        connectedDeviceLabel: null,
+        connectionOwner: 'none',
+        meshCoreBle: null,
+      });
+    }
+  }
+
   async handoffToAndroid(): Promise<void> {
     if (!this.snapshot.connectedDeviceAddress || this.snapshot.connectionOwner === 'android-native') return;
     if (!this.nativeHandoffSupported) {
@@ -282,6 +371,7 @@ export class AppRadioConnectionService {
     }
     const address = this.snapshot.connectedDeviceAddress;
     const label = this.snapshot.connectedDeviceLabel ?? 'MeshCore radio';
+    this.stopScan();
     const manager = this.ensureManager();
     this.patch({isWriting: true, statusDetail: 'Handing MeshCore BLE ownership to Android...'});
     try {
@@ -293,6 +383,7 @@ export class AppRadioConnectionService {
       this.nativeSession = session;
       this.patch({connectionOwner: 'android-native', meshCoreBle: null, status: 'Connected'});
       await this.runNativeStartupSync(session);
+      await this.refreshNativeDeviceState(session);
     } catch (error) {
       this.nativeSession = null;
       this.connectedDevice = null;
@@ -310,6 +401,7 @@ export class AppRadioConnectionService {
   }
 
   async disconnect(): Promise<void> {
+    this.stopScan();
     this.patch({isWriting: true});
     try {
       if (this.snapshot.connectionOwner === 'android-native') {
@@ -335,6 +427,7 @@ export class AppRadioConnectionService {
         await this.nativeSession.sendAppStart('BushMesh');
         await this.nativeSession.sendDeviceQuery();
         await this.runNativeStartupSync(this.nativeSession);
+        await this.refreshNativeDeviceState(this.nativeSession);
       } else if (this.meshCoreClient) {
         await this.runReactNativeStartupSync(this.meshCoreClient);
       }
@@ -432,8 +525,12 @@ export class AppRadioConnectionService {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    this.clearScanTimer();
-    this.manager?.stopDeviceScan();
+    this.lifecycleGeneration += 1;
+    this.initializePromise = null;
+    this.cancelActiveScan();
+    const manager = this.manager;
+    this.manager = null;
+    this.stopManagerScan(manager);
     this.meshCoreClient?.stop();
     this.meshCoreClient = null;
     if (this.nativeSession || this.deps.nativeCoordinator.isActive()) {
@@ -441,25 +538,37 @@ export class AppRadioConnectionService {
     }
     this.nativeSession = null;
     this.connectedDevice = null;
-    this.manager?.destroy();
-    this.manager = null;
+    if (manager) {
+      try {
+        manager.destroy();
+      } catch {
+        // A platform manager may already be terminating; disposal remains idempotent.
+      }
+    }
     this.listeners.clear();
     this.snapshot = initialSnapshot();
   }
 
-  private async recoverNativeOwner(): Promise<void> {
+  private async recoverNativeOwner(generation: number): Promise<void> {
     if (!this.nativeHandoffSupported) return;
     try {
       const nativeStatus = await this.deps.getNativeStatus();
+      if (!this.isActiveLifecycle(generation)) return;
       const address = nativeStatus.nativeBleDeviceAddress?.trim() ?? '';
       if (nativeStatus.ownership !== 'native-service' || !address) return;
       const label = nativeStatus.nativeBleDeviceLabel ?? nativeStatus.deviceLabel ?? 'MeshCore radio';
       this.patch({status: 'Connecting', statusDetail: 'Recovering Android-owned MeshCore radio session...', connectedDeviceAddress: address, connectedDeviceLabel: label, connectionOwner: 'android-native', meshCoreBle: null});
       const session = await this.startNativeSession(address, label);
+      if (!this.isActiveLifecycle(generation)) {
+        await this.deps.nativeCoordinator.stop().catch(() => undefined);
+        return;
+      }
       this.nativeSession = session;
       this.patch({status: 'Connected'});
       await this.runNativeStartupSync(session);
+      await this.refreshNativeDeviceState(session);
     } catch (error) {
+      if (!this.isActiveLifecycle(generation)) return;
       this.nativeSession = null;
       this.patch({status: 'Error', statusDetail: error instanceof Error ? `Native radio recovery failed: ${error.message}` : 'Native radio recovery failed.', connectedDeviceAddress: null, connectedDeviceLabel: null, connectionOwner: 'none'});
     }
@@ -500,6 +609,19 @@ export class AppRadioConnectionService {
     }
   }
 
+  private async refreshNativeDeviceState(session: NativeMeshCoreSession): Promise<void> {
+    this.patch({isWriting: true});
+    try {
+      const battery = (await session.getBatteryStatus()).parsed?.batteryInfo ?? null;
+      const contacts = (await session.syncContacts()).map(contactFromParsed);
+      this.patch({deviceStatus: battery, contacts});
+      const queued = await session.syncQueuedMessages(20);
+      queued.forEach(response => this.addFrame(nativeResponseLog(response)));
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
   private channelsFromLines(responses: Array<{parsedLines?: string[]}>): BushMeshChannel[] {
     return responses.map(response => channelFromParsedLines(response.parsedLines)).filter((channel): channel is BushMeshChannel => channel !== null);
   }
@@ -520,8 +642,52 @@ export class AppRadioConnectionService {
   }
 
   private ensureManager(): BleManager {
+    if (this.disposed) {
+      throw new Error('Application BLE manager is no longer active.');
+    }
     if (!this.manager) this.manager = this.deps.createBleManager();
     return this.manager;
+  }
+
+  private isActiveLifecycle(generation: number): boolean {
+    return !this.disposed && this.lifecycleGeneration === generation;
+  }
+
+  private isActiveScan(
+    manager: BleManager,
+    lifecycleGeneration: number,
+    scanGeneration: number,
+  ): boolean {
+    return (
+      this.isActiveLifecycle(lifecycleGeneration) &&
+      this.manager === manager &&
+      this.scanGeneration === scanGeneration
+    );
+  }
+
+  private cancelActiveScan(): void {
+    this.scanGeneration += 1;
+    this.clearScanTimer();
+  }
+
+  private finishScan(
+    manager: BleManager,
+    scanGeneration: number,
+    patch: Pick<AppRadioConnectionSnapshot, 'status' | 'statusDetail'>,
+  ): void {
+    if (this.manager !== manager || this.scanGeneration !== scanGeneration) return;
+    this.cancelActiveScan();
+    this.stopManagerScan(manager);
+    this.patch(patch);
+  }
+
+  private stopManagerScan(manager: BleManager | null): void {
+    if (!manager) return;
+    try {
+      manager.stopDeviceScan();
+    } catch {
+      // Stale native scan teardown must never resurrect a destroyed manager error.
+    }
   }
 
   private clearScanTimer(): void {
@@ -545,11 +711,13 @@ export class AppRadioConnectionService {
   }
 
   private patch(patch: Partial<AppRadioConnectionSnapshot>): void {
+    if (this.disposed) return;
     this.snapshot = {...this.snapshot, ...patch};
     this.emit();
   }
 
   private emit(): void {
+    if (this.disposed) return;
     this.listeners.forEach(listener => listener());
   }
 }
