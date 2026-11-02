@@ -103,7 +103,9 @@ describe('BushMesh v1 radio-core integration', () => {
       identityRef: 'radio-a',
     });
 
-    await expect(session.drainOnce(1100)).resolves.toMatchObject({outcome: 'accepted'});
+    await expect(
+      session.drainOnce(prepared.createdAtMs + 1),
+    ).resolves.toMatchObject({outcome: 'accepted'});
     expect(sent).toHaveLength(1);
     expect(Array.from(sent[0].payload)).toEqual(Array.from(prepared.payload));
   });
@@ -139,12 +141,16 @@ describe('BushMesh v1 radio-core integration', () => {
       bushMeshOutboundToRadioEnvelope(prepared, null),
     );
 
-    await expect(session.drainOnce(1200)).resolves.toMatchObject({outcome: 'idle'});
+    await expect(
+      session.drainOnce(prepared.createdAtMs + 1),
+    ).resolves.toMatchObject({outcome: 'idle'});
     session.setTransport(async (_channelIndex, _dataType, payload) => {
       sent.push(Uint8Array.from(payload));
     });
     session.setIdentity('radio-a');
-    await expect(session.drainOnce(1300)).resolves.toMatchObject({outcome: 'accepted'});
+    await expect(
+      session.drainOnce(prepared.createdAtMs + 2),
+    ).resolves.toMatchObject({outcome: 'accepted'});
     expect(sent).toHaveLength(1);
   });
 

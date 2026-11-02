@@ -51,3 +51,7 @@ export async function mutuallyTrust(
   await b.trust.trust(aIdentity.deviceId, aIdentity.fingerprint);
   return {aIdentity, bIdentity};
 }
+
+test('Security v1 test support exposes the frozen Node WebCrypto harness', () => {
+  expect(typeof createSecurityNode).toBe('function');
+});
