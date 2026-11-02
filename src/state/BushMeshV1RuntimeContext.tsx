@@ -23,26 +23,29 @@ const BushMeshV1RuntimeContext =
 /** Mounts the canonical runtime once at application-provider lifetime. */
 export function BushMeshV1RuntimeProvider({
   children,
+  service = bushMeshV1RuntimeService,
 }: {
   children: React.ReactNode;
+  service?: BushMeshV1RuntimeService;
 }): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<BushMeshV1RuntimeSnapshot>(() =>
-    bushMeshV1RuntimeService.getSnapshot(),
+    service.getSnapshot(),
   );
 
   useEffect(() => {
-    const unsubscribe = bushMeshV1RuntimeService.subscribe(setSnapshot);
-    void bushMeshV1RuntimeService.start().catch(() => undefined);
+    setSnapshot(service.getSnapshot());
+    const unsubscribe = service.subscribe(setSnapshot);
+    void service.start().catch(() => undefined);
 
     return () => {
       unsubscribe();
-      void bushMeshV1RuntimeService.dispose();
+      void service.dispose();
     };
-  }, []);
+  }, [service]);
 
   const value = useMemo(
-    () => ({service: bushMeshV1RuntimeService, snapshot}),
-    [snapshot],
+    () => ({service, snapshot}),
+    [service, snapshot],
   );
 
   return (
