@@ -24,8 +24,43 @@ describe('identity, trust, rotation and pairing', () => {
   test('detects malformed public key material', async () => {
     const node = createSecurityNode();
     const identity = await node.identity.loadOrCreate();
-    await node.metadata.setIdentity({...identity, signingPublicKey: toBase64Url(new Uint8Array(31))});
+    node.metadata.unsafeSetIdentity({
+      ...identity,
+      signingPublicKey: toBase64Url(new Uint8Array(31)),
+    });
     await expect(node.identity.current()).rejects.toMatchObject({code: 'INVALID_INPUT'});
+  });
+
+  test('fails closed when identity metadata and key-handle metadata diverge', async () => {
+    const node = createSecurityNode();
+    const identity = await node.identity.loadOrCreate();
+    const handles = await node.metadata.getIdentityKeyHandles();
+    expect(handles).not.toBeNull();
+
+    node.metadata.unsafeSetIdentity(null);
+    await expect(new IdentityManager(node.crypto, node.metadata, node.clock).loadOrCreate()).rejects.toMatchObject({
+      code: 'IDENTITY_CORRUPT',
+    });
+
+    node.metadata.unsafeSetIdentity(identity);
+    node.metadata.unsafeSetIdentityKeyHandles(null);
+    await expect(new IdentityManager(node.crypto, node.metadata, node.clock).loadOrCreate()).rejects.toMatchObject({
+      code: 'IDENTITY_CORRUPT',
+    });
+  });
+
+  test('fails closed when persisted handles belong to another provider', async () => {
+    const node = createSecurityNode();
+    await node.identity.loadOrCreate();
+    const handles = await node.metadata.getIdentityKeyHandles();
+    expect(handles).not.toBeNull();
+    node.metadata.unsafeSetIdentityKeyHandles({
+      ...handles!,
+      signingPrivateKey: {...handles!.signingPrivateKey, provider: 'other-native-provider'},
+    });
+    await expect(new IdentityManager(node.crypto, node.metadata, node.clock).loadOrCreate()).rejects.toMatchObject({
+      code: 'IDENTITY_CORRUPT',
+    });
   });
 
   test('rejects duplicate device identity with unproven replacement keys', async () => {
@@ -113,9 +148,9 @@ describe('identity, trust, rotation and pairing', () => {
     const challenge = node.crypto.randomBytes(32);
     const proof = await pairing.createProof(challenge);
     await expect(pairing.verifyProof(proof, challenge)).resolves.toBeUndefined();
-    const tamperedSignature = fromBase64Url(proof.signature, 64);
-    tamperedSignature[0] = (tamperedSignature[0] + 1) % 256;
-    const tampered = {...proof, signature: toBase64Url(tamperedSignature)};
+    const signatureBytes = fromBase64Url(proof.signature, 64);
+    signatureBytes[0] ^= 1;
+    const tampered = {...proof, signature: toBase64Url(signatureBytes)};
     await expect(pairing.verifyProof(tampered, challenge)).rejects.toBeInstanceOf(SecurityError);
     await expect(pairing.verifyProof(proof, node.crypto.randomBytes(32))).rejects.toMatchObject({
       code: 'AUTHENTICATION_FAILED',
