@@ -1,0 +1,47 @@
+name: Apply frozen-runtime simulator maintenance patch
+
+on:
+  push:
+    branches:
+      - test/network-simulator-v1
+    paths:
+      - '.github/workflows/network-simulator-maintenance-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-simulator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/network-simulator-v1
+      - name: Handle canonical fragment-pending result
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/bushmesh/testing/networkSimulator/DeterministicNetworkSimulator.ts')
+          text = path.read_text()
+
+          replacements = [
+            ("    | 'runtime-rejected'\n    | 'runtime-duplicate'\n", "    | 'runtime-rejected'\n    | 'runtime-duplicate'\n    | 'runtime-fragment-pending'\n"),
+            ("  runtimeRejected: number;\n  runtimeDuplicates: number;\n", "  runtimeRejected: number;\n  runtimeDuplicates: number;\n  runtimeFragmentPending: number;\n"),
+            ("    runtimeRejected: 0,\n    runtimeDuplicates: 0,\n", "    runtimeRejected: 0,\n    runtimeDuplicates: 0,\n    runtimeFragmentPending: 0,\n"),
+            ("    if (duplicate) {\n      this.record({\n        kind: 'duplicate',\n", "    if (result.status === 'fragment-pending') {\n      this.metrics.runtimeFragmentPending += 1;\n      this.record({\n        kind: 'runtime-fragment-pending',\n        from: item.from,\n        to: item.to,\n        packetId: item.packetId,\n        messageId: result.messageId,\n        detail: `missing=${result.missingFragments.join(',')}`,\n      });\n      return;\n    }\n\n    if (duplicate) {\n      this.record({\n        kind: 'duplicate',\n"),
+          ]
+
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'Expected simulator fragment-pending patch anchor not found: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+      - name: Commit simulator integration update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/bushmesh/testing/networkSimulator/DeterministicNetworkSimulator.ts
+          git commit -m "fix(sim): account for canonical fragment-pending results"
+          git push origin HEAD:test/network-simulator-v1
