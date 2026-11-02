@@ -117,14 +117,27 @@ export function prepareBushMeshPeerTextChannelFrames(
     maxPayloadBytes?: number;
   },
 ): PreparedBushMeshChannelFrame[] {
-  return prepareBushMeshPeerTextFrames(text, messageId, policy, {
-    priority: options?.priority,
-    ackRequested: options?.ackRequested,
-    storeAndForward: options?.storeAndForward,
-    ttlHops: options?.ttlHops,
-    maxPayloadBytes:
-      options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES,
-  }).map(toMeshCorePreparedFrame);
+  try {
+    return prepareBushMeshPeerTextFrames(text, messageId, policy, {
+      priority: options?.priority,
+      ackRequested: options?.ackRequested,
+      storeAndForward: options?.storeAndForward,
+      ttlHops: options?.ttlHops,
+      maxPayloadBytes:
+        options?.maxPayloadBytes ?? MESHCORE_CHANNEL_PAYLOAD_MAX_BYTES,
+    }).map(toMeshCorePreparedFrame);
+  } catch (error) {
+    if (
+      !policy.allowFragmentation &&
+      error instanceof Error &&
+      error.message.includes('fragmentation')
+    ) {
+      throw new Error(
+        'Remote BushMesh peer does not support fragmentation and the encoded message exceeds the transport payload limit.',
+      );
+    }
+    throw error;
+  }
 }
 
 export async function sendBushMeshTextSafeChannelMessage(
