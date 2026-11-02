@@ -1,14 +1,11 @@
 export {SecurityError, isSecurityError} from './errors';
+export type {SecurityErrorCode} from './errors';
 export {IdentityManager} from './identity';
 export {PairingService} from './pairing';
 export {PeerTrustManager} from './trust';
 export {DirectSessionManager} from './session';
 export {GroupKeyManager} from './group';
 export {VersionPolicy, securityV1VersionPolicy} from './versionPolicy';
-export {
-  WebCryptoProvider,
-  SecretStoreWebCryptoKeyPersistence,
-} from './webCryptoProvider';
 
 export type {
   CryptoProvider,
@@ -42,4 +39,3 @@ export type {
   TrustState,
   WrappedGroupKeyDistribution,
 } from './types';
-export type {WebCryptoKeyPersistence, WebCryptoLike} from './webCryptoProvider';
