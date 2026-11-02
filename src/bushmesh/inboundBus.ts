@@ -1,4 +1,4 @@
-import type {BushMeshInboundMessage} from './meshcoreBridge';
+import type {BushMeshInboundMessage} from '../radio/LegacyBushMeshInboundAdapter';
 
 export type BushMeshInboundSource = 'live' | 'background-replay';
 
@@ -30,14 +30,7 @@ function normalizeMetadata(
   };
 }
 
-/**
- * Lightweight event bridge between radio transports and Bushmesh domain state.
- *
- * Metadata is part of the domain boundary because traffic replayed after an
- * Android process restart must retain the time it was actually heard. Treating
- * replay time as receive time would falsely make stale convoy positions appear
- * live. Callers that do not supply metadata remain live by default.
- */
+/** Legacy application-domain bus retained until the canonical runtime replaces it. */
 export function publishBushMeshInboundMessage(
   message: BushMeshInboundMessage,
   metadata?: Partial<BushMeshInboundMetadata>,
