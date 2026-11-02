@@ -7,7 +7,7 @@ import {
   decodeBushMeshQuickAction,
   encodeBushMeshPosition,
   encodeBushMeshQuickAction,
-} from '../src/bushmesh/protocol';
+} from '../src/bushmesh/legacyProtocol';
 
 describe('BushMesh v1 protocol', () => {
   test('uses the MeshCore development application namespace', () => {
