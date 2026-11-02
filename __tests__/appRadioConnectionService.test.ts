@@ -199,7 +199,7 @@ describe('AppRadioConnectionService', () => {
   });
 
   it('does not resume a pending scan after the application manager is disposed', async () => {
-    let grantPermissions: ((granted: boolean) => void) | null = null;
+    let grantPermissions!: (granted: boolean) => void;
     const permissions = new Promise<boolean>(resolve => {
       grantPermissions = resolve;
     });
@@ -211,7 +211,7 @@ describe('AppRadioConnectionService', () => {
     const scan = service.startScan();
     await Promise.resolve();
     await service.dispose();
-    grantPermissions?.(true);
+    grantPermissions(true);
     await scan;
 
     expect(manager.startDeviceScan).not.toHaveBeenCalled();
@@ -243,9 +243,9 @@ describe('AppRadioConnectionService', () => {
         device.name,
         expect.any(Object),
       );
-      expect(
-        (manager.stopDeviceScan as jest.Mock).mock.invocationCallOrder.at(-1),
-      ).toBeLessThan(
+      const stopOrders = (manager.stopDeviceScan as jest.Mock).mock
+        .invocationCallOrder;
+      expect(stopOrders[stopOrders.length - 1]).toBeLessThan(
         (nativeCoordinator.start as jest.Mock).mock.invocationCallOrder[0],
       );
       expect(nativeSession.probeChannels).toHaveBeenCalled();
