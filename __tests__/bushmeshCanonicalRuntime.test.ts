@@ -108,10 +108,24 @@ function fromBase64Url(value: string): Uint8Array {
   );
 }
 
+function fakeCiphertext(plaintext: Uint8Array): string {
+  return toBase64Url(
+    Uint8Array.from([...new Array(16).fill(0xa5), ...Array.from(plaintext)]),
+  );
+}
+
+function fakePlaintext(ciphertext: string): Uint8Array {
+  const framed = fromBase64Url(ciphertext);
+  if (framed.length < 16 || framed.slice(0, 16).some(value => value !== 0xa5)) {
+    throw new Error('fake authenticated ciphertext tag is invalid');
+  }
+  return framed.slice(16);
+}
+
 function fakeSecurity(options?: {failUnprotect?: boolean}): BushMeshSecurityAdapter {
   return {
     async protect(request) {
-      const ciphertext = toBase64Url(request.plaintextWireBytes);
+      const ciphertext = fakeCiphertext(request.plaintextWireBytes);
       if (request.association.kind === 'direct-session') {
         return {
           protectedPayload: {
@@ -151,7 +165,7 @@ function fakeSecurity(options?: {failUnprotect?: boolean}): BushMeshSecurityAdap
       if (options?.failUnprotect) {
         throw new Error('fake authentication failed');
       }
-      const plaintextWireBytes = fromBase64Url(
+      const plaintextWireBytes = fakePlaintext(
         request.protectedPayload.message.ciphertext,
       );
       if (request.protectedPayload.kind === 'direct') {
