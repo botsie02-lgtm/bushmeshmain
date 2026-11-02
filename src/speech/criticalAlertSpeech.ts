@@ -1,4 +1,4 @@
-import {BushMeshQuickActionCode} from '../bushmesh/protocol';
+import {BushMeshQuickActionCode} from '../bushmesh/legacyProtocol';
 import {DriveAlert} from '../state/DriveContext';
 
 export const SPOKEN_CRITICAL_ACTIONS = new Set<BushMeshQuickActionCode>([
