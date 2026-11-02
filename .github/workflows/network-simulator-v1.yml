@@ -1,0 +1,32 @@
+name: BushMesh Network Simulator v1
+
+on:
+  push:
+    branches:
+      - test/network-simulator-v1
+    paths:
+      - 'src/bushmesh/testing/networkSimulator/**'
+      - 'src/bushmesh/runtime/**'
+      - 'src/bushmesh/protocol/**'
+      - '__tests__/bushmeshNetworkSimulator.test.ts'
+      - '.github/workflows/network-simulator-v1.yml'
+  pull_request:
+    paths:
+      - 'src/bushmesh/testing/networkSimulator/**'
+      - 'src/bushmesh/runtime/**'
+      - 'src/bushmesh/protocol/**'
+      - '__tests__/bushmeshNetworkSimulator.test.ts'
+      - '.github/workflows/network-simulator-v1.yml'
+
+jobs:
+  deterministic-network-simulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npm test -- --runInBand __tests__/bushmeshNetworkSimulator.test.ts
