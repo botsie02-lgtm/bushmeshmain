@@ -2,7 +2,7 @@ import {
   BushMeshQuickActionCode,
   decodeBushMeshPosition,
   decodeBushMeshQuickAction,
-} from '../src/bushmesh/protocol';
+} from '../src/bushmesh/legacyProtocol';
 import {decodeBushMeshFormationShare} from '../src/bushmesh/formationProtocol';
 import {decodeBushMeshPositionRequest} from '../src/bushmesh/positionRequestProtocol';
 import {createOutboxSnapshot, restoreOutboxSnapshot} from '../src/persistence/outboxSnapshot';
