@@ -4,7 +4,7 @@ import {
   BushMeshPosition,
   BushMeshQuickActionCode,
   BushMeshIdentityRef,
-} from '../bushmesh/protocol';
+} from '../bushmesh/legacyProtocol';
 import {BushMeshOutboxEntry} from '../bushmesh/outbox';
 import {
   BushMeshDatagramSender,
