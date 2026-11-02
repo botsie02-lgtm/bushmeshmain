@@ -1,4 +1,4 @@
-import {BushMeshQuickActionCode} from '../src/bushmesh/protocol';
+import {BushMeshQuickActionCode} from '../src/bushmesh/legacyProtocol';
 import {getQuickActionTemporalDecision} from '../src/drive/quickActions';
 
 describe('quick-action temporal decisions', () => {
