@@ -11,6 +11,8 @@ import {
   SafeAreaView,
 } from 'react-native-safe-area-context';
 
+import {AppProviders} from './src/app/AppProviders';
+import {ScreenMountGate} from './src/app/ScreenMountGate';
 import {CarMessagingStatusBanner} from './src/components/CarMessagingStatusBanner';
 import {ConvoyFormationBanner} from './src/components/ConvoyFormationBanner';
 import {ConvoyFormationGapBanner} from './src/components/ConvoyFormationGapBanner';
@@ -23,38 +25,21 @@ import {DriveNavigationBanner} from './src/components/DriveNavigationBanner';
 import {FieldNavigationPrompt} from './src/components/FieldNavigationPrompt';
 import {FormationProposalBanner} from './src/components/FormationProposalBanner';
 import {MapTrackExportBanner} from './src/components/MapTrackExportBanner';
-import {NativeChannelMessageBridge} from './src/components/NativeChannelMessageBridge';
-import {PositionRequestResponder} from './src/components/PositionRequestResponder';
-import {RadioMessageSpeechBridge} from './src/components/RadioMessageSpeechBridge';
 import {RadioSpeechStatusBanner} from './src/components/RadioSpeechStatusBanner';
 import {RecoveryCheckpointBanner} from './src/components/RecoveryCheckpointBanner';
-import {RecoveryCheckpointGuard} from './src/components/RecoveryCheckpointGuard';
 import {RecoveryEscalationNotice} from './src/components/RecoveryEscalationNotice';
 import {RecoveryReferenceNotice} from './src/components/RecoveryReferenceNotice';
 import {RouteGuidanceBanner} from './src/components/RouteGuidanceBanner';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
-import {SpeechAlertBridge} from './src/components/SpeechAlertBridge';
 import {SpeechPttPanel} from './src/components/SpeechPttPanel';
 import {SpeechStatusBanner} from './src/components/SpeechStatusBanner';
-import {BushMeshProvider} from './src/state/BushMeshContext';
-import {CarMessagingProvider} from './src/state/CarMessagingContext';
-import {ConvoyProvider} from './src/state/ConvoyContext';
-import {ConvoyFormationProvider} from './src/state/ConvoyFormationContext';
-import {ConvoyRecoveryProvider} from './src/state/ConvoyRecoveryContext';
-import {DriveProvider} from './src/state/DriveContext';
-import {FormationProposalProvider} from './src/state/FormationProposalContext';
-import {RadioSessionProvider} from './src/state/RadioSessionContext';
-import {LocationSessionProvider} from './src/state/LocationSessionContext';
-import {OfflineMapProvider} from './src/state/OfflineMapContext';
-import {RouteSessionProvider} from './src/state/RouteSessionContext';
-import {SpeechProvider} from './src/state/SpeechContext';
-import {DriveScreen} from './src/screens/DriveScreen';
-import {DeviceHubScreen} from './src/screens/DeviceHubScreen';
-import {RadioScreen} from './src/screens/RadioScreen';
 import {ContactsScreen} from './src/screens/ContactsScreen';
 import {ConvoyScreen} from './src/screens/ConvoyScreen';
+import {DeviceHubScreen} from './src/screens/DeviceHubScreen';
+import {DriveScreen} from './src/screens/DriveScreen';
 import {LocationScreen} from './src/screens/LocationScreen';
 import {MapScreen} from './src/screens/MapScreen';
+import {RadioScreen} from './src/screens/RadioScreen';
 import {colors} from './src/theme/colors';
 
 type TabKey =
@@ -130,39 +115,46 @@ function AppContent(): React.JSX.Element {
       ) : null}
 
       <View style={styles.content}>
-        <View style={[styles.screenWrap, activeTab !== 'drive' && styles.hidden]}>
-          <DriveScreen />
-        </View>
-
-        <View style={[styles.screenWrap, activeTab !== 'map' && styles.hidden]}>
-          <MapScreen />
-        </View>
-
-        <View style={[styles.screenWrap, activeTab !== 'channels' && styles.hidden]}>
-          <RadioScreen />
-        </View>
-
-        <View style={[styles.screenWrap, activeTab !== 'convoy' && styles.hidden]}>
-          <ConvoyScreen />
-        </View>
-
-        <View style={[styles.screenWrap, activeTab !== 'location' && styles.hidden]}>
-          <LocationScreen />
-        </View>
-
-        <View style={[styles.screenWrap, activeTab !== 'contacts' && styles.hidden]}>
-          <ContactsScreen />
-        </View>
-
-        <View style={[styles.screenWrap, activeTab !== 'device' && styles.hidden]}>
-          <DeviceHubScreen />
-        </View>
+        <ScreenMountGate active={activeTab === 'drive'}>
+          <View style={styles.screenWrap}>
+            <DriveScreen />
+          </View>
+        </ScreenMountGate>
+        <ScreenMountGate active={activeTab === 'map'}>
+          <View style={styles.screenWrap}>
+            <MapScreen />
+          </View>
+        </ScreenMountGate>
+        <ScreenMountGate active={activeTab === 'channels'}>
+          <View style={styles.screenWrap}>
+            <RadioScreen />
+          </View>
+        </ScreenMountGate>
+        <ScreenMountGate active={activeTab === 'convoy'}>
+          <View style={styles.screenWrap}>
+            <ConvoyScreen />
+          </View>
+        </ScreenMountGate>
+        <ScreenMountGate active={activeTab === 'location'}>
+          <View style={styles.screenWrap}>
+            <LocationScreen />
+          </View>
+        </ScreenMountGate>
+        <ScreenMountGate active={activeTab === 'contacts'}>
+          <View style={styles.screenWrap}>
+            <ContactsScreen />
+          </View>
+        </ScreenMountGate>
+        <ScreenMountGate active={activeTab === 'device'}>
+          <View style={styles.screenWrap}>
+            <DeviceHubScreen />
+          </View>
+        </ScreenMountGate>
       </View>
 
       <View style={styles.tabBar}>
         {tabs.map(tab => {
           const isActive = tab.key === activeTab;
-
           return (
             <TouchableOpacity
               key={tab.key}
@@ -182,36 +174,9 @@ function AppContent(): React.JSX.Element {
 function App(): React.JSX.Element {
   return (
     <SafeAreaProvider>
-      <BushMeshProvider>
-        <NativeChannelMessageBridge />
-        <CarMessagingProvider>
-          <ConvoyProvider>
-            <RecoveryCheckpointGuard />
-            <ConvoyFormationProvider>
-              <ConvoyRecoveryProvider>
-                <DriveProvider>
-                  <SpeechProvider>
-                    <SpeechAlertBridge />
-                    <RadioMessageSpeechBridge />
-                    <RadioSessionProvider>
-                      <FormationProposalProvider>
-                        <OfflineMapProvider>
-                          <LocationSessionProvider>
-                            <RouteSessionProvider>
-                              <PositionRequestResponder />
-                              <AppContent />
-                            </RouteSessionProvider>
-                          </LocationSessionProvider>
-                        </OfflineMapProvider>
-                      </FormationProposalProvider>
-                    </RadioSessionProvider>
-                  </SpeechProvider>
-                </DriveProvider>
-              </ConvoyRecoveryProvider>
-            </ConvoyFormationProvider>
-          </ConvoyProvider>
-        </CarMessagingProvider>
-      </BushMeshProvider>
+      <AppProviders>
+        <AppContent />
+      </AppProviders>
     </SafeAreaProvider>
   );
 }
@@ -243,9 +208,6 @@ const styles = StyleSheet.create({
   },
   screenWrap: {
     flex: 1,
-  },
-  hidden: {
-    display: 'none',
   },
   tabBar: {
     flexDirection: 'row',
