@@ -5,11 +5,11 @@ import {
   BushMeshPosition,
   encodeBushMeshPosition,
 } from '../bushmesh/protocol';
-import {
-  BushMeshInboundMessage,
-  decodeBushMeshMeshCoreFrame,
-} from '../bushmesh/meshcoreBridge';
 import {bushMeshRadioSession} from '../radio/BushMeshRadioSession';
+import {
+  ReceivedDatagram,
+  publishReceivedDatagram,
+} from '../radio/ReceivedDatagram';
 import {meshCoreSelfInfoToRadioProfile} from '../radio/meshCoreRadioProfile';
 import {MESHCORE_BLE} from './meshcoreBle';
 import {
@@ -40,6 +40,7 @@ import {
   redactMeshCoreDiagnosticBytes,
   redactMeshCoreParsedLines,
 } from './meshcoreDiagnostics';
+import {meshCoreFrameToReceivedDatagram} from './MeshCoreReceivedDatagramAdapter';
 import {
   MeshCoreSelfInfo,
   parseMeshCoreSelfInfo,
@@ -85,7 +86,9 @@ export type MeshCoreLogItem = {
   deviceInfo?: MeshCoreDeviceInfo;
   selfInfo?: MeshCoreSelfInfo;
   channelData?: MeshCoreChannelDataFrame;
-  bushMeshMessage?: BushMeshInboundMessage;
+  receivedDatagram?: ReceivedDatagram;
+  /** @deprecated BLE lifecycle no longer decodes BushMesh application packets. */
+  bushMeshMessage?: undefined;
 };
 
 export type MeshCoreSyncedMessage = {
@@ -103,7 +106,7 @@ export type MeshCoreClientEvents = {
   onChannelMessage?: (message: ParsedChannelMessage) => void;
   onContactMessage?: (message: ParsedContactMessage) => void;
   onChannelData?: (frame: MeshCoreChannelDataFrame) => void;
-  onBushMeshMessage?: (message: BushMeshInboundMessage) => void;
+  onReceivedDatagram?: (datagram: ReceivedDatagram) => void;
 };
 
 type PendingCommand = {
@@ -321,6 +324,7 @@ export class MeshCoreClient {
     );
   }
 
+  /** @deprecated Compatibility helper; canonical runtime should provide encoded payloads. */
   async sendBushMeshPosition(
     channelIndex: number,
     position: BushMeshPosition,
@@ -795,14 +799,19 @@ export class MeshCoreClient {
     const selfInfo = parseMeshCoreSelfInfo(bytes) ?? undefined;
 
     let channelData: MeshCoreChannelDataFrame | undefined;
-    let bushMeshMessage: BushMeshInboundMessage | undefined;
+    let receivedDatagram: ReceivedDatagram | undefined;
 
     if (decoded.packetType === 0x1b) {
       try {
         channelData = parseMeshCoreChannelDataFrame(bytes) ?? undefined;
         if (channelData) {
-          bushMeshMessage =
-            decodeBushMeshMeshCoreFrame(channelData) ?? undefined;
+          receivedDatagram = meshCoreFrameToReceivedDatagram(channelData, {
+            radioIdentityRef: bushMeshRadioSession.getSnapshot().identityRef,
+            transportDeviceId: this.device.id,
+            diagnosticLabel: 'meshcore-ble-plx-channel-data',
+          });
+          publishReceivedDatagram(receivedDatagram);
+          this.events.onReceivedDatagram?.(receivedDatagram);
         }
       } catch (error) {
         this.events.onError(
@@ -843,7 +852,7 @@ export class MeshCoreClient {
       deviceInfo,
       selfInfo,
       channelData,
-      bushMeshMessage,
+      receivedDatagram,
     };
 
     this.events.onTxFrame(frameLog);
@@ -863,10 +872,6 @@ export class MeshCoreClient {
 
     if (channelData) {
       this.events.onChannelData?.(channelData);
-    }
-
-    if (bushMeshMessage) {
-      this.events.onBushMeshMessage?.(bushMeshMessage);
     }
 
     this.handlePossibleCommandResponse(decoded.packetType, frameLog);
