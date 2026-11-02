@@ -23,10 +23,22 @@ export function receivedDatagramToBushMeshInbound(
   };
 }
 
+function canonicalOpaqueMetadata(
+  datagram: BushMeshOutboundDatagram,
+): Readonly<Record<string, string>> {
+  return {
+    'bushmesh.retryIntent': JSON.stringify(datagram.retryIntent),
+    'bushmesh.identityAssociation': JSON.stringify(datagram.identityAssociation),
+    'bushmesh.diagnostics': JSON.stringify(datagram.diagnostics),
+  };
+}
+
 /**
  * Map a canonical already-encoded datagram into the radio-core queue contract.
  * Protocol-managed reliability is intentionally one carrier attempt; only the
  * canonical transport-retry intent may request more carrier attempts.
+ * Canonical association/diagnostic data is carried as opaque metadata and is
+ * never interpreted by radio-core.
  */
 export function bushMeshOutboundToRadioEnvelope(
   datagram: BushMeshOutboundDatagram,
@@ -44,5 +56,7 @@ export function bushMeshOutboundToRadioEnvelope(
     identityRef: radioIdentityRef,
     description: datagram.diagnostics.label,
     createdAtMs: datagram.createdAtMs,
+    transport: datagram.transport,
+    opaqueMetadata: canonicalOpaqueMetadata(datagram),
   };
 }
