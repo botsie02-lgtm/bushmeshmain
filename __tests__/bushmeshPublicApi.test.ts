@@ -22,15 +22,19 @@ describe('BushMesh canonical public API', () => {
     expect(
       BushMeshProtocol.getBushMeshPacketDefinition(BushMeshPacketType.Convoy)?.name,
     ).toBe('convoy');
+    expect(typeof BushMeshProtocol.encodeBushMeshTextWire).toBe('function');
     expect(typeof BushMeshRuntime.BushMeshDatagramRuntime).toBe('function');
   });
 
-  it('does not leak compatibility runtimes or MeshCore carrier helpers through stable facades', () => {
+  it('does not leak compatibility runtimes, carrier framing or MeshCore helpers through stable facades', () => {
     const protocol = BushMeshProtocol as Record<string, unknown>;
     const runtime = BushMeshRuntime as Record<string, unknown>;
 
     expect(protocol.prepareBushMeshWireFrames).toBeUndefined();
     expect(protocol.BushMeshCarrierMode).toBeUndefined();
+    expect(protocol.BUSHMESH_TEXT_CARRIER_PREFIX).toBeUndefined();
+    expect(protocol.encodeBushMeshTextCarrier).toBeUndefined();
+    expect(protocol.decodeBushMeshTextCarrier).toBeUndefined();
     expect(runtime.BushMeshNetworkRuntime).toBeUndefined();
     expect(runtime.BushMeshRuntimeHub).toBeUndefined();
     expect(runtime.BushMeshNativeVoice).toBeUndefined();
