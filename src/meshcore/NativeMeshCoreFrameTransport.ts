@@ -3,6 +3,7 @@ import {Buffer} from 'buffer';
 import {
   NativeRadioServiceStatus,
   nativeRadioService,
+  waitForNativeRadioShutdown,
 } from '../native/NativeRadioService';
 import {
   MeshCoreFrameTransport,
@@ -13,12 +14,14 @@ export type NativeMeshCoreFrameTransportOptions = {
   pollIntervalMs?: number;
   maxFramesPerPoll?: number;
   readyTimeoutMs?: number;
+  stopTimeoutMs?: number;
   onNativeStatus?: (status: NativeRadioServiceStatus) => void;
 };
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_MAX_FRAMES_PER_POLL = 32;
 const DEFAULT_READY_TIMEOUT_MS = 15_000;
+const DEFAULT_STOP_TIMEOUT_MS = 6_000;
 
 /**
  * MeshCore raw-frame transport backed by the Android foreground BLE runtime.
@@ -34,6 +37,7 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
   private readonly pollIntervalMs: number;
   private readonly maxFramesPerPoll: number;
   private readonly readyTimeoutMs: number;
+  private readonly stopTimeoutMs: number;
   private readonly onNativeStatus?: (status: NativeRadioServiceStatus) => void;
   private handlers: MeshCoreFrameTransportHandlers | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -61,6 +65,10 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
     this.readyTimeoutMs = Math.max(
       1_000,
       Math.floor(options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS),
+    );
+    this.stopTimeoutMs = Math.max(
+      250,
+      Math.floor(options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS),
     );
     this.onNativeStatus = options.onNativeStatus;
   }
@@ -96,7 +104,17 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
     this.generation += 1;
     this.handlers = null;
     this.clearPollTimer();
-    await nativeRadioService.stop();
+
+    const dispatched = await nativeRadioService.stop();
+    if (!dispatched) {
+      throw new Error('Android did not accept the native radio stop request.');
+    }
+
+    const status = await waitForNativeRadioShutdown({
+      timeoutMs: this.stopTimeoutMs,
+      pollIntervalMs: this.pollIntervalMs,
+    });
+    this.onNativeStatus?.(status);
   }
 
   async writeBase64(base64Frame: string): Promise<void> {
