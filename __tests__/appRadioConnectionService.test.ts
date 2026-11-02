@@ -15,11 +15,21 @@ function fakeDevice(id = 'AA:BB'): Device {
   return device;
 }
 
+type ScanCallback = (error: Error | null, device: Device | null) => void;
+
 describe('AppRadioConnectionService', () => {
-  function createHarness() {
+  function createHarness(options: {
+    nativeSupported?: boolean;
+    requestPermissions?: () => Promise<boolean>;
+  } = {}) {
     const device = fakeDevice();
+    const scanCallbacks: ScanCallback[] = [];
     const manager = {
-      startDeviceScan: jest.fn(),
+      startDeviceScan: jest.fn(
+        (_uuids: unknown, _options: unknown, callback: ScanCallback) => {
+          scanCallbacks.push(callback);
+        },
+      ),
       stopDeviceScan: jest.fn(),
       connectToDevice: jest.fn().mockResolvedValue(device),
       cancelDeviceConnection: jest.fn().mockResolvedValue(undefined),
@@ -36,6 +46,17 @@ describe('AppRadioConnectionService', () => {
       syncContacts: jest.fn().mockResolvedValue([]),
       getChannel: jest.fn().mockResolvedValue({}),
     };
+    const nativeSession = {
+      sendAppStart: jest.fn().mockResolvedValue({}),
+      sendDeviceQuery: jest.fn().mockResolvedValue({}),
+      probeChannels: jest.fn().mockResolvedValue([]),
+      sendChannelMessage: jest.fn().mockResolvedValue({}),
+      getBatteryStatus: jest.fn().mockResolvedValue({parsed: {}}),
+      syncContacts: jest.fn().mockResolvedValue([]),
+      syncQueuedMessages: jest.fn().mockResolvedValue([]),
+      getChannel: jest.fn().mockResolvedValue({}),
+      stop: jest.fn().mockResolvedValue(undefined),
+    };
     let clientEvents: {
       onConnectionState?: (state: string, detail: string) => void;
     } | null = null;
@@ -46,21 +67,23 @@ describe('AppRadioConnectionService', () => {
     });
     const nativeCoordinator = {
       isActive: jest.fn(() => false),
-      start: jest.fn(),
+      start: jest.fn().mockResolvedValue(nativeSession),
       stop: jest.fn().mockResolvedValue(undefined),
     } as unknown as NativeMeshCoreSessionCoordinator;
+    const requestPermissions =
+      options.requestPermissions ?? jest.fn().mockResolvedValue(true);
 
     const service = new AppRadioConnectionService({
       createBleManager,
       createMeshCoreClient,
-      requestPermissions: jest.fn().mockResolvedValue(true),
+      requestPermissions,
       discoverBle: jest.fn().mockResolvedValue({
         serviceFound: true,
         rxFound: true,
         txFound: true,
       }),
       nativeCoordinator,
-      nativeSupported: () => false,
+      nativeSupported: () => options.nativeSupported ?? false,
       getNativeStatus: jest.fn(),
     });
 
@@ -69,6 +92,9 @@ describe('AppRadioConnectionService', () => {
       device,
       manager,
       client,
+      nativeSession,
+      nativeCoordinator,
+      scanCallbacks,
       createBleManager,
       createMeshCoreClient,
       getClientEvents: () => clientEvents,
@@ -141,6 +167,96 @@ describe('AppRadioConnectionService', () => {
     await service.dispose();
   });
 
+  it('keeps repeated scans on one live manager and ignores callbacks from superseded scans', async () => {
+    jest.useFakeTimers();
+    try {
+      const {service, manager, scanCallbacks, createBleManager} = createHarness();
+      await service.initialize();
+      await service.startScan();
+      expect(scanCallbacks).toHaveLength(1);
+      scanCallbacks[0](null, fakeDevice('FIRST'));
+      expect(service.getSnapshot().devices.map(item => item.id)).toEqual(['FIRST']);
+
+      await service.startScan();
+      expect(scanCallbacks).toHaveLength(2);
+      expect(createBleManager).toHaveBeenCalledTimes(1);
+      scanCallbacks[0](new Error('stale scan error'), null);
+      expect(service.getSnapshot().status).toBe('Scanning');
+      scanCallbacks[1](null, fakeDevice('SECOND'));
+      expect(service.getSnapshot().devices.map(item => item.id)).toEqual(['SECOND']);
+
+      const stopsBeforeDispose = manager.stopDeviceScan.mock.calls.length;
+      await service.dispose();
+      const stopsAfterDispose = manager.stopDeviceScan.mock.calls.length;
+      expect(stopsAfterDispose).toBe(stopsBeforeDispose + 1);
+      expect(() => scanCallbacks[1](new Error('late native callback'), null)).not.toThrow();
+      jest.runOnlyPendingTimers();
+      expect(manager.stopDeviceScan).toHaveBeenCalledTimes(stopsAfterDispose);
+      expect(manager.destroy).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not resume a pending scan after the application manager is disposed', async () => {
+    let grantPermissions: ((granted: boolean) => void) | null = null;
+    const permissions = new Promise<boolean>(resolve => {
+      grantPermissions = resolve;
+    });
+    const {service, manager} = createHarness({
+      requestPermissions: () => permissions,
+    });
+    await service.initialize();
+
+    const scan = service.startScan();
+    await Promise.resolve();
+    await service.dispose();
+    grantPermissions?.(true);
+    await scan;
+
+    expect(manager.startDeviceScan).not.toHaveBeenCalled();
+    expect(manager.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands a discovered device directly to Android without opening a JS GATT connection', async () => {
+    jest.useFakeTimers();
+    try {
+      const {
+        service,
+        device,
+        manager,
+        nativeCoordinator,
+        nativeSession,
+        scanCallbacks,
+      } = createHarness({nativeSupported: true});
+      await service.initialize();
+      await service.startScan();
+      scanCallbacks[0](null, device);
+
+      await service.handoffDiscoveredDeviceToAndroid(device);
+
+      expect(manager.connectToDevice).not.toHaveBeenCalled();
+      expect(manager.cancelDeviceConnection).not.toHaveBeenCalled();
+      expect(manager.stopDeviceScan).toHaveBeenCalled();
+      expect(nativeCoordinator.start).toHaveBeenCalledWith(
+        device.id,
+        device.name,
+        expect.any(Object),
+      );
+      expect(
+        (manager.stopDeviceScan as jest.Mock).mock.invocationCallOrder.at(-1),
+      ).toBeLessThan(
+        (nativeCoordinator.start as jest.Mock).mock.invocationCallOrder[0],
+      );
+      expect(nativeSession.probeChannels).toHaveBeenCalled();
+      expect(service.getSnapshot().connectionOwner).toBe('android-native');
+      expect(service.getSnapshot().status).toBe('Connected');
+      await service.dispose();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('provider-style teardown disposes owned resources exactly once', async () => {
     const {service, device, manager, client} = createHarness();
     await service.initialize();
@@ -150,7 +266,6 @@ describe('AppRadioConnectionService', () => {
     await service.dispose();
 
     expect(client.stop).toHaveBeenCalledTimes(1);
-    expect(manager.stopDeviceScan).toHaveBeenCalledTimes(2);
     expect(manager.destroy).toHaveBeenCalledTimes(1);
   });
 });
