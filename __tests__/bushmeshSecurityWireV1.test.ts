@@ -27,6 +27,10 @@ function b64(byte: number, length: number): string {
     .replace(/\//g, '_');
 }
 
+function repeat(byte: number, count: number): number[] {
+  return Array.from({length: count}, () => byte);
+}
+
 function hex(bytes: number[] | Uint8Array): string {
   return Array.from(bytes)
     .map(value => value.toString(16).padStart(2, '0').toUpperCase())
@@ -53,6 +57,11 @@ const identityB: BushMeshSecurityDeviceIdentity = {
   createdAt: 2,
 };
 
+const U32_ONE = [0, 0, 0, 1];
+const U32_TWO = [0, 0, 0, 2];
+const U64_ONE = [0, 0, 0, 0, 0, 0, 0, 1];
+const U64_TWO = [0, 0, 0, 0, 0, 0, 0, 2];
+
 function baseWire(messageId: number): number[] {
   return encodeBushMeshWire({
     type: BushMeshPacketType.Message,
@@ -72,6 +81,7 @@ describe('BushMesh Protocol v1 Security wire contract', () => {
       destinationNodeId: 2,
     }).authenticatedHeader;
     expect(hex(directAad)).toBe('42 4D 41 01 41 23 2A 03 01 02');
+
     const direct = encodeBushMeshProtectedDirectContainer({
       routing: {sourceNodeId: 1, destinationNodeId: 2},
       authenticatedHeader: directAad,
@@ -84,15 +94,24 @@ describe('BushMesh Protocol v1 Security wire contract', () => {
         ciphertext: b64(0xaa, 16),
       },
     });
-    expect(hex(direct)).toBe(
-      'B5 53 01 01 03 01 02 0A 42 4D 41 01 41 23 2A 03 01 02 22 01 01 01 01 73 00 00 00 01 00 00 00 00 00 00 00 05 10 AA AA AA AA AA AA AA AA AA AA AA AA AA AA AA AA',
-    );
+    expect(direct).toEqual([
+      0xb5, 0x53, 0x01, 0x01,
+      0x03, 0x01, 0x02,
+      0x0a, 0x42, 0x4d, 0x41, 0x01, 0x41, 0x23, 0x2a, 0x03, 0x01, 0x02,
+      0x22,
+      0x01, 0x01, 0x01, 0x01, 0x73,
+      ...U32_ONE,
+      0, 0, 0, 0, 0, 0, 0, 5,
+      0x10,
+      ...repeat(0xaa, 16),
+    ]);
 
     const groupAad = createBushMeshSecurityProtocolContext(baseWire(43), {
       sourceNodeId: 1,
       groupId: 'g',
     }).authenticatedHeader;
     expect(hex(groupAad)).toBe('42 4D 41 01 41 23 2B 05 01 01 67');
+
     const group = encodeBushMeshProtectedGroupContainer({
       routing: {sourceNodeId: 1, groupId: 'g'},
       authenticatedHeader: groupAad,
@@ -106,9 +125,18 @@ describe('BushMesh Protocol v1 Security wire contract', () => {
         ciphertext: b64(0xbb, 16),
       },
     });
-    expect(hex(group)).toBe(
-      'B5 53 01 02 05 01 01 67 0B 42 4D 41 01 41 23 2B 05 01 01 67 24 01 01 01 01 67 00 00 00 01 01 61 00 00 00 00 00 00 00 07 10 BB BB BB BB BB BB BB BB BB BB BB BB BB BB BB BB',
-    );
+    expect(group).toEqual([
+      0xb5, 0x53, 0x01, 0x02,
+      0x05, 0x01, 0x01, 0x67,
+      0x0b, 0x42, 0x4d, 0x41, 0x01, 0x41, 0x23, 0x2b, 0x05, 0x01, 0x01, 0x67,
+      0x24,
+      0x01, 0x01, 0x01, 0x01, 0x67,
+      ...U32_ONE,
+      0x01, 0x61,
+      0, 0, 0, 0, 0, 0, 0, 7,
+      0x10,
+      ...repeat(0xbb, 16),
+    ]);
 
     expect(decodeBushMeshSecurityContainer(direct)).toMatchObject({
       kind: 'protected-direct',
@@ -129,9 +157,22 @@ describe('BushMesh Protocol v1 Security wire contract', () => {
       issuedAt: 3,
       signature: b64(0x09, 64),
     });
-    expect(hex(pairing)).toBe(
-      'B5 53 01 10 00 00 CE 01 01 01 01 61 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 00 00 00 01 00 00 00 00 00 00 00 01 00 10 0A 0A 0A 0A 0A 0A 0A 0A 0A 0A 0A 0A 0A 0A 0A 0A 01 01 01 01 00 00 00 00 00 00 00 03 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09 09',
-    );
+    expect(pairing).toEqual([
+      0xb5, 0x53, 0x01, 0x10, 0x00, 0x00, 0xce, 0x01,
+      0x01,
+      0x01, 0x01, 0x61,
+      ...repeat(0x01, 32),
+      ...repeat(0x02, 32),
+      ...repeat(0x03, 32),
+      ...U32_ONE,
+      ...U64_ONE,
+      0x00,
+      0x10, ...repeat(0x0a, 16),
+      0x01, 0x01,
+      0x01, 0x01,
+      0, 0, 0, 0, 0, 0, 0, 3,
+      ...repeat(0x09, 64),
+    ]);
 
     const offer = encodeBushMeshSessionOfferContainer({
       handshakeId: 'h',
@@ -145,9 +186,26 @@ describe('BushMesh Protocol v1 Security wire contract', () => {
       issuedAt: 4,
       signature: b64(0x07, 64),
     });
-    expect(hex(offer)).toBe(
-      'B5 53 01 11 00 00 85 02 01 01 68 01 01 61 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 01 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 00 00 00 01 00 00 00 00 00 00 00 01 00 01 62 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 04 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 05 06 06 06 06 01 01 01 01 00 00 00 00 00 00 00 04 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07 07',
-    );
+    expect(offer).toEqual([
+      0xb5, 0x53, 0x01, 0x11, 0x00, 0x00, 0x85, 0x02,
+      0x01,
+      0x01, 0x68,
+      0x01, 0x01, 0x61,
+      ...repeat(0x01, 32),
+      ...repeat(0x02, 32),
+      ...repeat(0x03, 32),
+      ...U32_ONE,
+      ...U64_ONE,
+      0x00,
+      0x01, 0x62,
+      ...repeat(0x04, 32),
+      ...repeat(0x05, 32),
+      ...repeat(0x06, 4),
+      0x01, 0x01,
+      0x01, 0x01,
+      0, 0, 0, 0, 0, 0, 0, 4,
+      ...repeat(0x07, 64),
+    ]);
 
     const response = encodeBushMeshSessionResponseContainer({
       handshakeId: 'h',
@@ -161,13 +219,35 @@ describe('BushMesh Protocol v1 Security wire contract', () => {
       issuedAt: 5,
       signature: b64(0x17, 64),
     });
-    expect(hex(response)).toBe(
-      'B5 53 01 12 00 00 83 02 01 01 68 01 01 62 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 00 00 00 02 00 00 00 00 00 00 00 02 00 01 61 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 15 16 16 16 16 01 01 00 00 00 00 00 00 00 05 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17 17',
-    );
+    expect(response).toEqual([
+      0xb5, 0x53, 0x01, 0x12, 0x00, 0x00, 0x83, 0x02,
+      0x01,
+      0x01, 0x68,
+      0x01, 0x01, 0x62,
+      ...repeat(0x11, 32),
+      ...repeat(0x12, 32),
+      ...repeat(0x13, 32),
+      ...U32_TWO,
+      ...U64_TWO,
+      0x00,
+      0x01, 0x61,
+      ...repeat(0x14, 32),
+      ...repeat(0x15, 32),
+      ...repeat(0x16, 4),
+      0x01, 0x01,
+      0, 0, 0, 0, 0, 0, 0, 5,
+      ...repeat(0x17, 64),
+    ]);
 
-    expect(decodeBushMeshSecurityContainer(pairing)).toMatchObject({kind: 'pairing-proof'});
-    expect(decodeBushMeshSecurityContainer(offer)).toMatchObject({kind: 'session-offer'});
-    expect(decodeBushMeshSecurityContainer(response)).toMatchObject({kind: 'session-response'});
+    expect(decodeBushMeshSecurityContainer(pairing)).toMatchObject({
+      kind: 'pairing-proof',
+    });
+    expect(decodeBushMeshSecurityContainer(offer)).toMatchObject({
+      kind: 'session-offer',
+    });
+    expect(decodeBushMeshSecurityContainer(response)).toMatchObject({
+      kind: 'session-response',
+    });
   });
 
   it('freezes WrappedGroupKeyDistribution and IdentityRotationProof', () => {
@@ -191,9 +271,23 @@ describe('BushMesh Protocol v1 Security wire contract', () => {
         ciphertext: b64(0x21, 16),
       },
     });
-    expect(hex(distribution)).toBe(
-      'B5 53 01 13 00 00 72 01 01 67 00 00 00 02 01 61 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 01 62 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 01 01 01 73 22 01 01 01 01 73 00 00 00 01 00 00 00 00 00 00 00 09 10 21 21 21 21 21 21 21 21 21 21 21 21 21 21 21 21',
-    );
+    expect(distribution).toEqual([
+      0xb5, 0x53, 0x01, 0x13, 0x00, 0x00, 0x72,
+      0x01,
+      0x01, 0x67,
+      ...U32_TWO,
+      0x01, 0x61,
+      ...repeat(0x03, 32),
+      0x01, 0x62,
+      ...repeat(0x13, 32),
+      0x01, 0x01,
+      0x01, 0x73,
+      0x22,
+      0x01, 0x01, 0x01, 0x01, 0x73,
+      ...U32_ONE,
+      0, 0, 0, 0, 0, 0, 0, 9,
+      0x10, ...repeat(0x21, 16),
+    ]);
 
     const nextIdentity: BushMeshSecurityDeviceIdentity = {
       identityVersion: 1,
@@ -211,9 +305,21 @@ describe('BushMesh Protocol v1 Security wire contract', () => {
       rotatedAt: 6,
       signature: b64(0x34, 64),
     });
-    expect(hex(rotation)).toBe(
-      'B5 53 01 14 00 00 E1 01 01 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 03 01 01 61 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 31 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 32 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 33 00 00 00 02 00 00 00 00 00 00 00 01 01 00 00 00 00 00 00 00 06 00 00 00 00 00 00 00 06 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34 34',
-    );
+    expect(rotation).toEqual([
+      0xb5, 0x53, 0x01, 0x14, 0x00, 0x00, 0xe1, 0x01,
+      0x01,
+      ...repeat(0x03, 32),
+      0x01, 0x01, 0x61,
+      ...repeat(0x31, 32),
+      ...repeat(0x32, 32),
+      ...repeat(0x33, 32),
+      ...U32_TWO,
+      ...U64_ONE,
+      0x01,
+      0, 0, 0, 0, 0, 0, 0, 6,
+      0, 0, 0, 0, 0, 0, 0, 6,
+      ...repeat(0x34, 64),
+    ]);
 
     expect(decodeBushMeshSecurityContainer(distribution)).toMatchObject({
       kind: 'wrapped-group-key-distribution',
@@ -243,8 +349,12 @@ describe('BushMesh Protocol v1 Security wire contract', () => {
     reservedKind[3] = 0x15;
     expect(() => decodeBushMeshSecurityContainer(reservedKind)).toThrow(/kind 21/);
 
-    expect(() => decodeBushMeshSecurityContainer(valid.slice(0, -1))).toThrow(/Truncated/);
-    expect(() => decodeBushMeshSecurityContainer([...valid, 0])).toThrow(/trailing|unknown/i);
+    expect(() => decodeBushMeshSecurityContainer(valid.slice(0, -1))).toThrow(
+      /Truncated/,
+    );
+    expect(() => decodeBushMeshSecurityContainer([...valid, 0])).toThrow(
+      /trailing|unknown/i,
+    );
   });
 
   it('fragments the final protected container and reassembles it before Security processing', () => {
