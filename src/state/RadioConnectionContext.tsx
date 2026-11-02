@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 
 import {
+  AppRadioConnectionService,
   AppRadioConnectionSnapshot,
   appRadioConnectionService,
 } from '../radio/AppRadioConnectionService';
@@ -17,12 +18,14 @@ type RadioConnectionContextValue = {
   snapshot: AppRadioConnectionSnapshot;
   nativeHandoffSupported: boolean;
   startScan: () => Promise<void>;
-  connectToDevice: typeof appRadioConnectionService.connectToDevice;
+  stopScan: () => void;
+  connectToDevice: AppRadioConnectionService['connectToDevice'];
+  handoffDiscoveredDeviceToAndroid: AppRadioConnectionService['handoffDiscoveredDeviceToAndroid'];
   handoffToAndroid: () => Promise<void>;
   disconnect: () => Promise<void>;
   runActiveStartupSync: () => Promise<void>;
   getBatteryStatus: () => Promise<void>;
-  syncContacts: () => ReturnType<typeof appRadioConnectionService.syncContacts>;
+  syncContacts: () => ReturnType<AppRadioConnectionService['syncContacts']>;
   sendAppStart: () => Promise<void>;
   sendDeviceQuery: () => Promise<void>;
   getChannel0: () => Promise<void>;
@@ -31,7 +34,13 @@ type RadioConnectionContextValue = {
 
 const RadioConnectionContext = createContext<RadioConnectionContextValue | null>(null);
 
-export function RadioConnectionProvider({children}: {children: React.ReactNode}): React.JSX.Element {
+export function RadioConnectionProvider({
+  children,
+  service = appRadioConnectionService,
+}: {
+  children: React.ReactNode;
+  service?: AppRadioConnectionService;
+}): React.JSX.Element {
   const {
     setChannels,
     setConnectionStatus,
@@ -41,24 +50,29 @@ export function RadioConnectionProvider({children}: {children: React.ReactNode})
     setDeviceStatus,
     setContacts,
   } = useBushMesh();
-  const [snapshot, setSnapshot] = useState(() => appRadioConnectionService.getSnapshot());
+  const [snapshot, setSnapshot] = useState(() => service.getSnapshot());
   const lastChannelsKeyRef = useRef<string | null>(null);
   const lastContactsKeyRef = useRef<string | null>(null);
   const lastDeviceStatusKeyRef = useRef<string | null>(null);
 
+  // The BLE service is an application-lifetime resource. This effect is keyed
+  // only by the service instance, so BushMesh state/handler updates can never
+  // tear down its BleManager.
   useEffect(() => {
-    const refresh = () => setSnapshot(appRadioConnectionService.getSnapshot());
+    let active = true;
+    const refresh = () => {
+      if (active) setSnapshot(service.getSnapshot());
+    };
     refresh();
-    const unsubscribe = appRadioConnectionService.subscribe(refresh);
-    appRadioConnectionService.initialize().catch(() => undefined);
+    const unsubscribe = service.subscribe(refresh);
+    service.initialize().catch(() => undefined);
 
     return () => {
+      active = false;
       unsubscribe();
-      setSendChannelMessageHandler(null);
-      setSyncContactsHandler(null);
-      appRadioConnectionService.dispose().catch(() => undefined);
+      service.dispose().catch(() => undefined);
     };
-  }, [setSendChannelMessageHandler, setSyncContactsHandler]);
+  }, [service]);
 
   useEffect(() => {
     const channelsKey = JSON.stringify(snapshot.channels);
@@ -80,6 +94,9 @@ export function RadioConnectionProvider({children}: {children: React.ReactNode})
     }
   }, [snapshot, setChannels, setContacts, setDeviceStatus]);
 
+  // Command registration is deliberately separate from BLE ownership. A status
+  // transition may replace application handlers, but it must never dispose the
+  // application radio service.
   useEffect(() => {
     setConnectedDeviceName(snapshot.connectedDeviceLabel);
     setConnectionStatus(
@@ -88,14 +105,15 @@ export function RadioConnectionProvider({children}: {children: React.ReactNode})
 
     if (snapshot.status === 'Connected') {
       setSendChannelMessageHandler((channelIndex, message) =>
-        appRadioConnectionService.sendChannelMessage(channelIndex, message),
+        service.sendChannelMessage(channelIndex, message),
       );
-      setSyncContactsHandler(() => appRadioConnectionService.syncContacts());
+      setSyncContactsHandler(() => service.syncContacts());
     } else {
       setSendChannelMessageHandler(null);
       setSyncContactsHandler(null);
     }
   }, [
+    service,
     snapshot.connectedDeviceLabel,
     snapshot.status,
     setConnectionStatus,
@@ -104,23 +122,34 @@ export function RadioConnectionProvider({children}: {children: React.ReactNode})
     setSyncContactsHandler,
   ]);
 
+  useEffect(
+    () => () => {
+      setSendChannelMessageHandler(null);
+      setSyncContactsHandler(null);
+    },
+    [setSendChannelMessageHandler, setSyncContactsHandler],
+  );
+
   const value = useMemo<RadioConnectionContextValue>(
     () => ({
       snapshot,
-      nativeHandoffSupported: appRadioConnectionService.nativeHandoffSupported,
-      startScan: () => appRadioConnectionService.startScan(),
-      connectToDevice: device => appRadioConnectionService.connectToDevice(device),
-      handoffToAndroid: () => appRadioConnectionService.handoffToAndroid(),
-      disconnect: () => appRadioConnectionService.disconnect(),
-      runActiveStartupSync: () => appRadioConnectionService.runActiveStartupSync(),
-      getBatteryStatus: () => appRadioConnectionService.getBatteryStatus(),
-      syncContacts: () => appRadioConnectionService.syncContacts(),
-      sendAppStart: () => appRadioConnectionService.sendAppStart(),
-      sendDeviceQuery: () => appRadioConnectionService.sendDeviceQuery(),
-      getChannel0: () => appRadioConnectionService.getChannel0(),
-      probeChannels: () => appRadioConnectionService.probeChannels(),
+      nativeHandoffSupported: service.nativeHandoffSupported,
+      startScan: () => service.startScan(),
+      stopScan: () => service.stopScan(),
+      connectToDevice: device => service.connectToDevice(device),
+      handoffDiscoveredDeviceToAndroid: device =>
+        service.handoffDiscoveredDeviceToAndroid(device),
+      handoffToAndroid: () => service.handoffToAndroid(),
+      disconnect: () => service.disconnect(),
+      runActiveStartupSync: () => service.runActiveStartupSync(),
+      getBatteryStatus: () => service.getBatteryStatus(),
+      syncContacts: () => service.syncContacts(),
+      sendAppStart: () => service.sendAppStart(),
+      sendDeviceQuery: () => service.sendDeviceQuery(),
+      getChannel0: () => service.getChannel0(),
+      probeChannels: () => service.probeChannels(),
     }),
-    [snapshot],
+    [service, snapshot],
   );
 
   return (
