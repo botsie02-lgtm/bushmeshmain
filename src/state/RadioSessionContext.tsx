@@ -99,9 +99,11 @@ function activeEntriesForPersistence(
 /**
  * Native MeshCore ownership is commanded exclusively by the application radio
  * ownership layer and NativeMeshCoreSessionCoordinator. RadioSessionProvider
- * only owns the legacy React-Native-session keepalive. A non-idle coordinator
- * state is treated as native ownership even before Android has published its
- * native-service status, which closes takeover and shutdown transition races.
+ * only owns the legacy React-Native-session keepalive. A non-idle coordinator,
+ * native-service status, live native target, or persisted native target is an
+ * Android-native ownership reservation. Treating those states as observation
+ * only closes takeover/shutdown races and preserves sticky process recovery
+ * while Android restores its service state.
  */
 export function decideRadioSessionNativeLifecycle(
   runtimeRequested: boolean,
@@ -110,7 +112,10 @@ export function decideRadioSessionNativeLifecycle(
 ): RadioSessionNativeLifecycleDecision {
   if (
     coordinatorState !== 'idle' ||
-    status.ownership === 'native-service'
+    status.ownership === 'native-service' ||
+    status.persistedNativeTargetPresent === true ||
+    status.deviceAddress != null ||
+    status.nativeBleDeviceAddress != null
   ) {
     return 'observe-native-owner';
   }
