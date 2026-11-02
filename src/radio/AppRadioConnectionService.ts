@@ -402,17 +402,41 @@ export class AppRadioConnectionService {
 
   async disconnect(): Promise<void> {
     this.stopScan();
+    const nativeOwner = this.snapshot.connectionOwner === 'android-native';
+    const nativeAddress = this.snapshot.connectedDeviceAddress;
+    const nativeLabel = this.snapshot.connectedDeviceLabel;
     this.patch({isWriting: true});
-    try {
-      if (this.snapshot.connectionOwner === 'android-native') {
+
+    if (nativeOwner) {
+      try {
         await this.deps.nativeCoordinator.stop();
         this.nativeSession = null;
-      } else {
-        this.meshCoreClient?.stop();
-        this.meshCoreClient = null;
-        const address = this.connectedDevice?.id ?? this.snapshot.connectedDeviceAddress;
-        if (address) await this.ensureManager().cancelDeviceConnection(address).catch(() => undefined);
+        this.connectedDevice = null;
+        this.snapshot = {...initialSnapshot(), statusDetail: 'Device disconnected.'};
+        this.emit();
+      } catch (error) {
+        const detail =
+          error instanceof Error
+            ? error.message
+            : 'Android native radio did not confirm shutdown.';
+        this.patch({
+          status: 'Error',
+          statusDetail: `Background radio stop failed: ${detail}`,
+          connectedDeviceAddress: nativeAddress,
+          connectedDeviceLabel: nativeLabel,
+          connectionOwner: 'android-native',
+          isWriting: false,
+        });
+        throw error;
       }
+      return;
+    }
+
+    try {
+      this.meshCoreClient?.stop();
+      this.meshCoreClient = null;
+      const address = this.connectedDevice?.id ?? this.snapshot.connectedDeviceAddress;
+      if (address) await this.ensureManager().cancelDeviceConnection(address).catch(() => undefined);
     } finally {
       this.connectedDevice = null;
       this.snapshot = {...initialSnapshot(), statusDetail: 'Device disconnected.'};
