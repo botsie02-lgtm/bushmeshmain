@@ -16,7 +16,7 @@ import {
   DecodedBushMeshQuickAction,
   decodeBushMeshPosition,
   decodeBushMeshQuickAction,
-} from '../bushmesh/protocol';
+} from '../bushmesh/legacyProtocol';
 import {
   ReceivedDatagram,
   subscribeReceivedDatagrams,
