@@ -3,6 +3,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -41,9 +42,9 @@ export function RadioConnectionProvider({children}: {children: React.ReactNode})
     setContacts,
   } = useBushMesh();
   const [snapshot, setSnapshot] = useState(() => appRadioConnectionService.getSnapshot());
-  const channelsKey = JSON.stringify(snapshot.channels);
-  const contactsKey = JSON.stringify(snapshot.contacts);
-  const deviceStatusKey = JSON.stringify(snapshot.deviceStatus);
+  const lastChannelsKeyRef = useRef<string | null>(null);
+  const lastContactsKeyRef = useRef<string | null>(null);
+  const lastDeviceStatusKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const refresh = () => setSnapshot(appRadioConnectionService.getSnapshot());
@@ -60,16 +61,24 @@ export function RadioConnectionProvider({children}: {children: React.ReactNode})
   }, [setSendChannelMessageHandler, setSyncContactsHandler]);
 
   useEffect(() => {
-    setChannels(snapshot.channels);
-  }, [channelsKey, setChannels, snapshot.channels]);
+    const channelsKey = JSON.stringify(snapshot.channels);
+    if (channelsKey !== lastChannelsKeyRef.current) {
+      lastChannelsKeyRef.current = channelsKey;
+      setChannels(snapshot.channels);
+    }
 
-  useEffect(() => {
-    setContacts(snapshot.contacts);
-  }, [contactsKey, setContacts, snapshot.contacts]);
+    const contactsKey = JSON.stringify(snapshot.contacts);
+    if (contactsKey !== lastContactsKeyRef.current) {
+      lastContactsKeyRef.current = contactsKey;
+      setContacts(snapshot.contacts);
+    }
 
-  useEffect(() => {
-    setDeviceStatus(snapshot.deviceStatus);
-  }, [deviceStatusKey, setDeviceStatus, snapshot.deviceStatus]);
+    const deviceStatusKey = JSON.stringify(snapshot.deviceStatus);
+    if (deviceStatusKey !== lastDeviceStatusKeyRef.current) {
+      lastDeviceStatusKeyRef.current = deviceStatusKey;
+      setDeviceStatus(snapshot.deviceStatus);
+    }
+  }, [snapshot, setChannels, setContacts, setDeviceStatus]);
 
   useEffect(() => {
     setConnectedDeviceName(snapshot.connectedDeviceLabel);
