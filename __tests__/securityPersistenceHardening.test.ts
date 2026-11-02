@@ -30,6 +30,41 @@ describe('security metadata atomicity and recovery contract', () => {
     });
   });
 
+  test('missing ordinary counter state below a surviving high-watermark fails closed', async () => {
+    const metadata = new InMemorySecurityMetadataStore();
+    const prefix = toBase64Url(new Uint8Array(4));
+    await metadata.advanceNonceHighWatermark('scope/missing-counter', 9n);
+    metadata.unsafeSetNonceCounter('scope/missing-counter', 0n);
+    await expect(new NonceManager(metadata).next('scope/missing-counter', prefix)).rejects.toMatchObject({
+      code: 'COUNTER_ROLLBACK',
+    });
+  });
+
+  test('a failed high-watermark commit burns the reserved counter and recovery advances safely', async () => {
+    const metadata = new InMemorySecurityMetadataStore();
+    const prefix = toBase64Url(new Uint8Array(4));
+    const originalAdvance = metadata.advanceNonceHighWatermark.bind(metadata);
+    let failOnce = true;
+    metadata.advanceNonceHighWatermark = async (scope, counter) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error('simulated protected-store write failure');
+      }
+      await originalAdvance(scope, counter);
+    };
+
+    const manager = new NonceManager(metadata);
+    await expect(manager.next('scope/high-watermark-write', prefix)).rejects.toThrow(
+      'simulated protected-store write failure',
+    );
+    expect(await metadata.getNonceHighWatermark('scope/high-watermark-write')).toBe(0n);
+
+    const recovered = new NonceManager(metadata);
+    const next = await recovered.next('scope/high-watermark-write', prefix);
+    expect(next.counter).toBe(2n);
+    expect(await metadata.getNonceHighWatermark('scope/high-watermark-write')).toBe(2n);
+  });
+
   test('a duplicate reservation result is rejected even if a broken store returns it', async () => {
     const metadata = new InMemorySecurityMetadataStore();
     const prefix = toBase64Url(new Uint8Array(4));
