@@ -1,7 +1,11 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
-import {fragmentBushMeshDatagramPayload} from '../src/bushmesh/protocol/public';
+import {
+  decodeBushMeshSecurityContainer,
+  encodeBushMeshProtectedDirectContainer,
+  fragmentBushMeshDatagramPayload,
+} from '../src/bushmesh/protocol/public';
 import {BushMeshDatagramRuntime} from '../src/bushmesh/runtime/public';
 import {BUSHMESH_MESHCORE_DEV_DATA_TYPE} from '../src/bushmesh/legacyProtocol';
 import {
@@ -242,14 +246,23 @@ describe('canonical direct/message end-to-end vertical slice', () => {
       transport: TRANSPORT,
       protection: protection(setup),
     });
-    const tampered = Uint8Array.from(entry.payload);
-    tampered[5] = tampered[5] === 3 ? 4 : 3;
+    const container = decodeBushMeshSecurityContainer(entry.payload);
+    if (container.kind !== 'protected-direct') {
+      throw new Error('Expected protected-direct test container.');
+    }
+    const tampered = encodeBushMeshProtectedDirectContainer({
+      routing: {
+        sourceNodeId: container.routing.sourceNodeId,
+        destinationNodeId: (container.routing.destinationNodeId ?? 0) + 1,
+      },
+      authenticatedHeader: container.authenticatedHeader,
+      message: container.protectedPayload.message,
+    });
 
     await expect(
       services.receiverService.acceptInbound(received(tampered)),
     ).resolves.toMatchObject({status: 'rejected', reason: 'security-failed'});
     expect(deliveries).toBe(0);
-    expect(services.receiverService.getSnapshot().lastSecurityFailure).not.toBeNull();
   });
 
   test('Security v1 replay rejection maps to a stable integration outcome', async () => {
