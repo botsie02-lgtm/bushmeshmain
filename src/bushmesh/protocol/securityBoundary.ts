@@ -1,3 +1,5 @@
+import {Buffer} from 'buffer';
+
 import {
   BushMeshCompressionProfile,
   BushMeshPacketType,
@@ -5,6 +7,11 @@ import {
   assertIntegerInRange,
   encodeVarUint,
 } from './codec';
+import {
+  BUSHMESH_SECURITY_MAX_IDENTIFIER_BYTES,
+  BushMeshSecurityContainerKind,
+  BushMeshSecurityRoutingContext,
+} from './securityWire';
 import {decodeBushMeshWire} from './transport';
 
 /** Domain separator + schema version for BushMesh protocol AAD. */
@@ -14,6 +21,10 @@ export const BUSHMESH_AUTHENTICATED_HEADER_PREFIX = [
   0x41, // A
   0x01, // authenticated-header schema v1
 ] as const;
+
+const AAD_ROUTING_SOURCE = 0x01;
+const AAD_ROUTING_DESTINATION = 0x02;
+const AAD_ROUTING_GROUP = 0x04;
 
 export type BushMeshAuthenticatedHeaderFields = {
   protocolVersion: number;
@@ -30,14 +41,59 @@ export type BushMeshSecurityProtocolContext = {
   authenticatedHeader: Uint8Array;
 };
 
+function encodeRoutingForAad(routing: BushMeshSecurityRoutingContext): number[] {
+  let flags = 0;
+  if (routing.sourceNodeId !== undefined) {
+    assertIntegerInRange(routing.sourceNodeId, 0, 0xffffffff, 'AAD source node ID');
+    flags |= AAD_ROUTING_SOURCE;
+  }
+  if (routing.destinationNodeId !== undefined) {
+    assertIntegerInRange(
+      routing.destinationNodeId,
+      0,
+      0xffffffff,
+      'AAD destination node ID',
+    );
+    flags |= AAD_ROUTING_DESTINATION;
+  }
+
+  let groupBytes: number[] = [];
+  if (routing.groupId !== undefined) {
+    if (!routing.groupId) {
+      throw new Error('AAD group ID cannot be empty.');
+    }
+    groupBytes = Array.from(Buffer.from(routing.groupId, 'utf8'));
+    if (groupBytes.length > BUSHMESH_SECURITY_MAX_IDENTIFIER_BYTES) {
+      throw new Error('AAD group ID exceeds the BushMesh v1 size limit.');
+    }
+    flags |= AAD_ROUTING_GROUP;
+  }
+
+  return [
+    flags,
+    ...(routing.sourceNodeId === undefined
+      ? []
+      : encodeVarUint(routing.sourceNodeId)),
+    ...(routing.destinationNodeId === undefined
+      ? []
+      : encodeVarUint(routing.destinationNodeId)),
+    ...(routing.groupId === undefined
+      ? []
+      : [...encodeVarUint(groupBytes.length), ...groupBytes]),
+  ];
+}
+
 /**
  * Canonical immutable BushMesh header authenticated by Security v1.
  *
- * TTL/path counters are intentionally excluded because forwarding may mutate
- * them. The fields encoded here must remain byte-for-byte stable end to end.
+ * AAD v1 binds the logical router-visible source/destination/group selector
+ * whenever one exists. TTL, hop/path state, next-hop state, RSSI/SNR, transport
+ * retry state and arrival timestamps are deliberately excluded because valid
+ * forwarding changes them after end-to-end protection is applied.
  */
 export function encodeBushMeshAuthenticatedHeader(
   fields: BushMeshAuthenticatedHeaderFields,
+  routing: BushMeshSecurityRoutingContext = {},
 ): number[] {
   assertIntegerInRange(fields.protocolVersion, 0, 3, 'Protocol version');
   assertIntegerInRange(fields.packetType, 0, 0x3f, 'Packet type');
@@ -57,6 +113,7 @@ export function encodeBushMeshAuthenticatedHeader(
     first,
     second,
     ...encodeVarUint(fields.messageId),
+    ...encodeRoutingForAad(routing),
   ];
 }
 
@@ -78,12 +135,13 @@ export function getBushMeshAuthenticatedHeaderFields(
 
 export function createBushMeshSecurityProtocolContext(
   wireBytes: number[],
+  routing: BushMeshSecurityRoutingContext = {},
 ): BushMeshSecurityProtocolContext {
   const fields = getBushMeshAuthenticatedHeaderFields(wireBytes);
   return {
     protocolVersion: fields.protocolVersion,
     authenticatedHeader: Uint8Array.from(
-      encodeBushMeshAuthenticatedHeader(fields),
+      encodeBushMeshAuthenticatedHeader(fields, routing),
     ),
   };
 }
@@ -95,12 +153,11 @@ export function bushMeshAuthenticatedHeadersEqual(
   if (left.length !== right.length) {
     return false;
   }
+  let mismatch = 0;
   for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) {
-      return false;
-    }
+    mismatch |= left[index] ^ right[index];
   }
-  return true;
+  return mismatch === 0;
 }
 
 export type BushMeshSecurityTrafficClass =
@@ -113,74 +170,97 @@ export type BushMeshSecurityTrafficClass =
   | 'peer-revocation'
   | 'emergency-distress';
 
+export type BushMeshEmergencySecurityPolicy =
+  | 'require-authentication'
+  | 'allow-unauthenticated-fallback';
+
 export type BushMeshSecurityRequirement =
   | 'required-direct-session'
   | 'required-group'
+  | 'security-control-container'
   | 'policy-dependent'
-  | 'unassigned-v1-control-schema';
+  | 'local-only';
 
 export type BushMeshSecurityTreatment = {
   trafficClass: BushMeshSecurityTrafficClass;
   packetType: number | null;
+  containerKind?: number | null;
   requirement: BushMeshSecurityRequirement;
   rationale: string;
 };
 
 /**
- * Security treatment audit for protocol-v1 integration.
+ * Frozen Security treatment table for BushMesh Protocol v1.
  *
- * The null packet types are deliberate: Security v1 objects exist, but their
- * BushMesh transport packet/container schema has not yet been frozen. They
- * must not be smuggled through Command, DeviceInfo or another unrelated packet.
+ * Security control objects use the dedicated B5 53 container rather than
+ * consuming ordinary BushMesh packet IDs. Peer revocation remains local-only in
+ * Security v1; there is deliberately no unauthenticated network revocation
+ * command or session-retirement authority object in Protocol v1.
  */
 export const BUSHMESH_SECURITY_TREATMENTS: readonly BushMeshSecurityTreatment[] = [
   {
     trafficClass: 'direct-message',
     packetType: BushMeshPacketType.Message,
+    containerKind: BushMeshSecurityContainerKind.ProtectedDirect,
     requirement: 'required-direct-session',
-    rationale: 'Private peer-to-peer traffic is protected by a trusted direct session.',
+    rationale:
+      'Private peer-to-peer traffic requires a trusted direct session and an authenticated source/destination routing selector.',
   },
   {
     trafficClass: 'group-message',
     packetType: BushMeshPacketType.Message,
+    containerKind: BushMeshSecurityContainerKind.ProtectedGroup,
     requirement: 'required-group',
-    rationale: 'Private group/channel message traffic uses the active group security context.',
+    rationale:
+      'Private group/channel traffic requires the active group security context and authenticated group routing selector.',
   },
   {
     trafficClass: 'convoy-group',
     packetType: BushMeshPacketType.Convoy,
+    containerKind: BushMeshSecurityContainerKind.ProtectedGroup,
     requirement: 'required-group',
-    rationale: 'Convoy operational traffic is group-scoped and should authenticate membership.',
+    rationale:
+      'Convoy operational traffic is group-scoped and authenticates both protocol semantics and router-visible group identity.',
   },
   {
     trafficClass: 'pairing-session-establishment',
     packetType: null,
-    requirement: 'unassigned-v1-control-schema',
-    rationale: 'Pairing proofs and session offers/responses are owned by Security v1; BushMesh framing is not frozen yet.',
+    containerKind: null,
+    requirement: 'security-control-container',
+    rationale:
+      'PairingProof, SessionOffer and SessionResponse use dedicated frozen Security v1 control-container kinds.',
   },
   {
     trafficClass: 'group-key-distribution',
     packetType: null,
-    requirement: 'unassigned-v1-control-schema',
-    rationale: 'Authenticated wrapped group-key distribution needs a dedicated frozen transport schema.',
+    containerKind: BushMeshSecurityContainerKind.WrappedGroupKeyDistribution,
+    requirement: 'security-control-container',
+    rationale:
+      'WrappedGroupKeyDistribution is transported as its dedicated Security v1 control container.',
   },
   {
     trafficClass: 'identity-rotation',
     packetType: null,
-    requirement: 'unassigned-v1-control-schema',
-    rationale: 'Identity rotation proofs must not reuse general Command packets without a frozen schema.',
+    containerKind: BushMeshSecurityContainerKind.IdentityRotationProof,
+    requirement: 'security-control-container',
+    rationale:
+      'IdentityRotationProof is transported verbatim through its dedicated signed Security v1 control container.',
   },
   {
     trafficClass: 'peer-revocation',
     packetType: null,
-    requirement: 'unassigned-v1-control-schema',
-    rationale: 'Revocation/session retirement signalling requires a dedicated authenticated control schema.',
+    containerKind: null,
+    requirement: 'local-only',
+    rationale:
+      'Security v1 defines revocation/session retirement as local trust/session state. Protocol v1 does not accept a network revocation authority message.',
   },
   {
     trafficClass: 'emergency-distress',
     packetType: BushMeshPacketType.Distress,
+    containerKind: null,
     requirement: 'policy-dependent',
-    rationale: 'Emergency traffic should authenticate when security context exists, while the unauthenticated fallback policy remains a product/safety decision.',
+    rationale:
+      'Authenticate distress when a direct/group context is available. Unauthenticated fallback is forbidden by default and requires explicit product policy.',
   },
 ] as const;
 
@@ -208,4 +288,5 @@ export const BUSHMESH_SECURITY_DEFAULTS = {
     priority: BushMeshPriority.Location,
     compression: BushMeshCompressionProfile.Raw,
   },
+  emergencyPolicy: 'require-authentication' as BushMeshEmergencySecurityPolicy,
 } as const;
