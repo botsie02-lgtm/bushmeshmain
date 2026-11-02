@@ -12,22 +12,18 @@ react {
     // root = file("../../")
     //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
     // reactNativeDir = file("../../node_modules/react-native")
-    //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
     // codegenDir = file("../../node_modules/@react-native/codegen")
-    //   The cli.js file which is the React Native CLI entrypoint. Default is empty.
     // cliFile = file(../node_modules/react-native/cli.js)
 
     /* Variants */
-    //   The list of variants that are debuggable. For those we're going to
-    //   skip the bundling of the JS bundle and the assets. Default is "debug", "debugOptimized".
     // debuggableVariants = ["liteDebug", "liteDebugOptimized", "prodDebug", "prodDebugOptimized"]
 
     /* Bundling */
     // nodeExecutableAndArgs = ["node"]
     // bundleCommand = "ram-bundle"
     // bundleConfig = file(../rn-cli.config.js)
-    // bundleAssetName = "MyApplication.android.bundle"
-    // entryFile = file(../js/MyApplication.android.js)
+    // bundleAssetName = "BushMesh.android.bundle"
+    // entryFile = file(../index.js)
     // extraPackagerArgs = []
 
     /* Hermes Commands */
@@ -88,8 +84,9 @@ dependencies {
     implementation("com.facebook.react:react-android")
 
     // Android Auto messaging notifications are built on NotificationCompat,
-    // MessagingStyle, Person and RemoteInput from AndroidX Core.
-    implementation("androidx.core:core-ktx:1.19.1")
+    // MessagingStyle, Person and RemoteInput from AndroidX Core. 1.17.0 is the
+    // compatible line for the current compileSdk 36 / AGP toolchain.
+    implementation("androidx.core:core-ktx:1.17.0")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
