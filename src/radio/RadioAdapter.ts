@@ -1,3 +1,5 @@
+import type {ReceivedDatagramListener} from './ReceivedDatagram';
+
 export type RadioConnectionState =
   | 'disconnected'
   | 'connecting'
@@ -18,15 +20,21 @@ export type RadioDatagram = {
 };
 
 /**
- * Transport-neutral boundary between BushMesh domain features and a radio.
- *
- * MeshCore is the first implementation, but convoy, mapping and speech
- * features should depend on this contract rather than MeshCore-specific BLE
- * commands. A future BushMesh firmware adapter can implement the same surface.
+ * Transport-neutral boundary between application/runtime services and a radio.
+ * It transports bytes and link metadata only; packet encoding, encryption,
+ * routing and BushMesh semantics belong above this interface.
  */
 export interface RadioAdapter {
   readonly connectionState: RadioConnectionState;
   readonly capabilities: RadioCapabilities;
 
   sendDatagram(datagram: RadioDatagram): Promise<void>;
+
+  /**
+   * Optional during the compatibility migration. Production adapters should
+   * expose inbound channel data through the neutral ReceivedDatagram contract.
+   */
+  subscribeReceivedDatagrams?(
+    listener: ReceivedDatagramListener,
+  ): () => void;
 }
