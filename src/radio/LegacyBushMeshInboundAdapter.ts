@@ -1,4 +1,8 @@
 import {
+  BUSHMESH_SECURITY_WIRE_MAGIC,
+  BUSHMESH_WIRE_MAGIC,
+} from '../bushmesh/protocol/public';
+import {
   BUSHMESH_FORMATION_MESSAGE_TYPE,
   DecodedBushMeshFormationShare,
   decodeBushMeshFormationShare,
@@ -52,17 +56,28 @@ export type BushMeshInboundMessage =
       request: DecodedBushMeshPositionRequest;
     };
 
+function isCanonicalBushMeshDatagram(payload: Uint8Array): boolean {
+  return (
+    payload.length >= 2 &&
+    payload[0] === BUSHMESH_WIRE_MAGIC[0] &&
+    (payload[1] === BUSHMESH_WIRE_MAGIC[1] ||
+      payload[1] === BUSHMESH_SECURITY_WIRE_MAGIC[1])
+  );
+}
+
 /**
  * Temporary compatibility boundary for the pre-canonical BushMesh packet set.
  * The generic radio lifecycle only publishes ReceivedDatagram. This adapter is
  * the only inbound radio-core surface that should understand these packet bytes.
+ * Canonical B5 4D/B5 53 traffic is explicitly excluded so the migration paths
+ * cannot both deliver the same application event.
  */
 export class LegacyBushMeshInboundAdapter {
   consume(datagram: ReceivedDatagram): BushMeshInboundMessage | null {
     if (datagram.dataType !== BUSHMESH_MESHCORE_DEV_DATA_TYPE) {
       return null;
     }
-    if (datagram.payload.length < 2) {
+    if (datagram.payload.length < 2 || isCanonicalBushMeshDatagram(datagram.payload)) {
       return null;
     }
 
