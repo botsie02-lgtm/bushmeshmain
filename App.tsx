@@ -145,11 +145,20 @@ function AppContent(): React.JSX.Element {
             <ContactsScreen />
           </View>
         </ScreenMountGate>
-        <ScreenMountGate active={activeTab === 'device'}>
-          <View style={styles.screenWrap}>
-            <DeviceHubScreen />
-          </View>
-        </ScreenMountGate>
+
+        {/*
+          The legacy BLE diagnostics surface still owns the BLE-PLX client when
+          that compatibility mode is used. Keep this one surface mounted until
+          its connection ownership moves into an application-level radio service;
+          unmounting it on a tab change could orphan/disconnect a working radio.
+        */}
+        <View
+          style={[
+            styles.screenWrap,
+            activeTab !== 'device' && styles.hiddenCompatibilityScreen,
+          ]}>
+          <DeviceHubScreen />
+        </View>
       </View>
 
       <View style={styles.tabBar}>
@@ -208,6 +217,9 @@ const styles = StyleSheet.create({
   },
   screenWrap: {
     flex: 1,
+  },
+  hiddenCompatibilityScreen: {
+    display: 'none',
   },
   tabBar: {
     flexDirection: 'row',
