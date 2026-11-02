@@ -10,8 +10,8 @@ export type PrivateKeyPurpose =
   | 'session-ephemeral';
 
 /**
- * Serializable reference to private key material owned by a CryptoProvider.
- * No private key bytes are carried in this object.
+ * Serializable reference to asymmetric private key material owned by a
+ * CryptoProvider. No private key bytes are carried in this object.
  */
 export interface PrivateKeyHandle {
   provider: string;
@@ -20,6 +20,7 @@ export interface PrivateKeyHandle {
   purpose: PrivateKeyPurpose;
 }
 
+/** Local persistence record; not a transport/wire object. */
 export interface LocalIdentityKeyHandles {
   keyEpoch: number;
   signingPrivateKey: PrivateKeyHandle;
@@ -27,6 +28,7 @@ export interface LocalIdentityKeyHandles {
   createdAt: number;
 }
 
+/** Public stable device identity that may be transported inside Security v1 proofs/handshakes. */
 export interface DeviceIdentity {
   identityVersion: 1;
   deviceId: string;
@@ -38,6 +40,7 @@ export interface DeviceIdentity {
   rotatedAt?: number;
 }
 
+/** Transport-neutral signed proof that advances one peer identity key epoch. */
 export interface IdentityRotationProof {
   previousFingerprint: string;
   nextIdentity: DeviceIdentity;
@@ -45,6 +48,7 @@ export interface IdentityRotationProof {
   signature: string;
 }
 
+/** Local persistence record; not a transport/wire object. */
 export interface PeerTrustRecord {
   deviceId: string;
   identity: DeviceIdentity;
@@ -57,6 +61,7 @@ export interface PeerTrustRecord {
   revocationReason?: string;
 }
 
+/** Transport-neutral challenge-bound proof used during pairing/trust establishment. */
 export interface PairingProof {
   identity: DeviceIdentity;
   challenge: string;
@@ -66,6 +71,7 @@ export interface PairingProof {
   signature: string;
 }
 
+/** Transport-neutral initiator half of the authenticated direct-session handshake. */
 export interface SessionOffer {
   handshakeId: string;
   initiator: DeviceIdentity;
@@ -79,6 +85,7 @@ export interface SessionOffer {
   signature: string;
 }
 
+/** Transport-neutral responder half of the authenticated direct-session handshake. */
 export interface SessionResponse {
   handshakeId: string;
   responder: DeviceIdentity;
@@ -92,6 +99,7 @@ export interface SessionResponse {
   signature: string;
 }
 
+/** Local persistence record; not a transport/wire object. */
 export interface PendingHandshakeRecord {
   handshakeId: string;
   peerDeviceId: string;
@@ -101,6 +109,7 @@ export interface PendingHandshakeRecord {
   expiresAt: number;
 }
 
+/** Local persistence record; not a transport/wire object. */
 export interface DirectSessionRecord {
   sessionId: string;
   peerDeviceId: string;
@@ -119,6 +128,7 @@ export interface DirectSessionRecord {
   state: SessionState;
 }
 
+/** Transport-neutral protected direct payload returned by DirectSessionManager.encrypt(). */
 export interface EncryptedDirectMessage {
   securityVersion: SecurityVersion;
   protocolVersion: ProtocolVersion;
@@ -131,6 +141,7 @@ export interface EncryptedDirectMessage {
 export type GroupMemberRole = 'leader' | 'member';
 export type GroupMemberState = 'active' | 'revoked';
 
+/** Local/group-key-package membership record; not an independent routing object. */
 export interface GroupMembership {
   deviceId: string;
   identityFingerprint: string;
@@ -140,6 +151,7 @@ export interface GroupMembership {
   revokedAt?: number;
 }
 
+/** Local persistence record; not a transport/wire object. */
 export interface GroupKeyEpochRecord {
   epoch: number;
   keyRef: string;
@@ -149,6 +161,7 @@ export interface GroupKeyEpochRecord {
   revokedAt?: number;
 }
 
+/** Local persistence record; not a transport/wire object. */
 export interface GroupRecord {
   groupId: string;
   securityVersion: SecurityVersion;
@@ -160,6 +173,7 @@ export interface GroupRecord {
   updatedAt: number;
 }
 
+/** Transport-neutral protected group payload returned by GroupKeyManager.encrypt(). */
 export interface EncryptedGroupMessage {
   securityVersion: SecurityVersion;
   protocolVersion: ProtocolVersion;
@@ -171,8 +185,9 @@ export interface EncryptedGroupMessage {
 }
 
 /**
- * Transport-neutral container. The actual group key exists only inside the
- * authenticated direct-session ciphertext carried by encryptedPayload.
+ * Transport-neutral group-key delivery container. The actual group key and
+ * membership package exist only inside the authenticated direct-session
+ * ciphertext carried by encryptedPayload.
  */
 export interface WrappedGroupKeyDistribution {
   distributionVersion: 1;
@@ -188,9 +203,18 @@ export interface WrappedGroupKeyDistribution {
   encryptedPayload: EncryptedDirectMessage;
 }
 
+/**
+ * Integration boundary supplied by the canonical protocol/runtime for every
+ * protected direct/group exchange.
+ *
+ * authenticatedHeader is the protocol branch's deterministic byte encoding of
+ * immutable end-to-end metadata that must not be attacker-rewritable. Security
+ * v1 authenticates these bytes as AEAD AAD but deliberately does not define the
+ * protocol header schema, routing fields or packet framing.
+ */
 export interface SecurityProtocolContext {
-  /** Canonical protocol/runtime version selected for this protected exchange. */
+  /** Must exactly match the protocol version selected for the session/group. */
   protocolVersion: ProtocolVersion;
-  /** Canonical immutable protocol header bytes to authenticate as AEAD AAD. */
+  /** Canonical immutable end-to-end protocol header bytes to authenticate. */
   authenticatedHeader: Uint8Array;
 }
