@@ -1,9 +1,9 @@
 import {BUSHMESH_MESHCORE_DEV_DATA_TYPE} from '../bushmesh/protocol';
-import {
-  BushMeshInboundMessage,
-  decodeBushMeshMeshCoreFrame,
-} from '../bushmesh/meshcoreBridge';
 import {bushMeshRadioSession} from '../radio/BushMeshRadioSession';
+import {
+  ReceivedDatagram,
+  publishReceivedDatagram,
+} from '../radio/ReceivedDatagram';
 import {meshCoreSelfInfoToRadioProfile} from '../radio/meshCoreRadioProfile';
 import {
   buildAppStartCommand,
@@ -24,6 +24,7 @@ import {
   parseMeshCoreDeviceInfo,
 } from './meshcoreDeviceInfo';
 import {MeshCoreFrameTransport} from './MeshCoreFrameTransport';
+import {meshCoreFrameToReceivedDatagram} from './MeshCoreReceivedDatagramAdapter';
 import {decodeMeshCoreBytes} from './meshcorePackets';
 import {
   ParsedContactInfo,
@@ -48,14 +49,14 @@ export type NativeMeshCoreResponse = {
   selfInfo: MeshCoreSelfInfo | null;
   deviceInfo: MeshCoreDeviceInfo | null;
   channelData: MeshCoreChannelDataFrame | null;
-  bushMeshMessage: BushMeshInboundMessage | null;
+  receivedDatagram: ReceivedDatagram | null;
 };
 
 export type NativeMeshCoreSessionEvents = {
   onStatus?: (message: string) => void;
   onError?: (message: string) => void;
   onFrame?: (response: NativeMeshCoreResponse) => void;
-  onBushMeshMessage?: (message: BushMeshInboundMessage) => void;
+  onReceivedDatagram?: (datagram: ReceivedDatagram) => void;
 };
 
 type PendingCommand = {
@@ -68,12 +69,7 @@ type PendingCommand = {
 
 /**
  * Core MeshCore companion session running over the Android-owned BLE transport.
- *
- * It covers the protocol surface needed for a native-radio handoff: startup,
- * identity/capabilities, battery/channel reads, contacts, channel text,
- * queued-message sync and binary Bushmesh datagrams. It shares Bushmesh
- * owner-scoped session rules so a stale native session cannot transmit after
- * another radio wins.
+ * MeshCore framing is decoded here, but application protocol payloads are not.
  */
 export class NativeMeshCoreSession {
   private readonly owner = {};
@@ -88,9 +84,7 @@ export class NativeMeshCoreSession {
   ) {}
 
   async start(appName = 'BushMesh'): Promise<void> {
-    if (this.started) {
-      return;
-    }
+    if (this.started) return;
 
     await this.transport.start({
       onFrame: bytes => this.handleFrame(bytes),
@@ -127,21 +121,13 @@ export class NativeMeshCoreSession {
 
   async sendAppStart(appName = 'BushMesh'): Promise<NativeMeshCoreResponse> {
     return this.enqueueCommand('CMD_APP_START', () =>
-      this.executeCommand(
-        'CMD_APP_START',
-        buildAppStartCommand(appName),
-        [0x05],
-      ),
+      this.executeCommand('CMD_APP_START', buildAppStartCommand(appName), [0x05]),
     );
   }
 
   async sendDeviceQuery(): Promise<NativeMeshCoreResponse> {
     const response = await this.enqueueCommand('CMD_DEVICE_QUERY', () =>
-      this.executeCommand(
-        'CMD_DEVICE_QUERY',
-        buildDeviceQueryCommand(),
-        [0x0d],
-      ),
+      this.executeCommand('CMD_DEVICE_QUERY', buildDeviceQueryCommand(), [0x0d]),
     );
     this.lastDeviceInfo = response.deviceInfo;
     return response;
@@ -149,11 +135,7 @@ export class NativeMeshCoreSession {
 
   async getBatteryStatus(): Promise<NativeMeshCoreResponse> {
     return this.enqueueCommand('CMD_GET_BATTERY', () =>
-      this.executeCommand(
-        'CMD_GET_BATTERY',
-        buildGetBatteryCommand(),
-        [0x0c],
-      ),
+      this.executeCommand('CMD_GET_BATTERY', buildGetBatteryCommand(), [0x0c]),
     );
   }
 
@@ -174,7 +156,6 @@ export class NativeMeshCoreSession {
         ? Math.min(advertised, 8)
         : 8;
     const responses: NativeMeshCoreResponse[] = [];
-
     for (let index = 0; index < count; index += 1) {
       responses.push(await this.getChannel(index));
     }
@@ -192,9 +173,7 @@ export class NativeMeshCoreSession {
     message: string,
   ): Promise<NativeMeshCoreResponse> {
     const cleanMessage = message.trim();
-    if (!cleanMessage) {
-      throw new Error('Message is empty.');
-    }
+    if (!cleanMessage) throw new Error('Message is empty.');
     if (cleanMessage.length > MAX_CHANNEL_MESSAGE_CHARS) {
       throw new Error(
         `Message is too long. Keep it under ${MAX_CHANNEL_MESSAGE_CHARS} characters.`,
@@ -228,15 +207,11 @@ export class NativeMeshCoreSession {
   async syncQueuedMessages(maxMessages = 20): Promise<NativeMeshCoreResponse[]> {
     const responses: NativeMeshCoreResponse[] = [];
     const limit = Math.max(1, Math.min(100, Math.floor(maxMessages)));
-
     for (let index = 0; index < limit; index += 1) {
       const response = await this.syncNextMessage();
-      if (response.packetType === 0x0a) {
-        break;
-      }
+      if (response.packetType === 0x0a) break;
       responses.push(response);
     }
-
     return responses;
   }
 
@@ -254,6 +229,7 @@ export class NativeMeshCoreSession {
     );
   }
 
+  /** @deprecated Legacy convenience path; canonical runtime should supply dataType. */
   async sendBushMeshDatagram(
     channelIndex: number,
     payload: Uint8Array,
@@ -265,9 +241,7 @@ export class NativeMeshCoreSession {
     );
   }
 
-  private async syncContactsInternal(
-    since?: number,
-  ): Promise<ParsedContactInfo[]> {
+  private async syncContactsInternal(since?: number): Promise<ParsedContactInfo[]> {
     const contacts: ParsedContactInfo[] = [];
     this.events.onStatus?.('CMD_GET_CONTACTS sending over native BLE…');
 
@@ -276,49 +250,19 @@ export class NativeMeshCoreSession {
       buildGetContactsCommand(since),
       [0x02, 0x03, 0x04],
     );
-
-    if (response.parsed?.contactInfo) {
-      contacts.push(response.parsed.contactInfo);
-    }
-
-    if (response.packetType === 0x04) {
-      this.events.onStatus?.(
-        `Native contacts sync complete. Loaded ${contacts.length} contact(s).`,
-      );
-      return contacts;
-    }
-
+    if (response.parsed?.contactInfo) contacts.push(response.parsed.contactInfo);
+    if (response.packetType === 0x04) return contacts;
     if (
       response.packetType === 0x02 &&
       (response.parsed?.contactsStartCount ?? 0) === 0
     ) {
-      this.events.onStatus?.('Native contacts sync complete. Loaded 0 contacts.');
       return contacts;
     }
 
     for (let index = 0; index < MAX_CONTACT_RECORDS_PER_SYNC; index += 1) {
-      try {
-        response = await this.waitForPacket(
-          'CMD_GET_CONTACTS_NEXT',
-          [0x03, 0x04],
-        );
-      } catch (error) {
-        this.events.onStatus?.(
-          `Native contacts sync stopped after ${contacts.length} contact(s).`,
-        );
-        throw error;
-      }
-
-      if (response.parsed?.contactInfo) {
-        contacts.push(response.parsed.contactInfo);
-      }
-
-      if (response.packetType === 0x04) {
-        this.events.onStatus?.(
-          `Native contacts sync complete. Loaded ${contacts.length} contact(s).`,
-        );
-        return contacts;
-      }
+      response = await this.waitForPacket('CMD_GET_CONTACTS_NEXT', [0x03, 0x04]);
+      if (response.parsed?.contactInfo) contacts.push(response.parsed.contactInfo);
+      if (response.packetType === 0x04) return contacts;
     }
 
     this.events.onStatus?.(
@@ -331,7 +275,6 @@ export class NativeMeshCoreSession {
     if (!this.started && label !== 'CMD_APP_START') {
       return Promise.reject(new Error('Native MeshCore session is not started.'));
     }
-
     return this.commandQueue.enqueue(label, async () => {
       await this.transport.ensureReady();
       return task();
@@ -345,7 +288,6 @@ export class NativeMeshCoreSession {
   ): Promise<NativeMeshCoreResponse> {
     const response = this.waitForPacket(label, expectedPacketTypes);
     this.events.onStatus?.(`${label} sending over native BLE…`);
-
     try {
       await this.transport.writeBase64(base64Command);
     } catch (error) {
@@ -355,7 +297,6 @@ export class NativeMeshCoreSession {
           : new Error(`${label} native BLE write failed.`),
       );
     }
-
     return response;
   }
 
@@ -370,22 +311,12 @@ export class NativeMeshCoreSession {
         ),
       );
     }
-
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        if (this.pendingCommand?.label === label) {
-          this.pendingCommand = null;
-        }
+        if (this.pendingCommand?.label === label) this.pendingCommand = null;
         reject(new Error(`${label} timed out waiting for a MeshCore response.`));
       }, COMMAND_TIMEOUT_MS);
-
-      this.pendingCommand = {
-        label,
-        expectedPacketTypes,
-        resolve,
-        reject,
-        timeout,
-      };
+      this.pendingCommand = {label, expectedPacketTypes, resolve, reject, timeout};
     });
   }
 
@@ -395,7 +326,7 @@ export class NativeMeshCoreSession {
     let selfInfo: MeshCoreSelfInfo | null = null;
     let deviceInfo: MeshCoreDeviceInfo | null = null;
     let channelData: MeshCoreChannelDataFrame | null = null;
-    let bushMeshMessage: BushMeshInboundMessage | null = null;
+    let receivedDatagram: ReceivedDatagram | null = null;
 
     try {
       parsed = parseMeshCorePacketFields(bytes);
@@ -405,7 +336,11 @@ export class NativeMeshCoreSession {
       if (decoded.packetType === 0x1b) {
         channelData = parseMeshCoreChannelDataFrame(bytes);
         if (channelData) {
-          bushMeshMessage = decodeBushMeshMeshCoreFrame(channelData);
+          receivedDatagram = meshCoreFrameToReceivedDatagram(channelData, {
+            radioIdentityRef: bushMeshRadioSession.getSnapshot().identityRef,
+          });
+          publishReceivedDatagram(receivedDatagram);
+          this.events.onReceivedDatagram?.(receivedDatagram);
         }
       }
     } catch (error) {
@@ -417,19 +352,13 @@ export class NativeMeshCoreSession {
     }
 
     if (selfInfo) {
-      bushMeshRadioSession.setIdentityForOwner(
-        this.owner,
-        selfInfo.bushMeshIdentityRef,
-      );
+      bushMeshRadioSession.setIdentityForOwner(this.owner, selfInfo.bushMeshIdentityRef);
       bushMeshRadioSession.setRadioProfileForOwner(
         this.owner,
         meshCoreSelfInfoToRadioProfile(selfInfo),
       );
     }
-
-    if (deviceInfo) {
-      this.lastDeviceInfo = deviceInfo;
-    }
+    if (deviceInfo) this.lastDeviceInfo = deviceInfo;
 
     const response: NativeMeshCoreResponse = {
       packetType: decoded.packetType,
@@ -439,13 +368,10 @@ export class NativeMeshCoreSession {
       selfInfo,
       deviceInfo,
       channelData,
-      bushMeshMessage,
+      receivedDatagram,
     };
 
     this.events.onFrame?.(response);
-    if (bushMeshMessage) {
-      this.events.onBushMeshMessage?.(bushMeshMessage);
-    }
 
     if (decoded.packetType === 0x01) {
       const code = bytes[1];
@@ -476,9 +402,7 @@ export class NativeMeshCoreSession {
 
   private rejectPending(error: Error): void {
     const pending = this.pendingCommand;
-    if (!pending) {
-      return;
-    }
+    if (!pending) return;
     clearTimeout(pending.timeout);
     this.pendingCommand = null;
     pending.reject(error);
