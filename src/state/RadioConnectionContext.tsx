@@ -21,7 +21,7 @@ type RadioConnectionContextValue = {
   disconnect: () => Promise<void>;
   runActiveStartupSync: () => Promise<void>;
   getBatteryStatus: () => Promise<void>;
-  syncContacts: () => Promise<ReturnType<typeof appRadioConnectionService.syncContacts> extends Promise<infer T> ? T : never>;
+  syncContacts: () => ReturnType<typeof appRadioConnectionService.syncContacts>;
   sendAppStart: () => Promise<void>;
   sendDeviceQuery: () => Promise<void>;
   getChannel0: () => Promise<void>;
@@ -41,6 +41,9 @@ export function RadioConnectionProvider({children}: {children: React.ReactNode})
     setContacts,
   } = useBushMesh();
   const [snapshot, setSnapshot] = useState(() => appRadioConnectionService.getSnapshot());
+  const channelsKey = JSON.stringify(snapshot.channels);
+  const contactsKey = JSON.stringify(snapshot.contacts);
+  const deviceStatusKey = JSON.stringify(snapshot.deviceStatus);
 
   useEffect(() => {
     const refresh = () => setSnapshot(appRadioConnectionService.getSnapshot());
@@ -58,8 +61,17 @@ export function RadioConnectionProvider({children}: {children: React.ReactNode})
 
   useEffect(() => {
     setChannels(snapshot.channels);
+  }, [channelsKey, setChannels, snapshot.channels]);
+
+  useEffect(() => {
     setContacts(snapshot.contacts);
+  }, [contactsKey, setContacts, snapshot.contacts]);
+
+  useEffect(() => {
     setDeviceStatus(snapshot.deviceStatus);
+  }, [deviceStatusKey, setDeviceStatus, snapshot.deviceStatus]);
+
+  useEffect(() => {
     setConnectedDeviceName(snapshot.connectedDeviceLabel);
     setConnectionStatus(
       snapshot.status === 'Connected' ? 'Connected' : 'Disconnected',
@@ -75,16 +87,10 @@ export function RadioConnectionProvider({children}: {children: React.ReactNode})
       setSyncContactsHandler(null);
     }
   }, [
-    snapshot.channels,
-    snapshot.contacts,
-    snapshot.deviceStatus,
     snapshot.connectedDeviceLabel,
     snapshot.status,
-    setChannels,
     setConnectionStatus,
     setConnectedDeviceName,
-    setContacts,
-    setDeviceStatus,
     setSendChannelMessageHandler,
     setSyncContactsHandler,
   ]);
