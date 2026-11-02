@@ -18,6 +18,7 @@ import {
   receivedDatagramToBushMeshInbound,
 } from './BushMeshRadioCoreAdapter';
 import {androidBushMeshRuntimePersistence} from './RadioCoreBushMeshRuntimePersistence';
+import {bushMeshTransportAvailability} from './RadioCoreBushMeshTransportAvailability';
 
 export type BushMeshV1RuntimeState =
   | 'stopped'
@@ -201,4 +202,5 @@ export function createBushMeshV1RuntimeService(
 
 export const bushMeshV1RuntimeService = createBushMeshV1RuntimeService({
   persistence: androidBushMeshRuntimePersistence,
+  transportAvailability: bushMeshTransportAvailability,
 });
