@@ -12,6 +12,10 @@ type NativePersistenceModule = {
   saveOutbox: (serializedSnapshot: string) => Promise<boolean>;
   clearOutbox: () => Promise<boolean>;
   resetOutboxStorage: () => Promise<boolean>;
+  loadCanonicalRuntimeState: () => Promise<string | null>;
+  saveCanonicalRuntimeState: (serializedState: string) => Promise<boolean>;
+  clearCanonicalRuntimeState: () => Promise<boolean>;
+  resetCanonicalRuntimeStorage: () => Promise<boolean>;
 };
 
 const module = NativeModules.BushMeshPersistence as
@@ -54,6 +58,34 @@ export class AndroidBushMeshPersistence implements BushMeshPersistence {
     }
 
     await module.resetOutboxStorage();
+  }
+
+  async loadCanonicalRuntimeState(): Promise<string | null> {
+    if (!this.isSupported() || !module) {
+      return null;
+    }
+    return module.loadCanonicalRuntimeState();
+  }
+
+  async saveCanonicalRuntimeState(serializedState: string): Promise<void> {
+    if (!this.isSupported() || !module) {
+      return;
+    }
+    await module.saveCanonicalRuntimeState(serializedState);
+  }
+
+  async clearCanonicalRuntimeState(): Promise<void> {
+    if (!this.isSupported() || !module) {
+      return;
+    }
+    await module.clearCanonicalRuntimeState();
+  }
+
+  async resetCanonicalRuntimeStorage(): Promise<void> {
+    if (!this.isSupported() || !module) {
+      return;
+    }
+    await module.resetCanonicalRuntimeStorage();
   }
 }
 
