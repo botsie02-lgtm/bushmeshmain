@@ -385,7 +385,7 @@ export function BushMeshProvider({
     channels.find(channel => channel.channelIndex === activeChannelIndex) ??
     null;
 
-  const setChannels = (nextChannels: BushMeshChannel[]) => {
+  const setChannels = useCallback((nextChannels: BushMeshChannel[]) => {
     setChannelsState(nextChannels);
 
     setActiveChannelIndex(currentActiveIndex => {
@@ -402,22 +402,26 @@ export function BushMeshProvider({
 
       return firstNamedChannel?.channelIndex ?? null;
     });
-  };
+  }, []);
 
-  const setSendChannelMessageHandler = (
-    handler: SendChannelMessageHandler | null,
-  ) => {
-    setSendChannelMessageHandlerState(() => handler);
-  };
+  const setSendChannelMessageHandler = useCallback(
+    (handler: SendChannelMessageHandler | null) => {
+      setSendChannelMessageHandlerState(() => handler);
+    },
+    [],
+  );
 
-  const setSyncContactsHandler = (handler: SyncContactsHandler | null) => {
-    setSyncContactsHandlerState(() => handler);
-  };
+  const setSyncContactsHandler = useCallback(
+    (handler: SyncContactsHandler | null) => {
+      setSyncContactsHandlerState(() => handler);
+    },
+    [],
+  );
 
-  const clearChannels = () => {
+  const clearChannels = useCallback(() => {
     setChannelsState([]);
     setActiveChannelIndex(null);
-  };
+  }, []);
 
   const clearChannelMessages = useCallback(() => {
     channelMessagesRef.current = [];
@@ -607,11 +611,15 @@ export function BushMeshProvider({
       sendChannelMessageHandlerState,
       syncContactsHandlerState,
       setContacts,
+      setChannels,
+      setSendChannelMessageHandler,
+      setSyncContactsHandler,
       sendChannelMessage,
       syncContacts,
       addLocalChannelMessage,
       addDurableChannelMessage,
       updateChannelMessageStatus,
+      clearChannels,
       clearChannelMessages,
       clearContacts,
     ],
