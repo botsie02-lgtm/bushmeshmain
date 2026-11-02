@@ -215,7 +215,7 @@ describe('NativeMeshCoreSessionCoordinator stop serialization', () => {
   }
 
   it('coalesces repeated stop calls and becomes idle only after confirmation', async () => {
-    const deferred = {resolve: () => undefined};
+    const deferred: {resolve: () => void} = {resolve: () => {}};
     const stopPromise = new Promise<void>(resolve => {
       deferred.resolve = resolve;
     });
