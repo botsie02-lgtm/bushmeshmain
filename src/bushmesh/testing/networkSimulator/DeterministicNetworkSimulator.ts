@@ -703,12 +703,19 @@ export class DeterministicBushMeshNetworkSimulator {
       this.metrics.linkQualityChanges += 1;
     }
 
+    if (existing) {
+    // Scheduled transmission completions retain this object identity.
+    // Mutating config prevents a live RSSI/SNR update from stranding
+    // the replacement link in a permanently busy state.
+    existing.config = config;
+  } else {
     this.links.set(key, {
       config,
-      queue: existing?.queue ?? [],
-      queueBytes: existing?.queueBytes ?? 0,
-      busy: existing?.busy ?? false,
+      queue: [],
+      queueBytes: 0,
+      busy: false,
     });
+  }
     this.record(
       {
         kind: 'link',
