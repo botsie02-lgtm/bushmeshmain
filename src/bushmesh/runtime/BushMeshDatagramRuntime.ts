@@ -15,8 +15,9 @@ import {
   securityTreatmentFor,
 } from '../protocol/securityBoundary';
 import {
-  BushMeshDecodedSecurityControlContainer,
   BushMeshDecodedProtectedSecurityContainer,
+  BushMeshDecodedSecurityContainer,
+  BushMeshDecodedSecurityControlContainer,
   BushMeshSecurityRoutingContext,
   classifyBushMeshDatagramPayload,
   decodeBushMeshSecurityContainer,
@@ -24,6 +25,7 @@ import {
   encodeBushMeshProtectedGroupContainer,
 } from '../protocol/securityWire';
 import {
+  BushMeshDatagramFragmentReassembler,
   DecodedBushMeshWireMessage,
   decodeBushMeshWire,
 } from '../protocol/transport';
@@ -103,6 +105,13 @@ export type BushMeshInboundAccepted =
   | BushMeshInboundProtocolAccepted
   | BushMeshInboundSecurityControlAccepted;
 
+export type BushMeshInboundFragmentPending = {
+  status: 'fragment-pending';
+  datagram: BushMeshInboundDatagram;
+  messageId: number;
+  missingFragments: number[];
+};
+
 export type BushMeshInboundDuplicate = {
   status: 'duplicate';
   datagram: BushMeshInboundDatagram;
@@ -123,6 +132,7 @@ export type BushMeshInboundRejected = {
 
 export type BushMeshInboundResult =
   | BushMeshInboundAccepted
+  | BushMeshInboundFragmentPending
   | BushMeshInboundDuplicate
   | BushMeshInboundRejected;
 
@@ -134,6 +144,7 @@ export type BushMeshDatagramRuntimeOptions = {
   dedupTtlMs?: number;
   dedupMaxEntries?: number;
   dedupSnapshotKey?: string;
+  fragmentTimeoutMs?: number;
   emergencySecurityPolicy?: BushMeshEmergencySecurityPolicy;
 };
 
@@ -218,6 +229,44 @@ function inferTrafficClass(
   return undefined;
 }
 
+function validateAssociationForTraffic(
+  trafficClass: BushMeshSecurityTrafficClass | undefined,
+  association: BushMeshSecurityAssociation,
+): void {
+  if (!trafficClass) {
+    if (association.kind !== 'none') {
+      throw new Error(
+        'Protected BushMesh traffic requires an explicit or packet-implied traffic class.',
+      );
+    }
+    return;
+  }
+
+  const treatment = securityTreatmentFor(trafficClass);
+  if (treatment.requirement === 'security-control-container') {
+    throw new Error(
+      `${trafficClass} must use a dedicated BushMesh Security v1 control container.`,
+    );
+  }
+  if (treatment.requirement === 'local-only') {
+    throw new Error(`${trafficClass} is local-only in BushMesh Protocol v1.`);
+  }
+  if (
+    treatment.requirement === 'required-direct-session' &&
+    association.kind !== 'direct-session'
+  ) {
+    throw new Error(
+      `${trafficClass} requires a direct-session security association.`,
+    );
+  }
+  if (
+    treatment.requirement === 'required-group' &&
+    association.kind !== 'group'
+  ) {
+    throw new Error(`${trafficClass} requires a group security association.`);
+  }
+}
+
 function validateRoutingForAssociation(
   association: BushMeshSecurityAssociation,
   routing: BushMeshSecurityRoutingContext,
@@ -241,57 +290,14 @@ function validateRoutingForAssociation(
       routing.groupId !== association.groupId
     ) {
       throw new Error(
-        'Protected group traffic requires authenticated source node/group ID, no destination node ID, and a group ID matching the Security association.',
+        'Protected group traffic requires authenticated source/group IDs, no destination node ID, and a group ID matching the Security association.',
       );
     }
     return;
   }
-  throw new Error('Protected BushMesh payload traffic requires a direct-session or group association.');
-}
-
-function validateAssociationForTraffic(
-  trafficClass: BushMeshSecurityTrafficClass | undefined,
-  association: BushMeshSecurityAssociation,
-): void {
-  if (!trafficClass) {
-    if (association.kind !== 'none') {
-      throw new Error(
-        'Protected BushMesh traffic requires an explicit or packet-implied traffic class.',
-      );
-    }
-    return;
-  }
-
-  const treatment = securityTreatmentFor(trafficClass);
-  if (treatment.requirement === 'security-control-container') {
-    throw new Error(
-      `${trafficClass} is a Security v1 control object and must use a dedicated B5 53 control container.`,
-    );
-  }
-  if (treatment.requirement === 'local-only') {
-    throw new Error(`${trafficClass} is local-only in BushMesh Protocol v1.`);
-  }
-  if (
-    treatment.requirement === 'required-direct-session' &&
-    association.kind !== 'direct-session'
-  ) {
-    throw new Error(
-      `${trafficClass} requires a direct-session security association.`,
-    );
-  }
-  if (
-    treatment.requirement === 'required-group' &&
-    association.kind !== 'group'
-  ) {
-    throw new Error(`${trafficClass} requires a group security association.`);
-  }
-  if (
-    treatment.packetType !== null &&
-    treatment.packetType !== undefined &&
-    trafficClass !== 'emergency-distress'
-  ) {
-    // Packet type is validated by caller after decode, this branch documents the invariant.
-  }
+  throw new Error(
+    'Protected BushMesh payload traffic requires a direct-session or group association.',
+  );
 }
 
 function classifyDecodeError(error: unknown): BushMeshInboundRejected['reason'] {
@@ -326,17 +332,34 @@ function validateInboundDatagram(datagram: BushMeshInboundDatagram): void {
   }
 }
 
-function malformedInbound(
+function rejected(
   datagram: BushMeshInboundDatagram,
+  reason: BushMeshInboundRejected['reason'],
   error: unknown,
 ): BushMeshInboundRejected {
   return {
     status: 'rejected',
     datagram,
-    reason: classifyDecodeError(error),
+    reason,
     error:
-      error instanceof Error ? error.message : 'Malformed BushMesh datagram.',
+      error instanceof Error ? error.message : String(error || 'BushMesh error'),
   };
+}
+
+function malformedInbound(
+  datagram: BushMeshInboundDatagram,
+  error: unknown,
+): BushMeshInboundRejected {
+  return rejected(datagram, classifyDecodeError(error), error);
+}
+
+function isSecurityControlContainer(
+  container: BushMeshDecodedSecurityContainer,
+): container is BushMeshDecodedSecurityControlContainer {
+  return (
+    container.kind !== 'protected-direct' &&
+    container.kind !== 'protected-group'
+  );
 }
 
 function protectedProtocolVersion(
@@ -350,9 +373,13 @@ function validateUnprotectedAssociation(
   association: BushMeshSecurityAssociation,
 ): void {
   if (container.kind === 'protected-direct') {
+    if (container.protectedPayload.kind !== 'direct') {
+      throw new Error('Protected-direct container/object kind mismatch.');
+    }
+    const message = container.protectedPayload.message;
     if (
       association.kind !== 'direct-session' ||
-      association.sessionId !== container.protectedPayload.message.sessionId
+      association.sessionId !== message.sessionId
     ) {
       throw new Error(
         'Security adapter returned a direct-session association that does not match the protected direct object.',
@@ -361,9 +388,13 @@ function validateUnprotectedAssociation(
     return;
   }
 
+  if (container.protectedPayload.kind !== 'group') {
+    throw new Error('Protected-group container/object kind mismatch.');
+  }
+  const message = container.protectedPayload.message;
   if (
     association.kind !== 'group' ||
-    association.groupId !== container.protectedPayload.message.groupId
+    association.groupId !== message.groupId
   ) {
     throw new Error(
       'Security adapter returned a group association that does not match the protected group object.',
@@ -372,12 +403,9 @@ function validateUnprotectedAssociation(
 }
 
 /**
- * Canonical protocol/runtime seam. This class does not send radio packets and
- * does not import MeshCore or radio-core. It prepares opaque outbound datagrams
- * and accepts opaque inbound datagrams supplied by an application adapter.
- *
- * `dataType` is never used to identify BushMesh/security content. Payload magic
- * (`B5 4D` ordinary, `B5 53` Security container) is the canonical discriminator.
+ * Canonical protocol/runtime seam. It does not send radio packets and imports
+ * neither radio-core nor MeshCore. Radio adapters hand it opaque datagrams.
+ * BushMesh owns classification, fragmentation, Security dispatch and decode.
  */
 export class BushMeshDatagramRuntime {
   private readonly clock: BushMeshRuntimeClock;
@@ -385,6 +413,7 @@ export class BushMeshDatagramRuntime {
   private readonly security?: BushMeshSecurityAdapter;
   private readonly availability?: BushMeshTransportAvailabilityPort;
   private readonly recentMessages: BushMeshRecentMessageCache;
+  private readonly fragments: BushMeshDatagramFragmentReassembler;
   private readonly dedupSnapshotKey: string;
   private readonly emergencySecurityPolicy: BushMeshEmergencySecurityPolicy;
   private initialized = false;
@@ -398,6 +427,9 @@ export class BushMeshDatagramRuntime {
       options.dedupTtlMs,
       options.dedupMaxEntries,
     );
+    this.fragments = new BushMeshDatagramFragmentReassembler(
+      options.fragmentTimeoutMs,
+    );
     this.dedupSnapshotKey = options.dedupSnapshotKey ?? DEDUP_SNAPSHOT_KEY;
     this.emergencySecurityPolicy =
       options.emergencySecurityPolicy ?? 'require-authentication';
@@ -407,7 +439,6 @@ export class BushMeshDatagramRuntime {
     if (this.initialized) {
       return this.recentMessages.size();
     }
-
     if (!this.persistence) {
       this.initialized = true;
       return 0;
@@ -427,7 +458,6 @@ export class BushMeshDatagramRuntime {
         'Stored BushMesh runtime dedup snapshot is not valid JSON.',
       );
     }
-
     if (!parsed || typeof parsed !== 'object') {
       throw new Error(
         'Stored BushMesh runtime dedup snapshot has invalid shape.',
@@ -474,15 +504,16 @@ export class BushMeshDatagramRuntime {
     const association = options.identityAssociation ?? {kind: 'none' as const};
     validateAssociationForTraffic(trafficClass, association);
 
-    if (
-      trafficClass &&
-      trafficClass !== 'emergency-distress' &&
-      securityTreatmentFor(trafficClass).packetType !== null &&
-      securityTreatmentFor(trafficClass).packetType !== decoded.envelope.type
-    ) {
-      throw new Error(
-        `${trafficClass} does not match BushMesh packet type ${decoded.envelope.type}.`,
-      );
+    if (trafficClass && trafficClass !== 'emergency-distress') {
+      const treatment = securityTreatmentFor(trafficClass);
+      if (
+        treatment.packetType !== null &&
+        treatment.packetType !== decoded.envelope.type
+      ) {
+        throw new Error(
+          `${trafficClass} does not match BushMesh packet type ${decoded.envelope.type}.`,
+        );
+      }
     }
 
     const emergencyPolicy =
@@ -510,6 +541,7 @@ export class BushMeshDatagramRuntime {
           'BushMesh security adapter is required for protected traffic.',
         );
       }
+
       const routing = options.securityRouting ?? {};
       validateRoutingForAssociation(association, routing);
       const context = createBushMeshSecurityProtocolContext(plainBytes, routing);
@@ -525,7 +557,8 @@ export class BushMeshDatagramRuntime {
         if (
           result.protectedPayload.kind !== 'direct' ||
           result.protectedPayload.message.sessionId !== association.sessionId ||
-          result.protectedPayload.message.protocolVersion !== decoded.envelope.version
+          result.protectedPayload.message.protocolVersion !==
+            decoded.envelope.version
         ) {
           throw new Error(
             'Security adapter returned a protected direct object inconsistent with the requested session/protocol version.',
@@ -546,7 +579,8 @@ export class BushMeshDatagramRuntime {
         if (
           result.protectedPayload.kind !== 'group' ||
           result.protectedPayload.message.groupId !== association.groupId ||
-          result.protectedPayload.message.protocolVersion !== decoded.envelope.version
+          result.protectedPayload.message.protocolVersion !==
+            decoded.envelope.version
         ) {
           throw new Error(
             'Security adapter returned a protected group object inconsistent with the requested group/protocol version.',
@@ -568,12 +602,6 @@ export class BushMeshDatagramRuntime {
           'Identity-only associations cannot protect direct/group BushMesh payloads.',
         );
       }
-    } else if (
-      trafficClass &&
-      trafficClass !== 'emergency-distress' &&
-      securityTreatmentFor(trafficClass).requirement !== 'policy-dependent'
-    ) {
-      throw new Error(`${trafficClass} requires Security v1 protection.`);
     }
 
     const availability = this.transportAvailability();
@@ -620,10 +648,7 @@ export class BushMeshDatagramRuntime {
     validateRetryIntent(retryIntent);
 
     const decoded = decodeBushMeshSecurityContainer(containerBytes);
-    if (
-      decoded.kind === 'protected-direct' ||
-      decoded.kind === 'protected-group'
-    ) {
+    if (!isSecurityControlContainer(decoded)) {
       throw new Error(
         'Protected direct/group payloads must be prepared from plaintext through prepareOutbound().',
       );
@@ -663,9 +688,34 @@ export class BushMeshDatagramRuntime {
       return malformedInbound(datagram, error);
     }
 
+    let logicalDatagram = datagram;
     let classification;
     try {
       classification = classifyBushMeshDatagramPayload(datagram.payload);
+      if (classification.kind === 'ordinary-bushmesh') {
+        const decodedOuter = decodeBushMeshWire(Array.from(datagram.payload));
+        if (decodedOuter.envelope.type === BushMeshPacketType.Fragment) {
+          const fragment = this.fragments.accept(
+            Array.from(datagram.payload),
+            datagram.receivedAtMs,
+          );
+          if (!fragment.complete || !fragment.datagramPayload) {
+            return {
+              status: 'fragment-pending',
+              datagram,
+              messageId: decodedOuter.envelope.messageId,
+              missingFragments: fragment.reassembly?.missingFragments ?? [],
+            };
+          }
+          logicalDatagram = {
+            ...datagram,
+            payload: Uint8Array.from(fragment.datagramPayload),
+          };
+          classification = classifyBushMeshDatagramPayload(
+            fragment.datagramPayload,
+          );
+        }
+      }
     } catch (error) {
       return malformedInbound(datagram, error);
     }
@@ -673,7 +723,9 @@ export class BushMeshDatagramRuntime {
     if (classification.kind === 'unknown') {
       return malformedInbound(
         datagram,
-        new Error('Datagram is neither ordinary BushMesh nor a BushMesh Security v1 container.'),
+        new Error(
+          'Datagram is neither ordinary BushMesh nor a BushMesh Security v1 container.',
+        ),
       );
     }
 
@@ -687,32 +739,28 @@ export class BushMeshDatagramRuntime {
       | 'unauthenticated-emergency-fallback' = 'plain';
 
     if (classification.kind === 'security-container') {
-      let container;
+      let container: BushMeshDecodedSecurityContainer;
       try {
-        container = decodeBushMeshSecurityContainer(datagram.payload);
+        container = decodeBushMeshSecurityContainer(logicalDatagram.payload);
       } catch (error) {
-        return malformedInbound(datagram, error);
+        return malformedInbound(logicalDatagram, error);
       }
 
-      if (
-        container.kind !== 'protected-direct' &&
-        container.kind !== 'protected-group'
-      ) {
+      if (isSecurityControlContainer(container)) {
         return {
           status: 'accepted',
           kind: 'security-control',
-          datagram,
+          datagram: logicalDatagram,
           control: container,
         };
       }
 
       if (!this.security) {
-        return {
-          status: 'rejected',
-          datagram,
-          reason: 'security-unavailable',
-          error: 'BushMesh security adapter is not configured.',
-        };
+        return rejected(
+          logicalDatagram,
+          'security-unavailable',
+          'BushMesh security adapter is not configured.',
+        );
       }
 
       try {
@@ -724,10 +772,10 @@ export class BushMeshDatagramRuntime {
           protectedPayload: container.protectedPayload,
           context,
           routing: container.routing,
-          channelIndex: datagram.channelIndex,
-          dataType: datagram.dataType,
-          transport: datagram.transport,
-          receivedAtMs: datagram.receivedAtMs,
+          channelIndex: logicalDatagram.channelIndex,
+          dataType: logicalDatagram.dataType,
+          transport: logicalDatagram.transport,
+          receivedAtMs: logicalDatagram.receivedAtMs,
         });
         validateUnprotectedAssociation(container, unprotected.association);
         wireBytes = Array.from(unprotected.plaintextWireBytes);
@@ -750,73 +798,66 @@ export class BushMeshDatagramRuntime {
         securityRouting = container.routing;
         securityMode = container.kind;
       } catch (error) {
-        return {
-          status: 'rejected',
-          datagram,
-          reason: 'security-failed',
-          error:
-            error instanceof Error
-              ? error.message
-              : 'BushMesh security verification failed.',
-        };
+        return rejected(logicalDatagram, 'security-failed', error);
       }
     } else {
-      wireBytes = Array.from(datagram.payload);
+      wireBytes = Array.from(logicalDatagram.payload);
     }
 
     let decoded: DecodedBushMeshWireMessage;
-    let typed: BushMeshTypedPacket;
     try {
       decoded = decodeBushMeshWire(wireBytes);
-      typed = decodeBushMeshTypedPacket(wireBytes);
     } catch (error) {
-      return {
-        status: 'rejected',
-        datagram,
-        reason: classifyDecodeError(error),
-        error:
-          error instanceof Error
-            ? error.message
-            : 'BushMesh datagram decode failed.',
-      };
+      return rejected(
+        logicalDatagram,
+        classifyDecodeError(error),
+        error,
+      );
     }
 
     if (securityMode === 'plain') {
       if (decoded.envelope.type === BushMeshPacketType.Convoy) {
-        return {
-          status: 'rejected',
-          datagram,
-          reason: 'security-required',
-          error: 'BushMesh Protocol v1 requires group protection for Convoy traffic.',
-        };
+        return rejected(
+          logicalDatagram,
+          'security-required',
+          'BushMesh Protocol v1 requires group protection for Convoy traffic.',
+        );
       }
       if (decoded.envelope.type === BushMeshPacketType.Distress) {
         if (this.emergencySecurityPolicy !== 'allow-unauthenticated-fallback') {
-          return {
-            status: 'rejected',
-            datagram,
-            reason: 'security-required',
-            error:
-              'Unauthenticated BushMesh distress is forbidden by the active Security v1 emergency policy.',
-          };
+          return rejected(
+            logicalDatagram,
+            'security-required',
+            'Unauthenticated BushMesh distress is forbidden by the active Security v1 emergency policy.',
+          );
         }
         securityMode = 'unauthenticated-emergency-fallback';
       }
     }
 
+    let typed: BushMeshTypedPacket;
+    try {
+      typed = decodeBushMeshTypedPacket(wireBytes);
+    } catch (error) {
+      return rejected(logicalDatagram, 'malformed', error);
+    }
+
     const semanticSourceNodeId =
-      securityRouting?.sourceNodeId ?? datagram.sourceNodeId;
+      securityRouting?.sourceNodeId ?? logicalDatagram.sourceNodeId;
     if (semanticSourceNodeId !== undefined) {
       const identity = {
         sourceNodeId: semanticSourceNodeId,
         messageId: decoded.envelope.messageId,
       };
       if (
-        this.recentMessages.checkAndRemember(identity, datagram.receivedAtMs)
+        this.recentMessages.checkAndRemember(
+          identity,
+          logicalDatagram.receivedAtMs,
+        )
       ) {
         return {
           status: 'duplicate',
-          datagram,
+          datagram: logicalDatagram,
           messageId: decoded.envelope.messageId,
         };
       }
@@ -826,7 +867,7 @@ export class BushMeshDatagramRuntime {
     return {
       status: 'accepted',
       kind: 'protocol',
-      datagram,
+      datagram: logicalDatagram,
       decoded,
       typed,
       securityAssociation: association,
