@@ -50,6 +50,8 @@ export type NativeMeshCoreResponse = {
   deviceInfo: MeshCoreDeviceInfo | null;
   channelData: MeshCoreChannelDataFrame | null;
   receivedDatagram: ReceivedDatagram | null;
+  /** @deprecated Native radio lifecycle no longer decodes BushMesh payloads. */
+  bushMeshMessage?: undefined;
 };
 
 export type NativeMeshCoreSessionEvents = {
