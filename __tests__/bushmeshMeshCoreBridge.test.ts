@@ -5,7 +5,7 @@ import {
   BushMeshQuickActionCode,
   encodeBushMeshPosition,
   encodeBushMeshQuickAction,
-} from '../src/bushmesh/protocol';
+} from '../src/bushmesh/legacyProtocol';
 
 describe('BushMesh MeshCore bridge', () => {
   test('decodes a BushMesh position carried by MeshCore channel data', () => {
