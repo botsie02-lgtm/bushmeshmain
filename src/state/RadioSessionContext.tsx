@@ -8,10 +8,10 @@ import React, {
   useState,
 } from 'react';
 
-import {decodeBushMeshMeshCoreFrame} from '../bushmesh/meshcoreBridge';
 import {BushMeshOutboxEntry} from '../bushmesh/outbox';
 import {BushMeshQuickActionCode} from '../bushmesh/protocol';
 import {parseMeshCoreChannelDataFrame} from '../meshcore/meshcoreChannelData';
+import {meshCoreFrameToReceivedDatagram} from '../meshcore/MeshCoreReceivedDatagramAdapter';
 import {base64ToBytes} from '../meshcore/meshcorePackets';
 import {
   NativeRadioServiceStatus,
@@ -27,6 +27,7 @@ import {
   QueuePositionInput,
   bushMeshRadioSession,
 } from '../radio/BushMeshRadioSession';
+import {publishReceivedDatagram} from '../radio/ReceivedDatagram';
 import {TransmissionAttemptResult} from '../radio/BushMeshTransmissionController';
 import {useBushMesh} from './BushMeshContext';
 
@@ -76,12 +77,6 @@ function activeEntriesForPersistence(
   );
 }
 
-/**
- * A sticky Android radio service may be draining the encrypted outbox after JS
- * process death. An explicit start without a new address tells the service that
- * the foreground process is back; Android preserves native GATT ownership but
- * stops its recovery worker before JS reads or writes the same outbox.
- */
 async function yieldNativeRecoveryToForeground(): Promise<NativeRadioServiceStatus> {
   const current = await nativeRadioService.getStatus();
   if (
@@ -94,6 +89,11 @@ async function yieldNativeRecoveryToForeground(): Promise<NativeRadioServiceStat
   return current;
 }
 
+/**
+ * Replays Android-captured MeshCore channel data into the neutral inbound
+ * datagram bus. Protocol/runtime subscribers decide whether the payload belongs
+ * to BushMesh and how it should be decoded.
+ */
 async function replayBackgroundInbox(): Promise<{
   replayed: number;
   skipped: number;
@@ -115,21 +115,16 @@ async function replayBackgroundInbox(): Promise<{
         continue;
       }
 
-      const message = decodeBushMeshMeshCoreFrame(frame, {
-        receivedAtMs: recovered.receivedAtMs,
-        source: 'background-replay',
-      });
-
-      if (message) {
-        replayed += 1;
-      } else {
-        skipped += 1;
-      }
+      publishReceivedDatagram(
+        meshCoreFrameToReceivedDatagram(frame, {
+          receivedAtMs: recovered.receivedAtMs,
+          source: 'background-replay',
+          radioIdentityRef: bushMeshRadioSession.getSnapshot().identityRef,
+          diagnosticLabel: 'meshcore-background-inbox',
+        }),
+      );
+      replayed += 1;
     } catch {
-      // Native capture validates the surrounding MeshCore frame, but foreground
-      // protocol decoding may still reject a future/unknown Bushmesh payload.
-      // One unsupported frame must never block outbox recovery or other inbox
-      // entries from replaying.
       skipped += 1;
     }
   }
@@ -193,10 +188,6 @@ export function RadioSessionProvider({
       }
 
       try {
-        // Establish foreground ownership of persistence before loading. The
-        // native module claims a newer generation lease synchronously before it
-        // dispatches the service intent, so the recovery worker cannot mutate
-        // the encrypted queue after this call returns.
         if (nativeRadioService.isSupported()) {
           const status = await yieldNativeRecoveryToForeground();
           if (active) {
@@ -207,17 +198,17 @@ export function RadioSessionProvider({
             const replay = await replayBackgroundInbox();
             if (active && replay.skipped > 0) {
               setNativeRuntimeError(
-                `${replay.skipped} background Bushmesh frame${
+                `${replay.skipped} background radio datagram${
                   replay.skipped === 1 ? '' : 's'
-                } could not be replayed by the current protocol.`,
+                } could not be restored into the inbound runtime seam.`,
               );
             }
           } catch (inboxError) {
             if (active) {
               setNativeRuntimeError(
                 inboxError instanceof Error
-                  ? `Background Bushmesh inbox could not be replayed: ${inboxError.message}`
-                  : 'Background Bushmesh inbox could not be replayed.',
+                  ? `Background radio inbox could not be replayed: ${inboxError.message}`
+                  : 'Background radio inbox could not be replayed.',
               );
             }
           }
@@ -289,9 +280,6 @@ export function RadioSessionProvider({
             existing.ownership === 'native-service' &&
             existing.radioRequested === true
           ) {
-            // Native ownership can legitimately outlive the JS session. Preserve
-            // the Android GATT target instead of interpreting an empty JS owner
-            // set as a request to disconnect the radio.
             await nativeRadioService.start(existing.deviceLabel ?? null);
             status = await nativeRadioService.getStatus();
           } else {
