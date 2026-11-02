@@ -32,14 +32,17 @@ export type BushMeshSecurityAssociation =
   | {kind: 'none'};
 
 export type BushMeshOutboundDiagnostics = {
-  protocolVersion: number;
-  packetType: number;
-  messageId: number;
+  wireKind: 'protocol' | 'security-control';
+  protocolVersion?: number;
+  packetType?: number;
+  messageId?: number;
+  securityContainerKind?: number;
   protected: boolean;
   securityMode:
     | 'plain'
     | 'protected-direct'
     | 'protected-group'
+    | 'security-control'
     | 'unauthenticated-emergency-fallback';
   fragmented?: boolean;
   fragmentIndex?: number;
@@ -80,6 +83,7 @@ export type BushMeshInboundDatagram = {
   transport: string;
   source: 'live' | 'background-replay';
   link?: BushMeshInboundLinkMetadata;
+  /** Immediate/known BushMesh source when supplied by a carrier. Protected traffic uses authenticated logical routing source for semantic dedup. */
   sourceNodeId?: number;
   radioIdentityRef?: string | null;
   transportDeviceId?: string | null;
