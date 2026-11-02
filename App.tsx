@@ -50,7 +50,7 @@ const CONVOY_COMMAND_ATTENTION_MS = 60_000;
 
 function AppContent(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>('device');
-  const [, setConvoyAttentionTick] = useState(0);
+  const [convoyAttentionTick, setConvoyAttentionTick] = useState(0);
   const {unacknowledgedDistressCount} = useBushMeshLiveState();
   const convoyState = useBushMeshConvoyState();
 
@@ -71,7 +71,7 @@ function AppContent(): React.JSX.Element {
     }, Math.max(25, nextExpiry - now + 25));
 
     return () => clearTimeout(timer);
-  }, [convoyState.recentCommands]);
+  }, [convoyState.recentCommands, convoyAttentionTick]);
 
   const now = Date.now();
   const convoyIssueAttentionCount =
