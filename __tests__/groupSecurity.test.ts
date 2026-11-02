@@ -68,6 +68,18 @@ describe('group/convoy key handling', () => {
     expect(plaintext).toEqual(utf8('convoy update'));
   });
 
+  test('authenticated protocol header tampering is rejected for group traffic', async () => {
+    const {aGroups, bGroups, group} = await setupGroup();
+    const envelope = await aGroups.encrypt(group.groupId, utf8('route-sensitive'), context);
+    await expect(
+      bGroups.decrypt(envelope, {
+        protocolVersion: context.protocolVersion,
+        authenticatedHeader: utf8('modified-protocol-header'),
+      }),
+    ).rejects.toMatchObject({code: 'AUTHENTICATION_FAILED'});
+    await expect(bGroups.decrypt(envelope, context)).resolves.toEqual(utf8('route-sensitive'));
+  });
+
   test('rejects group replay across manager recovery', async () => {
     const {b, aGroups, bGroups, group} = await setupGroup();
     const envelope = await aGroups.encrypt(group.groupId, utf8('position'), context);
@@ -92,6 +104,24 @@ describe('group/convoy key handling', () => {
     const oldEnvelope = await aGroups.encrypt(group.groupId, utf8('old epoch'), context);
     await aGroups.rotateGroupKey(group.groupId);
     await expect(aGroups.decrypt(oldEnvelope, context)).rejects.toMatchObject({code: 'ROTATED_KEY'});
+  });
+
+  test('rotated group epoch is redistributed and installed only as a forward epoch', async () => {
+    const {aGroups, bGroups, aSessions, bSessions, aSession, bIdentity, group} = await setupGroup();
+    const rotated = await aGroups.rotateGroupKey(group.groupId);
+    expect(rotated.currentEpoch).toBe(2);
+    const next = await aGroups.wrapActiveKeyForPeer(
+      group.groupId,
+      bIdentity.deviceId,
+      aSession.sessionId,
+      aSessions,
+      context,
+    );
+    const installed = await bGroups.installWrappedGroupKey(next, bSessions, context);
+    expect(installed.currentEpoch).toBe(2);
+    await expect(bGroups.installWrappedGroupKey(next, bSessions, context)).rejects.toMatchObject({
+      code: 'REPLAY_DETECTED',
+    });
   });
 
   test('revoking a member rotates the group key and blocks future key distribution', async () => {
@@ -121,8 +151,11 @@ describe('group/convoy key handling', () => {
     ).rejects.toMatchObject({code: 'AUTHENTICATION_FAILED'});
   });
 
-  test('replayed wrapped distribution is rejected', async () => {
+  test('duplicate or metadata-modified wrapped distribution is rejected', async () => {
     const {bGroups, bSessions, wrapped} = await setupGroup();
+    await expect(
+      bGroups.installWrappedGroupKey(wrapped, bSessions, context),
+    ).rejects.toMatchObject({code: 'REPLAY_DETECTED'});
     await expect(
       bGroups.installWrappedGroupKey({...wrapped, epoch: wrapped.epoch + 1}, bSessions, context),
     ).rejects.toMatchObject({code: 'REPLAY_DETECTED'});
