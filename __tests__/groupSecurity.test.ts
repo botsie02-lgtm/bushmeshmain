@@ -1,4 +1,4 @@
-import {utf8} from '../src/security/bytes';
+import {fromBase64Url, toBase64Url, utf8} from '../src/security/bytes';
 import {GroupKeyManager} from '../src/security/group';
 import {DirectSessionManager} from '../src/security/session';
 import {createSecurityNode, mutuallyTrust} from './securityTestHelpers';
@@ -145,9 +145,10 @@ describe('group/convoy key handling', () => {
   test('modified group ciphertext is rejected', async () => {
     const {aGroups, bGroups, group} = await setupGroup();
     const envelope = await aGroups.encrypt(group.groupId, utf8('auth group'), context);
-    const last = envelope.ciphertext.endsWith('A') ? 'B' : 'A';
+    const ciphertextBytes = fromBase64Url(envelope.ciphertext);
+    ciphertextBytes[0] ^= 1;
     await expect(
-      bGroups.decrypt({...envelope, ciphertext: envelope.ciphertext.slice(0, -1) + last}, context),
+      bGroups.decrypt({...envelope, ciphertext: toBase64Url(ciphertextBytes)}, context),
     ).rejects.toMatchObject({code: 'AUTHENTICATION_FAILED'});
   });
 
