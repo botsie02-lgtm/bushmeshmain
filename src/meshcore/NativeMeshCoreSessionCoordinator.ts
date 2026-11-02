@@ -39,6 +39,7 @@ export class NativeMeshCoreSessionCoordinator {
   private listeners = new Set<Listener>();
   private snapshot: NativeMeshCoreOwnershipSnapshot = {...initialSnapshot};
   private lifecyclePromise: Promise<void> | null = null;
+  private stopPromise: Promise<void> | null = null;
   private events: NativeMeshCoreOwnershipEvents = {};
 
   subscribe(listener: Listener): () => void {
@@ -82,6 +83,10 @@ export class NativeMeshCoreSessionCoordinator {
     const address = deviceAddress.trim();
     if (!address) {
       throw new Error('Native radio handoff requires a Bluetooth device address.');
+    }
+
+    if (this.stopPromise) {
+      await this.stopPromise;
     }
 
     if (this.lifecyclePromise) {
@@ -182,6 +187,22 @@ export class NativeMeshCoreSessionCoordinator {
   }
 
   async stop(): Promise<void> {
+    if (this.stopPromise) {
+      return this.stopPromise;
+    }
+
+    const operation = this.stopInternal();
+    this.stopPromise = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.stopPromise === operation) {
+        this.stopPromise = null;
+      }
+    }
+  }
+
+  private async stopInternal(): Promise<void> {
     if (this.lifecyclePromise) {
       try {
         await this.lifecyclePromise;
@@ -204,9 +225,11 @@ export class NativeMeshCoreSessionCoordinator {
       errorMessage: null,
     });
 
-    this.session = null;
     try {
       await session.stop();
+      if (this.session === session) {
+        this.session = null;
+      }
       this.events = {};
       this.setSnapshot({...initialSnapshot});
     } catch (error) {
@@ -214,8 +237,12 @@ export class NativeMeshCoreSessionCoordinator {
         error instanceof Error
           ? error.message
           : 'Native MeshCore radio shutdown failed.';
-      this.events = {};
-      this.setSnapshot({...initialSnapshot, state: 'error', errorMessage: message});
+      this.setSnapshot({
+        ...this.snapshot,
+        state: 'error',
+        statusMessage: null,
+        errorMessage: message,
+      });
       throw error;
     }
   }
