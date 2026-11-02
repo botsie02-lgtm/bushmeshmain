@@ -10,6 +10,7 @@ export type {
   BushMeshDatagramRuntimeOptions,
   BushMeshInboundAccepted,
   BushMeshInboundDuplicate,
+  BushMeshInboundFragmentPending,
   BushMeshInboundProtocolAccepted,
   BushMeshInboundRejected,
   BushMeshInboundResult,
