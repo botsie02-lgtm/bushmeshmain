@@ -10,7 +10,7 @@ import {
   BushMeshQuickActionCode,
   encodeBushMeshPosition,
   encodeBushMeshQuickAction,
-} from '../src/bushmesh/protocol';
+} from '../src/bushmesh/legacyProtocol';
 import {subscribeBushMeshInboundMessages} from '../src/bushmesh/inboundBus';
 import {meshCoreFrameToReceivedDatagram} from '../src/meshcore/MeshCoreReceivedDatagramAdapter';
 import {
