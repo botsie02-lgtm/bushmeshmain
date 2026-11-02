@@ -51,7 +51,6 @@ export type {BushMeshNodeHello, BushMeshPing} from './discovery';
 export {
   assertBushMeshPeerPolicyNotDowngraded,
   encodeTextForBushMeshPeer,
-  evaluateBushMeshPeerPolicyDowngraded,
   evaluateBushMeshPeerPolicyDowngrade,
   negotiateBushMeshPeerPolicy,
 } from './capabilityPolicy';
