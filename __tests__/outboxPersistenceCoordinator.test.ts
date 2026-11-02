@@ -1,4 +1,4 @@
-import {BushMeshQuickActionCode} from '../src/bushmesh/protocol';
+import {BushMeshQuickActionCode} from '../src/bushmesh/legacyProtocol';
 import {MemoryBushMeshPersistence} from '../src/persistence/BushMeshPersistence';
 import {OutboxPersistenceCoordinator} from '../src/persistence/OutboxPersistenceCoordinator';
 import {BushMeshTransmissionController} from '../src/radio/BushMeshTransmissionController';
