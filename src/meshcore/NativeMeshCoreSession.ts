@@ -1,4 +1,4 @@
-import {BUSHMESH_MESHCORE_DEV_DATA_TYPE} from '../bushmesh/protocol';
+import {BUSHMESH_MESHCORE_DEV_DATA_TYPE} from '../bushmesh/legacyProtocol';
 import {bushMeshRadioSession} from '../radio/BushMeshRadioSession';
 import {
   ReceivedDatagram,
