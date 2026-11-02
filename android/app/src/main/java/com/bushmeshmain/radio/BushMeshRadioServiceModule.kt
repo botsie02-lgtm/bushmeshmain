@@ -60,6 +60,9 @@ class BushMeshRadioServiceModule(
   fun stop(promise: Promise) {
     try {
       outboxLease.claimForeground()
+      // This promise acknowledges command dispatch only. JavaScript waits on
+      // getStatus() until the service state, BLE target and persisted target all
+      // confirm release before treating Background Radio as stopped.
       dispatch(BushMeshRadioService.ACTION_STOP, null, null)
       promise.resolve(true)
     } catch (error: Exception) {
@@ -166,6 +169,7 @@ class BushMeshRadioServiceModule(
       putBoolean("radioRequested", BushMeshRadioServiceState.radioRequested)
       putBoolean("locationRequested", BushMeshRadioServiceState.locationRequested)
       putString("deviceLabel", BushMeshRadioServiceState.deviceLabel)
+      putString("deviceAddress", BushMeshRadioServiceState.deviceAddress)
       putDouble("startedAtMs", BushMeshRadioServiceState.startedAtMs.toDouble())
       putString("ownership", if (nativeOwnership) "native-service" else "react-native-session")
       putString("nativeBleState", nativeStatus.state)
@@ -179,6 +183,10 @@ class BushMeshRadioServiceModule(
       putDouble("nativeBleBufferedFrames", nativeStatus.bufferedFrames.toDouble())
       putDouble("nativeBackgroundInboxCount", nativeInbox.size().toDouble())
       putDouble("nativeBackgroundChannelInboxCount", nativeChannelInbox.size().toDouble())
+      putBoolean(
+        "persistedNativeTargetPresent",
+        BushMeshRadioService.hasPersistedNativeTarget(reactContext.applicationContext),
+      )
       putString("outboxLeaseOwner", lease.owner)
       putDouble("outboxLeaseEpoch", lease.epoch.toDouble())
     }
