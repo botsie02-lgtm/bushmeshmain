@@ -35,10 +35,17 @@ const identity: BushMeshSecurityDeviceIdentity = {
 
 function decodedControlValue(bytes: number[]): unknown {
   const decoded = decodeBushMeshSecurityContainer(bytes);
-  if (decoded.kind === 'protected-direct' || decoded.kind === 'protected-group') {
-    throw new Error('Expected Security control container.');
+  switch (decoded.kind) {
+    case 'pairing-proof':
+    case 'session-offer':
+    case 'session-response':
+    case 'wrapped-group-key-distribution':
+    case 'identity-rotation-proof':
+      return decoded.value;
+    case 'protected-direct':
+    case 'protected-group':
+      throw new Error('Expected Security control container.');
   }
-  return decoded.value;
 }
 
 describe('BushMesh Protocol v1 Security control round trips', () => {
@@ -153,7 +160,7 @@ describe('BushMesh Protocol v1 Security control round trips', () => {
     const bytes = encodeBushMeshPairingProofContainer(pairing);
 
     // B5 53 / version / kind / routingFlags / aadLength / bodyLength(varuint).
-    // Walk the two-byte body-length varuint rather than assuming its exact size.
+    // Walk the body-length varuint rather than assuming its exact size.
     let cursor = 6;
     while ((bytes[cursor] & 0x80) !== 0) {
       cursor += 1;
