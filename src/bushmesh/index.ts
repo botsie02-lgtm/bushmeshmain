@@ -15,8 +15,10 @@ export {
   createBushMeshSecurityProtocolContext,
 } from './protocol/public';
 export type {
+  BushMeshEmergencySecurityPolicy,
   BushMeshPeerPolicy,
   BushMeshSecurityProtocolContext,
+  BushMeshSecurityRoutingContext,
   BushMeshSecurityTrafficClass,
   BushMeshTypedPacket,
   DecodedBushMeshWireMessage,
@@ -36,6 +38,7 @@ export type {
   BushMeshRuntimePersistence,
   BushMeshSecurityAdapter,
   BushMeshSecurityAssociation,
+  BushMeshSecurityControlOutboundOptions,
   BushMeshTransportAvailability,
   BushMeshTransportAvailabilityPort,
 } from './runtime/public';
