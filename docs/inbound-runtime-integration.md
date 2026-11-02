@@ -54,9 +54,13 @@ Those protocol files may still have temporary outbound compatibility callers unt
 
 Long-lived providers and runtime bridges now live in `src/app/AppProviders.tsx` rather than accumulating in root `App.tsx`.
 
-The old tab shell kept every screen mounted and hid inactive screens with `display: none`. React effects remain active when a view is merely hidden, which can leave screen-owned BLE subscriptions, GPS watches, speech listeners, timers, radio subscriptions or map listeners alive. The shell now uses `ScreenMountGate` so only the active tab screen is mounted. Global services that genuinely need to survive tab changes remain in providers above the screen gate.
+The old tab shell kept every screen mounted and hid inactive screens with `display: none`. React effects remain active when a view is merely hidden, which can leave screen-owned BLE subscriptions, GPS watches, speech listeners, timers, radio subscriptions or map listeners alive. Drive, Map, Radio, Convoy, GPS and Contacts now use `ScreenMountGate`, so those screen trees unmount on tab changes and their effect cleanup functions run.
 
-This deliberately separates two lifetimes:
+The Device hub is intentionally the temporary exception. Its legacy BLE diagnostics path still owns a `BleManager`/`MeshCoreClient` connection inside `DeviceScreen`. Unmounting that screen solely because the driver changed tabs could orphan or disconnect a working radio. The Device hub therefore remains mounted while hidden until that BLE ownership is moved into an application-level radio service/provider. This is an application architecture blocker, not a canonical protocol or Security v1 responsibility.
+
+This deliberately separates two lifetimes where the architecture already supports it:
 
 - **application lifetime:** radio session, location session, speech provider, convoy state, persistence, runtime bridges;
 - **screen lifetime:** UI-local subscriptions/effects that should exist only while that screen is active.
+
+The remaining legacy BLE diagnostics ownership must ultimately join the application-lifetime radio layer before the Device screen can use the same unmount-on-inactive policy safely.
