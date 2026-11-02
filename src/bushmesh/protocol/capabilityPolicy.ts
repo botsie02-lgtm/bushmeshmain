@@ -118,6 +118,80 @@ export function negotiateBushMeshPeerPolicy(
   };
 }
 
+export type BushMeshCapabilityDowngrade = {
+  downgraded: boolean;
+  protocolVersionReduced: boolean;
+  removedCapabilities: number;
+  dictionaryVersionChanged: boolean;
+  reasons: string[];
+};
+
+/**
+ * Compares a newly negotiated peer policy with a previously trusted/accepted
+ * policy. The caller decides whether a downgrade is legitimate (for example,
+ * after explicit re-pairing); BushMesh only detects the loss of guarantees.
+ */
+export function evaluateBushMeshPeerPolicyDowngrade(
+  previous: BushMeshPeerPolicy,
+  next: BushMeshPeerPolicy,
+): BushMeshCapabilityDowngrade {
+  if (!previous.compatible) {
+    return {
+      downgraded: false,
+      protocolVersionReduced: false,
+      removedCapabilities: 0,
+      dictionaryVersionChanged: false,
+      reasons: [],
+    };
+  }
+
+  const reasons: string[] = [];
+  const protocolVersionReduced =
+    !next.compatible ||
+    next.protocolVersion === null ||
+    (previous.protocolVersion !== null &&
+      next.protocolVersion < previous.protocolVersion);
+  if (protocolVersionReduced) {
+    reasons.push('protocol-version');
+  }
+
+  const removedCapabilities =
+    (previous.capabilities & ~next.capabilities) >>> 0;
+  if (removedCapabilities !== 0) {
+    reasons.push('capabilities');
+  }
+
+  const dictionaryVersionChanged =
+    previous.allowDictionary &&
+    (!next.allowDictionary ||
+      next.dictionaryVersion !== previous.dictionaryVersion);
+  if (dictionaryVersionChanged) {
+    reasons.push('dictionary-version');
+  }
+
+  return {
+    downgraded: reasons.length > 0,
+    protocolVersionReduced,
+    removedCapabilities,
+    dictionaryVersionChanged,
+    reasons,
+  };
+}
+
+export function assertBushMeshPeerPolicyNotDowngraded(
+  previous: BushMeshPeerPolicy,
+  next: BushMeshPeerPolicy,
+): void {
+  const downgrade = evaluateBushMeshPeerPolicyDowngrade(previous, next);
+  if (!downgrade.downgraded) {
+    return;
+  }
+
+  throw new Error(
+    `BushMesh capability downgrade detected (${downgrade.reasons.join(', ')}).`,
+  );
+}
+
 export type BushMeshPeerEncodedText = {
   wireBytes: number[];
   compression: BushMeshCompressionProfile;
