@@ -106,9 +106,7 @@ describe('BushMesh integration safety invariants', () => {
       async () => 'background',
       1001,
     );
-    const backgroundRejected = expect(background).rejects.toBeInstanceOf(
-      BushMeshTransportQueueFullError,
-    );
+    const backgroundOutcome = background.catch(error => error);
 
     const emergency = queue.enqueue(
       BushMeshPriority.Emergency,
@@ -124,7 +122,9 @@ describe('BushMesh integration safety invariants', () => {
 
     releaseActive?.();
     await expect(active).resolves.toBe('active');
-    await backgroundRejected;
+    expect(await backgroundOutcome).toBeInstanceOf(
+      BushMeshTransportQueueFullError,
+    );
     await expect(emergency).resolves.toBe('emergency');
   });
 });
