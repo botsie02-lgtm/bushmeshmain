@@ -162,12 +162,26 @@ export function prepareBushMeshPeerTextFrames(
   }
 
   const encoded = encodeTextForBushMeshPeer(text, messageId, policy, options);
-  return prepareBushMeshWireFrames(encoded.wireBytes, messageId, {
-    carrier: policy.transport,
-    priority: options.priority,
-    maxPayloadBytes: options.maxPayloadBytes,
-    allowFragmentation: policy.allowFragmentation,
-  });
+
+  try {
+    return prepareBushMeshWireFrames(encoded.wireBytes, messageId, {
+      carrier: policy.transport,
+      priority: options.priority,
+      maxPayloadBytes: options.maxPayloadBytes,
+      allowFragmentation: policy.allowFragmentation,
+    });
+  } catch (error) {
+    if (
+      !policy.allowFragmentation &&
+      error instanceof Error &&
+      error.message.includes('fragmentation is disabled')
+    ) {
+      throw new Error(
+        'Remote BushMesh peer does not support fragmentation and the encoded message exceeds the transport payload limit.',
+      );
+    }
+    throw error;
+  }
 }
 
 export function decodeBushMeshInboundTransportFrame(
