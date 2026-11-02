@@ -40,6 +40,7 @@ export * from './routeFreshness';
 export * from './routedPayload';
 export * from './routing';
 export * from './scheduler';
+export * from './securityBoundary';
 export * from './semantic';
 export * from './semanticText';
 export * from './smallPayloads';
