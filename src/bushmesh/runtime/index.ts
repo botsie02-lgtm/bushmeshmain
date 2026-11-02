@@ -4,6 +4,8 @@
  * New integrations should import the transport-neutral API from `./public`.
  * Current app/native/MeshCore orchestration is grouped in `./compatibility`.
  */
+export * from './integration';
+export * from './BushMeshDatagramRuntime';
 export * from './BushMeshAdaptivePayloadPolicy';
 export * from './BushMeshAirtimeController';
 export * from './BushMeshAirtimeTransport';
