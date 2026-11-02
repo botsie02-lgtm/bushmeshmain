@@ -110,7 +110,7 @@ class MeshCoreNativeBleRuntime private constructor(
         lastError = null
 
         try {
-          if (!gatt.requestMtu(REQUESTED_BLE_MTU)) {
+          if (!gatt.requestMtu(REQUESTED_MTU)) {
             discoverServices(gatt)
           }
         } catch (error: SecurityException) {
