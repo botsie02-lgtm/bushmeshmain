@@ -18,10 +18,19 @@ export class IdentityManager {
   ) {}
 
   async loadOrCreate(): Promise<DeviceIdentity> {
-    const existing = await this.metadata.getIdentity();
-    if (existing) {
+    const [existing, existingHandles] = await Promise.all([
+      this.metadata.getIdentity(),
+      this.metadata.getIdentityKeyHandles(),
+    ]);
+    if (existing || existingHandles) {
+      if (!existing || !existingHandles) {
+        throw new SecurityError(
+          'IDENTITY_CORRUPT',
+          'Local identity metadata and private-key handles are out of sync',
+        );
+      }
       await this.assertIdentityIntegrity(existing);
-      await this.requireCurrentKeyHandles(existing);
+      await this.requireCurrentKeyHandles(existing, existingHandles);
       return existing;
     }
 
@@ -49,8 +58,7 @@ export class IdentityManager {
         createdAt: now,
       };
 
-      await this.metadata.setIdentityKeyHandles(handles);
-      await this.metadata.setIdentity(identity);
+      await this.metadata.setLocalIdentity(identity, handles);
       committed = true;
       return identity;
     } finally {
@@ -122,8 +130,7 @@ export class IdentityManager {
         createdAt: rotatedAt,
       };
 
-      await this.metadata.setIdentityKeyHandles(nextHandles);
-      await this.metadata.setIdentity(nextIdentity);
+      await this.metadata.setLocalIdentity(nextIdentity, nextHandles);
       committed = true;
       await Promise.allSettled([
         this.crypto.deletePrivateKey(oldHandles.signingPrivateKey),
@@ -175,8 +182,11 @@ export class IdentityManager {
     return toBase64Url(await this.crypto.sha256(identityFingerprintPayload(identity)));
   }
 
-  private async requireCurrentKeyHandles(identity: DeviceIdentity): Promise<LocalIdentityKeyHandles> {
-    const handles = await this.metadata.getIdentityKeyHandles();
+  private async requireCurrentKeyHandles(
+    identity: DeviceIdentity,
+    knownHandles?: LocalIdentityKeyHandles,
+  ): Promise<LocalIdentityKeyHandles> {
+    const handles = knownHandles ?? (await this.metadata.getIdentityKeyHandles());
     if (!handles || handles.keyEpoch !== identity.keyEpoch) {
       throw new SecurityError(
         'IDENTITY_CORRUPT',
