@@ -44,7 +44,9 @@ function received(payload: number[]): ReceivedDatagram {
 
 describe('BushMesh v1 radio-core integration', () => {
   test('radio-core inbound datagrams reach the canonical application-lifetime runtime', async () => {
-    let inboundListener: ((datagram: ReceivedDatagram) => void) | null = null;
+    let inboundListener: (datagram: ReceivedDatagram) => void = () => {
+      throw new Error('Canonical runtime did not subscribe to inbound datagrams.');
+    };
     const runtime = new BushMeshDatagramRuntime();
     const session = new BushMeshRadioSession();
     const service = new BushMeshV1RuntimeService({
@@ -53,7 +55,7 @@ describe('BushMesh v1 radio-core integration', () => {
       subscribeInbound: listener => {
         inboundListener = listener;
         return () => {
-          inboundListener = null;
+          inboundListener = () => undefined;
         };
       },
     });
@@ -65,8 +67,7 @@ describe('BushMesh v1 radio-core integration', () => {
     });
 
     await service.start();
-    expect(inboundListener).not.toBeNull();
-    inboundListener?.(received(messageWire(10)));
+    inboundListener(received(messageWire(10)));
 
     await expect(resultPromise).resolves.toMatchObject({
       status: 'accepted',
