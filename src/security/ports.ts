@@ -17,9 +17,19 @@ export interface GeneratedKeyPair {
 /**
  * Cryptographic boundary for BushMesh Security v1.
  *
- * Production implementations own private key material internally. Callers only
- * receive opaque, serializable handles suitable for Android Keystore/StrongBox,
- * iOS Keychain/Secure Enclave, HSMs, or future hardware-backed providers.
+ * Production implementations own asymmetric private-key material internally.
+ * Callers receive only opaque, serializable handles. A provider MUST NOT require
+ * Security v1 callers to export PKCS#8/private-key bytes in order to sign or
+ * perform key agreement.
+ *
+ * Provider requirements:
+ * - generated handles remain resolvable after process restart until deleted;
+ * - handles are scoped to the provider named by PrivateKeyHandle.provider;
+ * - hasPrivateKey returns false for deleted/unresolvable handles;
+ * - sign/deriveSharedSecret fail closed with KEY_NOT_FOUND for an unavailable
+ *   handle and reject algorithm/purpose mismatches;
+ * - deletePrivateKey is safe to call during cleanup even after partial failure;
+ * - returned public keys use the raw 32-byte Ed25519/X25519 Security v1 format.
  */
 export interface CryptoProvider {
   randomBytes(length: number): Uint8Array;
@@ -30,7 +40,9 @@ export interface CryptoProvider {
     info: Uint8Array,
     length: number,
   ): Promise<Uint8Array>;
-  generateSigningKeyPair(purpose: Extract<PrivateKeyPurpose, 'identity-signing'>): Promise<GeneratedKeyPair>;
+  generateSigningKeyPair(
+    purpose: Extract<PrivateKeyPurpose, 'identity-signing'>,
+  ): Promise<GeneratedKeyPair>;
   generateAgreementKeyPair(
     purpose: Extract<PrivateKeyPurpose, 'identity-agreement' | 'session-ephemeral'>,
   ): Promise<GeneratedKeyPair>;
@@ -54,8 +66,10 @@ export interface CryptoProvider {
 }
 
 /**
- * Symmetric secret storage. Production implementations should use platform
- * protected storage. Asymmetric private keys do NOT flow through this API.
+ * Symmetric secret storage. Production implementations must protect values at
+ * rest with platform security facilities and must never route them through
+ * AsyncStorage, React state, logs, analytics or plaintext files. Asymmetric
+ * private keys do NOT flow through this API.
  */
 export interface SecureSecretStore {
   setSecret(name: string, value: Uint8Array): Promise<void>;
@@ -66,7 +80,10 @@ export interface SecureSecretStore {
 /**
  * Non-secret security metadata persistence.
  *
- * Atomicity requirements:
+ * Atomicity requirements are part of the production contract:
+ * - setLocalIdentity MUST atomically commit the public identity and matching
+ *   opaque private-key handles as one logical transaction. A crash must not
+ *   expose one without the other.
  * - reserveNonceCounter MUST atomically compare the persisted counter against
  *   minimumHighWatermark, increment it, durably commit, then return it.
  * - advanceNonceHighWatermark MUST be atomic, durable and monotonic (max only).
@@ -78,9 +95,8 @@ export interface SecureSecretStore {
  */
 export interface SecurityMetadataStore {
   getIdentity(): Promise<DeviceIdentity | null>;
-  setIdentity(identity: DeviceIdentity): Promise<void>;
   getIdentityKeyHandles(): Promise<LocalIdentityKeyHandles | null>;
-  setIdentityKeyHandles(handles: LocalIdentityKeyHandles): Promise<void>;
+  setLocalIdentity(identity: DeviceIdentity, handles: LocalIdentityKeyHandles): Promise<void>;
 
   listPeers(): Promise<PeerTrustRecord[]>;
   getPeer(deviceId: string): Promise<PeerTrustRecord | null>;
