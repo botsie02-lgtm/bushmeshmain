@@ -61,15 +61,15 @@ export class InMemorySecurityMetadataStore implements SecurityMetadataStore {
     return this.identity ? clone(this.identity) : null;
   }
 
-  async setIdentity(identity: DeviceIdentity): Promise<void> {
-    this.identity = clone(identity);
-  }
-
   async getIdentityKeyHandles(): Promise<LocalIdentityKeyHandles | null> {
     return this.identityKeyHandles ? clone(this.identityKeyHandles) : null;
   }
 
-  async setIdentityKeyHandles(handles: LocalIdentityKeyHandles): Promise<void> {
+  async setLocalIdentity(
+    identity: DeviceIdentity,
+    handles: LocalIdentityKeyHandles,
+  ): Promise<void> {
+    this.identity = clone(identity);
     this.identityKeyHandles = clone(handles);
   }
 
@@ -190,6 +190,16 @@ export class InMemorySecurityMetadataStore implements SecurityMetadataStore {
     }
     this.replayStates.set(scope, {maxSeen: current.maxSeen, bitmap: current.bitmap | bit});
     return true;
+  }
+
+  /** Test-only fault injection for identity-store/key-store mismatch scenarios. */
+  unsafeSetIdentity(identity: DeviceIdentity | null): void {
+    this.identity = identity ? clone(identity) : null;
+  }
+
+  /** Test-only fault injection for identity-store/key-store mismatch scenarios. */
+  unsafeSetIdentityKeyHandles(handles: LocalIdentityKeyHandles | null): void {
+    this.identityKeyHandles = handles ? clone(handles) : null;
   }
 
   /** Test-only fault injection for rollback/recovery scenarios. */
