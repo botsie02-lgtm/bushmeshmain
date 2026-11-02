@@ -7,6 +7,7 @@ import {RadioMessageSpeechBridge} from '../components/RadioMessageSpeechBridge';
 import {RecoveryCheckpointGuard} from '../components/RecoveryCheckpointGuard';
 import {SpeechAlertBridge} from '../components/SpeechAlertBridge';
 import {BushMeshProvider} from '../state/BushMeshContext';
+import {BushMeshV1RuntimeProvider} from '../state/BushMeshV1RuntimeContext';
 import {CarMessagingProvider} from '../state/CarMessagingContext';
 import {ConvoyProvider} from '../state/ConvoyContext';
 import {ConvoyFormationProvider} from '../state/ConvoyFormationContext';
@@ -33,35 +34,37 @@ export function AppProviders({
   return (
     <BushMeshProvider>
       <RadioConnectionProvider>
-        <LegacyBushMeshInboundBridge />
-        <NativeChannelMessageBridge />
-        <CarMessagingProvider>
-          <ConvoyProvider>
-            <RecoveryCheckpointGuard />
-            <ConvoyFormationProvider>
-              <ConvoyRecoveryProvider>
-                <DriveProvider>
-                  <SpeechProvider>
-                    <SpeechAlertBridge />
-                    <RadioMessageSpeechBridge />
-                    <RadioSessionProvider>
-                      <FormationProposalProvider>
-                        <OfflineMapProvider>
-                          <LocationSessionProvider>
-                            <RouteSessionProvider>
-                              <PositionRequestResponder />
-                              {children}
-                            </RouteSessionProvider>
-                          </LocationSessionProvider>
-                        </OfflineMapProvider>
-                      </FormationProposalProvider>
-                    </RadioSessionProvider>
-                  </SpeechProvider>
-                </DriveProvider>
-              </ConvoyRecoveryProvider>
-            </ConvoyFormationProvider>
-          </ConvoyProvider>
-        </CarMessagingProvider>
+        <BushMeshV1RuntimeProvider>
+          <LegacyBushMeshInboundBridge />
+          <NativeChannelMessageBridge />
+          <CarMessagingProvider>
+            <ConvoyProvider>
+              <RecoveryCheckpointGuard />
+              <ConvoyFormationProvider>
+                <ConvoyRecoveryProvider>
+                  <DriveProvider>
+                    <SpeechProvider>
+                      <SpeechAlertBridge />
+                      <RadioMessageSpeechBridge />
+                      <RadioSessionProvider>
+                        <FormationProposalProvider>
+                          <OfflineMapProvider>
+                            <LocationSessionProvider>
+                              <RouteSessionProvider>
+                                <PositionRequestResponder />
+                                {children}
+                              </RouteSessionProvider>
+                            </LocationSessionProvider>
+                          </OfflineMapProvider>
+                        </FormationProposalProvider>
+                      </RadioSessionProvider>
+                    </SpeechProvider>
+                  </DriveProvider>
+                </ConvoyRecoveryProvider>
+              </ConvoyFormationProvider>
+            </ConvoyProvider>
+          </CarMessagingProvider>
+        </BushMeshV1RuntimeProvider>
       </RadioConnectionProvider>
     </BushMeshProvider>
   );
