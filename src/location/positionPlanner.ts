@@ -1,4 +1,4 @@
-import {BushMeshPosition} from '../bushmesh/protocol';
+import {BushMeshPosition} from '../bushmesh/legacyProtocol';
 import {
   AdaptivePositionDecision,
   getAdaptivePositionDecision,
