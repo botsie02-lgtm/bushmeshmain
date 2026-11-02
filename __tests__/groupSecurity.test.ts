@@ -146,7 +146,7 @@ describe('group/convoy key handling', () => {
     const {aGroups, bGroups, group} = await setupGroup();
     const envelope = await aGroups.encrypt(group.groupId, utf8('auth group'), context);
     const ciphertextBytes = fromBase64Url(envelope.ciphertext);
-    ciphertextBytes[0] ^= 1;
+    ciphertextBytes[0] = ciphertextBytes[0] === 255 ? 254 : ciphertextBytes[0] + 1;
     await expect(
       bGroups.decrypt({...envelope, ciphertext: toBase64Url(ciphertextBytes)}, context),
     ).rejects.toMatchObject({code: 'AUTHENTICATION_FAILED'});
