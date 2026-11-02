@@ -14,15 +14,33 @@ import {
 type ScenarioRunner = () => Promise<NetworkSimulatorScenarioResult>;
 
 const scenarioCases: Array<[string, ScenarioRunner]> = [
-  ['three-node convoy B disappears for 90 seconds and rejoins', INITIAL_NETWORK_SIMULATOR_SCENARIOS[0]],
+  [
+    'three-node convoy B disappears for 90 seconds and rejoins',
+    INITIAL_NETWORK_SIMULATOR_SCENARIOS[0],
+  ],
   ['35% random packet loss', INITIAL_NETWORK_SIMULATOR_SCENARIOS[1]],
   ['network partition followed by healing', INITIAL_NETWORK_SIMULATOR_SCENARIOS[2]],
-  ['node loses GPS while remaining connected', INITIAL_NETWORK_SIMULATOR_SCENARIOS[3]],
-  ['route/path quality changes while traffic is active', INITIAL_NETWORK_SIMULATOR_SCENARIOS[4]],
-  ['congestion with ordinary traffic followed by an SOS', INITIAL_NETWORK_SIMULATOR_SCENARIOS[5]],
+  [
+    'node loses GPS while remaining connected',
+    INITIAL_NETWORK_SIMULATOR_SCENARIOS[3],
+  ],
+  [
+    'route/path quality changes while traffic is active',
+    INITIAL_NETWORK_SIMULATOR_SCENARIOS[4],
+  ],
+  [
+    'congestion with ordinary traffic followed by an SOS',
+    INITIAL_NETWORK_SIMULATOR_SCENARIOS[5],
+  ],
   ['duplicate and delayed packet storm', INITIAL_NETWORK_SIMULATOR_SCENARIOS[6]],
-  ['store-and-forward through a temporarily unreachable destination', INITIAL_NETWORK_SIMULATOR_SCENARIOS[7]],
-  ['node restart with persisted runtime state', INITIAL_NETWORK_SIMULATOR_SCENARIOS[8]],
+  [
+    'store-and-forward through a temporarily unreachable destination',
+    INITIAL_NETWORK_SIMULATOR_SCENARIOS[7],
+  ],
+  [
+    'node restart with persisted runtime state',
+    INITIAL_NETWORK_SIMULATOR_SCENARIOS[8],
+  ],
   ['long-running seeded soak', INITIAL_NETWORK_SIMULATOR_SCENARIOS[9]],
 ];
 
@@ -32,7 +50,10 @@ function wire(messageId: number, payloadBytes = 8): number[] {
     priority: BushMeshPriority.DirectMessage,
     messageId,
     ackRequested: false,
-    payload: Array.from({length: payloadBytes}, (_, index) => (messageId + index) & 0xff),
+    payload: Array.from(
+      {length: payloadBytes},
+      (_, index) => (messageId + index) & 0xff,
+    ),
   });
 }
 
@@ -122,5 +143,26 @@ describe('deterministic BushMesh network simulator', () => {
     expect(sim.metrics.carrierReconnects).toBe(1);
     expect(sim.metrics.storeAndForwardRecoveries).toBe(1);
     expect(sim.metrics.deliveredDatagrams).toBe(1);
+  });
+
+  it('does not strand queued work when link quality changes during airtime', async () => {
+    const sim = new DeterministicBushMeshNetworkSimulator(0x11223344);
+    const a = await sim.addNode({id: 1, name: 'A'});
+    await sim.addNode({id: 2, name: 'B'});
+    sim.setLink(1, 2, {bitrateBps: 80, rssiDbm: -78, snrDb: 10});
+
+    const first = await a.prepareOutbound(wire(400));
+    const second = await a.prepareOutbound(wire(401));
+    await sim.transmit(1, 2, first);
+    await sim.transmit(1, 2, second);
+
+    // The first packet is already occupying airtime here. Changing quality must
+    // mutate the existing virtual link rather than orphan its completion event.
+    sim.setLink(1, 2, {rssiDbm: -112, snrDb: -7});
+    await sim.runUntilIdle();
+
+    expect(sim.metrics.linkQualityChanges).toBe(1);
+    expect(sim.metrics.deliveredDatagrams).toBe(2);
+    expect(sim.pendingWorkCount()).toBe(0);
   });
 });
