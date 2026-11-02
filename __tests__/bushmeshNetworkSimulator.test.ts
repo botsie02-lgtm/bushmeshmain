@@ -1,7 +1,11 @@
 import {
   BushMeshPacketType,
   BushMeshPriority,
+  decodeBushMeshSecurityContainer,
+  encodeBushMeshConvoyWire,
+  encodeBushMeshProtectedDirectContainer,
   encodeBushMeshWire,
+  fragmentBushMeshDatagramPayload,
 } from '../src/bushmesh/protocol/public';
 import {
   DeterministicBushMeshNetworkSimulator,
@@ -164,5 +168,122 @@ describe('deterministic BushMesh network simulator', () => {
     expect(sim.metrics.linkQualityChanges).toBe(1);
     expect(sim.metrics.deliveredDatagrams).toBe(2);
     expect(sim.pendingWorkCount()).toBe(0);
+  });
+
+  it('lets the canonical runtime own protected fragment reassembly and fragment-pending', async () => {
+    const sim = new DeterministicBushMeshNetworkSimulator(0x44556677);
+    const a = await sim.addNode({id: 1, name: 'A'});
+    const b = await sim.addNode({id: 2, name: 'B'});
+    sim.setLink(1, 2, {lossRate: 0, baseDelayMs: 1});
+
+    const protectedDatagram = await a.prepareOutbound(wire(500, 96), {
+      trafficClass: 'direct-message',
+      identityAssociation: {kind: 'direct-session', sessionId: 'frag-session'},
+      securityRouting: {sourceNodeId: 1, destinationNodeId: 2},
+    });
+    const fragments = fragmentBushMeshDatagramPayload(
+      Array.from(protectedDatagram.payload),
+      500,
+      24,
+    );
+    expect(fragments.length).toBeGreaterThan(1);
+
+    for (let index = 0; index < fragments.length; index += 1) {
+      const fragmentDatagram = await a.prepareOutbound(fragments[index]);
+      await sim.transmit(1, 2, fragmentDatagram);
+      await sim.runUntilIdle();
+
+      if (index < fragments.length - 1) {
+        expect(b.lastInboundResult?.status).toBe('fragment-pending');
+        expect(sim.metrics.deliveredDatagrams).toBe(0);
+      }
+    }
+
+    expect(b.lastInboundResult).toMatchObject({
+      status: 'accepted',
+      kind: 'protocol',
+      protected: true,
+      securityMode: 'protected-direct',
+      securityRouting: {sourceNodeId: 1, destinationNodeId: 2},
+    });
+    expect(sim.metrics.runtimeFragmentPending).toBe(fragments.length - 1);
+    expect(sim.metrics.deliveredDatagrams).toBe(1);
+    expect(sim.pendingWorkCount()).toBe(0);
+  });
+
+  it('exercises finalized fake Security direct/group containers and fails closed on AAD tamper', async () => {
+    const sim = new DeterministicBushMeshNetworkSimulator(0x778899aa);
+    const a = await sim.addNode({id: 1, name: 'A'});
+    const b = await sim.addNode({id: 2, name: 'B'});
+    sim.setLink(1, 2, {lossRate: 0});
+
+    const direct = await a.prepareOutbound(wire(510), {
+      trafficClass: 'direct-message',
+      identityAssociation: {kind: 'direct-session', sessionId: 'direct-session'},
+      securityRouting: {sourceNodeId: 1, destinationNodeId: 2},
+    });
+    expect(Array.from(direct.payload).slice(0, 4)).toEqual([0xb5, 0x53, 0x01, 0x01]);
+    await sim.transmit(1, 2, direct);
+    await sim.runUntilIdle();
+    expect(b.lastInboundResult).toMatchObject({
+      status: 'accepted',
+      kind: 'protocol',
+      protected: true,
+      securityMode: 'protected-direct',
+    });
+
+    const convoy = encodeBushMeshConvoyWire(
+      {
+        convoyId: 7,
+        nodeId: 1,
+        sequence: 1,
+        orderIndex: 0,
+        role: 0,
+        locationUnavailable: true,
+      },
+      511,
+    );
+    const group = await a.prepareOutbound(convoy, {
+      identityAssociation: {kind: 'group', groupId: 'convoy-alpha'},
+      securityRouting: {sourceNodeId: 1, groupId: 'convoy-alpha'},
+    });
+    await sim.transmit(1, 2, group);
+    await sim.runUntilIdle();
+    expect(b.lastInboundResult).toMatchObject({
+      status: 'accepted',
+      kind: 'protocol',
+      protected: true,
+      securityMode: 'protected-group',
+      securityRouting: {sourceNodeId: 1, groupId: 'convoy-alpha'},
+    });
+
+    const untampered = await a.prepareOutbound(wire(512), {
+      trafficClass: 'direct-message',
+      identityAssociation: {kind: 'direct-session', sessionId: 'aad-session'},
+      securityRouting: {sourceNodeId: 1, destinationNodeId: 2},
+    });
+    const decoded = decodeBushMeshSecurityContainer(Array.from(untampered.payload));
+    if (
+      decoded.kind !== 'protected-direct' ||
+      decoded.protectedPayload.kind !== 'direct'
+    ) {
+      throw new Error('Expected protected direct Security container.');
+    }
+    const tamperedPayload = encodeBushMeshProtectedDirectContainer({
+      routing: {sourceNodeId: 1, destinationNodeId: 3},
+      authenticatedHeader: decoded.authenticatedHeader,
+      message: decoded.protectedPayload.message,
+    });
+    await sim.transmit(1, 2, {
+      ...untampered,
+      payload: Uint8Array.from(tamperedPayload),
+    });
+    await sim.runUntilIdle();
+
+    expect(b.lastInboundResult).toMatchObject({
+      status: 'rejected',
+      reason: 'security-failed',
+    });
+    expect(sim.metrics.runtimeRejected).toBe(1);
   });
 });
