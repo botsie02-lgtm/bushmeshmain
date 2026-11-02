@@ -8,7 +8,7 @@ import {
   encodeBushMeshWire,
   fragmentBushMeshDatagramPayload,
 } from '../src/bushmesh/protocol/public';
-import {BUSHMESH_MESHCORE_DEV_DATA_TYPE} from '../src/bushmesh/protocol';
+import {BUSHMESH_MESHCORE_DEV_DATA_TYPE} from '../src/bushmesh/legacyProtocol';
 import {BushMeshSecurityV1Adapter} from '../src/integration/BushMeshSecurityV1Adapter';
 import {
   DirectSessionManager,
