@@ -2,8 +2,8 @@
  * Stable BushMesh protocol facade.
  *
  * Keep this surface intentionally small. Application/radio adapters should not
- * depend on implementation helpers such as schedulers, persistence, MeshCore
- * carriers, debug tooling or experimental codecs.
+ * depend on implementation helpers such as carrier framing, schedulers,
+ * persistence, MeshCore adapters, debug tooling or experimental codecs.
  */
 export {
   BUSHMESH_PROTOCOL_VERSION,
@@ -61,18 +61,14 @@ export type {
 } from './capabilityPolicy';
 
 export {
-  BUSHMESH_TEXT_CARRIER_PREFIX,
   BUSHMESH_WIRE_MAGIC,
-  decodeBushMeshTextCarrier,
   decodeBushMeshWire,
-  encodeBushMeshTextCarrier,
-  encodeBushMeshTextMessage,
   encodeBushMeshWire,
 } from './transport';
-export type {
-  DecodedBushMeshWireMessage,
-  EncodedBushMeshTextMessage,
-} from './transport';
+export type {DecodedBushMeshWireMessage} from './transport';
+
+export {encodeBushMeshTextWire} from './messageEncoding';
+export type {BushMeshEncodedTextWire} from './messageEncoding';
 
 export {
   decodeBushMeshAckWire,
