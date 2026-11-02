@@ -72,6 +72,7 @@ export type SimulatorTraceEvent = {
     | 'duplicate'
     | 'runtime-rejected'
     | 'runtime-duplicate'
+    | 'runtime-fragment-pending'
     | 'peer-stale'
     | 'gps-stale'
     | 'restart'
@@ -90,6 +91,7 @@ export type DeterministicNetworkMetrics = {
   failedDatagrams: number;
   runtimeRejected: number;
   runtimeDuplicates: number;
+  runtimeFragmentPending: number;
   duplicateCopiesInjected: number;
   transportRetries: number;
   totalTransmittedBytes: number;
@@ -563,6 +565,7 @@ function createMetrics(): DeterministicNetworkMetrics {
     failedDatagrams: 0,
     runtimeRejected: 0,
     runtimeDuplicates: 0,
+    runtimeFragmentPending: 0,
     duplicateCopiesInjected: 0,
     transportRetries: 0,
     totalTransmittedBytes: 0,
@@ -1194,6 +1197,19 @@ export class DeterministicBushMeshNetworkSimulator {
         packetId: item.packetId,
         messageId: item.datagram.diagnostics.messageId,
         detail: `${result.reason}:${result.error}`,
+      });
+      return;
+    }
+
+    if (result.status === 'fragment-pending') {
+      this.metrics.runtimeFragmentPending += 1;
+      this.record({
+        kind: 'runtime-fragment-pending',
+        from: item.from,
+        to: item.to,
+        packetId: item.packetId,
+        messageId: result.messageId,
+        detail: `missing=${result.missingFragments.join(',')}`,
       });
       return;
     }
