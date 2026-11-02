@@ -247,11 +247,13 @@ describe('canonical direct/message end-to-end vertical slice', () => {
       protection: protection(setup),
     });
     const container = decodeBushMeshSecurityContainer(entry.payload);
+    if (container.kind !== 'protected-direct') {
+      throw new Error('Expected protected-direct test container.');
+    }
     const protectedPayload = container.protectedPayload;
     const sourceNodeId = container.routing.sourceNodeId;
     const destinationNodeId = container.routing.destinationNodeId;
     if (
-      container.kind !== 'protected-direct' ||
       protectedPayload.kind !== 'direct' ||
       sourceNodeId === undefined ||
       destinationNodeId === undefined
