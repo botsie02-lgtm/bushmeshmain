@@ -22,6 +22,8 @@ export type BushMeshOutboxInput = {
   expiresAtMs?: number | null;
   createdAtMs?: number;
   maxAttempts?: number;
+  transport?: string;
+  opaqueMetadata?: Readonly<Record<string, string>>;
 };
 
 export type BushMeshOutboxEntry = Omit<
@@ -71,6 +73,19 @@ function validOptionalTimestamp(value: number | null): boolean {
   return value === null || (Number.isFinite(value) && value >= 0);
 }
 
+function validOpaqueMetadata(
+  value: Readonly<Record<string, string>> | undefined,
+): boolean {
+  return (
+    value === undefined ||
+    (typeof value === 'object' &&
+      value !== null &&
+      Object.entries(value).every(
+        ([key, metadataValue]) => key.length > 0 && typeof metadataValue === 'string',
+      ))
+  );
+}
+
 /**
  * Transport-neutral Bushmesh outbox.
  *
@@ -87,6 +102,9 @@ export class InMemoryBushMeshOutbox {
     const expiresAtMs = input.expiresAtMs ?? null;
     if (!validOptionalTimestamp(expiresAtMs)) {
       throw new Error('Outbox expiry must be null or a non-negative timestamp.');
+    }
+    if (!validOpaqueMetadata(input.opaqueMetadata)) {
+      throw new Error('Outbox opaque metadata must contain string keys and values.');
     }
 
     const entry: BushMeshOutboxEntry = {
@@ -105,6 +123,10 @@ export class InMemoryBushMeshOutbox {
       nextAttemptAtMs: createdAtMs,
       lastError: null,
       acceptedAtMs: null,
+      transport: input.transport,
+      opaqueMetadata: input.opaqueMetadata
+        ? {...input.opaqueMetadata}
+        : undefined,
     };
 
     this.entries.push(entry);
@@ -330,6 +352,9 @@ export class InMemoryBushMeshOutbox {
     if (!validOptionalTimestamp(entry.expiresAtMs)) {
       throw new Error(`Restored outbox entry ${entry.id} has an invalid expiry.`);
     }
+    if (!validOpaqueMetadata(entry.opaqueMetadata)) {
+      throw new Error(`Restored outbox entry ${entry.id} has invalid opaque metadata.`);
+    }
     if (
       !Number.isInteger(entry.maxAttempts) ||
       entry.maxAttempts < 1 ||
@@ -342,7 +367,13 @@ export class InMemoryBushMeshOutbox {
   }
 
   private clone(entry: BushMeshOutboxEntry): BushMeshOutboxEntry {
-    return {...entry, payload: Uint8Array.from(entry.payload)};
+    return {
+      ...entry,
+      payload: Uint8Array.from(entry.payload),
+      opaqueMetadata: entry.opaqueMetadata
+        ? {...entry.opaqueMetadata}
+        : undefined,
+    };
   }
 
   private requireEntry(id: string): BushMeshOutboxEntry {
