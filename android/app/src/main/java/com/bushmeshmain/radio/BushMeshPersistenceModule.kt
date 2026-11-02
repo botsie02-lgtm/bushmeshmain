@@ -27,12 +27,14 @@ class BushMeshPersistenceModule(
     private const val MESSAGES_KEY = "encrypted_messages_snapshot"
     private const val MAP_STATE_KEY = "encrypted_map_state_snapshot"
     private const val FORMATION_KEY = "encrypted_formation_snapshot"
+    private const val CANONICAL_RUNTIME_KEY = "encrypted_canonical_runtime_state"
     private const val OUTBOX_KEY_ALIAS = "bushmesh_outbox_aes_v1"
     private const val TRACK_KEY_ALIAS = "bushmesh_track_aes_v1"
     private const val CONTACTS_KEY_ALIAS = "bushmesh_contacts_aes_v1"
     private const val MESSAGES_KEY_ALIAS = "bushmesh_messages_aes_v1"
     private const val MAP_STATE_KEY_ALIAS = "bushmesh_map_state_aes_v1"
     private const val FORMATION_KEY_ALIAS = "bushmesh_formation_aes_v1"
+    private const val CANONICAL_RUNTIME_KEY_ALIAS = "bushmesh_canonical_runtime_aes_v1"
     private const val ENVELOPE_VERSION = "v1"
     private const val OUTBOX_AAD = ENVELOPE_VERSION
     private const val TRACK_AAD = "$ENVELOPE_VERSION:track"
@@ -40,6 +42,7 @@ class BushMeshPersistenceModule(
     private const val MESSAGES_AAD = "$ENVELOPE_VERSION:messages"
     private const val MAP_STATE_AAD = "$ENVELOPE_VERSION:map-state"
     private const val FORMATION_AAD = "$ENVELOPE_VERSION:formation"
+    private const val CANONICAL_RUNTIME_AAD = "$ENVELOPE_VERSION:canonical-runtime"
     private const val GCM_TAG_BITS = 128
     private const val GCM_IV_BYTES = 12
   }
@@ -164,6 +167,52 @@ class BushMeshPersistenceModule(
   @ReactMethod
   fun resetFormationStorage(promise: Promise) {
     resetStorage(FORMATION_KEY, FORMATION_KEY_ALIAS, "BUSHMESH_FORMATION_RESET_FAILED", "formation", promise)
+  }
+
+  @ReactMethod
+  fun loadCanonicalRuntimeState(promise: Promise) {
+    loadSecureValue(
+      CANONICAL_RUNTIME_KEY,
+      CANONICAL_RUNTIME_KEY_ALIAS,
+      CANONICAL_RUNTIME_AAD,
+      "canonical runtime",
+      "BUSHMESH_CANONICAL_RUNTIME_LOAD_FAILED",
+      promise,
+    )
+  }
+
+  @ReactMethod
+  fun saveCanonicalRuntimeState(serializedState: String, promise: Promise) {
+    saveSecureValue(
+      CANONICAL_RUNTIME_KEY,
+      CANONICAL_RUNTIME_KEY_ALIAS,
+      CANONICAL_RUNTIME_AAD,
+      "canonical runtime",
+      "BUSHMESH_CANONICAL_RUNTIME_SAVE_FAILED",
+      serializedState,
+      promise,
+    )
+  }
+
+  @ReactMethod
+  fun clearCanonicalRuntimeState(promise: Promise) {
+    clearSecureValue(
+      CANONICAL_RUNTIME_KEY,
+      "canonical runtime",
+      "BUSHMESH_CANONICAL_RUNTIME_CLEAR_FAILED",
+      promise,
+    )
+  }
+
+  @ReactMethod
+  fun resetCanonicalRuntimeStorage(promise: Promise) {
+    resetStorage(
+      CANONICAL_RUNTIME_KEY,
+      CANONICAL_RUNTIME_KEY_ALIAS,
+      "BUSHMESH_CANONICAL_RUNTIME_RESET_FAILED",
+      "canonical runtime",
+      promise,
+    )
   }
 
   private fun loadSecureValue(
