@@ -83,6 +83,18 @@ describe('secure direct-message sessions', () => {
     await expect(bSessions.decrypt(envelope, context)).resolves.toBeDefined();
   });
 
+  test('authenticated protocol header tampering fails without consuming replay state', async () => {
+    const {aSessions, bSessions, aSession} = await establish();
+    const envelope = await aSessions.encrypt(aSession.sessionId, utf8('header-bound'), context);
+    await expect(
+      bSessions.decrypt(envelope, {
+        protocolVersion: context.protocolVersion,
+        authenticatedHeader: utf8('tampered-header'),
+      }),
+    ).rejects.toMatchObject({code: 'AUTHENTICATION_FAILED'});
+    await expect(bSessions.decrypt(envelope, context)).resolves.toEqual(utf8('header-bound'));
+  });
+
   test('wrong receive key fails authentication', async () => {
     const {a, b, aSessions, bSessions, aSession, bSession} = await establish();
     const envelope = await aSessions.encrypt(aSession.sessionId, utf8('secret'), context);
@@ -99,6 +111,47 @@ describe('secure direct-message sessions', () => {
     await bSessions.revokeSessionsForPeer(aIdentity.deviceId);
     const envelope = await aSessions.encrypt(aSession.sessionId, utf8('blocked'), context);
     await expect(bSessions.decrypt(envelope, context)).rejects.toMatchObject({code: 'PEER_REVOKED'});
+  });
+
+  test('revocation that occurs during encryption prevents the in-flight envelope from being returned', async () => {
+    const {a, b, aSessions, aSession} = await establish();
+    const bIdentity = await b.identity.current();
+    const originalEncrypt = a.crypto.aeadEncrypt.bind(a.crypto);
+    let release!: () => void;
+    let started!: () => void;
+    const startedPromise = new Promise<void>(resolve => {
+      started = resolve;
+    });
+    const releasePromise = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const spy = jest.spyOn(a.crypto, 'aeadEncrypt').mockImplementation(async (...args) => {
+      started();
+      await releasePromise;
+      return originalEncrypt(...args);
+    });
+
+    try {
+      const inFlight = aSessions.encrypt(aSession.sessionId, utf8('queued-before-revoke'), context);
+      await startedPromise;
+      await a.trust.revoke(bIdentity.deviceId, 'revoked while queued');
+      await aSessions.revokeSessionsForPeer(bIdentity.deviceId);
+      release();
+      await expect(inFlight).rejects.toMatchObject({code: 'PEER_REVOKED'});
+    } finally {
+      release();
+      spy.mockRestore();
+    }
+  });
+
+  test('stale sessions fail with ROTATED_KEY immediately after trusted peer identity rotation', async () => {
+    const {a, b, aSessions, aSession} = await establish();
+    const proof = await b.identity.rotateKeys();
+    await a.trust.applyRotation(proof);
+    await expect(
+      aSessions.encrypt(aSession.sessionId, utf8('stale-fingerprint'), context),
+    ).rejects.toMatchObject({code: 'ROTATED_KEY'});
+    expect(await aSessions.rotateSessionsForPeer(proof.nextIdentity.deviceId)).toBe(1);
   });
 
   test('expired and rotated session keys are rejected', async () => {
@@ -169,6 +222,43 @@ describe('secure direct-message sessions', () => {
     const offer = await aSessions.createOffer((await b.identity.current()).deviceId);
     await bSessions.acceptOffer(offer);
     await expect(bSessions.acceptOffer(offer)).rejects.toMatchObject({code: 'REPLAY_DETECTED'});
+  });
+
+  test('revoked peer cannot complete a previously issued handshake', async () => {
+    const a = createSecurityNode();
+    const b = createSecurityNode();
+    const {aIdentity, bIdentity} = await mutuallyTrust(a, b);
+    const aSessions = new DirectSessionManager(
+      a.crypto, a.secrets, a.metadata, a.identity, a.trust, a.versions, a.clock,
+    );
+    const bSessions = new DirectSessionManager(
+      b.crypto, b.secrets, b.metadata, b.identity, b.trust, b.versions, b.clock,
+    );
+    const offer = await aSessions.createOffer(bIdentity.deviceId);
+    await b.trust.revoke(aIdentity.deviceId, 'revoked before accept');
+    await expect(bSessions.acceptOffer(offer)).rejects.toMatchObject({code: 'PEER_REVOKED'});
+  });
+
+  test('deleted pending opaque key handle fails closed and can be explicitly aborted before retry', async () => {
+    const a = createSecurityNode();
+    const b = createSecurityNode();
+    await mutuallyTrust(a, b);
+    const aSessions = new DirectSessionManager(
+      a.crypto, a.secrets, a.metadata, a.identity, a.trust, a.versions, a.clock,
+    );
+    const bSessions = new DirectSessionManager(
+      b.crypto, b.secrets, b.metadata, b.identity, b.trust, b.versions, b.clock,
+    );
+    const bIdentity = await b.identity.current();
+    const offer = await aSessions.createOffer(bIdentity.deviceId);
+    const pending = await a.metadata.getPendingHandshake(offer.handshakeId);
+    expect(pending).not.toBeNull();
+    await a.crypto.deletePrivateKey(pending!.privateKeyHandle);
+    const {response} = await bSessions.acceptOffer(offer);
+    await expect(aSessions.finalizeOffer(response)).rejects.toMatchObject({code: 'KEY_NOT_FOUND'});
+    await aSessions.abortPending(offer.handshakeId);
+    const retry = await aSessions.createOffer(bIdentity.deviceId);
+    await expect(bSessions.acceptOffer(retry)).resolves.toBeDefined();
   });
 
   test('malformed response timestamp is rejected before session establishment', async () => {
