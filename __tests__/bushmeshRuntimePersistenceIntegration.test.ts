@@ -1,5 +1,6 @@
 import {
   BushMeshDatagramRuntime,
+  type BushMeshRuntimeClock,
 } from '../src/bushmesh/runtime/public';
 import {
   BushMeshPacketType,
@@ -29,6 +30,26 @@ class MemoryRadioCoreRuntimeStore implements RadioCoreCanonicalRuntimeStateStore
   }
 }
 
+class TestRuntimeClock implements BushMeshRuntimeClock {
+  constructor(private currentMs: number) {}
+
+  now(): number {
+    return this.currentMs;
+  }
+
+  setNow(value: number): void {
+    this.currentMs = value;
+  }
+
+  setTimeout(handler: () => void, delayMs: number): ReturnType<typeof setTimeout> {
+    return setTimeout(handler, delayMs);
+  }
+
+  clearTimeout(handle: unknown): void {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  }
+}
+
 function messageWire(messageId: number): number[] {
   return encodeBushMeshWire({
     type: BushMeshPacketType.Message,
@@ -55,9 +76,10 @@ describe('radio-core canonical runtime persistence integration', () => {
   test('restores canonical dedup state after an application runtime restart', async () => {
     const store = new MemoryRadioCoreRuntimeStore();
     const persistence = new RadioCoreBushMeshRuntimePersistence(store);
+    const clock = new TestRuntimeClock(1000);
     const wire = messageWire(701);
 
-    const first = new BushMeshDatagramRuntime({persistence});
+    const first = new BushMeshDatagramRuntime({persistence, clock});
     await first.initialize();
     expect(await first.acceptInbound(inbound(wire, 1000))).toMatchObject({
       status: 'accepted',
@@ -66,7 +88,8 @@ describe('radio-core canonical runtime persistence integration', () => {
     await first.flush();
     expect(store.value).not.toBeNull();
 
-    const restarted = new BushMeshDatagramRuntime({persistence});
+    clock.setNow(1100);
+    const restarted = new BushMeshDatagramRuntime({persistence, clock});
     expect(await restarted.initialize()).toBeGreaterThan(0);
     expect(await restarted.acceptInbound(inbound(wire, 1100))).toMatchObject({
       status: 'duplicate',
