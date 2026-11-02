@@ -9,12 +9,16 @@ export type OutboundRetryPolicy = {
   maxAttempts: number;
 };
 
+export type OutboundDatagramOpaqueMetadata = Readonly<Record<string, string>>;
+
 /**
  * Runtime-neutral handoff from an application/protocol runtime to radio-core.
  *
  * The payload is already encoded before it crosses this boundary. Radio-core
  * owns queueing, retry, expiry and transport acceptance only; it does not
- * interpret or construct protocol packets.
+ * interpret or construct protocol packets. Optional opaque metadata is carried
+ * through unchanged for diagnostics/association tracing and is never decoded by
+ * radio-core.
  */
 export type OutboundDatagramEnvelope = {
   channelIndex: number;
@@ -26,4 +30,6 @@ export type OutboundDatagramEnvelope = {
   identityRef: string | null;
   description: string;
   createdAtMs?: number;
+  transport?: string;
+  opaqueMetadata?: OutboundDatagramOpaqueMetadata;
 };
