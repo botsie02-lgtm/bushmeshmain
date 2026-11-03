@@ -1,7 +1,12 @@
 package com.bushmeshmain.radio
 
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PersistableBundle
 import android.util.Base64
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -89,6 +94,31 @@ class BushMeshRadioServiceModule(
       promise.resolve(result)
     } catch (error: Exception) {
       promise.reject("BUSHMESH_SECURE_RANDOM_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun copySensitiveTextToClipboard(text: String, promise: Promise) {
+    try {
+      if (text.isBlank() || text.length > 4096) {
+        promise.reject(
+          "BUSHMESH_SENSITIVE_CLIPBOARD_INVALID_TEXT",
+          "Sensitive clipboard text must contain between 1 and 4096 characters.",
+        )
+        return
+      }
+
+      val clipboard = reactContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+      val clip = ClipData.newPlainText("BushMesh MeshCore carrier PSK", text)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        clip.description.extras = PersistableBundle().apply {
+          putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+        }
+      }
+      clipboard.setPrimaryClip(clip)
+      promise.resolve(true)
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_SENSITIVE_CLIPBOARD_FAILED", error.message, error)
     }
   }
 
