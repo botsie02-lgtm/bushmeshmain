@@ -33,6 +33,8 @@ import {
   buildSendChannelMessageCommand,
   buildSetChannelCommand,
   buildSetDeviceTimeCommand,
+  buildSetRadioParamsCommand,
+  buildSetRadioTxPowerCommand,
   getBatteryCommandHex,
   getChannelCommandHex,
   getContactsCommandHex,
@@ -41,6 +43,8 @@ import {
   sendChannelDataFloodCommandHex,
   sendChannelMessageCommandHex,
   setChannelCommandSafeHex,
+  setRadioParamsCommandHex,
+  setRadioTxPowerCommandHex,
 } from './meshcoreCommands';
 import {
   MeshCoreChannelDataFrame,
@@ -55,6 +59,14 @@ import {
   redactMeshCoreParsedLines,
 } from './meshcoreDiagnostics';
 import {meshCoreFrameToReceivedDatagram} from './MeshCoreReceivedDatagramAdapter';
+import {
+  MeshCoreRadioParams,
+  repeatModeForRadioWrite,
+  validateMeshCoreRadioParams,
+  validateMeshCoreTxPower,
+  verifyMeshCoreRadioParams,
+  verifyMeshCoreTxPower,
+} from './meshcoreRadioSettings';
 import {
   MeshCoreSelfInfo,
   parseMeshCoreSelfInfo,
@@ -279,6 +291,60 @@ export class MeshCoreClient {
       ),
     );
     return this.getDeviceTime();
+  }
+
+  async setRadioParams(input: MeshCoreRadioParams): Promise<MeshCoreSelfInfo> {
+    const validated = validateMeshCoreRadioParams(input);
+    const deviceResponse = await this.sendDeviceQuery();
+    if (!deviceResponse.deviceInfo) {
+      throw new Error('MeshCore Device Info is required before changing radio parameters.');
+    }
+    const repeatMode = repeatModeForRadioWrite(deviceResponse.deviceInfo);
+
+    await this.enqueueCommand('CMD_SET_RADIO_PARAMS', () =>
+      this.executeCommandAndWaitForPacket(
+        'CMD_SET_RADIO_PARAMS',
+        buildSetRadioParamsCommand(validated, repeatMode),
+        setRadioParamsCommandHex(validated, repeatMode),
+        [0x00],
+        'PACKET_OK',
+      ),
+    );
+
+    const readBack = await this.sendAppStart('BushMesh');
+    if (!readBack.selfInfo) {
+      throw new Error('MeshCore SELF_INFO was unavailable after changing radio parameters.');
+    }
+    verifyMeshCoreRadioParams(validated, readBack.selfInfo);
+    return readBack.selfInfo;
+  }
+
+  async setRadioTxPower(txPowerDbm: number): Promise<MeshCoreSelfInfo> {
+    const before = await this.sendAppStart('BushMesh');
+    if (!before.selfInfo) {
+      throw new Error('MeshCore SELF_INFO is required before changing TX power.');
+    }
+    const validated = validateMeshCoreTxPower(
+      txPowerDbm,
+      before.selfInfo.maxTxPower,
+    );
+
+    await this.enqueueCommand('CMD_SET_RADIO_TX_POWER', () =>
+      this.executeCommandAndWaitForPacket(
+        'CMD_SET_RADIO_TX_POWER',
+        buildSetRadioTxPowerCommand(validated),
+        setRadioTxPowerCommandHex(validated),
+        [0x00],
+        'PACKET_OK',
+      ),
+    );
+
+    const readBack = await this.sendAppStart('BushMesh');
+    if (!readBack.selfInfo) {
+      throw new Error('MeshCore SELF_INFO was unavailable after changing TX power.');
+    }
+    verifyMeshCoreTxPower(validated, readBack.selfInfo);
+    return readBack.selfInfo;
   }
 
   async getChannel(channelIndex: number): Promise<MeshCoreLogItem> {
