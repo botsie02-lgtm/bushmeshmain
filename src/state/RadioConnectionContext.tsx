@@ -27,6 +27,8 @@ type RadioConnectionContextValue = {
   getBatteryStatus: () => Promise<void>;
   getDeviceTime: AppRadioConnectionService['getDeviceTime'];
   setDeviceTimeToPhone: AppRadioConnectionService['setDeviceTimeToPhone'];
+  refreshRadioSettings: AppRadioConnectionService['refreshRadioSettings'];
+  applyAndVerifyRadioSettings: AppRadioConnectionService['applyAndVerifyRadioSettings'];
   syncContacts: () => ReturnType<AppRadioConnectionService['syncContacts']>;
   lookupContact: AppRadioConnectionService['lookupContact'];
   addOrUpdateContact: AppRadioConnectionService['addOrUpdateContact'];
@@ -159,6 +161,8 @@ export function RadioConnectionProvider({
       getBatteryStatus: () => service.getBatteryStatus(),
       getDeviceTime: () => service.getDeviceTime(),
       setDeviceTimeToPhone: () => service.setDeviceTimeToPhone(),
+      refreshRadioSettings: () => service.refreshRadioSettings(),
+      applyAndVerifyRadioSettings: input => service.applyAndVerifyRadioSettings(input),
       syncContacts: () => service.syncContacts(),
       lookupContact: valueToFind => service.lookupContact(valueToFind),
       addOrUpdateContact: input => service.addOrUpdateContact(input),
