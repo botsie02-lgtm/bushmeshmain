@@ -57,6 +57,11 @@ function harness(behavior: SetBehavior) {
     txPower: 20,
   };
   const writes: number[][] = [];
+  const emit = (frame: number[]) => {
+    Promise.resolve().then(() => {
+      handlers?.onFrame(frame);
+    });
+  };
 
   const transport: MeshCoreFrameTransport = {
     id: 'native-radio-test',
@@ -70,11 +75,11 @@ function harness(behavior: SetBehavior) {
       writes.push(bytes);
       const command = bytes[0];
       if (command === 0x01) {
-        queueMicrotask(() => handlers?.onFrame(selfInfoFrame(profile)));
+        emit(selfInfoFrame(profile));
         return;
       }
       if (command === 0x16) {
-        queueMicrotask(() => handlers?.onFrame(deviceInfoFrame(1)));
+        emit(deviceInfoFrame(1));
         return;
       }
       if (command === 0x0b) {
@@ -82,7 +87,7 @@ function harness(behavior: SetBehavior) {
           throw new Error('Native BLE disconnected during radio write.');
         }
         if (behavior === 'packet-error') {
-          queueMicrotask(() => handlers?.onFrame([0x01, 2]));
+          emit([0x01, 2]);
           return;
         }
         if (behavior === 'timeout') return;
@@ -98,13 +103,13 @@ function harness(behavior: SetBehavior) {
             codingRate: bytes[10],
           };
         }
-        queueMicrotask(() => handlers?.onFrame([0x00]));
+        emit([0x00]);
         return;
       }
       if (command === 0x0c) {
         const signed = bytes[1] > 127 ? bytes[1] - 256 : bytes[1];
         profile = {...profile, txPower: signed};
-        queueMicrotask(() => handlers?.onFrame([0x00]));
+        emit([0x00]);
       }
     }),
   };
