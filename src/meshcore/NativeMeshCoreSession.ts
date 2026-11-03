@@ -6,14 +6,27 @@ import {
 } from '../radio/ReceivedDatagram';
 import {meshCoreSelfInfoToRadioProfile} from '../radio/meshCoreRadioProfile';
 import {
+  MeshCoreChannelInfo,
+  parseMeshCoreChannelInfo,
+} from './meshcoreChannelInfo';
+import {
+  buildAddUpdateContactCommand,
   buildAppStartCommand,
   buildDeviceQueryCommand,
+  buildExportContactCommand,
   buildGetBatteryCommand,
   buildGetChannelCommand,
+  buildGetContactByKeyCommand,
   buildGetContactsCommand,
+  buildGetDeviceTimeCommand,
   buildGetMessageCommand,
+  buildImportContactCommand,
+  buildRemoveContactCommand,
   buildSendChannelDataFloodCommand,
   buildSendChannelMessageCommand,
+  buildSetChannelCommand,
+  buildSetDeviceTimeCommand,
+  MeshCoreContactWriteInput,
 } from './meshcoreCommands';
 import {
   MeshCoreChannelDataFrame,
@@ -35,6 +48,7 @@ import {
   MeshCoreSelfInfo,
   parseMeshCoreSelfInfo,
 } from './meshcoreSelfInfo';
+import {validateMeshCoreChannelIndex} from './meshcoreProvisioning';
 import {SerialTaskQueue} from './serialTaskQueue';
 
 const COMMAND_TIMEOUT_MS = 5_000;
@@ -68,6 +82,16 @@ type PendingCommand = {
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 };
+
+function readUInt32LE(bytes: number[], offset: number): number | null {
+  if (bytes.length < offset + 4) return null;
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0;
+}
 
 /**
  * Core MeshCore companion session running over the Android-owned BLE transport.
@@ -135,10 +159,39 @@ export class NativeMeshCoreSession {
     return response;
   }
 
+  async getDeviceInfo(): Promise<MeshCoreDeviceInfo> {
+    if (this.lastDeviceInfo) return this.lastDeviceInfo;
+    const response = await this.sendDeviceQuery();
+    if (!response.deviceInfo) {
+      throw new Error('MeshCore Device Info response could not be parsed.');
+    }
+    return response.deviceInfo;
+  }
+
   async getBatteryStatus(): Promise<NativeMeshCoreResponse> {
     return this.enqueueCommand('CMD_GET_BATTERY', () =>
       this.executeCommand('CMD_GET_BATTERY', buildGetBatteryCommand(), [0x0c]),
     );
+  }
+
+  async getDeviceTime(): Promise<number> {
+    const response = await this.enqueueCommand('CMD_GET_DEVICE_TIME', () =>
+      this.executeCommand('CMD_GET_DEVICE_TIME', buildGetDeviceTimeCommand(), [0x09]),
+    );
+    const seconds = readUInt32LE(response.bytes, 1);
+    if (seconds === null) throw new Error('MeshCore device time response was malformed.');
+    return seconds;
+  }
+
+  async setDeviceTime(timestampSeconds: number): Promise<number> {
+    await this.enqueueCommand('CMD_SET_DEVICE_TIME', () =>
+      this.executeCommand(
+        'CMD_SET_DEVICE_TIME',
+        buildSetDeviceTimeCommand(timestampSeconds),
+        [0x00],
+      ),
+    );
+    return this.getDeviceTime();
   }
 
   async getChannel(channelIndex: number): Promise<NativeMeshCoreResponse> {
@@ -151,12 +204,45 @@ export class NativeMeshCoreSession {
     );
   }
 
+  async readChannel(channelIndex: number): Promise<MeshCoreChannelInfo> {
+    const deviceInfo = await this.getDeviceInfo();
+    if (!deviceInfo.maxChannels) {
+      throw new Error('MeshCore firmware did not advertise maxChannels.');
+    }
+    validateMeshCoreChannelIndex(channelIndex, deviceInfo.maxChannels);
+    const response = await this.getChannel(channelIndex);
+    const parsed = parseMeshCoreChannelInfo(response.bytes);
+    if (!parsed || parsed.channelIndex !== channelIndex) {
+      throw new Error(`MeshCore channel ${channelIndex} response was malformed.`);
+    }
+    return parsed;
+  }
+
+  async writeChannel(
+    channelIndex: number,
+    channelName: string,
+    secret: Uint8Array,
+  ): Promise<void> {
+    const deviceInfo = await this.getDeviceInfo();
+    if (!deviceInfo.maxChannels) {
+      throw new Error('MeshCore firmware did not advertise maxChannels.');
+    }
+    validateMeshCoreChannelIndex(channelIndex, deviceInfo.maxChannels);
+    await this.enqueueCommand(`CMD_SET_CHANNEL_${channelIndex}`, () =>
+      this.executeCommand(
+        `CMD_SET_CHANNEL_${channelIndex}`,
+        buildSetChannelCommand(channelIndex, channelName, secret),
+        [0x00],
+      ),
+    );
+  }
+
   async probeChannels(): Promise<NativeMeshCoreResponse[]> {
-    const advertised = this.lastDeviceInfo?.maxChannels;
-    const count =
-      typeof advertised === 'number' && advertised > 0
-        ? Math.min(advertised, 8)
-        : 8;
+    const deviceInfo = await this.getDeviceInfo();
+    const count = deviceInfo.maxChannels;
+    if (!count || count <= 0) {
+      throw new Error('MeshCore firmware did not advertise a usable channel capacity.');
+    }
     const responses: NativeMeshCoreResponse[] = [];
     for (let index = 0; index < count; index += 1) {
       responses.push(await this.getChannel(index));
@@ -170,10 +256,69 @@ export class NativeMeshCoreSession {
     );
   }
 
+  async lookupContact(publicKey: string): Promise<ParsedContactInfo> {
+    const response = await this.enqueueCommand('CMD_GET_CONTACT_BY_KEY', () =>
+      this.executeCommand(
+        'CMD_GET_CONTACT_BY_KEY',
+        buildGetContactByKeyCommand(publicKey),
+        [0x03],
+      ),
+    );
+    if (!response.parsed?.contactInfo) {
+      throw new Error('MeshCore contact lookup returned an invalid contact record.');
+    }
+    return response.parsed.contactInfo;
+  }
+
+  async addOrUpdateContact(
+    input: MeshCoreContactWriteInput,
+  ): Promise<ParsedContactInfo> {
+    await this.enqueueCommand('CMD_ADD_UPDATE_CONTACT', () =>
+      this.executeCommand(
+        'CMD_ADD_UPDATE_CONTACT',
+        buildAddUpdateContactCommand(input),
+        [0x00],
+      ),
+    );
+    return this.lookupContact(input.publicKey);
+  }
+
+  async removeContact(publicKey: string): Promise<void> {
+    await this.enqueueCommand('CMD_REMOVE_CONTACT', () =>
+      this.executeCommand(
+        'CMD_REMOVE_CONTACT',
+        buildRemoveContactCommand(publicKey),
+        [0x00],
+      ),
+    );
+  }
+
+  async exportContact(publicKey: string): Promise<Uint8Array> {
+    const response = await this.enqueueCommand('CMD_EXPORT_CONTACT', () =>
+      this.executeCommand(
+        'CMD_EXPORT_CONTACT',
+        buildExportContactCommand(publicKey),
+        [0x0b],
+      ),
+    );
+    return Uint8Array.from(response.bytes);
+  }
+
+  async importContact(exportedContact: Uint8Array): Promise<void> {
+    await this.enqueueCommand('CMD_IMPORT_CONTACT', () =>
+      this.executeCommand(
+        'CMD_IMPORT_CONTACT',
+        buildImportContactCommand(exportedContact),
+        [0x00],
+      ),
+    );
+  }
+
   async sendChannelMessage(
     channelIndex: number,
     message: string,
   ): Promise<NativeMeshCoreResponse> {
+    this.validateKnownChannelIndex(channelIndex);
     const cleanMessage = message.trim();
     if (!cleanMessage) throw new Error('Message is empty.');
     if (cleanMessage.length > MAX_CHANNEL_MESSAGE_CHARS) {
@@ -222,6 +367,7 @@ export class NativeMeshCoreSession {
     dataType: number,
     payload: Uint8Array,
   ): Promise<NativeMeshCoreResponse> {
+    this.validateKnownChannelIndex(channelIndex);
     return this.enqueueCommand(`CMD_SEND_CHANNEL_DATA_${channelIndex}`, () =>
       this.executeCommand(
         `CMD_SEND_CHANNEL_DATA_${channelIndex}`,
@@ -241,6 +387,13 @@ export class NativeMeshCoreSession {
       BUSHMESH_MESHCORE_DEV_DATA_TYPE,
       payload,
     );
+  }
+
+  private validateKnownChannelIndex(channelIndex: number): void {
+    const maxChannels = this.lastDeviceInfo?.maxChannels;
+    if (maxChannels && maxChannels > 0) {
+      validateMeshCoreChannelIndex(channelIndex, maxChannels);
+    }
   }
 
   private async syncContactsInternal(since?: number): Promise<ParsedContactInfo[]> {
