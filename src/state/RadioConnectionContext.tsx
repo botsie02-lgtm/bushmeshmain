@@ -25,7 +25,21 @@ type RadioConnectionContextValue = {
   disconnect: () => Promise<void>;
   runActiveStartupSync: () => Promise<void>;
   getBatteryStatus: () => Promise<void>;
+  getDeviceTime: AppRadioConnectionService['getDeviceTime'];
+  setDeviceTimeToPhone: AppRadioConnectionService['setDeviceTimeToPhone'];
   syncContacts: () => ReturnType<AppRadioConnectionService['syncContacts']>;
+  lookupContact: AppRadioConnectionService['lookupContact'];
+  addOrUpdateContact: AppRadioConnectionService['addOrUpdateContact'];
+  removeContact: AppRadioConnectionService['removeContact'];
+  exportContact: AppRadioConnectionService['exportContact'];
+  importContact: AppRadioConnectionService['importContact'];
+  refreshChannels: AppRadioConnectionService['refreshChannels'];
+  createPrivateChannel: AppRadioConnectionService['createPrivateChannel'];
+  joinPrivateChannel: AppRadioConnectionService['joinPrivateChannel'];
+  clearChannel: AppRadioConnectionService['clearChannel'];
+  revealChannelSecret: AppRadioConnectionService['revealChannelSecret'];
+  createConvoy: AppRadioConnectionService['createConvoy'];
+  joinConvoy: AppRadioConnectionService['joinConvoy'];
   sendAppStart: () => Promise<void>;
   sendDeviceQuery: () => Promise<void>;
   getChannel0: () => Promise<void>;
@@ -143,7 +157,21 @@ export function RadioConnectionProvider({
       disconnect: () => service.disconnect(),
       runActiveStartupSync: () => service.runActiveStartupSync(),
       getBatteryStatus: () => service.getBatteryStatus(),
+      getDeviceTime: () => service.getDeviceTime(),
+      setDeviceTimeToPhone: () => service.setDeviceTimeToPhone(),
       syncContacts: () => service.syncContacts(),
+      lookupContact: valueToFind => service.lookupContact(valueToFind),
+      addOrUpdateContact: input => service.addOrUpdateContact(input),
+      removeContact: valueToRemove => service.removeContact(valueToRemove),
+      exportContact: valueToExport => service.exportContact(valueToExport),
+      importContact: exported => service.importContact(exported),
+      refreshChannels: () => service.refreshChannels(),
+      createPrivateChannel: input => service.createPrivateChannel(input),
+      joinPrivateChannel: input => service.joinPrivateChannel(input),
+      clearChannel: index => service.clearChannel(index),
+      revealChannelSecret: index => service.revealChannelSecret(index),
+      createConvoy: input => service.createConvoy(input),
+      joinConvoy: input => service.joinConvoy(input),
       sendAppStart: () => service.sendAppStart(),
       sendDeviceQuery: () => service.sendDeviceQuery(),
       getChannel0: () => service.getChannel0(),
