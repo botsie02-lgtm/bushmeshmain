@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import {Device} from 'react-native-ble-plx';
 
+import {RadioSettingsPanel} from '../components/RadioSettingsPanel';
 import {
   NativeMeshCoreOwnershipSnapshot,
   nativeMeshCoreSessionCoordinator,
@@ -168,6 +169,8 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
           <Text style={styles.errorText}>{displayedError}</Text>
         ) : null}
       </View>
+
+      {nativeActive ? <RadioSettingsPanel /> : null}
 
       {nativeActive ? (
         <TouchableOpacity
