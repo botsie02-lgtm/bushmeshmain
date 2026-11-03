@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 
+import {AdvancedCarrierCredentials} from '../components/AdvancedCarrierCredentials';
 import {
   bearingDegrees,
   compassDirection,
@@ -355,6 +356,7 @@ export function ConvoyScreen(): React.JSX.Element {
             <Text style={styles.profileText}>
               Carrier {enrollmentProfile.channelName} · slot {enrollmentProfile.channelIndex}
             </Text>
+            <AdvancedCarrierCredentials profile={enrollmentProfile} />
           </View>
         ) : null}
       </View>
