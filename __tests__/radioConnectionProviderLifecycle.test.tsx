@@ -22,6 +22,18 @@ function fakeDevice(): Device {
   return device;
 }
 
+const fakeDeviceInfo = {
+  firmwareVersion: 3,
+  maxContacts: 32,
+  maxChannels: 2,
+  blePin: null,
+  firmwareBuild: 'test',
+  model: 'test',
+  version: 'test',
+  clientRepeat: null,
+  pathHashMode: null,
+};
+
 function createServiceHarness() {
   const device = fakeDevice();
   const manager = {
@@ -35,7 +47,15 @@ function createServiceHarness() {
     start: jest.fn(),
     stop: jest.fn(),
     sendAppStart: jest.fn().mockResolvedValue({}),
-    sendDeviceQuery: jest.fn().mockResolvedValue({}),
+    sendDeviceQuery: jest.fn().mockResolvedValue({deviceInfo: fakeDeviceInfo}),
+    getDeviceInfo: jest.fn().mockResolvedValue(fakeDeviceInfo),
+    readChannel: jest.fn(async (channelIndex: number) => ({
+      channelIndex,
+      channelName: '',
+      secret: new Uint8Array(16),
+      empty: true,
+    })),
+    writeChannel: jest.fn().mockResolvedValue(undefined),
     probeChannels: jest.fn().mockResolvedValue([]),
     sendChannelMessage: jest.fn().mockResolvedValue({}),
     getBatteryStatus: jest.fn().mockResolvedValue({}),
@@ -166,8 +186,6 @@ describe('RadioConnectionProvider application lifetime', () => {
       ),
     ).toBe(false);
 
-    // Child/screen navigation can unmount/remount while the application provider
-    // and its single BLE manager remain alive.
     await ReactTestRenderer.act(async () => {
       renderer!.update(app(false));
       await Promise.resolve();
