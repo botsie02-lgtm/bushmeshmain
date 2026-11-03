@@ -13,20 +13,34 @@ import {
 import {meshCoreSelfInfoToRadioProfile} from '../radio/meshCoreRadioProfile';
 import {MESHCORE_BLE} from './meshcoreBle';
 import {
+  MeshCoreChannelInfo,
+  parseMeshCoreChannelInfo,
+} from './meshcoreChannelInfo';
+import {
+  buildAddUpdateContactCommand,
   buildAppStartCommand,
   buildDeviceQueryCommand,
+  buildExportContactCommand,
   buildGetBatteryCommand,
   buildGetChannelCommand,
+  buildGetContactByKeyCommand,
   buildGetContactsCommand,
+  buildGetDeviceTimeCommand,
   buildGetMessageCommand,
+  buildImportContactCommand,
+  buildRemoveContactCommand,
   buildSendChannelDataFloodCommand,
   buildSendChannelMessageCommand,
+  buildSetChannelCommand,
+  buildSetDeviceTimeCommand,
   getBatteryCommandHex,
   getChannelCommandHex,
   getContactsCommandHex,
   getMessageCommandHex,
+  MeshCoreContactWriteInput,
   sendChannelDataFloodCommandHex,
   sendChannelMessageCommandHex,
+  setChannelCommandSafeHex,
 } from './meshcoreCommands';
 import {
   MeshCoreChannelDataFrame,
@@ -53,6 +67,7 @@ import {
   ParsedContactMessage,
   parseMeshCorePacketFields,
 } from './meshcoreParsers';
+import {validateMeshCoreChannelIndex} from './meshcoreProvisioning';
 import {
   MeshCoreReassembler,
   createIdleReassembler,
@@ -60,7 +75,6 @@ import {
 import {SerialTaskQueue} from './serialTaskQueue';
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 5000;
-const FALLBACK_CHANNEL_COUNT = 8;
 const REQUESTED_BLE_MTU = 185;
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000] as const;
 const RESYNC_DELAYS_MS = [2_000, 5_000, 10_000, 30_000] as const;
@@ -118,6 +132,16 @@ type PendingCommand = {
   timeoutId: ReturnType<typeof setTimeout>;
 };
 
+function readUInt32LE(bytes: number[] | undefined, offset: number): number | null {
+  if (!bytes || bytes.length < offset + 4) return null;
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0;
+}
+
 export class MeshCoreClient {
   private manager: BleManager;
   private device: Device;
@@ -129,6 +153,7 @@ export class MeshCoreClient {
   private commandQueue = new SerialTaskQueue();
   private mtuPromise: Promise<number | null> | null = null;
   private lastDeviceInfo: MeshCoreDeviceInfo | null = null;
+  private readonly channelInfoByIndex = new Map<number, MeshCoreChannelInfo>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private resyncTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
@@ -207,6 +232,15 @@ export class MeshCoreClient {
     return result;
   }
 
+  async getDeviceInfo(): Promise<MeshCoreDeviceInfo> {
+    if (this.lastDeviceInfo) return this.lastDeviceInfo;
+    const result = await this.sendDeviceQuery();
+    if (!result.deviceInfo) {
+      throw new Error('MeshCore Device Info response could not be parsed.');
+    }
+    return result.deviceInfo;
+  }
+
   async getBatteryStatus(): Promise<MeshCoreLogItem> {
     return this.enqueueCommand('CMD_GET_BATTERY', () =>
       this.executeCommandAndWaitForPacket(
@@ -217,6 +251,34 @@ export class MeshCoreClient {
         'PACKET_BATTERY',
       ),
     );
+  }
+
+  async getDeviceTime(): Promise<number> {
+    const result = await this.enqueueCommand('CMD_GET_DEVICE_TIME', () =>
+      this.executeCommandAndWaitForPacket(
+        'CMD_GET_DEVICE_TIME',
+        buildGetDeviceTimeCommand(),
+        '05',
+        [0x09],
+        'PACKET_CURR_TIME',
+      ),
+    );
+    const seconds = readUInt32LE(result.rawBytes, 1);
+    if (seconds === null) throw new Error('MeshCore device time response was malformed.');
+    return seconds;
+  }
+
+  async setDeviceTime(timestampSeconds: number): Promise<number> {
+    await this.enqueueCommand('CMD_SET_DEVICE_TIME', () =>
+      this.executeCommandAndWaitForPacket(
+        'CMD_SET_DEVICE_TIME',
+        buildSetDeviceTimeCommand(timestampSeconds),
+        '06 <uint32 timestamp>',
+        [0x00],
+        'PACKET_OK',
+      ),
+    );
+    return this.getDeviceTime();
   }
 
   async getChannel(channelIndex: number): Promise<MeshCoreLogItem> {
@@ -231,38 +293,137 @@ export class MeshCoreClient {
     );
   }
 
-  async probeChannels(channelCount?: number): Promise<MeshCoreLogItem[]> {
-    const advertisedChannelCount = this.lastDeviceInfo?.maxChannels;
-    const requestedCount = channelCount ?? FALLBACK_CHANNEL_COUNT;
-    const resolvedCount =
-      advertisedChannelCount && advertisedChannelCount > 0
-        ? advertisedChannelCount
-        : Math.min(requestedCount, FALLBACK_CHANNEL_COUNT);
+  async readChannel(channelIndex: number): Promise<MeshCoreChannelInfo> {
+    const info = await this.getDeviceInfo();
+    if (!info.maxChannels) throw new Error('MeshCore firmware did not advertise maxChannels.');
+    validateMeshCoreChannelIndex(channelIndex, info.maxChannels);
+    await this.getChannel(channelIndex);
+    const channel = this.channelInfoByIndex.get(channelIndex);
+    if (!channel) {
+      throw new Error(`MeshCore channel ${channelIndex} response was malformed.`);
+    }
+    return {
+      ...channel,
+      secret: Uint8Array.from(channel.secret),
+    };
+  }
+
+  async writeChannel(
+    channelIndex: number,
+    channelName: string,
+    secret: Uint8Array,
+  ): Promise<void> {
+    const info = await this.getDeviceInfo();
+    if (!info.maxChannels) throw new Error('MeshCore firmware did not advertise maxChannels.');
+    validateMeshCoreChannelIndex(channelIndex, info.maxChannels);
+    const label = `CMD_SET_CHANNEL_${channelIndex}`;
+    await this.enqueueCommand(label, () =>
+      this.executeCommandAndWaitForPacket(
+        label,
+        buildSetChannelCommand(channelIndex, channelName, secret),
+        setChannelCommandSafeHex(channelIndex, channelName),
+        [0x00],
+        'PACKET_OK',
+      ),
+    );
+  }
+
+  async probeChannels(): Promise<MeshCoreLogItem[]> {
+    const info = await this.getDeviceInfo();
+    const resolvedCount = info.maxChannels;
+    if (!resolvedCount || resolvedCount <= 0) {
+      throw new Error('MeshCore firmware did not advertise a usable channel capacity.');
+    }
 
     const results: MeshCoreLogItem[] = [];
-
     for (let channelIndex = 0; channelIndex < resolvedCount; channelIndex += 1) {
       this.events.onStatus(
         `Probing channel ${channelIndex + 1} of ${resolvedCount}...`,
       );
-
-      const result = await this.getChannel(channelIndex);
-      results.push(result);
-
+      results.push(await this.getChannel(channelIndex));
       await this.delay(80);
     }
 
     this.events.onStatus(
       `Channel probe complete. Checked ${resolvedCount} channels.`,
     );
-
     return results;
+  }
+
+  async lookupContact(publicKey: string): Promise<ParsedContactInfo> {
+    const result = await this.enqueueCommand('CMD_GET_CONTACT_BY_KEY', () =>
+      this.executeCommandAndWaitForPacket(
+        'CMD_GET_CONTACT_BY_KEY',
+        buildGetContactByKeyCommand(publicKey),
+        '1E <32-byte public key>',
+        [0x03],
+        'PACKET_CONTACT',
+      ),
+    );
+    if (!result.contactInfo) {
+      throw new Error('MeshCore contact lookup returned an invalid contact record.');
+    }
+    return result.contactInfo;
+  }
+
+  async addOrUpdateContact(
+    input: MeshCoreContactWriteInput,
+  ): Promise<ParsedContactInfo> {
+    await this.enqueueCommand('CMD_ADD_UPDATE_CONTACT', () =>
+      this.executeCommandAndWaitForPacket(
+        'CMD_ADD_UPDATE_CONTACT',
+        buildAddUpdateContactCommand(input),
+        '09 <contact record redacted>',
+        [0x00],
+        'PACKET_OK',
+      ),
+    );
+    return this.lookupContact(input.publicKey);
+  }
+
+  async removeContact(publicKey: string): Promise<void> {
+    await this.enqueueCommand('CMD_REMOVE_CONTACT', () =>
+      this.executeCommandAndWaitForPacket(
+        'CMD_REMOVE_CONTACT',
+        buildRemoveContactCommand(publicKey),
+        '0F <32-byte public key>',
+        [0x00],
+        'PACKET_OK',
+      ),
+    );
+  }
+
+  async exportContact(publicKey: string): Promise<Uint8Array> {
+    const result = await this.enqueueCommand('CMD_EXPORT_CONTACT', () =>
+      this.executeCommandAndWaitForPacket(
+        'CMD_EXPORT_CONTACT',
+        buildExportContactCommand(publicKey),
+        '11 <32-byte public key>',
+        [0x0b],
+        'PACKET_EXPORT_CONTACT',
+      ),
+    );
+    if (!result.rawBytes) throw new Error('MeshCore contact export was empty.');
+    return Uint8Array.from(result.rawBytes);
+  }
+
+  async importContact(exportedContact: Uint8Array): Promise<void> {
+    await this.enqueueCommand('CMD_IMPORT_CONTACT', () =>
+      this.executeCommandAndWaitForPacket(
+        'CMD_IMPORT_CONTACT',
+        buildImportContactCommand(exportedContact),
+        '12 <exported contact payload>',
+        [0x00],
+        'PACKET_OK',
+      ),
+    );
   }
 
   async sendChannelMessage(
     channelIndex: number,
     message: string,
   ): Promise<MeshCoreLogItem> {
+    this.validateKnownChannelIndex(channelIndex);
     const cleanMessage = message.trim();
 
     if (!cleanMessage) {
@@ -311,6 +472,7 @@ export class MeshCoreClient {
     dataType: number,
     payload: Uint8Array,
   ): Promise<MeshCoreLogItem> {
+    this.validateKnownChannelIndex(channelIndex);
     const label = `CMD_SEND_CHANNEL_DATA_${channelIndex}`;
 
     return this.enqueueCommand(label, () =>
@@ -385,6 +547,13 @@ export class MeshCoreClient {
     return this.enqueueCommand('CMD_GET_CONTACTS', () =>
       this.syncContactsInternal(since),
     );
+  }
+
+  private validateKnownChannelIndex(channelIndex: number): void {
+    const maxChannels = this.lastDeviceInfo?.maxChannels;
+    if (maxChannels && maxChannels > 0) {
+      validateMeshCoreChannelIndex(channelIndex, maxChannels);
+    }
   }
 
   private async syncContactsInternal(
@@ -581,6 +750,7 @@ export class MeshCoreClient {
     this.commandQueue.cancelPending();
     this.mtuPromise = null;
     this.lastDeviceInfo = null;
+    this.channelInfoByIndex.clear();
 
     if (ownership === 'release') {
       bushMeshRadioSession.releaseTransport(this.radioSessionOwner);
@@ -663,6 +833,7 @@ export class MeshCoreClient {
       this.device = readyDevice;
       this.mtuPromise = null;
       this.lastDeviceInfo = null;
+      this.channelInfoByIndex.clear();
 
       if (!this.activateConnectedRuntime('resume')) {
         this.stopped = true;
@@ -791,6 +962,10 @@ export class MeshCoreClient {
   }
 
   private handleIncomingFrame(bytes: number[]): void {
+    const rawChannelInfo = parseMeshCoreChannelInfo(bytes);
+    if (rawChannelInfo) {
+      this.channelInfoByIndex.set(rawChannelInfo.channelIndex, rawChannelInfo);
+    }
     const diagnosticBytes = redactMeshCoreDiagnosticBytes(bytes);
     const decoded = decodeMeshCoreBytes(diagnosticBytes);
     const parsed = parseMeshCorePacketFields(bytes);
