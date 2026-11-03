@@ -1,5 +1,6 @@
 import React, {useMemo, useState} from 'react';
 import {
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,23 +12,15 @@ import {
 import {distanceMeters, formatDistance, getConvoyFreshness} from '../convoy/convoy';
 import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
+import {useRadioConnection} from '../state/RadioConnectionContext';
 import {colors} from '../theme/colors';
 
 function ageLabel(timestampSeconds: number | null, nowMs: number): string {
-  if (timestampSeconds === null || timestampSeconds <= 0) {
-    return 'Never heard';
-  }
-
+  if (timestampSeconds === null || timestampSeconds <= 0) return 'Never heard';
   const ageSeconds = Math.max(0, Math.floor(nowMs / 1000) - timestampSeconds);
-  if (ageSeconds < 60) {
-    return `${ageSeconds}s ago`;
-  }
-  if (ageSeconds < 3_600) {
-    return `${Math.floor(ageSeconds / 60)}m ago`;
-  }
-  if (ageSeconds < 86_400) {
-    return `${Math.floor(ageSeconds / 3_600)}h ago`;
-  }
+  if (ageSeconds < 60) return `${ageSeconds}s ago`;
+  if (ageSeconds < 3_600) return `${Math.floor(ageSeconds / 60)}m ago`;
+  if (ageSeconds < 86_400) return `${Math.floor(ageSeconds / 3_600)}h ago`;
   return `${Math.floor(ageSeconds / 86_400)}d ago`;
 }
 
@@ -41,6 +34,15 @@ function shortKey(prefix: string): string {
 export function ContactsScreen(): React.JSX.Element {
   const {contacts, connectionStatus, connectedDeviceName} = useBushMesh();
   const {
+    snapshot,
+    syncContacts,
+    lookupContact,
+    addOrUpdateContact,
+    removeContact,
+    exportContact,
+    importContact,
+  } = useRadioConnection();
+  const {
     vehicles,
     localPosition,
     navigationTargetVehicleId,
@@ -48,23 +50,26 @@ export function ContactsScreen(): React.JSX.Element {
     clearNavigationTarget,
   } = useConvoy();
   const [query, setQuery] = useState('');
+  const [lookupKey, setLookupKey] = useState('');
+  const [addKey, setAddKey] = useState('');
+  const [addName, setAddName] = useState('');
+  const [importValue, setImportValue] = useState('');
+  const [exportValue, setExportValue] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState(
+    'Contacts are stored on the MeshCore node. Local filtering does not discover nearby radios.',
+  );
   const nowMs = Date.now();
+  const canManage = connectionStatus === 'Connected' && !snapshot.isWriting;
 
   const filteredContacts = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const sorted = [...contacts].sort((a, b) => {
       const aAdvert = a.lastAdvert ?? 0;
       const bAdvert = b.lastAdvert ?? 0;
-      if (aAdvert !== bAdvert) {
-        return bAdvert - aAdvert;
-      }
+      if (aAdvert !== bAdvert) return bAdvert - aAdvert;
       return a.name.localeCompare(b.name);
     });
-
-    if (!needle) {
-      return sorted;
-    }
-
+    if (!needle) return sorted;
     return sorted.filter(contact =>
       `${contact.name} ${contact.publicKeyPrefix} ${contact.publicKey}`
         .toLowerCase()
@@ -78,187 +83,172 @@ export function ContactsScreen(): React.JSX.Element {
     return byId;
   }, [vehicles]);
 
-  const contactsWithLocations = contacts.filter(
-    contact => contact.latitude !== null && contact.longitude !== null,
-  ).length;
-  const liveContactCount = contacts.filter(contact =>
-    liveMatches.has(contact.publicKeyPrefix.toUpperCase()),
-  ).length;
+  const runSync = async () => {
+    const synced = await syncContacts();
+    setActionStatus(`Synced ${synced.length} contact(s) from the connected node.`);
+  };
+
+  const runLookup = async () => {
+    try {
+      const contact = await lookupContact(lookupKey);
+      setActionStatus(`Refreshed ${contact.name || shortKey(contact.publicKeyPrefix)} from the node.`);
+    } catch (error) {
+      setActionStatus(error instanceof Error ? error.message : 'Contact lookup failed.');
+    }
+  };
+
+  const runAdd = async () => {
+    try {
+      const contact = await addOrUpdateContact({publicKey: addKey, name: addName});
+      setActionStatus(`Contact ${contact.name || shortKey(contact.publicKeyPrefix)} written and verified.`);
+      setAddKey('');
+      setAddName('');
+    } catch (error) {
+      setActionStatus(error instanceof Error ? error.message : 'Contact write failed.');
+    }
+  };
+
+  const runImport = async () => {
+    try {
+      const updated = await importContact(importValue);
+      setActionStatus(`Contact import accepted. Node now reports ${updated.length} contact(s).`);
+      setImportValue('');
+    } catch (error) {
+      setActionStatus(error instanceof Error ? error.message : 'Contact import failed.');
+    }
+  };
+
+  const confirmRemove = (publicKey: string, name: string) => {
+    Alert.alert(
+      'Remove contact?',
+      `Remove ${name || shortKey(publicKey)} from the connected MeshCore node?`,
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            removeContact(publicKey)
+              .then(() => setActionStatus('Contact removed and node list refreshed.'))
+              .catch(error =>
+                setActionStatus(
+                  error instanceof Error ? error.message : 'Contact removal failed.',
+                ),
+              );
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled">
-      <View style={styles.heroCard}>
-        <View style={styles.heroTopRow}>
-          <View style={styles.heroCopy}>
-            <Text style={styles.eyebrow}>RADIO CONTACTS</Text>
-            <Text style={styles.title}>People and nodes</Text>
-          </View>
-          <View
-            style={[
-              styles.statusPill,
-              connectionStatus === 'Connected'
-                ? styles.statusConnected
-                : styles.statusOffline,
-            ]}>
-            <Text style={styles.statusText}>
-              {connectionStatus === 'Connected' ? 'RADIO ONLINE' : 'OFFLINE'}
-            </Text>
-          </View>
-        </View>
+      <View style={styles.card}>
+        <Text style={styles.eyebrow}>RADIO CONTACTS</Text>
+        <Text style={styles.title}>People and nodes</Text>
         <Text style={styles.body}>
-          MeshCore contacts are matched against live Bushmesh position identities.
-          Following a contact only uses live Bushmesh position packets; a stored
-          MeshCore advert location is shown as last-known information, not live GPS.
+          MeshCore does not provide an arbitrary “search everyone nearby” command.
+          BushMesh syncs the node's stored contact table and can perform an exact
+          firmware lookup by a full 32-byte public key. A short prefix is resolved
+          locally only when it uniquely matches a synced contact.
         </Text>
-        {connectedDeviceName ? (
-          <Text style={styles.deviceText}>Node: {connectedDeviceName}</Text>
+        <Text style={styles.meta}>
+          {connectedDeviceName ? `Node: ${connectedDeviceName}` : 'No node connected'}
+        </Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Node contact actions</Text>
+        <View style={styles.buttonRow}>
+          <TouchableOpacity style={[styles.primaryButton, !canManage && styles.disabled]} disabled={!canManage} onPress={() => runSync().catch(() => undefined)}>
+            <Text style={styles.primaryText}>Sync Contacts from Node</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.secondaryButton, !canManage && styles.disabled]} disabled={!canManage} onPress={() => runSync().catch(() => undefined)}>
+            <Text style={styles.secondaryText}>Refresh contacts</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.label}>LOOK UP CONTACT</Text>
+        <TextInput style={styles.input} value={lookupKey} onChangeText={setLookupKey} placeholder="Full public key or unique synced prefix" placeholderTextColor={colors.textMuted} autoCapitalize="characters" autoCorrect={false} />
+        <TouchableOpacity style={[styles.secondaryButton, !canManage && styles.disabled]} disabled={!canManage} onPress={runLookup}>
+          <Text style={styles.secondaryText}>Look up on node</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.label}>ADD / UPDATE DIRECT CONTACT</Text>
+        <Text style={styles.help}>
+          Requires the contact's full public key. This writes a direct/zero-hop contact record and verifies it with CMD_GET_CONTACT_BY_KEY. Import an exported contact to preserve richer routing metadata.
+        </Text>
+        <TextInput style={styles.input} value={addName} onChangeText={setAddName} placeholder="Contact name" placeholderTextColor={colors.textMuted} />
+        <TextInput style={styles.input} value={addKey} onChangeText={setAddKey} placeholder="64-character public key hex" placeholderTextColor={colors.textMuted} autoCapitalize="characters" autoCorrect={false} />
+        <TouchableOpacity style={[styles.secondaryButton, !canManage && styles.disabled]} disabled={!canManage} onPress={runAdd}>
+          <Text style={styles.secondaryText}>Write and verify contact</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.label}>IMPORT EXPORTED CONTACT</Text>
+        <TextInput style={[styles.input, styles.multiline]} value={importValue} onChangeText={setImportValue} placeholder="Paste BushMesh/MeshCore contact export" placeholderTextColor={colors.textMuted} autoCapitalize="none" autoCorrect={false} multiline />
+        <TouchableOpacity style={[styles.secondaryButton, !canManage && styles.disabled]} disabled={!canManage} onPress={runImport}>
+          <Text style={styles.secondaryText}>Import contact to node</Text>
+        </TouchableOpacity>
+
+        <View style={styles.statusBox}><Text style={styles.statusText}>{actionStatus}</Text></View>
+        {exportValue ? (
+          <View style={styles.exportBox}>
+            <Text style={styles.label}>EXPORTED CONTACT · SELECT / COPY</Text>
+            <Text selectable style={styles.exportText}>{exportValue}</Text>
+            <TouchableOpacity onPress={() => setExportValue(null)}><Text style={styles.linkText}>Hide export</Text></TouchableOpacity>
+          </View>
         ) : null}
       </View>
 
-      <View style={styles.metricRow}>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{contacts.length}</Text>
-          <Text style={styles.metricLabel}>KNOWN</Text>
-        </View>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{liveContactCount}</Text>
-          <Text style={styles.metricLabel}>LIVE ON BUSHMESH</Text>
-        </View>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{contactsWithLocations}</Text>
-          <Text style={styles.metricLabel}>LAST LOCATION</Text>
-        </View>
-      </View>
-
-      <TextInput
-        value={query}
-        onChangeText={setQuery}
-        placeholder="Search name or public key"
-        placeholderTextColor={colors.textMuted}
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={styles.searchInput}
-      />
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Contacts</Text>
-        <Text style={styles.sectionMeta}>{filteredContacts.length} shown</Text>
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Local contact filter</Text>
+        <Text style={styles.help}>
+          This only filters contacts already loaded into BushMesh. It does not send a radio discovery request.
+        </Text>
+        <TextInput value={query} onChangeText={setQuery} placeholder="Filter loaded contacts by name or key" placeholderTextColor={colors.textMuted} autoCapitalize="none" autoCorrect={false} style={styles.input} />
+        <Text style={styles.meta}>{filteredContacts.length} of {contacts.length} loaded contact(s) shown</Text>
       </View>
 
       {filteredContacts.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>
-            {contacts.length === 0 ? 'No contacts synced yet' : 'No contacts match'}
-          </Text>
-          <Text style={styles.emptyText}>
-            {contacts.length === 0
-              ? 'Connect a MeshCore companion node and sync contacts from Device. Bushmesh will keep this screen focused on operational contact data rather than raw protocol records.'
-              : 'Try a different name or public-key prefix.'}
-          </Text>
-        </View>
+        <View style={styles.card}><Text style={styles.body}>{contacts.length === 0 ? 'No contacts synced yet.' : 'No locally loaded contacts match this filter.'}</Text></View>
       ) : (
         filteredContacts.map(contact => {
           const liveVehicle = liveMatches.get(contact.publicKeyPrefix.toUpperCase()) ?? null;
-          const freshness = liveVehicle
-            ? getConvoyFreshness(liveVehicle.receivedAtMs, nowMs)
-            : null;
-          const following =
-            liveVehicle !== null && navigationTargetVehicleId === liveVehicle.id;
-          const rangeMeters =
-            liveVehicle && localPosition
-              ? distanceMeters(localPosition, liveVehicle)
-              : null;
-
+          const freshness = liveVehicle ? getConvoyFreshness(liveVehicle.receivedAtMs, nowMs) : null;
+          const following = liveVehicle !== null && navigationTargetVehicleId === liveVehicle.id;
+          const rangeMeters = liveVehicle && localPosition ? distanceMeters(localPosition, liveVehicle) : null;
           return (
             <View key={contact.publicKey} style={styles.contactCard}>
-              <View style={styles.contactTopRow}>
-                <View style={styles.contactTitleWrap}>
-                  <Text style={styles.contactName} numberOfLines={1}>
-                    {contact.name || 'Unnamed contact'}
-                  </Text>
-                  <Text style={styles.publicKey}>{shortKey(contact.publicKeyPrefix)}</Text>
+              <View style={styles.contactTop}>
+                <View style={styles.flex}>
+                  <Text style={styles.contactName}>{contact.name || 'Unnamed contact'}</Text>
+                  <Text selectable style={styles.keyText}>{shortKey(contact.publicKeyPrefix)} · {ageLabel(contact.lastAdvert, nowMs)}</Text>
                 </View>
-                {liveVehicle ? (
-                  <View
-                    style={[
-                      styles.livePill,
-                      freshness === 'live' || freshness === 'recent'
-                        ? styles.livePillReady
-                        : styles.livePillStale,
-                    ]}>
-                    <Text style={styles.livePillText}>
-                      {freshness?.toUpperCase() ?? 'LIVE'}
-                    </Text>
-                  </View>
-                ) : (
-                  <Text style={styles.advertAge}>{ageLabel(contact.lastAdvert, nowMs)}</Text>
-                )}
+                {freshness ? <Text style={styles.liveText}>{freshness.toUpperCase()}</Text> : null}
               </View>
-
-              <View style={styles.detailGrid}>
-                <View style={styles.detailCell}>
-                  <Text style={styles.detailLabel}>MESH PATH</Text>
-                  <Text style={styles.detailValue}>
-                    {contact.outPathLength < 0 ? 'Unknown' : `${contact.outPathLength} hop${contact.outPathLength === 1 ? '' : 's'}`}
-                  </Text>
-                </View>
-                <View style={styles.detailCell}>
-                  <Text style={styles.detailLabel}>NODE TYPE</Text>
-                  <Text style={styles.detailValue}>{contact.type}</Text>
-                </View>
-                <View style={styles.detailCell}>
-                  <Text style={styles.detailLabel}>LAST ADVERT</Text>
-                  <Text style={styles.detailValue}>{ageLabel(contact.lastAdvert, nowMs)}</Text>
-                </View>
-              </View>
-
+              <Text style={styles.help}>
+                Type {contact.type} · path {contact.outPathLength < 0 ? 'unknown' : `${contact.outPathLength} hop(s)`}
+              </Text>
               {liveVehicle ? (
-                <View style={styles.livePositionCard}>
-                  <View style={styles.positionCopy}>
-                    <Text style={styles.positionKicker}>LIVE BUSHMESH POSITION</Text>
-                    <Text style={styles.positionText}>
-                      {liveVehicle.latitude.toFixed(5)}, {liveVehicle.longitude.toFixed(5)}
-                    </Text>
-                    <Text style={styles.positionMeta}>
-                      {rangeMeters === null ? 'Range unavailable until your GPS is ready' : `${formatDistance(rangeMeters)} away`}
-                      {liveVehicle.snrDb === null ? '' : ` · ${liveVehicle.snrDb.toFixed(1)} dB SNR`}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[
-                      styles.followButton,
-                      following ? styles.followButtonActive : undefined,
-                    ]}
-                    onPress={() =>
-                      following
-                        ? clearNavigationTarget()
-                        : setNavigationTarget(liveVehicle.id)
-                    }>
-                    <Text
-                      style={[
-                        styles.followButtonText,
-                        following ? styles.followButtonTextActive : undefined,
-                      ]}>
-                      {following ? 'FOLLOWING' : 'FOLLOW LIVE'}
-                    </Text>
+                <View style={styles.liveBox}>
+                  <Text style={styles.liveText}>LIVE BUSHMESH POSITION</Text>
+                  <Text style={styles.body}>{liveVehicle.latitude.toFixed(5)}, {liveVehicle.longitude.toFixed(5)}{rangeMeters === null ? '' : ` · ${formatDistance(rangeMeters)} away`}</Text>
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => following ? clearNavigationTarget() : setNavigationTarget(liveVehicle.id)}>
+                    <Text style={styles.secondaryText}>{following ? 'Stop following' : 'Follow live position'}</Text>
                   </TouchableOpacity>
                 </View>
-              ) : contact.latitude !== null && contact.longitude !== null ? (
-                <View style={styles.lastKnownCard}>
-                  <Text style={styles.lastKnownKicker}>LAST-KNOWN ADVERT LOCATION</Text>
-                  <Text style={styles.lastKnownText}>
-                    {contact.latitude.toFixed(5)}, {contact.longitude.toFixed(5)}
-                  </Text>
-                  <Text style={styles.lastKnownWarning}>
-                    Stored MeshCore advert location — not safe to treat as current.
-                  </Text>
-                </View>
-              ) : (
-                <Text style={styles.noLocationText}>No contact location available.</Text>
-              )}
+              ) : null}
+              <View style={styles.contactActions}>
+                <TouchableOpacity onPress={() => exportContact(contact.publicKey).then(value => {setExportValue(value); setActionStatus('Contact export ready. This contains public contact/routing data, not a node private key.');}).catch(error => setActionStatus(error instanceof Error ? error.message : 'Contact export failed.'))} disabled={!canManage}>
+                  <Text style={styles.linkText}>Export</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => confirmRemove(contact.publicKey, contact.name)} disabled={!canManage}>
+                  <Text style={styles.dangerText}>Remove</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           );
         })
@@ -269,147 +259,35 @@ export function ContactsScreen(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   screen: {flex: 1, backgroundColor: colors.background},
-  content: {padding: 16, paddingBottom: 36},
-  heroCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 12,
-  },
-  heroTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  heroCopy: {flex: 1},
-  eyebrow: {
-    color: colors.accent,
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1.2,
-  },
-  title: {
-    color: colors.textPrimary,
-    fontSize: 25,
-    fontWeight: '900',
-    marginTop: 4,
-  },
-  body: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: 9,
-  },
-  deviceText: {color: colors.textMuted, fontSize: 11, marginTop: 9},
-  statusPill: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-  },
-  statusConnected: {borderColor: colors.success},
-  statusOffline: {borderColor: colors.border},
-  statusText: {color: colors.textPrimary, fontSize: 9, fontWeight: '900'},
-  metricRow: {flexDirection: 'row', gap: 8, marginBottom: 12},
-  metricCard: {
-    flex: 1,
-    backgroundColor: colors.surfaceSoft,
-    borderRadius: 14,
-    padding: 12,
-  },
-  metricValue: {color: colors.textPrimary, fontSize: 22, fontWeight: '900'},
-  metricLabel: {color: colors.textMuted, fontSize: 8, fontWeight: '900', marginTop: 3},
-  searchInput: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    color: colors.textPrimary,
-    borderRadius: 15,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
-    marginBottom: 16,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 9,
-  },
-  sectionTitle: {color: colors.textPrimary, fontSize: 17, fontWeight: '900'},
-  sectionMeta: {color: colors.textMuted, fontSize: 11, fontWeight: '700'},
-  emptyCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 16,
-  },
-  emptyTitle: {color: colors.textPrimary, fontSize: 15, fontWeight: '900'},
-  emptyText: {color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 5},
-  contactCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 18,
-    padding: 15,
-    marginBottom: 10,
-  },
-  contactTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  contactTitleWrap: {flex: 1, minWidth: 0},
-  contactName: {color: colors.textPrimary, fontSize: 17, fontWeight: '900'},
-  publicKey: {color: colors.textMuted, fontSize: 10, fontWeight: '700', marginTop: 3},
-  advertAge: {color: colors.textMuted, fontSize: 10, fontWeight: '700'},
-  livePill: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-  },
-  livePillReady: {borderColor: colors.success},
-  livePillStale: {borderColor: colors.warning},
-  livePillText: {color: colors.textPrimary, fontSize: 8, fontWeight: '900'},
-  detailGrid: {flexDirection: 'row', gap: 8, marginTop: 13},
-  detailCell: {flex: 1},
-  detailLabel: {color: colors.textMuted, fontSize: 7, fontWeight: '900'},
-  detailValue: {color: colors.textSecondary, fontSize: 11, fontWeight: '700', marginTop: 3},
-  livePositionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: colors.surfaceSoft,
-    borderRadius: 14,
-    padding: 12,
-    marginTop: 13,
-  },
-  positionCopy: {flex: 1},
-  positionKicker: {color: colors.success, fontSize: 8, fontWeight: '900'},
-  positionText: {color: colors.textPrimary, fontSize: 12, fontWeight: '800', marginTop: 3},
-  positionMeta: {color: colors.textMuted, fontSize: 10, marginTop: 3},
-  followButton: {
-    borderWidth: 1,
-    borderColor: colors.accent,
-    borderRadius: 11,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-  },
-  followButtonActive: {backgroundColor: colors.accent},
-  followButtonText: {color: colors.accent, fontSize: 9, fontWeight: '900'},
-  followButtonTextActive: {color: colors.background},
-  lastKnownCard: {
-    backgroundColor: colors.surfaceSoft,
-    borderRadius: 14,
-    padding: 12,
-    marginTop: 13,
-  },
-  lastKnownKicker: {color: colors.warning, fontSize: 8, fontWeight: '900'},
-  lastKnownText: {color: colors.textPrimary, fontSize: 12, fontWeight: '800', marginTop: 3},
-  lastKnownWarning: {color: colors.textMuted, fontSize: 10, lineHeight: 15, marginTop: 4},
-  noLocationText: {color: colors.textMuted, fontSize: 11, marginTop: 13},
+  content: {padding: 16, paddingBottom: 40, gap: 12},
+  card: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 20, padding: 16},
+  eyebrow: {color: colors.accent, fontSize: 11, fontWeight: '900', letterSpacing: 1.1},
+  title: {color: colors.textPrimary, fontSize: 24, fontWeight: '900', marginTop: 4},
+  sectionTitle: {color: colors.textPrimary, fontSize: 17, fontWeight: '900', marginBottom: 8},
+  body: {color: colors.textSecondary, fontSize: 13, lineHeight: 20},
+  meta: {color: colors.textMuted, fontSize: 11, marginTop: 8},
+  label: {color: colors.textMuted, fontSize: 10, fontWeight: '900', letterSpacing: 0.8, marginTop: 16},
+  help: {color: colors.textMuted, fontSize: 11, lineHeight: 17, marginTop: 5},
+  input: {backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, color: colors.textPrimary, borderRadius: 13, paddingHorizontal: 12, paddingVertical: 11, marginTop: 9},
+  multiline: {minHeight: 80, textAlignVertical: 'top'},
+  buttonRow: {gap: 8},
+  primaryButton: {backgroundColor: colors.accent, borderRadius: 13, alignItems: 'center', paddingVertical: 12, marginTop: 9},
+  primaryText: {color: colors.background, fontWeight: '900'},
+  secondaryButton: {borderWidth: 1, borderColor: colors.accent, borderRadius: 13, alignItems: 'center', paddingVertical: 10, marginTop: 9},
+  secondaryText: {color: colors.accent, fontWeight: '900'},
+  disabled: {opacity: 0.45},
+  statusBox: {backgroundColor: colors.surfaceSoft, borderRadius: 12, padding: 11, marginTop: 14},
+  statusText: {color: colors.textSecondary, fontSize: 11, lineHeight: 17},
+  exportBox: {borderWidth: 1, borderColor: colors.warning, borderRadius: 12, padding: 11, marginTop: 10},
+  exportText: {color: colors.textPrimary, fontSize: 10, marginTop: 7},
+  contactCard: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 18, padding: 15},
+  contactTop: {flexDirection: 'row', alignItems: 'flex-start', gap: 10},
+  flex: {flex: 1},
+  contactName: {color: colors.textPrimary, fontSize: 16, fontWeight: '900'},
+  keyText: {color: colors.textMuted, fontSize: 10, marginTop: 4},
+  liveText: {color: colors.success, fontSize: 10, fontWeight: '900'},
+  liveBox: {backgroundColor: colors.surfaceSoft, borderRadius: 12, padding: 10, marginTop: 10},
+  contactActions: {flexDirection: 'row', justifyContent: 'flex-end', gap: 18, marginTop: 12},
+  linkText: {color: colors.accent, fontSize: 11, fontWeight: '900', marginTop: 8},
+  dangerText: {color: colors.danger, fontSize: 11, fontWeight: '900', marginTop: 8},
 });
