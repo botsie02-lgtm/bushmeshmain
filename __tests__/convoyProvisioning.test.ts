@@ -1,3 +1,5 @@
+import {Buffer} from 'buffer';
+
 import {
   createBushMeshConvoy,
   decodeBushMeshConvoyInvite,
@@ -39,14 +41,16 @@ function createPort() {
       const value = slots.get(index)!;
       return {...value, secret: Uint8Array.from(value.secret)};
     }),
-    writeChannel: jest.fn(async (index: number, name: string, secret: Uint8Array) => {
-      slots.set(index, {
-        channelIndex: index,
-        channelName: name,
-        secret: Uint8Array.from(secret),
-        empty: name.length === 0 && Array.from(secret).every(byte => byte === 0),
-      });
-    }),
+    writeChannel: jest.fn(
+      async (index: number, name: string, secret: Uint8Array): Promise<void> => {
+        slots.set(index, {
+          channelIndex: index,
+          channelName: name,
+          secret: Uint8Array.from(secret),
+          empty: name.length === 0 && Array.from(secret).every(byte => byte === 0),
+        });
+      },
+    ),
     slots,
   };
 }
@@ -109,7 +113,13 @@ describe('BushMesh convoy carrier provisioning', () => {
 
   it('does not return an enrollment when channel read-back verification fails', async () => {
     const port = createPort();
-    port.writeChannel = jest.fn(async () => undefined);
+    port.writeChannel = jest.fn(
+      async (
+        _index: number,
+        _name: string,
+        _secret: Uint8Array,
+      ): Promise<void> => undefined,
+    );
 
     await expect(
       createBushMeshConvoy(port, {
