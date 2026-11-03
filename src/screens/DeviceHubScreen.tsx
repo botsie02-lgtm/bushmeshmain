@@ -12,8 +12,9 @@ import {colors} from '../theme/colors';
 import {DeviceScreen} from './DeviceScreen';
 import {FieldDiagnosticsScreen} from './FieldDiagnosticsScreen';
 import {NativeRadioSetupScreen} from './NativeRadioSetupScreen';
+import {RadioSettingsScreen} from './RadioSettingsScreen';
 
-type DeviceMode = 'background' | 'legacy' | 'report';
+type DeviceMode = 'background' | 'radio' | 'legacy' | 'report';
 
 export function DeviceHubScreen(): React.JSX.Element {
   const [mode, setMode] = useState<DeviceMode>('background');
@@ -61,6 +62,20 @@ export function DeviceHubScreen(): React.JSX.Element {
             <TouchableOpacity
               style={[
                 styles.modeButton,
+                mode === 'radio' && styles.modeButtonActive,
+              ]}
+              onPress={() => setMode('radio')}>
+              <Text
+                style={[
+                  styles.modeText,
+                  mode === 'radio' && styles.modeTextActive,
+                ]}>
+                Radio Settings
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.modeButton,
                 mode === 'report' && styles.modeButtonActive,
               ]}
               onPress={() => setMode('report')}>
@@ -103,6 +118,8 @@ export function DeviceHubScreen(): React.JSX.Element {
           <View style={styles.content}>
             {mode === 'background' ? (
               <NativeRadioSetupScreen />
+            ) : mode === 'radio' ? (
+              <RadioSettingsScreen />
             ) : mode === 'report' ? (
               <View style={styles.reportMode}>
                 <FieldSupportSnapshot />
@@ -124,8 +141,8 @@ const styles = StyleSheet.create({
   screen: {flex: 1, backgroundColor: colors.background},
   modeBar: {
     flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: 10,
+    gap: 5,
+    paddingHorizontal: 8,
     paddingTop: 10,
     paddingBottom: 8,
     backgroundColor: colors.background,
@@ -136,8 +153,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingHorizontal: 4,
-    paddingVertical: 9,
+    paddingHorizontal: 2,
+    paddingVertical: 8,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.surface,
@@ -146,7 +163,7 @@ const styles = StyleSheet.create({
   modeButtonDisabled: {opacity: 0.45},
   modeText: {
     color: colors.textSecondary,
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '800',
     textAlign: 'center',
   },
