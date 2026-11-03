@@ -1,5 +1,6 @@
 import React, {useState} from 'react';
 import {
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,18 +10,25 @@ import {
 } from 'react-native';
 
 import {BushMeshChannel, useBushMesh} from '../state/BushMeshContext';
+import {useRadioConnection} from '../state/RadioConnectionContext';
 import {colors} from '../theme/colors';
 
 function isPrivateChannel(channel: BushMeshChannel): boolean {
-  return (
-    channel.secret !== 'Empty / Public' &&
-    channel.secret !== 'Unknown' &&
-    channel.secret.length > 0
-  );
+  return channel.secret === 'Configured (redacted)';
+}
+
+function optionalSlot(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const slot = Number(trimmed);
+  if (!Number.isInteger(slot) || slot < 0) {
+    throw new Error('Channel slot must be a non-negative whole number.');
+  }
+  return slot;
 }
 
 export function ChannelsScreen(): React.JSX.Element {
-    const {
+  const {
     connectionStatus,
     connectedDeviceName,
     channels,
@@ -32,55 +40,54 @@ export function ChannelsScreen(): React.JSX.Element {
     addLocalChannelMessage,
     setActiveChannelIndex,
   } = useBushMesh();
+  const {
+    snapshot,
+    refreshChannels,
+    createPrivateChannel,
+    joinPrivateChannel,
+    clearChannel,
+    revealChannelSecret,
+  } = useRadioConnection();
 
   const [messageText, setMessageText] = useState('Test from BushMesh');
-  const [sendStatus, setSendStatus] = useState<string>(
-    'No channel message sent yet.',
-  );
+  const [sendStatus, setSendStatus] = useState('No channel message sent yet.');
   const [isSending, setIsSending] = useState(false);
-
-  const visibleChannels = channels.filter(
-    channel => channel.channelName && channel.channelName !== 'Empty',
+  const [createName, setCreateName] = useState('BushMesh Convoy');
+  const [createSlot, setCreateSlot] = useState('');
+  const [joinName, setJoinName] = useState('');
+  const [joinSecret, setJoinSecret] = useState('');
+  const [joinSlot, setJoinSlot] = useState('');
+  const [managementStatus, setManagementStatus] = useState(
+    'No channel configuration change made yet.',
   );
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [revealedSlot, setRevealedSlot] = useState<number | null>(null);
 
-  const activeIsPrivate = activeChannel ? isPrivateChannel(activeChannel) : false;
-
-  const trimmedMessage = messageText.trim();
-  const messageTooLong = trimmedMessage.length > 133;
-  const canSend =
-    !!activeChannel &&
-    canSendChannelMessage &&
-    trimmedMessage.length > 0 &&
-    !messageTooLong &&
-    !isSending;
+  const canManage = connectionStatus === 'Connected' && !snapshot.isWriting;
 
   const sendActiveChannelMessage = async () => {
     if (!activeChannel) {
       setSendStatus('No active channel selected.');
       return;
     }
-
     const channelIndex = Number(activeChannel.channelIndex);
-
-    if (!Number.isFinite(channelIndex)) {
+    if (!Number.isInteger(channelIndex)) {
       setSendStatus('Active channel index is invalid.');
       return;
     }
+    const clean = messageText.trim();
+    if (!clean || clean.length > 133) return;
 
     try {
       setIsSending(true);
-      setSendStatus(`Sending to ${activeChannel.channelName}...`);
-
-      await sendChannelMessage(channelIndex, trimmedMessage);
-
+      await sendChannelMessage(channelIndex, clean);
       addLocalChannelMessage({
         channelIndex: activeChannel.channelIndex,
         channelName: activeChannel.channelName,
-        text: trimmedMessage,
+        text: clean,
         direction: 'sent',
         status: 'sent',
       });
-
       setSendStatus(`Sent to ${activeChannel.channelName}.`);
       setMessageText('');
     } catch (error) {
@@ -92,248 +99,293 @@ export function ChannelsScreen(): React.JSX.Element {
     }
   };
 
+  const createChannel = async () => {
+    try {
+      setRevealedSecret(null);
+      const result = await createPrivateChannel({
+        channelName: createName,
+        channelIndex: optionalSlot(createSlot),
+      });
+      setActiveChannelIndex(String(result.channelIndex));
+      setManagementStatus(
+        `Created and verified “${result.channelName}” in slot ${result.channelIndex}. Secret remains hidden until Reveal is pressed.`,
+      );
+      setRevealedSlot(result.channelIndex);
+    } catch (error) {
+      setManagementStatus(
+        error instanceof Error ? error.message : 'Channel creation failed.',
+      );
+    }
+  };
+
+  const joinChannel = async () => {
+    try {
+      setRevealedSecret(null);
+      const result = await joinPrivateChannel({
+        channelName: joinName,
+        secretHex: joinSecret,
+        channelIndex: optionalSlot(joinSlot),
+      });
+      setActiveChannelIndex(String(result.channelIndex));
+      setManagementStatus(
+        `Joined and verified “${result.channelName}” in slot ${result.channelIndex}.`,
+      );
+      setJoinSecret('');
+    } catch (error) {
+      setManagementStatus(
+        error instanceof Error ? error.message : 'Channel join failed.',
+      );
+    }
+  };
+
+  const reveal = async (channelIndex: number) => {
+    try {
+      const secret = await revealChannelSecret(channelIndex);
+      setRevealedSlot(channelIndex);
+      setRevealedSecret(secret);
+      setManagementStatus(
+        'Sensitive carrier secret revealed deliberately. Long-press the value to copy it; hide it again when finished.',
+      );
+    } catch (error) {
+      setManagementStatus(
+        error instanceof Error ? error.message : 'Secret reveal failed.',
+      );
+    }
+  };
+
+  const confirmClear = (channelIndex: number, channelName: string) => {
+    Alert.alert(
+      'Clear channel?',
+      `This will erase “${channelName}” from MeshCore slot ${channelIndex}.`,
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            clearChannel(channelIndex)
+              .then(() => {
+                setRevealedSecret(null);
+                setManagementStatus(
+                  `Channel slot ${channelIndex} cleared and verified.`,
+                );
+              })
+              .catch(error =>
+                setManagementStatus(
+                  error instanceof Error ? error.message : 'Channel clear failed.',
+                ),
+              );
+          },
+        },
+      ],
+    );
+  };
+
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View style={styles.headerCard}>
-        <Text style={styles.eyebrow}>Channels</Text>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled">
+      <View style={styles.card}>
+        <Text style={styles.eyebrow}>NODE / CHANNEL MANAGEMENT</Text>
         <Text style={styles.title}>MeshCore Channels</Text>
         <Text style={styles.body}>
-          Select the active channel BushMesh will use for convoy and group
-          messages.
+          BushMesh reads the node-advertised channel capacity. Private-channel
+          secrets are carrier configuration, not Security v1 group keys, and are
+          hidden from normal diagnostics.
         </Text>
-      </View>
-
-      <View style={styles.statusCard}>
-        <Text style={styles.statusLabel}>Connection</Text>
-        <Text
-          style={[
-            styles.statusValue,
-            {
-              color:
-                connectionStatus === 'Connected'
-                  ? colors.success
-                  : colors.textSecondary,
-            },
-          ]}>
-          {connectionStatus}
-        </Text>
-        <Text style={styles.statusDetail}>
+        <Text style={styles.meta}>
           {connectedDeviceName
-            ? `Connected to ${connectedDeviceName}`
-            : 'No companion node connected.'}
+            ? `Node: ${connectedDeviceName}`
+            : 'No node connected'}{' '}
+          · {channels.length} slot(s) loaded
         </Text>
+        <TouchableOpacity
+          style={[styles.secondaryButton, !canManage && styles.disabled]}
+          disabled={!canManage}
+          onPress={() => refreshChannels().catch(() => undefined)}>
+          <Text style={styles.secondaryButtonText}>Refresh channel slots</Text>
+        </TouchableOpacity>
       </View>
 
-      <View style={styles.activeCard}>
-        <Text style={styles.sectionTitle}>Active Channel</Text>
-
-        {activeChannel ? (
-          <>
-            <View style={styles.activeTopRow}>
-              <View style={styles.activeNameWrap}>
-                <Text style={styles.activeName}>{activeChannel.channelName}</Text>
-                <Text style={styles.activeSubText}>
-                  Channel #{activeChannel.channelIndex}
-                </Text>
-              </View>
-
-              <View
-                style={[
-                  styles.channelTypePill,
-                  activeIsPrivate && styles.channelTypePillPrivate,
-                ]}>
-                <Text style={styles.channelTypeText}>
-                  {activeIsPrivate ? 'Private' : 'Public'}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.messageReadyCard}>
-              <Text style={styles.messageReadyTitle}>Message-ready</Text>
-              <Text style={styles.messageReadyText}>
-                Future convoy chat, TTS, and push-to-talk controls will use this
-                selected channel first.
-              </Text>
-            </View>
-
-            <View style={styles.detailGrid}>
-              <View style={styles.detailBox}>
-                <Text style={styles.detailLabel}>Channel Index</Text>
-                <Text style={styles.detailValue}>
-                  {activeChannel.channelIndex}
-                </Text>
-              </View>
-
-              <View style={styles.detailBox}>
-                <Text style={styles.detailLabel}>Type</Text>
-                <Text style={styles.detailValue}>
-                  {activeIsPrivate ? 'Private' : 'Public'}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.secretBox}>
-              <Text style={styles.secretLabel}>Secret</Text>
-              <Text style={styles.secretValue}>{activeChannel.secret}</Text>
-            </View>
-          </>
-        ) : (
-          <Text style={styles.emptyText}>
-            No active channel selected yet. Connect to your companion node and
-            let startup sync load channels.
-          </Text>
-        )}
-      </View>
-
-      <View style={styles.sendCard}>
-        <Text style={styles.sectionTitle}>Send Test Message</Text>
-
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Create private channel</Text>
         <Text style={styles.body}>
-          Sends a short text message to the active MeshCore channel.
+          Leave slot blank to use the first empty slot. BushMesh generates a
+          cryptographically random 16-byte secret and only succeeds after read-back
+          verification.
         </Text>
-
         <TextInput
-          style={styles.messageInput}
+          style={styles.input}
+          value={createName}
+          onChangeText={setCreateName}
+          placeholder="Channel name"
+          placeholderTextColor={colors.textMuted}
+        />
+        <TextInput
+          style={styles.input}
+          value={createSlot}
+          onChangeText={setCreateSlot}
+          placeholder="Optional slot number"
+          placeholderTextColor={colors.textMuted}
+          keyboardType="number-pad"
+        />
+        <TouchableOpacity
+          style={[styles.primaryButton, !canManage && styles.disabled]}
+          disabled={!canManage}
+          onPress={createChannel}>
+          <Text style={styles.primaryButtonText}>Create and verify</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Join private channel</Text>
+        <Text style={styles.body}>
+          Enter the existing channel name and exact 16-byte secret (32 hex characters).
+        </Text>
+        <TextInput
+          style={styles.input}
+          value={joinName}
+          onChangeText={setJoinName}
+          placeholder="Channel name"
+          placeholderTextColor={colors.textMuted}
+        />
+        <TextInput
+          style={styles.input}
+          value={joinSecret}
+          onChangeText={setJoinSecret}
+          placeholder="32-character secret hex"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          secureTextEntry
+        />
+        <TextInput
+          style={styles.input}
+          value={joinSlot}
+          onChangeText={setJoinSlot}
+          placeholder="Optional slot number"
+          placeholderTextColor={colors.textMuted}
+          keyboardType="number-pad"
+        />
+        <TouchableOpacity
+          style={[styles.primaryButton, !canManage && styles.disabled]}
+          disabled={!canManage}
+          onPress={joinChannel}>
+          <Text style={styles.primaryButtonText}>Join and verify</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.statusBox}>
+        <Text style={styles.statusText}>{managementStatus}</Text>
+        {revealedSecret && revealedSlot !== null ? (
+          <View style={styles.secretBox}>
+            <Text style={styles.secretLabel}>SENSITIVE · SLOT {revealedSlot}</Text>
+            <Text selectable style={styles.secretValue}>
+              {revealedSecret}
+            </Text>
+            <TouchableOpacity onPress={() => setRevealedSecret(null)}>
+              <Text style={styles.hideText}>Hide secret</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Channel slots</Text>
+        {channels.length === 0 ? (
+          <Text style={styles.body}>No channel slots loaded yet.</Text>
+        ) : null}
+        {channels.map(channel => {
+          const index = Number(channel.channelIndex);
+          const empty = channel.channelName === 'Empty';
+          const active = channel.channelIndex === activeChannelIndex;
+          return (
+            <View
+              key={channel.channelIndex}
+              style={[styles.channelRow, active && styles.activeRow]}>
+              <TouchableOpacity
+                style={styles.channelCopy}
+                disabled={empty}
+                onPress={() => setActiveChannelIndex(channel.channelIndex)}>
+                <Text style={styles.channelName}>
+                  #{channel.channelIndex} · {channel.channelName}
+                </Text>
+                <Text style={styles.channelMeta}>
+                  {empty
+                    ? 'Empty slot'
+                    : `${isPrivateChannel(channel) ? 'Private' : 'Public'}${
+                        active ? ' · ACTIVE BUSHMESH CARRIER' : ' · tap to activate'
+                      }`}
+                </Text>
+              </TouchableOpacity>
+              {!empty ? (
+                <View style={styles.rowActions}>
+                  <TouchableOpacity disabled={!canManage} onPress={() => reveal(index)}>
+                    <Text style={styles.actionText}>Reveal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={!canManage}
+                    onPress={() => confirmClear(index, channel.channelName)}>
+                    <Text style={styles.dangerText}>Clear</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Send test message</Text>
+        <Text style={styles.body}>
+          {activeChannel
+            ? `Active carrier: ${activeChannel.channelName} (#${activeChannel.channelIndex})`
+            : 'Select a configured channel first.'}
+        </Text>
+        <TextInput
+          style={[styles.input, styles.messageInput]}
           value={messageText}
           onChangeText={setMessageText}
-          placeholder="Type a short channel message"
+          placeholder="Short channel message"
           placeholderTextColor={colors.textMuted}
           multiline
           maxLength={133}
         />
-
-        <View style={styles.messageMetaRow}>
-          <Text
-            style={[
-              styles.messageCount,
-              messageTooLong && styles.messageCountError,
-            ]}>
-            {trimmedMessage.length}/133
-          </Text>
-
-          <Text style={styles.messageStatus}>{sendStatus}</Text>
-        </View>
-              <View style={styles.messageHistoryCard}>
-        <Text style={styles.sectionTitle}>Channel Messages</Text>
-
-        {channelMessages.length === 0 ? (
-          <Text style={styles.emptyText}>
-            No local messages yet. Send a test message to the active channel.
-          </Text>
-        ) : (
-          channelMessages.map(message => (
-            <View key={message.id} style={styles.messageBubble}>
-              <View style={styles.messageBubbleTopRow}>
-                <Text style={styles.messageChannel}>
-                  {message.channelName} #{message.channelIndex}
-                </Text>
-                <Text style={styles.messageDirection}>
-                  {message.direction === 'sent' ? 'Sent' : 'Received'}
-                </Text>
-              </View>
-
-              <Text style={styles.messageText}>{message.text}</Text>
-
-              <Text style={styles.messageTime}>
-                {new Date(message.createdAt).toLocaleTimeString()}
-              </Text>
-            </View>
-          ))
-        )}
-      </View>
-
         <TouchableOpacity
-          style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-          onPress={sendActiveChannelMessage}
-          disabled={!canSend}>
-          <Text style={styles.sendButtonText}>
-            {isSending ? 'Sending...' : 'Send to Active Channel'}
+          style={[
+            styles.primaryButton,
+            (!activeChannel ||
+              !canSendChannelMessage ||
+              isSending ||
+              !messageText.trim()) &&
+              styles.disabled,
+          ]}
+          disabled={
+            !activeChannel ||
+            !canSendChannelMessage ||
+            isSending ||
+            !messageText.trim()
+          }
+          onPress={sendActiveChannelMessage}>
+          <Text style={styles.primaryButtonText}>
+            {isSending ? 'Sending…' : 'Send to active channel'}
           </Text>
         </TouchableOpacity>
+        <Text style={styles.meta}>{sendStatus}</Text>
       </View>
 
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Available Channels</Text>
-
-        {channels.length === 0 ? (
-          <Text style={styles.emptyText}>
-            No channels loaded yet. Connect from the Device tab. Startup sync
-            should load channels automatically.
-          </Text>
-        ) : null}
-
-        {visibleChannels.length > 0 ? (
-          visibleChannels.map(channel => {
-            const isActive = channel.channelIndex === activeChannelIndex;
-            const channelIsPrivate = isPrivateChannel(channel);
-
-            return (
-              <TouchableOpacity
-                key={channel.channelIndex}
-                style={[
-                  styles.channelCard,
-                  isActive && styles.channelCardActive,
-                ]}
-                onPress={() => setActiveChannelIndex(channel.channelIndex)}>
-                <View style={styles.channelTopRow}>
-                  <View style={styles.channelNameWrap}>
-                    <Text style={styles.channelName}>{channel.channelName}</Text>
-                    <Text style={styles.channelPurpose}>
-                      {isActive
-                        ? 'Active channel selected.'
-                        : 'Tap to make active.'}
-                    </Text>
-                  </View>
-
-                  <View style={styles.channelRightWrap}>
-                    <Text style={styles.channelIndex}>
-                      #{channel.channelIndex}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.smallTypeText,
-                        channelIsPrivate && styles.smallTypeTextPrivate,
-                      ]}>
-                      {channelIsPrivate ? 'Private' : 'Public'}
-                    </Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            );
-          })
-        ) : channels.length > 0 ? (
-          <Text style={styles.emptyText}>
-            Channel sync finished, but no named channels were found.
-          </Text>
-        ) : null}
-      </View>
-
-      {channels.length > 0 ? (
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>All Channel Slots</Text>
-
-          {channels.map(channel => {
-            const isActive = channel.channelIndex === activeChannelIndex;
-            const canSelect = channel.channelName && channel.channelName !== 'Empty';
-
-            return (
-              <TouchableOpacity
-                key={`slot-${channel.channelIndex}`}
-                style={[styles.slotRow, isActive && styles.slotRowActive]}
-                disabled={!canSelect}
-                onPress={() => setActiveChannelIndex(channel.channelIndex)}>
-                <Text
-                  style={[
-                    styles.slotText,
-                    isActive && styles.slotTextActive,
-                    !canSelect && styles.slotTextDisabled,
-                  ]}>
-                  Channel {channel.channelIndex}: {channel.channelName}
-                  {isActive ? '  • Active' : ''}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+      {channelMessages.length > 0 ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Channel messages</Text>
+          {channelMessages.map(message => (
+            <View key={message.id} style={styles.messageBubble}>
+              <Text style={styles.channelMeta}>
+                {message.channelName} #{message.channelIndex} · {message.direction}
+              </Text>
+              <Text style={styles.messageText}>{message.text}</Text>
+            </View>
+          ))}
         </View>
       ) : null}
     </ScrollView>
@@ -341,354 +393,100 @@ export function ChannelsScreen(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-    messageHistoryCard: {
-    marginTop: 18,
+  screen: {flex: 1, backgroundColor: colors.background},
+  content: {padding: 16, paddingBottom: 40, gap: 12},
+  card: {
     backgroundColor: colors.surface,
-    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 20,
     padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  messageBubble: {
-    backgroundColor: colors.background,
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 10,
-  },
-  messageBubbleTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
-  },
-  messageChannel: {
-    flex: 1,
-    color: colors.accent,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  messageDirection: {
-    color: colors.success,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  messageText: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 21,
-  },
-  messageTime: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 8,
-  },
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  headerCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 22,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   eyebrow: {
     color: colors.accent,
-    fontSize: 13,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    marginBottom: 8,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.1,
   },
   title: {
     color: colors.textPrimary,
     fontSize: 24,
     fontWeight: '900',
-    marginBottom: 10,
-  },
-  body: {
-    color: colors.textSecondary,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  statusCard: {
-    marginTop: 16,
-    backgroundColor: colors.surfaceSoft,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  statusLabel: {
-    color: colors.textMuted,
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  statusValue: {
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  statusDetail: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    marginTop: 6,
-  },
-  activeCard: {
-    marginTop: 18,
-    backgroundColor: colors.surfaceSoft,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  activeTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  activeNameWrap: {
-    flex: 1,
-  },
-  activeName: {
-    color: colors.textPrimary,
-    fontSize: 24,
-    fontWeight: '900',
-  },
-  activeSubText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '700',
     marginTop: 4,
-  },
-  channelTypePill: {
-    backgroundColor: colors.accent,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  channelTypePillPrivate: {
-    backgroundColor: colors.warning,
-  },
-  channelTypeText: {
-    color: colors.background,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  messageReadyCard: {
-    marginTop: 14,
-    backgroundColor: colors.background,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  messageReadyTitle: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '900',
-    marginBottom: 6,
-  },
-  messageReadyText: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  detailGrid: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 12,
-  },
-  detailBox: {
-    flex: 1,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  detailLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-  detailValue: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '900',
-  },
-  sendCard: {
-    marginTop: 18,
-    backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  messageInput: {
-    marginTop: 12,
-    minHeight: 82,
-    backgroundColor: colors.background,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 12,
-    color: colors.textPrimary,
-    fontSize: 15,
-    textAlignVertical: 'top',
-  },
-  messageMetaRow: {
-    marginTop: 8,
-    gap: 6,
-  },
-  messageCount: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  messageCountError: {
-    color: colors.danger,
-  },
-  messageStatus: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 18,
-  },
-  sendButton: {
-    marginTop: 12,
-    minHeight: 46,
-    borderRadius: 14,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
-  sendButtonDisabled: {
-    opacity: 0.4,
-  },
-  sendButtonText: {
-    color: colors.background,
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  sectionCard: {
-    marginTop: 18,
-    backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   sectionTitle: {
     color: colors.textPrimary,
     fontSize: 18,
     fontWeight: '900',
-    marginBottom: 12,
-  },
-  emptyText: {
-    color: colors.textMuted,
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  channelCard: {
-    backgroundColor: colors.background,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 12,
-  },
-  channelCardActive: {
-    borderColor: colors.accent,
-    backgroundColor: colors.surfaceSoft,
-  },
-  channelTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  channelNameWrap: {
-    flex: 1,
-  },
-  channelName: {
-    color: colors.textPrimary,
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  channelPurpose: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    marginTop: 5,
-    lineHeight: 20,
-  },
-  channelRightWrap: {
-    alignItems: 'flex-end',
-  },
-  channelIndex: {
-    color: colors.accent,
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  smallTypeText: {
-    color: colors.success,
-    fontSize: 11,
-    fontWeight: '900',
-    marginTop: 5,
-  },
-  smallTypeTextPrivate: {
-    color: colors.warning,
-  },
-  secretBox: {
-    marginTop: 12,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  secretLabel: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-  secretValue: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 18,
-  },
-  slotRow: {
-    backgroundColor: colors.background,
-    borderRadius: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
     marginBottom: 8,
   },
-  slotRowActive: {
-    borderColor: colors.accent,
-    backgroundColor: colors.surfaceSoft,
-  },
-  slotText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  slotTextActive: {
+  body: {color: colors.textSecondary, fontSize: 13, lineHeight: 20},
+  meta: {color: colors.textMuted, fontSize: 11, marginTop: 9},
+  input: {
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
     color: colors.textPrimary,
+    borderRadius: 13,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginTop: 10,
   },
-  slotTextDisabled: {
-    color: colors.textMuted,
+  messageInput: {minHeight: 70, textAlignVertical: 'top'},
+  primaryButton: {
+    backgroundColor: colors.accent,
+    borderRadius: 13,
+    alignItems: 'center',
+    paddingVertical: 13,
+    marginTop: 12,
   },
+  primaryButtonText: {color: colors.background, fontWeight: '900'},
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: 13,
+    alignItems: 'center',
+    paddingVertical: 11,
+    marginTop: 12,
+  },
+  secondaryButtonText: {color: colors.accent, fontWeight: '900'},
+  disabled: {opacity: 0.45},
+  statusBox: {backgroundColor: colors.surfaceSoft, borderRadius: 16, padding: 14},
+  statusText: {color: colors.textSecondary, fontSize: 12, lineHeight: 18},
+  secretBox: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    borderRadius: 12,
+    padding: 12,
+  },
+  secretLabel: {color: colors.warning, fontSize: 10, fontWeight: '900'},
+  secretValue: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 6,
+  },
+  hideText: {color: colors.accent, fontWeight: '900', marginTop: 10},
+  channelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingVertical: 12,
+  },
+  activeRow: {backgroundColor: colors.surfaceSoft},
+  channelCopy: {flex: 1},
+  channelName: {color: colors.textPrimary, fontSize: 14, fontWeight: '900'},
+  channelMeta: {color: colors.textMuted, fontSize: 10, marginTop: 3},
+  rowActions: {alignItems: 'flex-end', gap: 8, marginLeft: 8},
+  actionText: {color: colors.accent, fontWeight: '900', fontSize: 11},
+  dangerText: {color: colors.danger, fontWeight: '900', fontSize: 11},
+  messageBubble: {
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    padding: 11,
+    marginTop: 8,
+  },
+  messageText: {color: colors.textPrimary, fontSize: 14, marginTop: 4},
 });
