@@ -10,6 +10,13 @@ export type MeshCoreChannelInfo = {
   empty: boolean;
 };
 
+export function isZeroMeshCoreChannelSecret(secret: Uint8Array): boolean {
+  return (
+    secret.length === MESHCORE_CHANNEL_SECRET_BYTES &&
+    Array.from(secret).every(byte => byte === 0)
+  );
+}
+
 export function parseMeshCoreChannelInfo(
   bytes: number[] | Uint8Array,
 ): MeshCoreChannelInfo | null {
@@ -28,8 +35,7 @@ export function parseMeshCoreChannelInfo(
   const secret = Uint8Array.from(
     frame.slice(34, 34 + MESHCORE_CHANNEL_SECRET_BYTES),
   );
-  const empty =
-    channelName.length === 0 && Array.from(secret).every(byte => byte === 0);
+  const empty = channelName.length === 0 && isZeroMeshCoreChannelSecret(secret);
 
   return {
     channelIndex: frame[1],
@@ -52,7 +58,9 @@ export function meshCoreSecretToHex(secret: Uint8Array): string {
 export function meshCoreSecretFromHex(value: string): Uint8Array {
   const normalized = value.replace(/[^0-9a-f]/gi, '');
   if (!/^[0-9a-fA-F]{32}$/.test(normalized)) {
-    throw new Error('MeshCore channel secret must contain exactly 16 bytes (32 hex characters).');
+    throw new Error(
+      'MeshCore channel secret must contain exactly 16 bytes (32 hex characters).',
+    );
   }
 
   const bytes: number[] = [];
@@ -81,9 +89,14 @@ export function safeMeshCoreChannel(
   channelName: string;
   secret: string;
 } {
+  const zeroSecret = isZeroMeshCoreChannelSecret(channel.secret);
   return {
     channelIndex: String(channel.channelIndex),
     channelName: channel.channelName || 'Empty',
-    secret: channel.empty ? 'Empty / Public' : 'Configured (redacted)',
+    secret: channel.empty
+      ? 'Empty / Public'
+      : zeroSecret
+        ? 'Public / zero secret'
+        : 'Configured (redacted)',
   };
 }
