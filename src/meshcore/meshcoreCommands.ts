@@ -4,6 +4,11 @@ import {
   MESHCORE_CHANNEL_NAME_BYTES,
   MESHCORE_CHANNEL_SECRET_BYTES,
 } from './meshcoreChannelInfo';
+import {
+  MeshCoreRadioParams,
+  MeshCoreRepeatMode,
+  validateMeshCoreRadioParams,
+} from './meshcoreRadioSettings';
 
 const MESHCORE_PUBLIC_KEY_BYTES = 32;
 const MESHCORE_MAX_PATH_BYTES = 64;
@@ -110,6 +115,55 @@ export function buildGetDeviceTimeCommand(): string {
 
 export function buildSetDeviceTimeCommand(timestampSeconds: number): string {
   return bytesToBase64([0x06, ...writeUInt32LE(timestampSeconds)]);
+}
+
+function setRadioParamsCommandBytes(
+  input: MeshCoreRadioParams,
+  repeatMode: MeshCoreRepeatMode | null,
+): number[] {
+  const validated = validateMeshCoreRadioParams(input);
+  const bytes = [
+    0x0b,
+    ...writeUInt32LE(validated.frequencyMilliMhz),
+    ...writeUInt32LE(validated.bandwidthMilliKhz),
+    validated.spreadingFactor,
+    validated.codingRate,
+  ];
+  if (repeatMode !== null) {
+    bytes.push(repeatMode);
+  }
+  return bytes;
+}
+
+/** MeshCore CMD_SET_RADIO_PARAMS (0x0B). Protocol v9+ appends repeat_mode. */
+export function buildSetRadioParamsCommand(
+  input: MeshCoreRadioParams,
+  repeatMode: MeshCoreRepeatMode | null,
+): string {
+  return bytesToBase64(setRadioParamsCommandBytes(input, repeatMode));
+}
+
+export function setRadioParamsCommandHex(
+  input: MeshCoreRadioParams,
+  repeatMode: MeshCoreRepeatMode | null,
+): string {
+  return bytesToHex(setRadioParamsCommandBytes(input, repeatMode));
+}
+
+function setRadioTxPowerCommandBytes(txPowerDbm: number): number[] {
+  if (!Number.isInteger(txPowerDbm) || txPowerDbm < -128 || txPowerDbm > 127) {
+    throw new Error('MeshCore TX power must fit a signed 8-bit value.');
+  }
+  return [0x0c, txPowerDbm < 0 ? 0x100 + txPowerDbm : txPowerDbm];
+}
+
+/** MeshCore CMD_SET_RADIO_TX_POWER (0x0C). Firmware interprets byte 1 as int8. */
+export function buildSetRadioTxPowerCommand(txPowerDbm: number): string {
+  return bytesToBase64(setRadioTxPowerCommandBytes(txPowerDbm));
+}
+
+export function setRadioTxPowerCommandHex(txPowerDbm: number): string {
+  return bytesToHex(setRadioTxPowerCommandBytes(txPowerDbm));
 }
 
 export function buildGetChannelCommand(channelIndex: number): string {
