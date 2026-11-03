@@ -53,10 +53,11 @@ export function sanitizeNativeMeshCoreResponseForDiagnostics(
     parsed: response.parsed
       ? {
           ...response.parsed,
-          lines: redactMeshCoreParsedLines(
-            response.packetType,
-            response.parsed.lines,
-          ),
+          lines:
+            redactMeshCoreParsedLines(
+              response.packetType,
+              response.parsed.lines,
+            ) ?? [],
         }
       : null,
     receivedDatagram: response.receivedDatagram
@@ -91,9 +92,7 @@ export class NativeMeshCoreSessionCoordinator {
             parsed: this.snapshot.lastFrame.parsed
               ? {
                   ...this.snapshot.lastFrame.parsed,
-                  lines: this.snapshot.lastFrame.parsed.lines
-                    ? [...this.snapshot.lastFrame.parsed.lines]
-                    : undefined,
+                  lines: [...this.snapshot.lastFrame.parsed.lines],
                 }
               : null,
             receivedDatagram: this.snapshot.lastFrame.receivedDatagram
