@@ -33,6 +33,7 @@ import {RouteGuidanceBanner} from './src/components/RouteGuidanceBanner';
 import {SecureDataStatusBanner} from './src/components/SecureDataStatusBanner';
 import {SpeechPttPanel} from './src/components/SpeechPttPanel';
 import {SpeechStatusBanner} from './src/components/SpeechStatusBanner';
+import {ActiveConvoyCarrierProfile} from './src/convoy/carrierCredentials';
 import {ContactsScreen} from './src/screens/ContactsScreen';
 import {ConvoyScreen} from './src/screens/ConvoyScreen';
 import {DeviceHubScreen} from './src/screens/DeviceHubScreen';
@@ -63,6 +64,8 @@ const tabs: Array<{key: TabKey; label: string}> = [
 
 function AppContent(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>('drive');
+  const [activeCarrierProfile, setActiveCarrierProfile] =
+    useState<ActiveConvoyCarrierProfile | null>(null);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
@@ -127,12 +130,19 @@ function AppContent(): React.JSX.Element {
         </ScreenMountGate>
         <ScreenMountGate active={activeTab === 'channels'}>
           <View style={styles.screenWrap}>
-            <RadioScreen />
+            <RadioScreen
+              onOpenCarrierDetails={
+                activeCarrierProfile ? () => setActiveTab('convoy') : undefined
+              }
+            />
           </View>
         </ScreenMountGate>
         <ScreenMountGate active={activeTab === 'convoy'}>
           <View style={styles.screenWrap}>
-            <ConvoyScreen />
+            <ConvoyScreen
+              activeCarrierProfile={activeCarrierProfile}
+              onActiveCarrierProfileChange={setActiveCarrierProfile}
+            />
           </View>
         </ScreenMountGate>
         <ScreenMountGate active={activeTab === 'location'}>
