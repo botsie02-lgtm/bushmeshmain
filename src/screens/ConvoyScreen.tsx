@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 
 import {AdvancedCarrierCredentials} from '../components/AdvancedCarrierCredentials';
+import {ActiveConvoyCarrierProfile} from '../convoy/carrierCredentials';
 import {
   bearingDegrees,
   compassDirection,
@@ -28,6 +29,13 @@ import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
 import {useRadioConnection} from '../state/RadioConnectionContext';
 import {colors} from '../theme/colors';
+
+export type ConvoyScreenProps = {
+  activeCarrierProfile?: ActiveConvoyCarrierProfile | null;
+  onActiveCarrierProfileChange?: (
+    profile: ActiveConvoyCarrierProfile,
+  ) => void;
+};
 
 function freshnessColor(freshness: ConvoyFreshness): string {
   switch (freshness) {
@@ -88,7 +96,10 @@ function RadarPoint({
   );
 }
 
-export function ConvoyScreen(): React.JSX.Element {
+export function ConvoyScreen({
+  activeCarrierProfile = null,
+  onActiveCarrierProfileChange,
+}: ConvoyScreenProps = {}): React.JSX.Element {
   const {vehicles, localPosition, loadDemoConvoy, clearConvoy} = useConvoy();
   const {connectionStatus, setActiveChannelIndex} = useBushMesh();
   const {snapshot, createConvoy, joinConvoy} = useRadioConnection();
@@ -104,14 +115,16 @@ export function ConvoyScreen(): React.JSX.Element {
   const [enrollmentStatus, setEnrollmentStatus] = useState(
     'Connect a MeshCore node to create or join a convoy carrier.',
   );
-  const [enrollmentProfile, setEnrollmentProfile] = useState<{
-    convoyId: string;
-    convoyName: string;
-    channelName: string;
-    channelIndex: number;
-  } | null>(null);
+  const [localEnrollmentProfile, setLocalEnrollmentProfile] =
+    useState<ActiveConvoyCarrierProfile | null>(null);
+  const enrollmentProfile = activeCarrierProfile ?? localEnrollmentProfile;
 
   const canProvision = connectionStatus === 'Connected' && !snapshot.isWriting;
+
+  const rememberEnrollmentProfile = (profile: ActiveConvoyCarrierProfile) => {
+    setLocalEnrollmentProfile(profile);
+    onActiveCarrierProfileChange?.(profile);
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setClockTick(value => value + 1), 10_000);
@@ -168,7 +181,7 @@ export function ConvoyScreen(): React.JSX.Element {
         channelIndex: optionalSlot(createSlot),
       });
       setActiveChannelIndex(String(enrollment.channel.channelIndex));
-      setEnrollmentProfile({
+      rememberEnrollmentProfile({
         convoyId: enrollment.convoyId,
         convoyName: enrollment.convoyName,
         channelName: enrollment.channel.channelName,
@@ -211,7 +224,7 @@ export function ConvoyScreen(): React.JSX.Element {
         channelIndex: optionalSlot(joinSlot),
       });
       setActiveChannelIndex(String(enrollment.channel.channelIndex));
-      setEnrollmentProfile({
+      rememberEnrollmentProfile({
         convoyId: enrollment.convoyId,
         convoyName: enrollment.convoyName,
         channelName: enrollment.channel.channelName,
