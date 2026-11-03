@@ -36,6 +36,11 @@ function readInt32LE(bytes: number[], offset: number): number | null {
   return value > 0x7fffffff ? value - 0x100000000 : value;
 }
 
+function readInt8(value: number | undefined): number {
+  const byte = value ?? 0;
+  return byte > 0x7f ? byte - 0x100 : byte;
+}
+
 function toHex(bytes: number[]): string {
   return bytes
     .map(byte => byte.toString(16).padStart(2, '0').toUpperCase())
@@ -84,7 +89,9 @@ export function parseMeshCoreSelfInfo(
 
   return {
     advertisementType: packet[1] ?? 0,
-    txPower: packet[2] ?? 0,
+    // MeshCore writes the configured TX power into SELF_INFO as an int8. Keep
+    // negative values such as -9 dBm intact for exact read-back verification.
+    txPower: readInt8(packet[2]),
     maxTxPower: packet[3] ?? 0,
     publicKeyHex,
     bushMeshIdentityRef: meshCorePublicKeyToBushMeshIdentityRef(publicKeyHex),
