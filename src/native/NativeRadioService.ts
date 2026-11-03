@@ -60,6 +60,7 @@ type NativeRadioServiceModule = {
     deviceLabel: string | null,
   ) => Promise<boolean>;
   stop: () => Promise<boolean>;
+  secureRandomBytes: (length: number) => Promise<number[]>;
   enqueueNativeBleWrite: (base64Frame: string) => Promise<boolean>;
   drainNativeBleFrames: (maxFrames: number) => Promise<string[]>;
   drainBackgroundInbox: (maxFrames: number) => Promise<NativeBackgroundInboxFrame[]>;
@@ -192,9 +193,7 @@ export const nativeRadioService = {
   },
 
   async start(deviceLabel: string | null): Promise<boolean> {
-    if (!this.isSupported() || !module) {
-      return false;
-    }
+    if (!this.isSupported() || !module) return false;
     return module.start(deviceLabel);
   },
 
@@ -202,9 +201,7 @@ export const nativeRadioService = {
     deviceAddress: string,
     deviceLabel: string | null,
   ): Promise<boolean> {
-    if (!this.isSupported() || !module) {
-      return false;
-    }
+    if (!this.isSupported() || !module) return false;
 
     const address = deviceAddress.trim();
     if (!address) {
@@ -215,16 +212,41 @@ export const nativeRadioService = {
   },
 
   async stop(): Promise<boolean> {
-    if (!this.isSupported() || !module) {
-      return false;
-    }
+    if (!this.isSupported() || !module) return false;
     return module.stop();
   },
 
-  async enqueueNativeBleWrite(base64Frame: string): Promise<boolean> {
-    if (!this.isSupported() || !module) {
-      return false;
+  async secureRandomBytes(length: number): Promise<Uint8Array> {
+    const count = Math.floor(length);
+    if (count < 1 || count > 64) {
+      throw new Error('Secure random request must be between 1 and 64 bytes.');
     }
+
+    const cryptoProvider = globalThis.crypto as
+      | {getRandomValues?: (array: Uint8Array) => Uint8Array}
+      | undefined;
+    if (typeof cryptoProvider?.getRandomValues === 'function') {
+      const bytes = new Uint8Array(count);
+      cryptoProvider.getRandomValues(bytes);
+      return bytes;
+    }
+
+    if (!this.isSupported() || !module) {
+      throw new Error('No cryptographically secure random provider is available.');
+    }
+    const bytes = await module.secureRandomBytes(count);
+    if (
+      !Array.isArray(bytes) ||
+      bytes.length !== count ||
+      bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)
+    ) {
+      throw new Error('Native secure random provider returned invalid bytes.');
+    }
+    return Uint8Array.from(bytes);
+  },
+
+  async enqueueNativeBleWrite(base64Frame: string): Promise<boolean> {
+    if (!this.isSupported() || !module) return false;
     if (!base64Frame) {
       throw new Error('Native BLE writes require a non-empty base64 frame.');
     }
@@ -232,29 +254,21 @@ export const nativeRadioService = {
   },
 
   async drainNativeBleFrames(maxFrames = 32): Promise<string[]> {
-    if (!this.isSupported() || !module) {
-      return [];
-    }
+    if (!this.isSupported() || !module) return [];
     const boundedMax = Math.max(0, Math.min(128, Math.floor(maxFrames)));
     return module.drainNativeBleFrames(boundedMax);
   },
 
   async drainBackgroundInbox(maxFrames = 128): Promise<NativeBackgroundInboxFrame[]> {
-    if (!this.isSupported() || !module) {
-      return [];
-    }
+    if (!this.isSupported() || !module) return [];
     const boundedMax = Math.max(0, Math.min(128, Math.floor(maxFrames)));
-    return validBackgroundFrames(
-      await module.drainBackgroundInbox(boundedMax),
-    );
+    return validBackgroundFrames(await module.drainBackgroundInbox(boundedMax));
   },
 
   async listBackgroundChannelInbox(
     maxFrames = 128,
   ): Promise<NativeBackgroundChannelInboxFrame[]> {
-    if (!this.isSupported() || !module) {
-      return [];
-    }
+    if (!this.isSupported() || !module) return [];
     const boundedMax = Math.max(0, Math.min(128, Math.floor(maxFrames)));
     return validChannelInboxFrames(
       await module.listBackgroundChannelInbox(boundedMax),
@@ -262,9 +276,7 @@ export const nativeRadioService = {
   },
 
   async acknowledgeBackgroundChannelInbox(ids: string[]): Promise<number> {
-    if (!this.isSupported() || !module) {
-      return 0;
-    }
+    if (!this.isSupported() || !module) return 0;
     const normalized = Array.from(
       new Set(
         ids
@@ -272,18 +284,12 @@ export const nativeRadioService = {
           .filter(id => /^[0-9a-f]{64}$/.test(id)),
       ),
     );
-    if (normalized.length === 0) {
-      return 0;
-    }
-    return module.acknowledgeBackgroundChannelInboxJson(
-      JSON.stringify(normalized),
-    );
+    if (normalized.length === 0) return 0;
+    return module.acknowledgeBackgroundChannelInboxJson(JSON.stringify(normalized));
   },
 
   async getStatus(): Promise<NativeRadioServiceStatus> {
-    if (!this.isSupported() || !module) {
-      return {...unsupportedStatus};
-    }
+    if (!this.isSupported() || !module) return {...unsupportedStatus};
     return module.getStatus();
   },
 };
