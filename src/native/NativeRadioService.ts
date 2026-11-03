@@ -71,6 +71,10 @@ type NativeRadioServiceModule = {
   getStatus: () => Promise<NativeRadioServiceStatus>;
 };
 
+type SecureRandomCryptoProvider = {
+  getRandomValues?: (array: Uint8Array) => Uint8Array;
+};
+
 const module = NativeModules.BushMeshRadioService as
   | NativeRadioServiceModule
   | undefined;
@@ -222,9 +226,9 @@ export const nativeRadioService = {
       throw new Error('Secure random request must be between 1 and 64 bytes.');
     }
 
-    const cryptoProvider = globalThis.crypto as
-      | {getRandomValues?: (array: Uint8Array) => Uint8Array}
-      | undefined;
+    const cryptoProvider = (
+      globalThis as unknown as {crypto?: SecureRandomCryptoProvider}
+    ).crypto;
     if (typeof cryptoProvider?.getRandomValues === 'function') {
       const bytes = new Uint8Array(count);
       cryptoProvider.getRandomValues(bytes);
