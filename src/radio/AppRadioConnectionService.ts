@@ -1,11 +1,34 @@
+import {Buffer} from 'buffer';
 import {BleManager, Device} from 'react-native-ble-plx';
 
 import {requestBlePermissions} from '../ble/blePermissions';
+import {
+  BushMeshConvoyEnrollment,
+  createBushMeshConvoy,
+  joinBushMeshConvoy,
+} from '../convoy/convoyProvisioning';
+import {
+  meshCoreSecretFromHex,
+  meshCoreSecretToHex,
+  safeMeshCoreChannel,
+} from '../meshcore/meshcoreChannelInfo';
 import {MeshCoreClient, MeshCoreLogItem} from '../meshcore/MeshCoreClient';
 import {
   MeshCoreBleDiscovery,
   discoverMeshCoreBle,
 } from '../meshcore/meshcoreBle';
+import {MeshCoreDeviceInfo} from '../meshcore/meshcoreDeviceInfo';
+import {
+  redactMeshCoreDiagnosticBytes,
+  redactMeshCoreParsedLines,
+} from '../meshcore/meshcoreDiagnostics';
+import {
+  MeshCoreChannelProvisioningPort,
+  clearMeshCoreChannel,
+  provisionMeshCoreChannel,
+  readAllMeshCoreChannels,
+} from '../meshcore/meshcoreProvisioning';
+import {MeshCoreSelfInfo} from '../meshcore/meshcoreSelfInfo';
 import {
   NativeMeshCoreResponse,
   NativeMeshCoreSession,
@@ -33,6 +56,13 @@ export type AppRadioConnectionOwner = 'none' | 'react-native' | 'android-native'
 
 export type AppRadioLogItem = MeshCoreLogItem & {id: string};
 
+export type AppProvisionedChannel = {
+  channelIndex: number;
+  channelName: string;
+  /** Sensitive: returned only to an explicit create/join/reveal UI flow. */
+  secretHex: string;
+};
+
 export type AppRadioConnectionSnapshot = {
   status: AppRadioConnectionStatus;
   statusDetail: string;
@@ -48,6 +78,9 @@ export type AppRadioConnectionSnapshot = {
   channels: BushMeshChannel[];
   contacts: BushMeshContact[];
   deviceStatus: BushMeshDeviceStatus | null;
+  deviceInfo: MeshCoreDeviceInfo | null;
+  selfInfo: MeshCoreSelfInfo | null;
+  deviceTimeSeconds: number | null;
 };
 
 type Listener = () => void;
@@ -67,6 +100,7 @@ type Dependencies = {
   nativeCoordinator: NativeMeshCoreSessionCoordinator;
   nativeSupported: () => boolean;
   getNativeStatus: typeof nativeRadioService.getStatus;
+  randomBytes: (length: number) => Promise<Uint8Array>;
 };
 
 const initialSnapshot = (): AppRadioConnectionSnapshot => ({
@@ -84,6 +118,9 @@ const initialSnapshot = (): AppRadioConnectionSnapshot => ({
   channels: [],
   contacts: [],
   deviceStatus: null,
+  deviceInfo: null,
+  selfInfo: null,
+  deviceTimeSeconds: null,
 });
 
 function channelFromParsedLines(lines?: string[]): BushMeshChannel | null {
@@ -97,7 +134,9 @@ function channelFromParsedLines(lines?: string[]): BushMeshChannel | null {
   };
 }
 
-function contactFromParsed(contact: Awaited<ReturnType<MeshCoreClient['syncContacts']>>[number]): BushMeshContact {
+function contactFromParsed(
+  contact: Awaited<ReturnType<MeshCoreClient['syncContacts']>>[number],
+): BushMeshContact {
   return {
     publicKey: contact.publicKey,
     publicKeyPrefix: contact.publicKeyPrefix,
@@ -113,11 +152,18 @@ function contactFromParsed(contact: Awaited<ReturnType<MeshCoreClient['syncConta
 }
 
 function nativeResponseLog(response: NativeMeshCoreResponse): MeshCoreLogItem {
+  const diagnosticBytes = redactMeshCoreDiagnosticBytes(response.bytes);
+  const parsedLines = redactMeshCoreParsedLines(
+    response.packetType,
+    response.parsed?.lines,
+  );
   return {
     label: response.label,
-    value: response.bytes.map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join(' '),
-    rawBytes: [...response.bytes],
-    parsedLines: response.parsed?.lines,
+    value: diagnosticBytes
+      .map(byte => byte.toString(16).padStart(2, '0').toUpperCase())
+      .join(' '),
+    rawBytes: diagnosticBytes,
+    parsedLines,
     batteryInfo: response.parsed?.batteryInfo,
     contactInfo: response.parsed?.contactInfo,
     channelMessage: response.parsed?.channelMessage,
@@ -148,12 +194,14 @@ export class AppRadioConnectionService {
   constructor(deps: Partial<Dependencies> = {}) {
     this.deps = {
       createBleManager: () => new BleManager(),
-      createMeshCoreClient: (manager, device, events) => new MeshCoreClient(manager, device, events),
+      createMeshCoreClient: (manager, device, events) =>
+        new MeshCoreClient(manager, device, events),
       requestPermissions: requestBlePermissions,
       discoverBle: discoverMeshCoreBle,
       nativeCoordinator: nativeMeshCoreSessionCoordinator,
       nativeSupported: () => nativeRadioService.isSupported(),
       getNativeStatus: () => nativeRadioService.getStatus(),
+      randomBytes: length => nativeRadioService.secureRandomBytes(length),
       ...deps,
     };
   }
@@ -173,7 +221,11 @@ export class AppRadioConnectionService {
       txFrames: this.snapshot.txFrames.map(log => ({...log})),
       rxLogs: this.snapshot.rxLogs.map(log => ({...log})),
       meshCoreBle: this.snapshot.meshCoreBle ? {...this.snapshot.meshCoreBle} : null,
-      deviceStatus: this.snapshot.deviceStatus ? {...this.snapshot.deviceStatus} : null,
+      deviceStatus: this.snapshot.deviceStatus
+        ? {...this.snapshot.deviceStatus}
+        : null,
+      deviceInfo: this.snapshot.deviceInfo ? {...this.snapshot.deviceInfo} : null,
+      selfInfo: this.snapshot.selfInfo ? {...this.snapshot.selfInfo} : null,
     };
   }
 
@@ -198,11 +250,17 @@ export class AppRadioConnectionService {
 
   async startScan(): Promise<void> {
     const lifecycleGeneration = this.lifecycleGeneration;
-    this.patch({status: 'Requesting permissions', statusDetail: 'Checking Bluetooth permissions...'});
+    this.patch({
+      status: 'Requesting permissions',
+      statusDetail: 'Checking Bluetooth permissions...',
+    });
     const granted = await this.deps.requestPermissions();
     if (!this.isActiveLifecycle(lifecycleGeneration)) return;
     if (!granted) {
-      this.patch({status: 'Error', statusDetail: 'Bluetooth permissions were not granted.'});
+      this.patch({
+        status: 'Error',
+        statusDetail: 'Bluetooth permissions were not granted.',
+      });
       return;
     }
 
@@ -210,7 +268,11 @@ export class AppRadioConnectionService {
     this.cancelActiveScan();
     this.stopManagerScan(manager);
     const scanGeneration = ++this.scanGeneration;
-    this.patch({devices: [], status: 'Scanning', statusDetail: 'Scanning for nearby BLE devices...'});
+    this.patch({
+      devices: [],
+      status: 'Scanning',
+      statusDetail: 'Scanning for nearby BLE devices...',
+    });
     manager.startDeviceScan(null, null, (error, device) => {
       if (!this.isActiveScan(manager, lifecycleGeneration, scanGeneration)) return;
       if (error) {
@@ -254,11 +316,15 @@ export class AppRadioConnectionService {
   async connectToDevice(device: Device): Promise<void> {
     this.stopScan();
     const manager = this.ensureManager();
-    this.patch({status: 'Connecting', statusDetail: `Connecting to ${device.name ?? device.localName}...`});
+    this.patch({
+      status: 'Connecting',
+      statusDetail: `Connecting to ${device.name ?? device.localName}...`,
+    });
     try {
       const connected = await manager.connectToDevice(device.id);
       if (this.disposed || this.manager !== manager) return;
-      const readyDevice = await connected.discoverAllServicesAndCharacteristics();
+      const readyDevice =
+        await connected.discoverAllServicesAndCharacteristics();
       if (this.disposed || this.manager !== manager) return;
       const discovery = await this.deps.discoverBle(readyDevice);
       if (this.disposed || this.manager !== manager) return;
@@ -274,10 +340,15 @@ export class AppRadioConnectionService {
         rxLogs: [],
         channels: [],
         contacts: [],
+        deviceInfo: null,
+        selfInfo: null,
+        deviceTimeSeconds: null,
         status: 'Connected',
       });
       if (!discovery.serviceFound || !discovery.rxFound || !discovery.txFound) {
-        this.patch({statusDetail: `Connected to ${label}, but the MeshCore UART service was not fully found.`});
+        this.patch({
+          statusDetail: `Connected to ${label}, but the MeshCore UART service was not fully found.`,
+        });
         return;
       }
 
@@ -287,9 +358,12 @@ export class AppRadioConnectionService {
         onStatus: statusDetail => this.patch({statusDetail}),
         onError: message => this.patch({status: 'Error', statusDetail: message}),
         onConnectionState: (state, detail) => {
-          if (state === 'connected') this.patch({status: 'Connected', statusDetail: detail});
-          else if (state === 'reconnecting') this.patch({status: 'Connecting', statusDetail: detail});
-          else if (state === 'disconnected') this.patch({status: 'Disconnected', statusDetail: detail});
+          if (state === 'connected')
+            this.patch({status: 'Connected', statusDetail: detail});
+          else if (state === 'reconnecting')
+            this.patch({status: 'Connecting', statusDetail: detail});
+          else if (state === 'disconnected')
+            this.patch({status: 'Disconnected', statusDetail: detail});
         },
       });
       this.meshCoreClient?.stop();
@@ -297,7 +371,11 @@ export class AppRadioConnectionService {
       client.start();
       await this.runReactNativeStartupSync(client);
     } catch (error) {
-      this.patch({status: 'Error', statusDetail: error instanceof Error ? error.message : 'Failed to connect.'});
+      this.patch({
+        status: 'Error',
+        statusDetail:
+          error instanceof Error ? error.message : 'Failed to connect.',
+      });
     }
   }
 
@@ -308,11 +386,18 @@ export class AppRadioConnectionService {
    */
   async handoffDiscoveredDeviceToAndroid(device: Device): Promise<void> {
     if (!this.nativeHandoffSupported) {
-      this.patch({status: 'Error', statusDetail: 'Android native radio ownership is unavailable in this build.'});
+      this.patch({
+        status: 'Error',
+        statusDetail: 'Android native radio ownership is unavailable in this build.',
+      });
       return;
     }
     if (this.snapshot.connectionOwner !== 'none') {
-      this.patch({status: 'Error', statusDetail: 'Disconnect the current radio owner before starting Android ownership.'});
+      this.patch({
+        status: 'Error',
+        statusDetail:
+          'Disconnect the current radio owner before starting Android ownership.',
+      });
       return;
     }
 
@@ -329,6 +414,9 @@ export class AppRadioConnectionService {
       channels: [],
       contacts: [],
       deviceStatus: null,
+      deviceInfo: null,
+      selfInfo: null,
+      deviceTimeSeconds: null,
     });
 
     try {
@@ -364,16 +452,26 @@ export class AppRadioConnectionService {
   }
 
   async handoffToAndroid(): Promise<void> {
-    if (!this.snapshot.connectedDeviceAddress || this.snapshot.connectionOwner === 'android-native') return;
+    if (
+      !this.snapshot.connectedDeviceAddress ||
+      this.snapshot.connectionOwner === 'android-native'
+    )
+      return;
     if (!this.nativeHandoffSupported) {
-      this.patch({status: 'Error', statusDetail: 'Android native radio ownership is unavailable in this build.'});
+      this.patch({
+        status: 'Error',
+        statusDetail: 'Android native radio ownership is unavailable in this build.',
+      });
       return;
     }
     const address = this.snapshot.connectedDeviceAddress;
     const label = this.snapshot.connectedDeviceLabel ?? 'MeshCore radio';
     this.stopScan();
     const manager = this.ensureManager();
-    this.patch({isWriting: true, statusDetail: 'Handing MeshCore BLE ownership to Android...'});
+    this.patch({
+      isWriting: true,
+      statusDetail: 'Handing MeshCore BLE ownership to Android...',
+    });
     try {
       this.meshCoreClient?.stop();
       this.meshCoreClient = null;
@@ -381,7 +479,11 @@ export class AppRadioConnectionService {
       this.connectedDevice = null;
       const session = await this.startNativeSession(address, label);
       this.nativeSession = session;
-      this.patch({connectionOwner: 'android-native', meshCoreBle: null, status: 'Connected'});
+      this.patch({
+        connectionOwner: 'android-native',
+        meshCoreBle: null,
+        status: 'Connected',
+      });
       await this.runNativeStartupSync(session);
       await this.refreshNativeDeviceState(session);
     } catch (error) {
@@ -389,7 +491,10 @@ export class AppRadioConnectionService {
       this.connectedDevice = null;
       this.patch({
         status: 'Error',
-        statusDetail: error instanceof Error ? `Android radio handoff failed: ${error.message}` : 'Android radio handoff failed.',
+        statusDetail:
+          error instanceof Error
+            ? `Android radio handoff failed: ${error.message}`
+            : 'Android radio handoff failed.',
         connectedDeviceAddress: null,
         connectedDeviceLabel: null,
         connectionOwner: 'none',
@@ -435,8 +540,12 @@ export class AppRadioConnectionService {
     try {
       this.meshCoreClient?.stop();
       this.meshCoreClient = null;
-      const address = this.connectedDevice?.id ?? this.snapshot.connectedDeviceAddress;
-      if (address) await this.ensureManager().cancelDeviceConnection(address).catch(() => undefined);
+      const address =
+        this.connectedDevice?.id ?? this.snapshot.connectedDeviceAddress;
+      if (address)
+        await this.ensureManager()
+          .cancelDeviceConnection(address)
+          .catch(() => undefined);
     } finally {
       this.connectedDevice = null;
       this.snapshot = {...initialSnapshot(), statusDetail: 'Device disconnected.'};
@@ -446,33 +555,91 @@ export class AppRadioConnectionService {
 
   async runActiveStartupSync(): Promise<void> {
     try {
-      if (this.snapshot.connectionOwner === 'android-native' && this.nativeSession) {
+      if (
+        this.snapshot.connectionOwner === 'android-native' &&
+        this.nativeSession
+      ) {
         this.patch({isWriting: true});
-        await this.nativeSession.sendAppStart('BushMesh');
-        await this.nativeSession.sendDeviceQuery();
+        const self = await this.nativeSession.sendAppStart('BushMesh');
+        const device = await this.nativeSession.sendDeviceQuery();
+        this.patch({
+          selfInfo: self.selfInfo,
+          deviceInfo: device.deviceInfo,
+        });
         await this.runNativeStartupSync(this.nativeSession);
         await this.refreshNativeDeviceState(this.nativeSession);
       } else if (this.meshCoreClient) {
         await this.runReactNativeStartupSync(this.meshCoreClient);
       }
     } catch (error) {
-      this.patch({status: 'Error', statusDetail: error instanceof Error ? error.message : 'Startup sync failed.', isWriting: false});
+      this.patch({
+        status: 'Error',
+        statusDetail:
+          error instanceof Error ? error.message : 'Startup sync failed.',
+        isWriting: false,
+      });
     }
   }
 
   async getBatteryStatus(): Promise<void> {
     this.patch({isWriting: true});
     try {
-      const battery = this.snapshot.connectionOwner === 'android-native'
-        ? (await this.nativeSession?.getBatteryStatus())?.parsed?.batteryInfo
-        : (await this.meshCoreClient?.getBatteryStatus())?.batteryInfo;
+      const battery =
+        this.snapshot.connectionOwner === 'android-native'
+          ? (await this.nativeSession?.getBatteryStatus())?.parsed?.batteryInfo
+          : (await this.meshCoreClient?.getBatteryStatus())?.batteryInfo;
       if (battery) {
-        this.patch({deviceStatus: battery, statusDetail: `Battery ${battery.batteryVolts.toFixed(2)} V. Storage ${battery.storagePercent ?? 0}% used.`});
+        this.patch({
+          deviceStatus: battery,
+          statusDetail: `Battery ${battery.batteryVolts.toFixed(
+            2,
+          )} V. Storage ${battery.storagePercent ?? 0}% used.`,
+        });
       } else {
-        this.patch({statusDetail: 'Battery response received, but no battery info parsed.'});
+        this.patch({
+          statusDetail: 'Battery response received, but no battery info parsed.',
+        });
       }
     } catch (error) {
-      this.patch({status: 'Error', statusDetail: error instanceof Error ? error.message : 'Failed to get battery status.'});
+      this.patch({
+        status: 'Error',
+        statusDetail:
+          error instanceof Error ? error.message : 'Failed to get battery status.',
+      });
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async getDeviceTime(): Promise<number> {
+    const session = this.requireManagementSession();
+    this.patch({isWriting: true});
+    try {
+      const seconds = await session.getDeviceTime();
+      this.patch({
+        deviceTimeSeconds: seconds,
+        statusDetail: `Node time: ${new Date(seconds * 1000).toISOString()}`,
+      });
+      return seconds;
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async setDeviceTimeToPhone(): Promise<number> {
+    const session = this.requireManagementSession();
+    this.patch({isWriting: true});
+    try {
+      const requested = Math.floor(Date.now() / 1000);
+      const verified = await session.setDeviceTime(requested);
+      if (verified < requested) {
+        throw new Error('MeshCore node time did not verify after update.');
+      }
+      this.patch({
+        deviceTimeSeconds: verified,
+        statusDetail: 'Node time updated and read back successfully.',
+      });
+      return verified;
     } finally {
       this.patch({isWriting: false});
     }
@@ -481,22 +648,249 @@ export class AppRadioConnectionService {
   async syncContacts(): Promise<BushMeshContact[]> {
     this.patch({isWriting: true});
     try {
-      const contacts = this.snapshot.connectionOwner === 'android-native'
-        ? await this.nativeSession?.syncContacts()
-        : await this.meshCoreClient?.syncContacts();
+      const contacts =
+        this.snapshot.connectionOwner === 'android-native'
+          ? await this.nativeSession?.syncContacts()
+          : await this.meshCoreClient?.syncContacts();
       const mapped = contacts?.map(contactFromParsed) ?? [];
-      this.patch({contacts: mapped, statusDetail: `Contacts sync complete. Loaded ${mapped.length} contact(s).`});
+      this.patch({
+        contacts: mapped,
+        statusDetail: `Contacts sync complete. Loaded ${mapped.length} contact(s).`,
+      });
       return mapped;
     } catch (error) {
-      this.patch({status: 'Error', statusDetail: error instanceof Error ? error.message : 'Failed to sync contacts.'});
+      this.patch({
+        status: 'Error',
+        statusDetail:
+          error instanceof Error ? error.message : 'Failed to sync contacts.',
+      });
       return [];
     } finally {
       this.patch({isWriting: false});
     }
   }
 
+  async lookupContact(publicKeyOrPrefix: string): Promise<BushMeshContact> {
+    const fullKey = this.resolveContactPublicKey(publicKeyOrPrefix);
+    const contact = await this.requireManagementSession().lookupContact(fullKey);
+    const mapped = contactFromParsed(contact);
+    const without = this.snapshot.contacts.filter(
+      current => current.publicKey.toUpperCase() !== mapped.publicKey.toUpperCase(),
+    );
+    this.patch({contacts: [mapped, ...without], statusDetail: 'Contact refreshed from node.'});
+    return mapped;
+  }
+
+  async addOrUpdateContact(input: {
+    publicKey: string;
+    name: string;
+    type?: number;
+  }): Promise<BushMeshContact> {
+    this.patch({isWriting: true});
+    try {
+      const contact = await this.requireManagementSession().addOrUpdateContact({
+        publicKey: input.publicKey,
+        name: input.name,
+        type: input.type,
+      });
+      const mapped = contactFromParsed(contact);
+      const without = this.snapshot.contacts.filter(
+        current => current.publicKey.toUpperCase() !== mapped.publicKey.toUpperCase(),
+      );
+      this.patch({
+        contacts: [mapped, ...without],
+        statusDetail: 'Contact written and verified by public-key lookup.',
+      });
+      return mapped;
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async removeContact(publicKeyOrPrefix: string): Promise<void> {
+    const fullKey = this.resolveContactPublicKey(publicKeyOrPrefix);
+    this.patch({isWriting: true});
+    try {
+      await this.requireManagementSession().removeContact(fullKey);
+      const contacts = await this.requireManagementSession().syncContacts();
+      if (
+        contacts.some(
+          contact => contact.publicKey.toUpperCase() === fullKey.toUpperCase(),
+        )
+      ) {
+        throw new Error('MeshCore contact removal did not verify during refresh.');
+      }
+      this.patch({
+        contacts: contacts.map(contactFromParsed),
+        statusDetail: 'Contact removed and node contact list verified.',
+      });
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async exportContact(publicKeyOrPrefix: string): Promise<string> {
+    const fullKey = this.resolveContactPublicKey(publicKeyOrPrefix);
+    const bytes = await this.requireManagementSession().exportContact(fullKey);
+    return Buffer.from(bytes).toString('base64');
+  }
+
+  async importContact(exportedBase64: string): Promise<BushMeshContact[]> {
+    const normalized = exportedBase64.trim();
+    if (!normalized) throw new Error('Paste a MeshCore exported contact first.');
+    const bytes = Uint8Array.from(Buffer.from(normalized, 'base64'));
+    this.patch({isWriting: true});
+    try {
+      await this.requireManagementSession().importContact(bytes);
+      const contacts = await this.requireManagementSession().syncContacts();
+      const mapped = contacts.map(contactFromParsed);
+      this.patch({
+        contacts: mapped,
+        statusDetail: 'Contact import accepted; node contact list refreshed.',
+      });
+      return mapped;
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async refreshChannels(): Promise<BushMeshChannel[]> {
+    this.patch({isWriting: true});
+    try {
+      const channels = await readAllMeshCoreChannels(this.requireProvisioningPort());
+      const safe = channels.map(safeMeshCoreChannel);
+      this.patch({
+        channels: safe,
+        statusDetail: `Loaded ${safe.length} channel slot(s) from the node-advertised capacity.`,
+      });
+      return safe;
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async createPrivateChannel(input: {
+    channelName: string;
+    channelIndex?: number | null;
+  }): Promise<AppProvisionedChannel> {
+    this.patch({isWriting: true});
+    try {
+      const provisioned = await provisionMeshCoreChannel(
+        this.requireProvisioningPort(),
+        {
+          channelName: input.channelName,
+          channelIndex: input.channelIndex,
+          randomBytes: this.deps.randomBytes,
+        },
+      );
+      await this.refreshChannelsInternal();
+      this.patch({
+        statusDetail: `Private channel “${provisioned.channelName}” written to slot ${provisioned.channelIndex} and verified.`,
+      });
+      return {
+        channelIndex: provisioned.channelIndex,
+        channelName: provisioned.channelName,
+        secretHex: meshCoreSecretToHex(provisioned.secret),
+      };
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async joinPrivateChannel(input: {
+    channelName: string;
+    secretHex: string;
+    channelIndex?: number | null;
+  }): Promise<AppProvisionedChannel> {
+    this.patch({isWriting: true});
+    try {
+      const provisioned = await provisionMeshCoreChannel(
+        this.requireProvisioningPort(),
+        {
+          channelName: input.channelName,
+          secret: meshCoreSecretFromHex(input.secretHex),
+          channelIndex: input.channelIndex,
+        },
+      );
+      await this.refreshChannelsInternal();
+      this.patch({
+        statusDetail: `Private channel “${provisioned.channelName}” joined in slot ${provisioned.channelIndex} and verified.`,
+      });
+      return {
+        channelIndex: provisioned.channelIndex,
+        channelName: provisioned.channelName,
+        secretHex: meshCoreSecretToHex(provisioned.secret),
+      };
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async clearChannel(channelIndex: number): Promise<void> {
+    this.patch({isWriting: true});
+    try {
+      await clearMeshCoreChannel(this.requireProvisioningPort(), channelIndex);
+      await this.refreshChannelsInternal();
+      this.patch({
+        statusDetail: `Channel slot ${channelIndex} cleared and verified.`,
+      });
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async revealChannelSecret(channelIndex: number): Promise<string> {
+    const channel = await this.requireProvisioningPort().readChannel(channelIndex);
+    if (channel.empty) throw new Error('This channel slot is empty.');
+    return meshCoreSecretToHex(channel.secret);
+  }
+
+  async createConvoy(input: {
+    convoyName: string;
+    channelName?: string;
+    channelIndex?: number | null;
+  }): Promise<BushMeshConvoyEnrollment> {
+    this.patch({isWriting: true});
+    try {
+      const enrollment = await createBushMeshConvoy(
+        this.requireProvisioningPort(),
+        {...input, randomBytes: this.deps.randomBytes},
+      );
+      await this.refreshChannelsInternal();
+      this.patch({
+        statusDetail: `Convoy “${enrollment.convoyName}” carrier provisioned and verified in slot ${enrollment.channel.channelIndex}.`,
+      });
+      return enrollment;
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async joinConvoy(input: {
+    invite: string;
+    channelIndex?: number | null;
+  }): Promise<BushMeshConvoyEnrollment> {
+    this.patch({isWriting: true});
+    try {
+      const enrollment = await joinBushMeshConvoy(
+        this.requireProvisioningPort(),
+        input,
+      );
+      await this.refreshChannelsInternal();
+      this.patch({
+        statusDetail: `Convoy “${enrollment.convoyName}” carrier joined and verified in slot ${enrollment.channel.channelIndex}.`,
+      });
+      return enrollment;
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
   async sendChannelMessage(channelIndex: number, message: string): Promise<void> {
-    if (this.snapshot.connectionOwner === 'android-native' && this.nativeSession) {
+    if (
+      this.snapshot.connectionOwner === 'android-native' &&
+      this.nativeSession
+    ) {
       await this.nativeSession.sendChannelMessage(channelIndex, message);
       return;
     }
@@ -509,40 +903,51 @@ export class AppRadioConnectionService {
 
   async sendAppStart(): Promise<void> {
     await this.runCommand(async () => {
-      if (this.snapshot.connectionOwner === 'android-native') await this.nativeSession?.sendAppStart('BushMesh');
-      else await this.meshCoreClient?.sendAppStart('BushMesh');
+      if (this.snapshot.connectionOwner === 'android-native') {
+        const response = await this.nativeSession?.sendAppStart('BushMesh');
+        if (response?.selfInfo) this.patch({selfInfo: response.selfInfo});
+      } else {
+        const response = await this.meshCoreClient?.sendAppStart('BushMesh');
+        if (response?.selfInfo) this.patch({selfInfo: response.selfInfo});
+      }
     }, 'App Start failed.');
   }
 
   async sendDeviceQuery(): Promise<void> {
     await this.runCommand(async () => {
-      if (this.snapshot.connectionOwner === 'android-native') await this.nativeSession?.sendDeviceQuery();
-      else await this.meshCoreClient?.sendDeviceQuery();
+      if (this.snapshot.connectionOwner === 'android-native') {
+        const response = await this.nativeSession?.sendDeviceQuery();
+        if (response?.deviceInfo) this.patch({deviceInfo: response.deviceInfo});
+      } else {
+        const response = await this.meshCoreClient?.sendDeviceQuery();
+        if (response?.deviceInfo) this.patch({deviceInfo: response.deviceInfo});
+      }
     }, 'Device Query failed.');
   }
 
   async getChannel0(): Promise<void> {
     await this.runCommand(async () => {
-      const channel = this.snapshot.connectionOwner === 'android-native'
-        ? channelFromParsedLines((await this.nativeSession?.getChannel(0))?.parsed?.lines)
-        : channelFromParsedLines((await this.meshCoreClient?.getChannel(0))?.parsedLines);
+      const channel =
+        this.snapshot.connectionOwner === 'android-native'
+          ? channelFromParsedLines(
+              (await this.nativeSession?.getChannel(0))?.parsed?.lines,
+            )
+          : channelFromParsedLines(
+              (await this.meshCoreClient?.getChannel(0))?.parsedLines,
+            );
       if (channel) this.patch({channels: [channel]});
     }, 'Failed to get Channel 0.');
   }
 
   async probeChannels(): Promise<void> {
-    this.patch({isWriting: true, channels: []});
     try {
-      if (this.snapshot.connectionOwner === 'android-native' && this.nativeSession) {
-        this.patch({channels: this.channelsFromNative(await this.nativeSession.probeChannels())});
-      } else if (this.meshCoreClient) {
-        const results = await this.meshCoreClient.probeChannels();
-        this.patch({channels: this.channelsFromLines(results.map(result => ({parsedLines: result.parsedLines})))});
-      }
+      await this.refreshChannels();
     } catch (error) {
-      this.patch({status: 'Error', statusDetail: error instanceof Error ? error.message : 'Failed to probe channels.'});
-    } finally {
-      this.patch({isWriting: false});
+      this.patch({
+        status: 'Error',
+        statusDetail:
+          error instanceof Error ? error.message : 'Failed to probe channels.',
+      });
     }
   }
 
@@ -580,8 +985,18 @@ export class AppRadioConnectionService {
       if (!this.isActiveLifecycle(generation)) return;
       const address = nativeStatus.nativeBleDeviceAddress?.trim() ?? '';
       if (nativeStatus.ownership !== 'native-service' || !address) return;
-      const label = nativeStatus.nativeBleDeviceLabel ?? nativeStatus.deviceLabel ?? 'MeshCore radio';
-      this.patch({status: 'Connecting', statusDetail: 'Recovering Android-owned MeshCore radio session...', connectedDeviceAddress: address, connectedDeviceLabel: label, connectionOwner: 'android-native', meshCoreBle: null});
+      const label =
+        nativeStatus.nativeBleDeviceLabel ??
+        nativeStatus.deviceLabel ??
+        'MeshCore radio';
+      this.patch({
+        status: 'Connecting',
+        statusDetail: 'Recovering Android-owned MeshCore radio session...',
+        connectedDeviceAddress: address,
+        connectedDeviceLabel: label,
+        connectionOwner: 'android-native',
+        meshCoreBle: null,
+      });
       const session = await this.startNativeSession(address, label);
       if (!this.isActiveLifecycle(generation)) {
         await this.deps.nativeCoordinator.stop().catch(() => undefined);
@@ -594,11 +1009,23 @@ export class AppRadioConnectionService {
     } catch (error) {
       if (!this.isActiveLifecycle(generation)) return;
       this.nativeSession = null;
-      this.patch({status: 'Error', statusDetail: error instanceof Error ? `Native radio recovery failed: ${error.message}` : 'Native radio recovery failed.', connectedDeviceAddress: null, connectedDeviceLabel: null, connectionOwner: 'none'});
+      this.patch({
+        status: 'Error',
+        statusDetail:
+          error instanceof Error
+            ? `Native radio recovery failed: ${error.message}`
+            : 'Native radio recovery failed.',
+        connectedDeviceAddress: null,
+        connectedDeviceLabel: null,
+        connectionOwner: 'none',
+      });
     }
   }
 
-  private async startNativeSession(address: string, label: string): Promise<NativeMeshCoreSession> {
+  private async startNativeSession(
+    address: string,
+    label: string,
+  ): Promise<NativeMeshCoreSession> {
     return this.deps.nativeCoordinator.start(address, label, {
       onStatus: statusDetail => this.patch({statusDetail}),
       onError: message => this.patch({status: 'Error', statusDetail: message}),
@@ -607,36 +1034,64 @@ export class AppRadioConnectionService {
   }
 
   private async runReactNativeStartupSync(client: MeshCoreClient): Promise<void> {
-    this.patch({isWriting: true, channels: [], statusDetail: 'Startup sync: sending App Start...'});
+    this.patch({
+      isWriting: true,
+      channels: [],
+      statusDetail: 'Startup sync: sending App Start...',
+    });
     try {
-      await client.sendAppStart('BushMesh');
-      this.patch({statusDetail: 'Startup sync: querying device info...'});
-      await client.sendDeviceQuery();
-      this.patch({statusDetail: 'Startup sync: loading configured channels...'});
-      const results = await client.probeChannels();
-      const channels = this.channelsFromLines(results.map(result => ({parsedLines: result.parsedLines})));
-      const named = channels.filter(channel => channel.channelName !== 'Empty');
-      this.patch({channels, statusDetail: `Startup sync complete. Loaded ${named.length} named channel(s) from ${channels.length} slot(s).`});
+      const self = await client.sendAppStart('BushMesh');
+      this.patch({
+        selfInfo: self.selfInfo ?? null,
+        statusDetail: 'Startup sync: querying device info...',
+      });
+      const device = await client.sendDeviceQuery();
+      this.patch({
+        deviceInfo: device.deviceInfo ?? null,
+        statusDetail: 'Startup sync: loading configured channels...',
+      });
+      const channels = await readAllMeshCoreChannels(client);
+      const safe = channels.map(safeMeshCoreChannel);
+      const named = safe.filter(channel => channel.channelName !== 'Empty');
+      this.patch({
+        channels: safe,
+        statusDetail: `Startup sync complete. Loaded ${named.length} named channel(s) from ${safe.length} slot(s).`,
+      });
     } finally {
       this.patch({isWriting: false});
     }
   }
 
-  private async runNativeStartupSync(session: NativeMeshCoreSession): Promise<void> {
-    this.patch({isWriting: true, channels: [], statusDetail: 'Android session: loading configured channels...'});
+  private async runNativeStartupSync(
+    session: NativeMeshCoreSession,
+  ): Promise<void> {
+    this.patch({
+      isWriting: true,
+      channels: [],
+      statusDetail: 'Android session: loading configured channels...',
+    });
     try {
-      const channels = this.channelsFromNative(await session.probeChannels());
-      const named = channels.filter(channel => channel.channelName !== 'Empty');
-      this.patch({channels, statusDetail: `Android owns the radio. Loaded ${named.length} named channel(s) from ${channels.length} slot(s).`});
+      const deviceInfo = await session.getDeviceInfo();
+      const channels = await readAllMeshCoreChannels(session);
+      const safe = channels.map(safeMeshCoreChannel);
+      const named = safe.filter(channel => channel.channelName !== 'Empty');
+      this.patch({
+        deviceInfo,
+        channels: safe,
+        statusDetail: `Android owns the radio. Loaded ${named.length} named channel(s) from ${safe.length} slot(s).`,
+      });
     } finally {
       this.patch({isWriting: false});
     }
   }
 
-  private async refreshNativeDeviceState(session: NativeMeshCoreSession): Promise<void> {
+  private async refreshNativeDeviceState(
+    session: NativeMeshCoreSession,
+  ): Promise<void> {
     this.patch({isWriting: true});
     try {
-      const battery = (await session.getBatteryStatus()).parsed?.batteryInfo ?? null;
+      const battery =
+        (await session.getBatteryStatus()).parsed?.batteryInfo ?? null;
       const contacts = (await session.syncContacts()).map(contactFromParsed);
       this.patch({deviceStatus: battery, contacts});
       const queued = await session.syncQueuedMessages(20);
@@ -646,20 +1101,83 @@ export class AppRadioConnectionService {
     }
   }
 
-  private channelsFromLines(responses: Array<{parsedLines?: string[]}>): BushMeshChannel[] {
-    return responses.map(response => channelFromParsedLines(response.parsedLines)).filter((channel): channel is BushMeshChannel => channel !== null);
+  private async refreshChannelsInternal(): Promise<void> {
+    const channels = await readAllMeshCoreChannels(this.requireProvisioningPort());
+    this.patch({channels: channels.map(safeMeshCoreChannel)});
   }
 
-  private channelsFromNative(responses: NativeMeshCoreResponse[]): BushMeshChannel[] {
-    return responses.map(response => channelFromParsedLines(response.parsed?.lines)).filter((channel): channel is BushMeshChannel => channel !== null);
+  private requireProvisioningPort(): MeshCoreChannelProvisioningPort {
+    if (
+      this.snapshot.connectionOwner === 'android-native' &&
+      this.nativeSession
+    ) {
+      return this.nativeSession;
+    }
+    if (this.snapshot.connectionOwner === 'react-native' && this.meshCoreClient) {
+      return this.meshCoreClient;
+    }
+    throw new Error('No active MeshCore radio session is available for provisioning.');
   }
 
-  private async runCommand(task: () => Promise<void>, fallback: string): Promise<void> {
+  private requireManagementSession(): NativeMeshCoreSession | MeshCoreClient {
+    if (
+      this.snapshot.connectionOwner === 'android-native' &&
+      this.nativeSession
+    ) {
+      return this.nativeSession;
+    }
+    if (this.snapshot.connectionOwner === 'react-native' && this.meshCoreClient) {
+      return this.meshCoreClient;
+    }
+    throw new Error('No active MeshCore radio session is available.');
+  }
+
+  private resolveContactPublicKey(publicKeyOrPrefix: string): string {
+    const normalized = publicKeyOrPrefix.replace(/[^0-9a-f]/gi, '').toUpperCase();
+    if (/^[0-9A-F]{64}$/.test(normalized)) return normalized;
+    if (!normalized || normalized.length > 64) {
+      throw new Error('Enter a MeshCore public key or a unique synced public-key prefix.');
+    }
+    const matches = this.snapshot.contacts.filter(contact =>
+      contact.publicKey.toUpperCase().startsWith(normalized),
+    );
+    if (matches.length === 1) return matches[0].publicKey;
+    if (matches.length === 0) {
+      throw new Error(
+        'MeshCore firmware lookup requires the full 32-byte public key. Sync Contacts first so BushMesh can resolve this local prefix to one full key.',
+      );
+    }
+    throw new Error('That public-key prefix matches more than one synced contact. Enter more key bytes.');
+  }
+
+  private channelsFromLines(
+    responses: Array<{parsedLines?: string[]}>,
+  ): BushMeshChannel[] {
+    return responses
+      .map(response => channelFromParsedLines(response.parsedLines))
+      .filter((channel): channel is BushMeshChannel => channel !== null);
+  }
+
+  private channelsFromNative(
+    responses: NativeMeshCoreResponse[],
+  ): BushMeshChannel[] {
+    return responses
+      .map(response => channelFromParsedLines(response.parsed?.lines))
+      .filter((channel): channel is BushMeshChannel => channel !== null);
+  }
+
+  private async runCommand(
+    task: () => Promise<void>,
+    fallback: string,
+  ): Promise<void> {
     this.patch({isWriting: true});
     try {
       await task();
     } catch (error) {
-      this.patch({status: 'Error', statusDetail: error instanceof Error ? error.message : fallback});
+      this.patch({
+        status: 'Error',
+        statusDetail: error instanceof Error ? error.message : fallback,
+      });
     } finally {
       this.patch({isWriting: false});
     }
@@ -726,12 +1244,21 @@ export class AppRadioConnectionService {
   }
 
   private addChunk(log: MeshCoreLogItem): void {
-    if (log.label === 'RX_WRITE') this.patch({rxLogs: [this.makeLogItem(log), ...this.snapshot.rxLogs.slice(0, 39)]});
-    else this.patch({txChunks: [this.makeLogItem(log), ...this.snapshot.txChunks.slice(0, 39)]});
+    if (log.label === 'RX_WRITE') {
+      this.patch({
+        rxLogs: [this.makeLogItem(log), ...this.snapshot.rxLogs.slice(0, 39)],
+      });
+    } else {
+      this.patch({
+        txChunks: [this.makeLogItem(log), ...this.snapshot.txChunks.slice(0, 39)],
+      });
+    }
   }
 
   private addFrame(log: MeshCoreLogItem): void {
-    this.patch({txFrames: [this.makeLogItem(log), ...this.snapshot.txFrames.slice(0, 39)]});
+    this.patch({
+      txFrames: [this.makeLogItem(log), ...this.snapshot.txFrames.slice(0, 39)],
+    });
   }
 
   private patch(patch: Partial<AppRadioConnectionSnapshot>): void {
