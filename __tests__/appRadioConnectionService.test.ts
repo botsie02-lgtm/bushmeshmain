@@ -15,6 +15,27 @@ function fakeDevice(id = 'AA:BB'): Device {
   return device;
 }
 
+const fakeDeviceInfo = {
+  firmwareVersion: 3,
+  maxContacts: 32,
+  maxChannels: 2,
+  blePin: null,
+  firmwareBuild: 'test',
+  model: 'test',
+  version: 'test',
+  clientRepeat: null,
+  pathHashMode: null,
+};
+
+function emptyChannel(channelIndex: number) {
+  return {
+    channelIndex,
+    channelName: '',
+    secret: new Uint8Array(16),
+    empty: true,
+  };
+}
+
 type ScanCallback = (error: Error | null, device: Device | null) => void;
 
 describe('AppRadioConnectionService', () => {
@@ -39,7 +60,10 @@ describe('AppRadioConnectionService', () => {
       start: jest.fn(),
       stop: jest.fn(),
       sendAppStart: jest.fn().mockResolvedValue({}),
-      sendDeviceQuery: jest.fn().mockResolvedValue({}),
+      sendDeviceQuery: jest.fn().mockResolvedValue({deviceInfo: fakeDeviceInfo}),
+      getDeviceInfo: jest.fn().mockResolvedValue(fakeDeviceInfo),
+      readChannel: jest.fn(async (channelIndex: number) => emptyChannel(channelIndex)),
+      writeChannel: jest.fn().mockResolvedValue(undefined),
       probeChannels: jest.fn().mockResolvedValue([]),
       sendChannelMessage: jest.fn().mockResolvedValue({}),
       getBatteryStatus: jest.fn().mockResolvedValue({}),
@@ -48,7 +72,10 @@ describe('AppRadioConnectionService', () => {
     };
     const nativeSession = {
       sendAppStart: jest.fn().mockResolvedValue({}),
-      sendDeviceQuery: jest.fn().mockResolvedValue({}),
+      sendDeviceQuery: jest.fn().mockResolvedValue({deviceInfo: fakeDeviceInfo}),
+      getDeviceInfo: jest.fn().mockResolvedValue(fakeDeviceInfo),
+      readChannel: jest.fn(async (channelIndex: number) => emptyChannel(channelIndex)),
+      writeChannel: jest.fn().mockResolvedValue(undefined),
       probeChannels: jest.fn().mockResolvedValue([]),
       sendChannelMessage: jest.fn().mockResolvedValue({}),
       getBatteryStatus: jest.fn().mockResolvedValue({parsed: {}}),
@@ -248,7 +275,7 @@ describe('AppRadioConnectionService', () => {
       expect(stopOrders[stopOrders.length - 1]).toBeLessThan(
         (nativeCoordinator.start as jest.Mock).mock.invocationCallOrder[0],
       );
-      expect(nativeSession.probeChannels).toHaveBeenCalled();
+      expect(nativeSession.readChannel).toHaveBeenCalledTimes(2);
       expect(service.getSnapshot().connectionOwner).toBe('android-native');
       expect(service.getSnapshot().status).toBe('Connected');
       await service.dispose();
