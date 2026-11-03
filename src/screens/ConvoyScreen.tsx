@@ -1,5 +1,12 @@
 import React, {useEffect, useMemo, useState} from 'react';
-import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 import {
   bearingDegrees,
@@ -12,7 +19,13 @@ import {
   getConvoyFreshness,
   positionAgeSeconds,
 } from '../convoy/convoy';
+import {
+  BushMeshConvoyInviteV1,
+  decodeBushMeshConvoyInvite,
+} from '../convoy/convoyProvisioning';
+import {useBushMesh} from '../state/BushMeshContext';
 import {useConvoy} from '../state/ConvoyContext';
+import {useRadioConnection} from '../state/RadioConnectionContext';
 import {colors} from '../theme/colors';
 
 function freshnessColor(freshness: ConvoyFreshness): string {
@@ -26,6 +39,16 @@ function freshnessColor(freshness: ConvoyFreshness): string {
     case 'lost':
       return colors.danger;
   }
+}
+
+function optionalSlot(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const slot = Number(trimmed);
+  if (!Number.isInteger(slot) || slot < 0) {
+    throw new Error('Channel slot must be a non-negative whole number.');
+  }
+  return slot;
 }
 
 function RadarPoint({
@@ -66,7 +89,28 @@ function RadarPoint({
 
 export function ConvoyScreen(): React.JSX.Element {
   const {vehicles, localPosition, loadDemoConvoy, clearConvoy} = useConvoy();
+  const {connectionStatus, setActiveChannelIndex} = useBushMesh();
+  const {snapshot, createConvoy, joinConvoy} = useRadioConnection();
   const [, setClockTick] = useState(0);
+  const [convoyName, setConvoyName] = useState('BushMesh Test Convoy');
+  const [channelName, setChannelName] = useState('');
+  const [createSlot, setCreateSlot] = useState('');
+  const [invite, setInvite] = useState('');
+  const [joinSlot, setJoinSlot] = useState('');
+  const [decodedInvite, setDecodedInvite] =
+    useState<BushMeshConvoyInviteV1 | null>(null);
+  const [sensitiveInvite, setSensitiveInvite] = useState<string | null>(null);
+  const [enrollmentStatus, setEnrollmentStatus] = useState(
+    'Connect a MeshCore node to create or join a convoy carrier.',
+  );
+  const [enrollmentProfile, setEnrollmentProfile] = useState<{
+    convoyId: string;
+    convoyName: string;
+    channelName: string;
+    channelIndex: number;
+  } | null>(null);
+
+  const canProvision = connectionStatus === 'Connected' && !snapshot.isWriting;
 
   useEffect(() => {
     const timer = setInterval(() => setClockTick(value => value + 1), 10_000);
@@ -87,9 +131,7 @@ export function ConvoyScreen(): React.JSX.Element {
       })),
     ];
 
-    if (coordinates.length === 0) {
-      return null;
-    }
+    if (coordinates.length === 0) return null;
 
     const latitudes = coordinates.map(point => point.latitude);
     const longitudes = coordinates.map(point => point.longitude);
@@ -116,8 +158,80 @@ export function ConvoyScreen(): React.JSX.Element {
     return freshness === 'stale' || freshness === 'lost';
   }).length;
 
+  const createEnrollment = async () => {
+    try {
+      setSensitiveInvite(null);
+      const enrollment = await createConvoy({
+        convoyName,
+        channelName: channelName.trim() || undefined,
+        channelIndex: optionalSlot(createSlot),
+      });
+      setActiveChannelIndex(String(enrollment.channel.channelIndex));
+      setEnrollmentProfile({
+        convoyId: enrollment.convoyId,
+        convoyName: enrollment.convoyName,
+        channelName: enrollment.channel.channelName,
+        channelIndex: enrollment.channel.channelIndex,
+      });
+      setSensitiveInvite(enrollment.invite);
+      setEnrollmentStatus(
+        `Convoy carrier provisioned, read back, verified, and activated on slot ${enrollment.channel.channelIndex}. Share the sensitive invite only with convoy members.`,
+      );
+    } catch (error) {
+      setEnrollmentStatus(
+        error instanceof Error ? error.message : 'Convoy creation failed.',
+      );
+    }
+  };
+
+  const inspectInvite = () => {
+    try {
+      const decoded = decodeBushMeshConvoyInvite(invite);
+      setDecodedInvite(decoded);
+      setEnrollmentStatus(
+        'Invite decoded locally. Confirm the convoy and channel below before writing this carrier to the connected node.',
+      );
+    } catch (error) {
+      setDecodedInvite(null);
+      setEnrollmentStatus(
+        error instanceof Error ? error.message : 'Convoy invite is invalid.',
+      );
+    }
+  };
+
+  const joinEnrollment = async () => {
+    if (!decodedInvite) {
+      setEnrollmentStatus('Inspect a valid convoy invite before joining.');
+      return;
+    }
+    try {
+      const enrollment = await joinConvoy({
+        invite,
+        channelIndex: optionalSlot(joinSlot),
+      });
+      setActiveChannelIndex(String(enrollment.channel.channelIndex));
+      setEnrollmentProfile({
+        convoyId: enrollment.convoyId,
+        convoyName: enrollment.convoyName,
+        channelName: enrollment.channel.channelName,
+        channelIndex: enrollment.channel.channelIndex,
+      });
+      setSensitiveInvite(null);
+      setEnrollmentStatus(
+        `Joined “${enrollment.convoyName}”. Carrier write verified and activated on slot ${enrollment.channel.channelIndex}.`,
+      );
+    } catch (error) {
+      setEnrollmentStatus(
+        error instanceof Error ? error.message : 'Convoy join failed.',
+      );
+    }
+  };
+
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled">
       <View style={styles.heroCard}>
         <View style={styles.heroTopRow}>
           <View style={styles.heroCopy}>
@@ -133,6 +247,116 @@ export function ConvoyScreen(): React.JSX.Element {
           Bushmesh treats every vehicle position as time-sensitive. Old coordinates
           fade to stale and lost instead of pretending a mate is still there.
         </Text>
+      </View>
+
+      <View style={styles.enrollmentCard}>
+        <Text style={styles.sectionEyebrow}>PROVISIONING</Text>
+        <Text style={styles.sectionTitle}>Create Convoy</Text>
+        <Text style={styles.body}>
+          Creates a convoy profile, provisions a new private MeshCore carrier on
+          the connected node, verifies the write, activates that slot for BushMesh,
+          then creates a sensitive invite. The MeshCore carrier secret is not a
+          Security v1 group key.
+        </Text>
+        <TextInput
+          style={styles.input}
+          value={convoyName}
+          onChangeText={setConvoyName}
+          placeholder="Convoy name"
+          placeholderTextColor={colors.textMuted}
+        />
+        <TextInput
+          style={styles.input}
+          value={channelName}
+          onChangeText={setChannelName}
+          placeholder="Optional MeshCore channel name"
+          placeholderTextColor={colors.textMuted}
+        />
+        <TextInput
+          style={styles.input}
+          value={createSlot}
+          onChangeText={setCreateSlot}
+          placeholder="Optional slot; blank = first empty"
+          placeholderTextColor={colors.textMuted}
+          keyboardType="number-pad"
+        />
+        <TouchableOpacity
+          style={[styles.primaryButton, !canProvision && styles.disabled]}
+          disabled={!canProvision}
+          onPress={createEnrollment}>
+          <Text style={styles.primaryButtonText}>Create, provision and verify</Text>
+        </TouchableOpacity>
+
+        {sensitiveInvite ? (
+          <View style={styles.sensitiveBox}>
+            <Text style={styles.sensitiveLabel}>SENSITIVE CONVOY INVITE · SELECT / COPY</Text>
+            <Text selectable style={styles.inviteText}>{sensitiveInvite}</Text>
+            <TouchableOpacity onPress={() => setSensitiveInvite(null)}>
+              <Text style={styles.linkText}>Hide invite</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <View style={styles.divider} />
+        <Text style={styles.sectionTitle}>Join Convoy</Text>
+        <Text style={styles.body}>
+          Paste a BushMesh invite, inspect its convoy/channel metadata, then
+          explicitly confirm before writing the same private carrier to this node.
+        </Text>
+        <TextInput
+          style={[styles.input, styles.inviteInput]}
+          value={invite}
+          onChangeText={value => {
+            setInvite(value);
+            setDecodedInvite(null);
+          }}
+          placeholder="Paste BUSHMESH-CONVOY-1 invite"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          multiline
+        />
+        <TouchableOpacity style={styles.secondaryButton} onPress={inspectInvite}>
+          <Text style={styles.secondaryButtonText}>Inspect invite</Text>
+        </TouchableOpacity>
+        {decodedInvite ? (
+          <View style={styles.confirmBox}>
+            <Text style={styles.confirmTitle}>Confirm convoy provisioning</Text>
+            <Text style={styles.confirmText}>Convoy: {decodedInvite.convoy.name}</Text>
+            <Text style={styles.confirmText}>ID: {decodedInvite.convoy.id}</Text>
+            <Text style={styles.confirmText}>Carrier: {decodedInvite.carrier.channelName}</Text>
+            <Text style={styles.confirmText}>Invite version: {decodedInvite.version}</Text>
+            <Text style={styles.confirmText}>Security v1 enrollment: not embedded in this phase</Text>
+            <TextInput
+              style={styles.input}
+              value={joinSlot}
+              onChangeText={setJoinSlot}
+              placeholder="Optional slot; blank = first empty"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="number-pad"
+            />
+            <TouchableOpacity
+              style={[styles.primaryButton, !canProvision && styles.disabled]}
+              disabled={!canProvision}
+              onPress={joinEnrollment}>
+              <Text style={styles.primaryButtonText}>Confirm, provision and activate</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <View style={styles.statusBox}>
+          <Text style={styles.statusText}>{enrollmentStatus}</Text>
+        </View>
+        {enrollmentProfile ? (
+          <View style={styles.profileBox}>
+            <Text style={styles.sectionEyebrow}>ACTIVE CONVOY PROFILE</Text>
+            <Text style={styles.profileTitle}>{enrollmentProfile.convoyName}</Text>
+            <Text style={styles.profileText}>ID {enrollmentProfile.convoyId}</Text>
+            <Text style={styles.profileText}>
+              Carrier {enrollmentProfile.channelName} · slot {enrollmentProfile.channelIndex}
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.statsRow}>
@@ -299,6 +523,13 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 18,
   },
+  enrollmentCard: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 22,
+    padding: 18,
+  },
   heroTopRow: {flexDirection: 'row', justifyContent: 'space-between', gap: 12},
   heroCopy: {flex: 1},
   eyebrow: {color: colors.accent, fontSize: 12, fontWeight: '800', letterSpacing: 1.2},
@@ -316,6 +547,48 @@ const styles = StyleSheet.create({
   },
   offlineDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success},
   offlinePillText: {color: colors.textPrimary, fontSize: 9, fontWeight: '800'},
+  input: {
+    marginTop: 10,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    color: colors.textPrimary,
+    borderRadius: 13,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  inviteInput: {minHeight: 88, textAlignVertical: 'top'},
+  divider: {height: 1, backgroundColor: colors.border, marginVertical: 18},
+  sensitiveBox: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    borderRadius: 14,
+    padding: 12,
+  },
+  sensitiveLabel: {color: colors.warning, fontSize: 10, fontWeight: '900'},
+  inviteText: {color: colors.textPrimary, fontSize: 10, lineHeight: 15, marginTop: 8},
+  linkText: {color: colors.accent, fontWeight: '900', marginTop: 10},
+  confirmBox: {
+    marginTop: 12,
+    backgroundColor: colors.surfaceSoft,
+    borderRadius: 14,
+    padding: 12,
+  },
+  confirmTitle: {color: colors.textPrimary, fontSize: 15, fontWeight: '900'},
+  confirmText: {color: colors.textSecondary, fontSize: 11, marginTop: 5},
+  statusBox: {marginTop: 12, backgroundColor: colors.surfaceSoft, borderRadius: 12, padding: 11},
+  statusText: {color: colors.textSecondary, fontSize: 11, lineHeight: 17},
+  profileBox: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: colors.success,
+    borderRadius: 14,
+    padding: 12,
+  },
+  profileTitle: {color: colors.textPrimary, fontSize: 16, fontWeight: '900', marginTop: 4},
+  profileText: {color: colors.textSecondary, fontSize: 11, marginTop: 4},
+  disabled: {opacity: 0.45},
   statsRow: {flexDirection: 'row', gap: 10},
   statCard: {
     flex: 1,
@@ -337,7 +610,7 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {color: colors.textPrimary, fontSize: 19, fontWeight: '800'},
   primaryButton: {
-    marginTop: 18,
+    marginTop: 12,
     backgroundColor: colors.accent,
     borderRadius: 15,
     alignItems: 'center',
@@ -466,7 +739,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     alignItems: 'center',
     paddingVertical: 13,
-    marginTop: 4,
+    marginTop: 8,
   },
   secondaryButtonText: {color: colors.textSecondary, fontSize: 13, fontWeight: '800'},
 });
