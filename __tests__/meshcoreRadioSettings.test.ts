@@ -31,6 +31,7 @@ const selfInfo = {
   advertisementType: 0,
   txPower: 20,
   maxTxPower: 22,
+  publicKeyHex: 'AA'.repeat(32),
   publicKeyPrefix: 'AABBCCDDEEFF',
   bushMeshIdentityRef: 'AABBCCDDEEFF',
   latitude: null,
