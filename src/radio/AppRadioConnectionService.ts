@@ -43,6 +43,12 @@ import {
   BushMeshContact,
   BushMeshDeviceStatus,
 } from '../state/BushMeshContext';
+import {
+  AppRadioSettingsInput,
+  AppVerifiedRadioSettings,
+  applyAndVerifyMeshCoreRadioSettings,
+  refreshMeshCoreRadioSettings,
+} from './appRadioSettings';
 
 export type AppRadioConnectionStatus =
   | 'Disconnected'
@@ -645,6 +651,40 @@ export class AppRadioConnectionService {
     }
   }
 
+  async refreshRadioSettings(): Promise<AppVerifiedRadioSettings> {
+    const session = this.requireManagementSession();
+    this.patch({isWriting: true});
+    try {
+      const verified = await refreshMeshCoreRadioSettings(session);
+      this.patch({
+        selfInfo: verified.selfInfo,
+        deviceInfo: verified.deviceInfo,
+        statusDetail: `Radio profile refreshed: ${verified.summary}`,
+      });
+      return verified;
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
+  async applyAndVerifyRadioSettings(
+    input: AppRadioSettingsInput,
+  ): Promise<AppVerifiedRadioSettings> {
+    const session = this.requireManagementSession();
+    this.patch({isWriting: true});
+    try {
+      const verified = await applyAndVerifyMeshCoreRadioSettings(session, input);
+      this.patch({
+        selfInfo: verified.selfInfo,
+        deviceInfo: verified.deviceInfo,
+        statusDetail: `Radio profile verified: ${verified.summary}`,
+      });
+      return verified;
+    } finally {
+      this.patch({isWriting: false});
+    }
+  }
+
   async syncContacts(): Promise<BushMeshContact[]> {
     this.patch({isWriting: true});
     try {
@@ -1029,7 +1069,11 @@ export class AppRadioConnectionService {
     return this.deps.nativeCoordinator.start(address, label, {
       onStatus: statusDetail => this.patch({statusDetail}),
       onError: message => this.patch({status: 'Error', statusDetail: message}),
-      onFrame: response => this.addFrame(nativeResponseLog(response)),
+      onFrame: response => {
+        if (response.selfInfo) this.patch({selfInfo: response.selfInfo});
+        if (response.deviceInfo) this.patch({deviceInfo: response.deviceInfo});
+        this.addFrame(nativeResponseLog(response));
+      },
     });
   }
 
@@ -1068,14 +1112,16 @@ export class AppRadioConnectionService {
     this.patch({
       isWriting: true,
       channels: [],
-      statusDetail: 'Android session: loading configured channels...',
+      statusDetail: 'Android session: loading radio profile and configured channels...',
     });
     try {
+      const self = await session.sendAppStart('BushMesh');
       const deviceInfo = await session.getDeviceInfo();
       const channels = await readAllMeshCoreChannels(session);
       const safe = channels.map(safeMeshCoreChannel);
       const named = safe.filter(channel => channel.channelName !== 'Empty');
       this.patch({
+        selfInfo: self.selfInfo,
         deviceInfo,
         channels: safe,
         statusDetail: `Android owns the radio. Loaded ${named.length} named channel(s) from ${safe.length} slot(s).`,
