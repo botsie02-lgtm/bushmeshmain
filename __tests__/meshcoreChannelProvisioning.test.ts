@@ -29,7 +29,7 @@ function deviceInfo(maxChannels: number | null): MeshCoreDeviceInfo {
 function channel(
   channelIndex: number,
   channelName = '',
-  secret = new Uint8Array(16),
+  secret: Uint8Array = new Uint8Array(16),
 ): MeshCoreChannelInfo {
   return {
     channelIndex,
@@ -56,7 +56,13 @@ function createPort(maxChannels = 3) {
       slots.set(index, channel(index, name, secret));
     },
   );
-  return {port: {getDeviceInfo, readChannel, writeChannel}, slots, getDeviceInfo, readChannel, writeChannel};
+  return {
+    port: {getDeviceInfo, readChannel, writeChannel},
+    slots,
+    getDeviceInfo,
+    readChannel,
+    writeChannel,
+  };
 }
 
 describe('MeshCore SET_CHANNEL provisioning', () => {
@@ -69,15 +75,17 @@ describe('MeshCore SET_CHANNEL provisioning', () => {
     expect(bytes).toHaveLength(50);
     expect(bytes[0]).toBe(0x20);
     expect(bytes[1]).toBe(5);
-    expect(Buffer.from(bytes.slice(2, 34)).toString('utf8').replace(/\0/g, '')).toBe(
-      'Bush Convoy',
-    );
+    expect(
+      Buffer.from(bytes.slice(2, 34)).toString('utf8').replace(/\0/g, ''),
+    ).toBe('Bush Convoy');
     expect(bytes.slice(34)).toEqual(Array.from(secret));
   });
 
   it('accepts exactly 32 UTF-8 name bytes and rejects longer names instead of truncating', () => {
     const secret = new Uint8Array(16);
-    expect(() => buildSetChannelCommand(0, 'a'.repeat(32), secret)).not.toThrow();
+    expect(() =>
+      buildSetChannelCommand(0, 'a'.repeat(32), secret),
+    ).not.toThrow();
     expect(() => buildSetChannelCommand(0, 'a'.repeat(33), secret)).toThrow(
       /cannot exceed 32 UTF-8 bytes/i,
     );
@@ -87,12 +95,12 @@ describe('MeshCore SET_CHANNEL provisioning', () => {
   });
 
   it('requires an exact 16-byte channel secret', () => {
-    expect(() => buildSetChannelCommand(0, 'Convoy', new Uint8Array(15))).toThrow(
-      /exactly 16 bytes/i,
-    );
-    expect(() => buildSetChannelCommand(0, 'Convoy', new Uint8Array(17))).toThrow(
-      /exactly 16 bytes/i,
-    );
+    expect(() =>
+      buildSetChannelCommand(0, 'Convoy', new Uint8Array(15)),
+    ).toThrow(/exactly 16 bytes/i);
+    expect(() =>
+      buildSetChannelCommand(0, 'Convoy', new Uint8Array(17)),
+    ).toThrow(/exactly 16 bytes/i);
   });
 
   it('never includes the secret in the safe diagnostic description', () => {
@@ -121,8 +129,14 @@ describe('MeshCore SET_CHANNEL provisioning', () => {
 
   it('creates a private channel in the first empty slot with secure random bytes and verifies read-back', async () => {
     const {port, slots, writeChannel} = createPort(4);
-    slots.set(0, channel(0, 'Existing', Uint8Array.from({length: 16}, () => 7)));
-    const randomSecret = Uint8Array.from({length: 16}, (_, index) => 0x80 + index);
+    slots.set(
+      0,
+      channel(0, 'Existing', Uint8Array.from({length: 16}, () => 7)),
+    );
+    const randomSecret = Uint8Array.from(
+      {length: 16},
+      (_, index) => 0x80 + index,
+    );
     const randomBytes = jest.fn(async (length: number) => {
       expect(length).toBe(16);
       return randomSecret;
@@ -136,12 +150,19 @@ describe('MeshCore SET_CHANNEL provisioning', () => {
     expect(provisioned.channelIndex).toBe(1);
     expect(provisioned.channelName).toBe('BushMesh Private');
     expect(Array.from(provisioned.secret)).toEqual(Array.from(randomSecret));
-    expect(writeChannel).toHaveBeenCalledWith(1, 'BushMesh Private', expect.any(Uint8Array));
+    expect(writeChannel).toHaveBeenCalledWith(
+      1,
+      'BushMesh Private',
+      expect.any(Uint8Array),
+    );
   });
 
   it('clears a channel with an empty name and zero secret, then verifies it', async () => {
     const {port, slots, writeChannel} = createPort(3);
-    slots.set(2, channel(2, 'Old Convoy', Uint8Array.from({length: 16}, () => 9)));
+    slots.set(
+      2,
+      channel(2, 'Old Convoy', Uint8Array.from({length: 16}, () => 9)),
+    );
 
     const cleared = await clearMeshCoreChannel(port, 2);
 
