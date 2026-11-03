@@ -10,6 +10,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.WritableNativeMap
+import java.security.SecureRandom
 import org.json.JSONArray
 
 class BushMeshRadioServiceModule(
@@ -67,6 +68,27 @@ class BushMeshRadioServiceModule(
       promise.resolve(true)
     } catch (error: Exception) {
       promise.reject("BUSHMESH_RADIO_SERVICE_STOP_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun secureRandomBytes(length: Double, promise: Promise) {
+    try {
+      val count = length.toInt()
+      if (count !in 1..64) {
+        promise.reject(
+          "BUSHMESH_SECURE_RANDOM_INVALID_LENGTH",
+          "Secure random request must be between 1 and 64 bytes.",
+        )
+        return
+      }
+      val bytes = ByteArray(count)
+      SecureRandom().nextBytes(bytes)
+      val result = Arguments.createArray()
+      bytes.forEach { byte -> result.pushInt(byte.toInt() and 0xff) }
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_SECURE_RANDOM_FAILED", error.message, error)
     }
   }
 
@@ -129,11 +151,7 @@ class BushMeshRadioServiceModule(
       }
       promise.resolve(result)
     } catch (error: Exception) {
-      promise.reject(
-        "BUSHMESH_NATIVE_CHANNEL_INBOX_LIST_FAILED",
-        error.message,
-        error,
-      )
+      promise.reject("BUSHMESH_NATIVE_CHANNEL_INBOX_LIST_FAILED", error.message, error)
     }
   }
 
@@ -144,17 +162,11 @@ class BushMeshRadioServiceModule(
       val ids = mutableListOf<String>()
       for (index in 0 until array.length()) {
         val id = array.optString(index, "").trim()
-        if (id.isNotEmpty()) {
-          ids.add(id)
-        }
+        if (id.isNotEmpty()) ids.add(id)
       }
       promise.resolve(nativeChannelInbox.acknowledge(ids).toDouble())
     } catch (error: Exception) {
-      promise.reject(
-        "BUSHMESH_NATIVE_CHANNEL_INBOX_ACK_FAILED",
-        error.message,
-        error,
-      )
+      promise.reject("BUSHMESH_NATIVE_CHANNEL_INBOX_ACK_FAILED", error.message, error)
     }
   }
 
