@@ -56,7 +56,11 @@ function deliveryColor(message: BushMeshChannelMessage): string {
   return colors.warning;
 }
 
-export function RadioScreen(): React.JSX.Element {
+export function RadioScreen({
+  onOpenCarrierDetails,
+}: {
+  onOpenCarrierDetails?: () => void;
+} = {}): React.JSX.Element {
   const {
     connectionStatus,
     connectedDeviceName,
@@ -205,6 +209,13 @@ export function RadioScreen(): React.JSX.Element {
           <Text style={styles.securityText}>
             Channel key material is hidden from the driver-facing radio screen.
           </Text>
+          {onOpenCarrierDetails ? (
+            <TouchableOpacity
+              style={styles.carrierDetailsButton}
+              onPress={onOpenCarrierDetails}>
+              <Text style={styles.carrierDetailsText}>Carrier details</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ) : (
         <View style={styles.emptyCard}>
@@ -383,6 +394,16 @@ const styles = StyleSheet.create({
   activeBadge: {backgroundColor: colors.accent, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5},
   activeBadgeText: {color: colors.background, fontSize: 8, fontWeight: '900'},
   securityText: {color: colors.textMuted, fontSize: 10, lineHeight: 15, marginTop: 10},
+  carrierDetailsButton: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  carrierDetailsText: {color: colors.accent, fontSize: 10, fontWeight: '900'},
   emptyCard: {backgroundColor: colors.surface, borderRadius: 16, padding: 14, marginBottom: 14},
   emptyTitle: {color: colors.textPrimary, fontSize: 14, fontWeight: '900'},
   emptyText: {color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 3},
