@@ -15,8 +15,12 @@ import {useBushMesh} from '../state/BushMeshContext';
 import {useRadioConnection} from '../state/RadioConnectionContext';
 import {colors} from '../theme/colors';
 
+function displayValue(value: string | number | null | undefined): string {
+  return value === null || value === undefined || value === '' ? '—' : String(value);
+}
+
 export function DeviceScreen(): React.JSX.Element {
-  const {channels: sharedChannels} = useBushMesh();
+  const {channels: sharedChannels, activeChannelIndex} = useBushMesh();
   const {
     snapshot,
     nativeHandoffSupported,
@@ -26,6 +30,8 @@ export function DeviceScreen(): React.JSX.Element {
     disconnect,
     runActiveStartupSync,
     getBatteryStatus,
+    getDeviceTime,
+    setDeviceTimeToPhone,
     syncContacts,
     sendAppStart,
     sendDeviceQuery,
@@ -33,6 +39,9 @@ export function DeviceScreen(): React.JSX.Element {
     probeChannels,
   } = useRadioConnection();
   const [showDebugLogs, setShowDebugLogs] = useState(false);
+  const [settingsStatus, setSettingsStatus] = useState(
+    'Node settings are read from the active MeshCore session.',
+  );
 
   const {
     status,
@@ -46,6 +55,10 @@ export function DeviceScreen(): React.JSX.Element {
     txFrames,
     rxLogs,
     isWriting,
+    deviceInfo,
+    selfInfo,
+    deviceStatus,
+    deviceTimeSeconds,
   } = snapshot;
 
   const hasConnectedRadio = connectedDeviceAddress !== null;
@@ -113,6 +126,24 @@ export function DeviceScreen(): React.JSX.Element {
       <Text style={styles.txText}>{log.value}</Text>
     </View>
   );
+
+  const refreshNodeTime = async () => {
+    try {
+      const seconds = await getDeviceTime();
+      setSettingsStatus(`Node time read successfully: ${new Date(seconds * 1000).toISOString()}`);
+    } catch (error) {
+      setSettingsStatus(error instanceof Error ? error.message : 'Node time read failed.');
+    }
+  };
+
+  const updateNodeTime = async () => {
+    try {
+      const seconds = await setDeviceTimeToPhone();
+      setSettingsStatus(`Node time updated and verified: ${new Date(seconds * 1000).toISOString()}`);
+    } catch (error) {
+      setSettingsStatus(error instanceof Error ? error.message : 'Node time update failed.');
+    }
+  };
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -237,6 +268,116 @@ export function DeviceScreen(): React.JSX.Element {
       ) : null}
 
       {hasConnectedRadio ? (
+        <View style={styles.nodeSettingsCard}>
+          <Text style={styles.sectionTitleNoMargin}>Node Settings</Text>
+          <Text style={styles.body}>
+            Safe operational information from verified MeshCore companion commands.
+            BushMesh does not expose or export this node's private identity key.
+          </Text>
+
+          <View style={styles.settingsGroup}>
+            <Text style={styles.settingsHeading}>Identity</Text>
+            <Text style={styles.settingText}>
+              Node name: {displayValue(selfInfo?.deviceName ?? connectedDeviceLabel)}
+            </Text>
+            <Text style={styles.settingText}>
+              Public identity ref: {displayValue(selfInfo?.bushMeshIdentityRef)}
+            </Text>
+            <Text style={styles.settingText}>
+              Advert type: {displayValue(selfInfo?.advertisementType)}
+            </Text>
+          </View>
+
+          <View style={styles.settingsGroup}>
+            <Text style={styles.settingsHeading}>Firmware and capacity</Text>
+            <Text style={styles.settingText}>
+              Device model: {displayValue(deviceInfo?.model)}
+            </Text>
+            <Text style={styles.settingText}>
+              Firmware: {displayValue(deviceInfo?.version)} · build {displayValue(deviceInfo?.firmwareBuild)}
+            </Text>
+            <Text style={styles.settingText}>
+              Device-info protocol: {displayValue(deviceInfo?.firmwareVersion)}
+            </Text>
+            <Text style={styles.settingText}>
+              Maximum channels: {displayValue(deviceInfo?.maxChannels)} · maximum contacts: {displayValue(deviceInfo?.maxContacts)}
+            </Text>
+            <Text style={styles.settingText}>
+              BLE PIN: {deviceInfo?.blePin ? 'configured (not displayed)' : 'not reported'}
+            </Text>
+          </View>
+
+          <View style={styles.settingsGroup}>
+            <Text style={styles.settingsHeading}>Radio profile / capabilities</Text>
+            <Text style={styles.settingText}>
+              Frequency: {selfInfo?.frequencyMhz == null ? '—' : `${selfInfo.frequencyMhz.toFixed(3)} MHz`}
+            </Text>
+            <Text style={styles.settingText}>
+              Bandwidth: {selfInfo?.bandwidthKhz == null ? '—' : `${selfInfo.bandwidthKhz.toFixed(1)} kHz`} · SF {displayValue(selfInfo?.spreadingFactor)} · CR {displayValue(selfInfo?.codingRate)}
+            </Text>
+            <Text style={styles.settingText}>
+              TX power: {selfInfo?.txPower == null ? '—' : `${selfInfo.txPower} dBm`} · max {selfInfo?.maxTxPower == null ? '—' : `${selfInfo.maxTxPower} dBm`}
+            </Text>
+            <Text style={styles.settingText}>
+              Client repeat: {displayValue(deviceInfo?.clientRepeat)} · path hash mode: {displayValue(deviceInfo?.pathHashMode)}
+            </Text>
+          </View>
+
+          <View style={styles.settingsGroup}>
+            <Text style={styles.settingsHeading}>Battery / storage</Text>
+            <Text style={styles.settingText}>
+              Battery: {deviceStatus ? `${deviceStatus.batteryVolts.toFixed(2)} V` : '—'}
+            </Text>
+            <Text style={styles.settingText}>
+              Storage: {deviceStatus?.storagePercent == null ? '—' : `${deviceStatus.storagePercent}% used`} {deviceStatus?.usedStorageKb == null ? '' : `(${deviceStatus.usedStorageKb} / ${deviceStatus.totalStorageKb ?? '—'} KB)`}
+            </Text>
+            <TouchableOpacity
+              style={[styles.commandButtonSecondary, !canSendCommands && styles.commandButtonDisabled]}
+              onPress={() => getBatteryStatus().catch(() => undefined)}
+              disabled={!canSendCommands}>
+              <Text style={styles.commandButtonSecondaryText}>Refresh battery / storage</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.settingsGroup}>
+            <Text style={styles.settingsHeading}>Device time</Text>
+            <Text style={styles.settingText}>
+              {deviceTimeSeconds == null
+                ? 'Not read yet.'
+                : new Date(deviceTimeSeconds * 1000).toISOString()}
+            </Text>
+            <View style={styles.settingsButtons}>
+              <TouchableOpacity
+                style={[styles.commandButtonSecondary, !canSendCommands && styles.commandButtonDisabled]}
+                onPress={refreshNodeTime}
+                disabled={!canSendCommands}>
+                <Text style={styles.commandButtonSecondaryText}>Read time</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.commandButtonSecondary, !canSendCommands && styles.commandButtonDisabled]}
+                onPress={updateNodeTime}
+                disabled={!canSendCommands}>
+                <Text style={styles.commandButtonSecondaryText}>Set from phone and verify</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.settingsGroup}>
+            <Text style={styles.settingsHeading}>Channel carrier</Text>
+            <Text style={styles.settingText}>
+              Advertised slots: {displayValue(deviceInfo?.maxChannels)} · loaded: {sharedChannels.length} · active BushMesh slot: {displayValue(activeChannelIndex)}
+            </Text>
+            <Text style={styles.settingsHint}>
+              Create/join/clear private carrier channels from the Channels screen.
+              Secrets remain redacted here and in ordinary diagnostics.
+            </Text>
+          </View>
+
+          <Text style={styles.settingsStatus}>{settingsStatus}</Text>
+        </View>
+      ) : null}
+
+      {hasConnectedRadio ? (
         <View style={styles.syncCard}>
           <Text style={styles.sectionTitleNoMargin}>Radio Sync</Text>
           <Text style={styles.body}>
@@ -279,7 +420,9 @@ export function DeviceScreen(): React.JSX.Element {
                 <Text style={styles.channelTitle}>
                   Channel {channel.channelIndex}: {channel.channelName}
                 </Text>
-                <Text style={styles.channelSecret}>Secret: {channel.secret}</Text>
+                <Text style={styles.channelSecret}>
+                  Carrier secret: {channel.secret === 'Configured (redacted)' ? 'configured (redacted)' : channel.secret}
+                </Text>
               </View>
             ))
           ) : (
@@ -434,6 +577,13 @@ const styles = StyleSheet.create({
   handoffCard: {marginTop: 18, backgroundColor: colors.surface, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: colors.accent},
   nativeCard: {marginTop: 18, backgroundColor: colors.surfaceSoft, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: colors.success},
   nativeTitle: {color: colors.success, fontSize: 12, fontWeight: '900', letterSpacing: 1},
+  nodeSettingsCard: {marginTop: 18, backgroundColor: colors.surface, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: colors.border},
+  settingsGroup: {marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border},
+  settingsHeading: {color: colors.accent, fontSize: 11, fontWeight: '900', letterSpacing: 0.7, marginBottom: 7},
+  settingText: {color: colors.textSecondary, fontSize: 12, lineHeight: 19},
+  settingsHint: {color: colors.textMuted, fontSize: 11, lineHeight: 17, marginTop: 5},
+  settingsButtons: {gap: 8, marginTop: 9},
+  settingsStatus: {color: colors.textMuted, fontSize: 11, lineHeight: 17, marginTop: 14},
   syncCard: {marginTop: 18, backgroundColor: colors.surface, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: colors.border},
   commandButtons: {marginTop: 14, gap: 10},
   commandButton: {minHeight: 46, borderRadius: 14, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, marginTop: 12},
