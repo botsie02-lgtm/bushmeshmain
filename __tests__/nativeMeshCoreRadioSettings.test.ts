@@ -121,10 +121,6 @@ const requested = {
 };
 
 describe('NativeMeshCoreSession radio settings', () => {
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
   it('accepts PACKET_OK, reads SELF_INFO back and verifies the exact profile', async () => {
     const {session, writes} = harness('success');
     await session.start();
@@ -158,16 +154,14 @@ describe('NativeMeshCoreSession radio settings', () => {
     await session.stop();
   });
 
-  it('times out when firmware never answers the radio parameter command', async () => {
-    jest.useFakeTimers();
-    const {session} = harness('timeout');
-    const start = session.start();
-    await jest.runOnlyPendingTimersAsync();
-    await start;
-
-    const update = session.setRadioParams(requested);
-    await jest.advanceTimersByTimeAsync(5_001);
-    await expect(update).rejects.toThrow(/timed out/i);
-    await session.stop();
-  });
+  it(
+    'times out when firmware never answers the radio parameter command',
+    async () => {
+      const {session} = harness('timeout');
+      await session.start();
+      await expect(session.setRadioParams(requested)).rejects.toThrow(/timed out/i);
+      await session.stop();
+    },
+    7_000,
+  );
 });
