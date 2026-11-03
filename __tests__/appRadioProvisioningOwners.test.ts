@@ -15,6 +15,20 @@ const deviceInfo = {
   pathHashMode: null,
 };
 
+const contactPublicKey = 'AB'.repeat(32);
+const parsedContact = {
+  publicKey: contactPublicKey,
+  publicKeyPrefix: contactPublicKey.slice(0, 12),
+  name: 'Heltec B',
+  type: 0,
+  flags: 0,
+  outPathLength: 0,
+  lastAdvert: 1234,
+  latitude: null,
+  longitude: null,
+  lastModified: 1234,
+};
+
 function fakeDevice(): Device {
   const device = {
     id: 'AA:BB:CC:DD:EE:FF',
@@ -49,17 +63,24 @@ function mutableSession() {
       const value = slots.get(index)!;
       return {...value, secret: Uint8Array.from(value.secret)};
     }),
-    writeChannel: jest.fn(async (index: number, name: string, secret: Uint8Array) => {
-      slots.set(index, {
-        channelIndex: index,
-        channelName: name,
-        secret: Uint8Array.from(secret),
-        empty: name.length === 0 && Array.from(secret).every(byte => byte === 0),
-      });
-    }),
+    writeChannel: jest.fn(
+      async (index: number, name: string, secret: Uint8Array): Promise<void> => {
+        slots.set(index, {
+          channelIndex: index,
+          channelName: name,
+          secret: Uint8Array.from(secret),
+          empty: name.length === 0 && Array.from(secret).every(byte => byte === 0),
+        });
+      },
+    ),
     probeChannels: jest.fn().mockResolvedValue([]),
     getBatteryStatus: jest.fn().mockResolvedValue({parsed: {batteryInfo: null}}),
     syncContacts: jest.fn().mockResolvedValue([]),
+    lookupContact: jest.fn().mockResolvedValue(parsedContact),
+    addOrUpdateContact: jest.fn().mockResolvedValue(parsedContact),
+    removeContact: jest.fn().mockResolvedValue(undefined),
+    exportContact: jest.fn().mockResolvedValue(Uint8Array.from([0x0b, 1, 2, 3])),
+    importContact: jest.fn().mockResolvedValue(undefined),
     syncQueuedMessages: jest.fn().mockResolvedValue([]),
     sendChannelMessage: jest.fn().mockResolvedValue({}),
     getChannel: jest.fn().mockResolvedValue({}),
@@ -101,7 +122,15 @@ function createHarness(nativeSupported: boolean) {
       return new Uint8Array(length).fill(9);
     }),
   });
-  return {service, device, manager, react, native, nativeCoordinator, randomSecret};
+  return {
+    service,
+    device,
+    manager,
+    react,
+    native,
+    nativeCoordinator,
+    randomSecret,
+  };
 }
 
 describe('AppRadioConnectionService provisioning owners', () => {
@@ -157,6 +186,48 @@ describe('AppRadioConnectionService provisioning owners', () => {
     });
     expect(service.getSnapshot().channels[2].secret).toBe('Configured (redacted)');
     await service.disconnect();
+    await service.dispose();
+  });
+
+  it('runs sync, unique-prefix lookup, add/update, export/import and verified remove through the active session', async () => {
+    const {service, device, react} = createHarness(false);
+    await service.initialize();
+    await service.connectToDevice(device);
+
+    react.session.syncContacts
+      .mockResolvedValueOnce([parsedContact])
+      .mockResolvedValueOnce([parsedContact])
+      .mockResolvedValueOnce([]);
+
+    const synced = await service.syncContacts();
+    expect(synced).toHaveLength(1);
+
+    const lookedUp = await service.lookupContact(contactPublicKey.slice(0, 8));
+    expect(react.session.lookupContact).toHaveBeenCalledWith(contactPublicKey);
+    expect(lookedUp.name).toBe('Heltec B');
+
+    const updated = await service.addOrUpdateContact({
+      publicKey: contactPublicKey,
+      name: 'Heltec B',
+    });
+    expect(react.session.addOrUpdateContact).toHaveBeenCalledWith({
+      publicKey: contactPublicKey,
+      name: 'Heltec B',
+      type: undefined,
+    });
+    expect(updated.publicKey).toBe(contactPublicKey);
+
+    const exported = await service.exportContact(contactPublicKey);
+    expect(react.session.exportContact).toHaveBeenCalledWith(contactPublicKey);
+    expect(typeof exported).toBe('string');
+
+    await service.importContact(exported);
+    expect(react.session.importContact).toHaveBeenCalledWith(expect.any(Uint8Array));
+
+    await service.removeContact(contactPublicKey);
+    expect(react.session.removeContact).toHaveBeenCalledWith(contactPublicKey);
+    expect(service.getSnapshot().contacts).toEqual([]);
+
     await service.dispose();
   });
 });
