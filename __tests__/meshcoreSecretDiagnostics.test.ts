@@ -4,6 +4,7 @@ import {
   redactMeshCoreDiagnosticBytes,
   redactMeshCoreParsedLines,
 } from '../src/meshcore/meshcoreDiagnostics';
+import {sanitizeNativeMeshCoreResponseForDiagnostics} from '../src/meshcore/NativeMeshCoreSessionCoordinator';
 
 function channelInfo(secret: number[]): number[] {
   const name = Array.from(Buffer.from('Private Convoy', 'utf8'));
@@ -36,5 +37,23 @@ describe('MeshCore channel secret diagnostics', () => {
       'Channel Name: Private Convoy',
       'Secret: Configured (redacted)',
     ]);
+  });
+
+  it('never retains a raw channel secret in Android-native coordinator state or observer frames', () => {
+    const secret = Array.from({length: 16}, (_, index) => 0xb0 + index);
+    const originalBytes = channelInfo(secret);
+    const sanitized = sanitizeNativeMeshCoreResponseForDiagnostics({
+      packetType: 0x12,
+      label: 'PACKET_CHANNEL_INFO',
+      bytes: originalBytes,
+      parsed: null,
+      selfInfo: null,
+      deviceInfo: null,
+      channelData: null,
+      receivedDatagram: null,
+    });
+
+    expect(sanitized.bytes.slice(34, 50)).toEqual(new Array(16).fill(0));
+    expect(originalBytes.slice(34, 50)).toEqual(secret);
   });
 });
