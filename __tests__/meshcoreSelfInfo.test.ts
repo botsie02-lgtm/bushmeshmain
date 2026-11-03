@@ -53,6 +53,18 @@ describe('MeshCore SELF_INFO', () => {
     expect(parsed?.deviceName).toBe('Bush Radio');
   });
 
+  test('preserves negative signed TX power reported by SELF_INFO', () => {
+    const bytes = new Array<number>(58).fill(0);
+    bytes[0] = 0x05;
+    bytes[2] = 0xf7; // -9 as int8
+    bytes[3] = 22;
+    for (let index = 0; index < 32; index += 1) {
+      bytes[4 + index] = index + 1;
+    }
+
+    expect(parseMeshCoreSelfInfo(bytes)?.txPower).toBe(-9);
+  });
+
   test('ignores unrelated packet types', () => {
     expect(parseMeshCoreSelfInfo([0x0d, 1, 2, 3])).toBeNull();
   });
