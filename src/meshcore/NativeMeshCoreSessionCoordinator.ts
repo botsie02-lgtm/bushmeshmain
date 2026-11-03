@@ -1,3 +1,7 @@
+import {
+  redactMeshCoreDiagnosticBytes,
+  redactMeshCoreParsedLines,
+} from './meshcoreDiagnostics';
 import {NativeMeshCoreFrameTransport} from './NativeMeshCoreFrameTransport';
 import {
   NativeMeshCoreResponse,
@@ -34,6 +38,36 @@ const initialSnapshot: NativeMeshCoreOwnershipSnapshot = {
   lastFrame: null,
 };
 
+/**
+ * Native command responses may briefly contain MeshCore channel secrets so the
+ * command transaction can verify read-back. Coordinator state and observer
+ * callbacks are diagnostic/application surfaces and must never retain those raw
+ * bytes after the transaction has parsed them.
+ */
+export function sanitizeNativeMeshCoreResponseForDiagnostics(
+  response: NativeMeshCoreResponse,
+): NativeMeshCoreResponse {
+  return {
+    ...response,
+    bytes: redactMeshCoreDiagnosticBytes(response.bytes),
+    parsed: response.parsed
+      ? {
+          ...response.parsed,
+          lines: redactMeshCoreParsedLines(
+            response.packetType,
+            response.parsed.lines,
+          ),
+        }
+      : null,
+    receivedDatagram: response.receivedDatagram
+      ? {
+          ...response.receivedDatagram,
+          payload: Uint8Array.from(response.receivedDatagram.payload),
+        }
+      : null,
+  };
+}
+
 export class NativeMeshCoreSessionCoordinator {
   private session: NativeMeshCoreSession | null = null;
   private listeners = new Set<Listener>();
@@ -54,6 +88,14 @@ export class NativeMeshCoreSessionCoordinator {
         ? {
             ...this.snapshot.lastFrame,
             bytes: [...this.snapshot.lastFrame.bytes],
+            parsed: this.snapshot.lastFrame.parsed
+              ? {
+                  ...this.snapshot.lastFrame.parsed,
+                  lines: this.snapshot.lastFrame.parsed.lines
+                    ? [...this.snapshot.lastFrame.parsed.lines]
+                    : undefined,
+                }
+              : null,
             receivedDatagram: this.snapshot.lastFrame.receivedDatagram
               ? {
                   ...this.snapshot.lastFrame.receivedDatagram,
@@ -135,9 +177,12 @@ export class NativeMeshCoreSessionCoordinator {
         this.events.onError?.(message);
       },
       onFrame: response => {
-        this.snapshot = {...this.snapshot, lastFrame: response};
+        const diagnosticResponse = sanitizeNativeMeshCoreResponseForDiagnostics(
+          response,
+        );
+        this.snapshot = {...this.snapshot, lastFrame: diagnosticResponse};
         this.emit();
-        this.events.onFrame?.(response);
+        this.events.onFrame?.(diagnosticResponse);
       },
       onReceivedDatagram: datagram => {
         this.events.onReceivedDatagram?.(datagram);
