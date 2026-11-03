@@ -4,15 +4,30 @@ import {NativeMeshCoreSessionCoordinator} from '../src/meshcore/NativeMeshCoreSe
 import {AppRadioConnectionService} from '../src/radio/AppRadioConnectionService';
 
 const deviceInfo = {
-  firmwareVersion: 3,
+  firmwareVersion: 9,
   maxContacts: 64,
   maxChannels: 3,
   blePin: null,
   firmwareBuild: 'test',
   model: 'Heltec',
   version: 'test',
-  clientRepeat: null,
-  pathHashMode: null,
+  clientRepeat: 1,
+  pathHashMode: 0,
+};
+
+const baseSelfInfo = {
+  advertisementType: 0,
+  txPower: 20,
+  maxTxPower: 22,
+  publicKeyPrefix: 'AABBCCDDEEFF',
+  bushMeshIdentityRef: 'AABBCCDDEEFF',
+  latitude: null,
+  longitude: null,
+  frequencyMhz: 869.618,
+  bandwidthKhz: 62.5,
+  spreadingFactor: 8,
+  codingRate: 5,
+  deviceName: 'Provisioning Heltec',
 };
 
 const contactPublicKey = 'AB'.repeat(32);
@@ -53,12 +68,26 @@ function mutableSession() {
       },
     ]),
   );
+  let currentSelfInfo = {...baseSelfInfo};
   const session = {
     start: jest.fn(),
     stop: jest.fn(),
-    sendAppStart: jest.fn().mockResolvedValue({}),
+    sendAppStart: jest.fn(async () => ({selfInfo: {...currentSelfInfo}})),
     sendDeviceQuery: jest.fn().mockResolvedValue({deviceInfo}),
     getDeviceInfo: jest.fn().mockResolvedValue(deviceInfo),
+    setRadioParams: jest.fn(async (input: {
+      frequencyMhz: number;
+      bandwidthKhz: number;
+      spreadingFactor: number;
+      codingRate: number;
+    }) => {
+      currentSelfInfo = {...currentSelfInfo, ...input};
+      return {...currentSelfInfo};
+    }),
+    setRadioTxPower: jest.fn(async (txPower: number) => {
+      currentSelfInfo = {...currentSelfInfo, txPower};
+      return {...currentSelfInfo};
+    }),
     readChannel: jest.fn(async (index: number) => {
       const value = slots.get(index)!;
       return {...value, secret: Uint8Array.from(value.secret)};
@@ -133,6 +162,14 @@ function createHarness(nativeSupported: boolean) {
   };
 }
 
+const targetRadio = {
+  frequencyMhz: 916.58,
+  bandwidthKhz: 62.5,
+  spreadingFactor: 8,
+  codingRate: 5,
+  txPowerDbm: 20,
+};
+
 describe('AppRadioConnectionService provisioning owners', () => {
   it('provisions and verifies through the existing React-Native BLE session', async () => {
     const {service, device, react, randomSecret} = createHarness(false);
@@ -185,6 +222,61 @@ describe('AppRadioConnectionService provisioning owners', () => {
       secretHex: 'AB'.repeat(16),
     });
     expect(service.getSnapshot().channels[2].secret).toBe('Configured (redacted)');
+    await service.disconnect();
+    await service.dispose();
+  });
+
+  it('applies and verifies radio settings through the existing JS-GATT owner without rewriting channels', async () => {
+    const {service, device, react} = createHarness(false);
+    await service.initialize();
+    await service.connectToDevice(device);
+    await service.createPrivateChannel({channelName: 'Keep Me', channelIndex: 1});
+    const channelsBefore = service.getSnapshot().channels;
+    react.session.writeChannel.mockClear();
+
+    const verified = await service.applyAndVerifyRadioSettings(targetRadio);
+
+    expect(react.session.setRadioParams).toHaveBeenCalledWith({
+      frequencyMhz: 916.58,
+      bandwidthKhz: 62.5,
+      spreadingFactor: 8,
+      codingRate: 5,
+    });
+    expect(react.session.setRadioTxPower).not.toHaveBeenCalled();
+    expect(verified.selfInfo.frequencyMhz).toBe(916.58);
+    expect(service.getSnapshot().channels).toEqual(channelsBefore);
+    expect(react.session.writeChannel).not.toHaveBeenCalled();
+    await service.dispose();
+  });
+
+  it('applies and verifies radio settings through Android-native ownership without opening JS GATT or rewriting channels', async () => {
+    const {service, device, manager, native} = createHarness(true);
+    await service.initialize();
+    await service.handoffDiscoveredDeviceToAndroid(device);
+    await service.joinPrivateChannel({
+      channelName: 'Keep Native',
+      secretHex: 'AB'.repeat(16),
+      channelIndex: 2,
+    });
+    const channelsBefore = service.getSnapshot().channels;
+    native.session.writeChannel.mockClear();
+
+    const verified = await service.applyAndVerifyRadioSettings({
+      ...targetRadio,
+      txPowerDbm: 21,
+    });
+
+    expect(manager.connectToDevice).not.toHaveBeenCalled();
+    expect(native.session.setRadioParams).toHaveBeenCalledWith({
+      frequencyMhz: 916.58,
+      bandwidthKhz: 62.5,
+      spreadingFactor: 8,
+      codingRate: 5,
+    });
+    expect(native.session.setRadioTxPower).toHaveBeenCalledWith(21);
+    expect(verified.selfInfo.txPower).toBe(21);
+    expect(service.getSnapshot().channels).toEqual(channelsBefore);
+    expect(native.session.writeChannel).not.toHaveBeenCalled();
     await service.disconnect();
     await service.dispose();
   });
