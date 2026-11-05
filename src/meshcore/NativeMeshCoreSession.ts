@@ -396,7 +396,9 @@ export class NativeMeshCoreSession {
           cleanMessage,
           timestampSeconds,
         ),
-        [0x06],
+        // Channel text submission uses PACKET_OK (0x00), not the
+        // PACKET_MSG_SENT (0x06) response for direct/contact messages.
+        [0x00],
       ),
     );
   }
