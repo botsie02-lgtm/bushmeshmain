@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 
+import type {ChannelSubmissionFailure} from '../meshcore/channelSendDiagnostics';
 import {androidContactPersistence} from '../persistence/AndroidContactPersistence';
 import {androidMessagePersistence} from '../persistence/AndroidMessagePersistence';
 import {createContactSnapshot} from '../persistence/contactSnapshot';
@@ -37,6 +38,8 @@ export type BushMeshChannelMessage = {
   text: string;
   direction: 'sent' | 'received';
   status: BushMeshMessageDeliveryStatus;
+  /** Bounded, non-sensitive submission diagnostics, never a raw device error. */
+  submissionFailure?: ChannelSubmissionFailure;
   createdAt: string;
 };
 type BushMeshChannelMessageInput = Omit<
