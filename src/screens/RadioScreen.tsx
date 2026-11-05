@@ -9,6 +9,10 @@ import {
   View,
 } from 'react-native';
 
+import {
+  classifyChannelSubmissionFailure,
+  formatChannelSubmissionFailure,
+} from '../meshcore/channelSendDiagnostics';
 import {estimateLoRaAirtimeMs} from '../radio/loraAirtime';
 import {
   BushMeshChannel,
@@ -39,7 +43,9 @@ function deliveryLabel(message: BushMeshChannelMessage): string {
     case 'confirmed':
       return 'PEER CONFIRMED';
     case 'failed':
-      return 'FAILED';
+      return message.submissionFailure?.reason === 'timeout'
+        ? 'ACCEPTANCE UNKNOWN'
+        : 'FAILED';
   }
 }
 
@@ -48,7 +54,9 @@ function deliveryColor(message: BushMeshChannelMessage): string {
     return colors.success;
   }
   if (message.status === 'failed') {
-    return colors.danger;
+    return message.submissionFailure?.reason === 'timeout'
+      ? colors.warning
+      : colors.danger;
   }
   if (message.status === 'accepted') {
     return colors.accent;
@@ -140,19 +148,19 @@ export function RadioScreen({
       });
       setMessageText('');
       setSendStatus(
-        'Accepted by MeshCore for transmission. Peer delivery is not yet confirmed.',
+        'RADIO ACCEPTED — MeshCore PACKET_OK (0x00). Peer delivery is not confirmed.',
       );
     } catch (error) {
+      const submissionFailure = classifyChannelSubmissionFailure(error);
       addLocalChannelMessage({
         channelIndex: activeChannel.channelIndex,
         channelName: activeChannel.channelName,
         text: cleanMessage,
         direction: 'sent',
         status: 'failed',
+        submissionFailure,
       });
-      setSendStatus(
-        error instanceof Error ? error.message : 'Radio submission failed.',
-      );
+      setSendStatus(formatChannelSubmissionFailure(submissionFailure));
     } finally {
       setIsSending(false);
     }
@@ -335,6 +343,11 @@ export function RadioScreen({
               </Text>
             </View>
             <Text style={styles.messageText}>{message.text}</Text>
+            {message.submissionFailure ? (
+              <Text style={styles.submissionFailure}>
+                {formatChannelSubmissionFailure(message.submissionFailure)}
+              </Text>
+            ) : null}
             <Text style={styles.messageTime}>
               {new Date(message.createdAt).toLocaleString()}
             </Text>
@@ -482,4 +495,5 @@ const styles = StyleSheet.create({
   deliveryState: {fontSize: 9, fontWeight: '900'},
   messageText: {color: colors.textPrimary, fontSize: 15, lineHeight: 21, marginTop: 7},
   messageTime: {color: colors.textMuted, fontSize: 9, marginTop: 8},
+  submissionFailure: {color: colors.warning, fontSize: 10, lineHeight: 15, marginTop: 7},
 });
