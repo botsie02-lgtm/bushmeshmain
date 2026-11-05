@@ -1,3 +1,4 @@
+import {CHANNEL_SUBMISSION_FAILURE_REASONS} from '../meshcore/channelSendDiagnostics';
 import type {BushMeshChannelMessage} from '../state/BushMeshContext';
 
 export const BUSHMESH_MESSAGE_SNAPSHOT_VERSION = 1 as const;
@@ -54,6 +55,16 @@ function validatePersistedMessage(
     !STATUSES.has(candidate.status)
   ) {
     throw new Error('Persisted Bushmesh message has an invalid status.');
+  }
+  if (candidate.submissionFailure !== undefined) {
+    const failure = candidate.submissionFailure;
+    if (!failure || typeof failure !== 'object' ||
+        !CHANNEL_SUBMISSION_FAILURE_REASONS.includes(failure.reason) ||
+        (failure.firmwareCode !== undefined &&
+          (!Number.isInteger(failure.firmwareCode) ||
+            failure.firmwareCode < 0 || failure.firmwareCode > 255))) {
+      throw new Error('Persisted Bushmesh message has invalid radio failure diagnostics.');
+    }
   }
   if (
     typeof candidate.createdAt !== 'string' ||
