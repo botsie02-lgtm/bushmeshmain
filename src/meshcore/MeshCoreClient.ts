@@ -516,8 +516,10 @@ export class MeshCoreClient {
           cleanMessage,
           timestampSeconds,
         ),
-        [0x06],
-        'PACKET_MSG_SENT',
+        // MeshCore CMD_SEND_CHANNEL_TXT_MSG (0x03) returns RESP_CODE_OK.
+        // Direct/contact CMD_SEND_TXT_MSG (0x02) uses RESP_CODE_SENT (0x06).
+        [0x00],
+        'PACKET_OK',
       ),
     );
 
