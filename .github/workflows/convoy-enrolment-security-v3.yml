@@ -42,6 +42,8 @@ jobs:
           java-version: '17'
           cache: gradle
       - run: npm ci
+      - name: Extend Gradle distribution download timeout in CI checkout only
+        run: sed -i 's/networkTimeout=10000/networkTimeout=120000/' android/gradle/wrapper/gradle-wrapper.properties
       - name: Android debug compile
         working-directory: android
         run: |

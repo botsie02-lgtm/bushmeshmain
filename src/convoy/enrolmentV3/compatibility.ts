@@ -1,5 +1,5 @@
 import type {ConvoyMembershipService} from '../membership/ConvoyMembershipService';
-import type {ConvoyJoinRequest, ConvoyMembershipSnapshot} from '../membership/model';
+import type {ConvoyMembershipSnapshot} from '../membership/model';
 import type {ConvoySecurityV1Port, VerifiedLocalGroup} from '../membership/securityV1';
 import type {AuthorizedConvoyDirectory} from '../../app/activeContext/operationalConvoy';
 import type {
@@ -10,7 +10,7 @@ import {
 } from './contract';
 import {
   JoinObservationV3, newJoinObservation, observeJoinEvent,
-  reconcileJoinObservation, parseJoinObservation,
+  reconcileJoinObservation,
 } from './joinState';
 import type {JoinObservationStore} from './joinStore';
 import {planRemainingEpochRecipients} from './rosterPolicy';

@@ -293,6 +293,82 @@ test('trusted peer key rotation invalidates pinned request and never authorises 
   expect(restored.authorized).toBe(false);
 });
 
+test('v2 epoch-distribution wrapper binds intended peer, group and encrypted envelope structure', async () => {
+  const x = await signedSample();
+  const wrapped = {
+    distributionVersion: 1 as const,
+    groupId: x.proposal.groupId, epoch: 4,
+    senderDeviceId: x.bIdentity.deviceId, senderFingerprint: x.bIdentity.fingerprint,
+    recipientDeviceId: x.proposal.requester.deviceId,
+    recipientFingerprint: x.proposal.requester.fingerprint,
+    securityVersion: 1, protocolVersion: 1, sessionId: 'session-1',
+    encryptedPayload: {securityVersion: 1, protocolVersion: 1, sessionId: 'session-1',
+      keyEpoch: 1, counter: '1', ciphertext: 'abcdefghijklmnopqrstuvw'},
+  };
+  const draft = {kind: 'epoch-distribution' as const,
+    schema: ENROLMENT_V2_SCHEMA, version: 2 as const,
+    transactionId: x.proposal.transactionId, convoyId: x.proposal.convoyId,
+    groupId: x.proposal.groupId, committedEpoch: 4,
+    rosterDigest: x.proposal.rosterDigestAfter,
+    credentialId: x.proposal.credentialId,
+    sender: x.proposal.approver, recipient: x.proposal.requester,
+    wrappedKey: wrapped, signature: 'unsigned-proposal'};
+  expect(decodeProposedEnrolmentControl(encodeProposedEnrolmentControl(draft))).toEqual(draft);
+  expect(() => encodeProposedEnrolmentControl({...draft,
+    wrappedKey: {...wrapped, epoch: 3}})).toThrow();
+  expect(() => encodeProposedEnrolmentControl({...draft,
+    wrappedKey: {...wrapped, recipientFingerprint: 'attacker'}})).toThrow();
+  expect(() => encodeProposedEnrolmentControl({...draft,
+    wrappedKey: {...wrapped, encryptedPayload: {...wrapped.encryptedPayload, psk: 'secret'}}}))
+    .toThrow();
+});
+
+test('remaining trusted member can reconnect and install fresh epoch after local revocation', async () => {
+  const {clock, a, aIdentity, bIdentity, owner} = await pair();
+  const third = createSecurityNode(clock);
+  const thirdIdentity = await third.identity.loadOrCreate();
+  await a.trust.observe(thirdIdentity);
+  await a.trust.trust(thirdIdentity.deviceId, thirdIdentity.fingerprint);
+  await third.trust.observe(aIdentity);
+  await third.trust.trust(aIdentity.deviceId, aIdentity.fingerprint);
+  const remaining = makeService(third);
+  const convoy = await owner.membership.createConvoy('Recovery', [
+    {deviceId: bIdentity.deviceId, fingerprint: bIdentity.fingerprint},
+    {deviceId: thirdIdentity.deviceId, fingerprint: thirdIdentity.fingerprint},
+  ]);
+  const offer = await owner.sessions.createOffer(thirdIdentity.deviceId);
+  const accepted = await remaining.sessions.acceptOffer(offer);
+  const session = await owner.sessions.finalizeOffer(accepted.response);
+  const wrap = () => owner.membership.wrapEnrolmentForMember({
+    convoyId: convoy.convoyId, recipientDeviceId: thirdIdentity.deviceId,
+    sessionId: session.sessionId, context: aad,
+  });
+  const initial = await wrap();
+  await remaining.membership.installEnrolment({
+    convoyId: convoy.convoyId, displayName: convoy.displayName,
+    distribution: initial, context: aad,
+  });
+  const staleTraffic = await remaining.groups.encrypt(convoy.groupId, utf8('old'), aad);
+  expect((await owner.join.revokeAndPlanRekey(convoy.convoyId, bIdentity.deviceId))
+    .pendingRecipientDeviceIds).toContain(thirdIdentity.deviceId);
+  await expect(owner.membership.wrapEnrolmentForMember({
+    convoyId: convoy.convoyId, recipientDeviceId: thirdIdentity.deviceId,
+    sessionId: 'missing-session', context: aad,
+  })).rejects.toBeDefined();
+  await expect(owner.groups.decrypt(staleTraffic, aad))
+    .rejects.toMatchObject({code: 'ROTATED_KEY'});
+  const refreshed = await wrap();
+  expect(refreshed.epoch).toBe(2);
+  await remaining.membership.installEnrolment({
+    convoyId: convoy.convoyId, displayName: convoy.displayName,
+    distribution: refreshed, context: aad,
+  });
+  const current = await remaining.groups.encrypt(convoy.groupId, utf8('reconnected'), aad);
+  expect(await owner.groups.decrypt(current, aad)).toEqual(utf8('reconnected'));
+  expect((await remaining.membership.resolveAuthorized(convoy.convoyId,
+    thirdIdentity.deviceId))?.verifiedBy).toBe('security-v1');
+});
+
 test('real removal rotates local key; remaining members require rekey, global revocation unproved', async () => {
   const {clock, a, aIdentity, bIdentity, owner} = await pair();
   const third = createSecurityNode(clock);
