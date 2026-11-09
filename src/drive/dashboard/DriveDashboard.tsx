@@ -128,6 +128,35 @@ export function DriveDashboard({
         <Text style={styles.smallDetail}>{model.connectionDetail}</Text>
       </View>
 
+      <Section title="Safety alerts">
+        <View style={styles.panel}>
+          {!model.alertsAvailable ? (
+            <Text style={styles.panelHint}>
+              Verified convoy alerts are not connected. Unverified public-channel
+              alerts are intentionally excluded.
+            </Text>
+          ) : model.alerts.length === 0 ? (
+            <Text style={styles.panelHint}>No current verified convoy alerts.</Text>
+          ) : (
+            model.alerts.map(alert => (
+              <View key={alert.id} style={styles.alertRow}>
+                <Text style={styles.alertTitle}>{alert.label}</Text>
+                <Text style={styles.alertDetail}>{alert.description}</Text>
+                <Text style={styles.alertMeta}>
+                  Received from authorised member · {alert.senderId}
+                </Text>
+                {onDismissVerifiedAlert ? (
+                  <LargeButton
+                    label={'Dismiss alert ' + alert.id}
+                    onPress={() => onDismissVerifiedAlert(alert.id)}
+                  />
+                ) : null}
+              </View>
+            ))
+          )}
+        </View>
+      </Section>
+
       <Section title="Active convoy">
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>{model.convoy.name}</Text>
@@ -193,35 +222,6 @@ export function DriveDashboard({
           {onOpenDevice ? (
             <LargeButton label="GPS settings" onPress={onOpenDevice} />
           ) : null}
-        </View>
-      </Section>
-
-      <Section title="Safety alerts">
-        <View style={styles.panel}>
-          {!model.alertsAvailable ? (
-            <Text style={styles.panelHint}>
-              Verified convoy alerts are not connected. Unverified public-channel
-              alerts are intentionally excluded.
-            </Text>
-          ) : model.alerts.length === 0 ? (
-            <Text style={styles.panelHint}>No current verified convoy alerts.</Text>
-          ) : (
-            model.alerts.map(alert => (
-              <View key={alert.id} style={styles.alertRow}>
-                <Text style={styles.alertTitle}>{alert.label}</Text>
-                <Text style={styles.alertDetail}>{alert.description}</Text>
-                <Text style={styles.alertMeta}>
-                  Received from authorised member · {alert.senderId}
-                </Text>
-                {onDismissVerifiedAlert ? (
-                  <LargeButton
-                    label={'Dismiss alert ' + alert.id}
-                    onPress={() => onDismissVerifiedAlert(alert.id)}
-                  />
-                ) : null}
-              </View>
-            ))
-          )}
         </View>
       </Section>
 
