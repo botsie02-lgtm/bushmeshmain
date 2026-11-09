@@ -1,0 +1,44 @@
+name: Device settings regions v1 validation
+
+on:
+  push:
+    branches:
+      - feature/device-settings-regions-v1
+
+jobs:
+  javascript:
+    name: Jest, TypeScript and ESLint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npm test -- --runInBand
+      - run: npx tsc --noEmit
+      - run: npm run lint
+
+  android:
+    name: Android assembleDebug
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Android debug compile
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
