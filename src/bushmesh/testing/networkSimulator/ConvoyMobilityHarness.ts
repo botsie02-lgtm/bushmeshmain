@@ -1,7 +1,6 @@
 import {
   BushMeshPacketType,
   BushMeshPriority,
-  LocationPrecision,
   encodeBushMeshConvoyWire,
   encodeBushMeshWire,
 } from '../../protocol/public';
@@ -313,7 +312,7 @@ export class ConvoyMobilityHarness {
       orderIndex: sourceId - 1,
       role: sourceId === 1 ? 0 : 1,
       ...(gpsAvailable
-        ? {location: {latitude, longitude, precision: LocationPrecision.Approx1M}}
+        ? {location: {latitude, longitude}}
         : {locationUnavailable: true}),
     }, messageId);
     const outbound = await source.prepareOutbound(wire, {
@@ -396,7 +395,8 @@ export class ConvoyMobilityHarness {
         if (receiverId === sourceId) continue;
         const view = this.positionView(receiverId, sourceId);
         views.push(view);
-        counts[view.freshness] += 1;
+        const bucket = view.freshness === 'never-seen' ? 'neverSeen' : view.freshness;
+        counts[bucket] += 1;
       }
     }
     return {
