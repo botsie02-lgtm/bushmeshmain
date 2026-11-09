@@ -288,9 +288,12 @@ describe('AppRadioConnectionService native stop lifecycle', () => {
     let owned = true;
     coordinator.getSession = jest.fn(() => owned ? nativeSession : null);
     coordinator.getSnapshot = jest.fn(() => ({
-      state: owned ? 'active' : 'idle',
+      state: owned ? 'active' as const : 'idle' as const,
       deviceAddress: owned ? device.id : null,
       deviceLabel: owned ? 'Test Heltec' : null,
+      statusMessage: null,
+      errorMessage: null,
+      lastFrame: null,
     }));
     (nativeCoordinator.stop as jest.Mock).mockImplementation(async () => {owned = false;});
     const internals = service as unknown as {

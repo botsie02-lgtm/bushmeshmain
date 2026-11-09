@@ -61,6 +61,10 @@ describe('native radio send handler survives optional startup synchronization fa
       meshContext = useBushMesh();
       return null;
     }
+    function currentContext(): ReturnType<typeof useBushMesh> {
+      if (!meshContext) throw new Error('BushMesh context probe has not mounted.');
+      return meshContext;
+    }
     let renderer: ReactTestRenderer.ReactTestRenderer | null = null;
     try {
       await ReactTestRenderer.act(async () => {
@@ -73,7 +77,7 @@ describe('native radio send handler survives optional startup synchronization fa
         );
         await Promise.resolve();
       });
-      expect(meshContext?.canSendChannelMessage).toBe(false);
+      expect(currentContext().canSendChannelMessage).toBe(false);
       await ReactTestRenderer.act(async () => {
         await service.handoffDiscoveredDeviceToAndroid(device);
         await Promise.resolve();
@@ -81,9 +85,9 @@ describe('native radio send handler survives optional startup synchronization fa
       expect(service.getSnapshot().connectionOwner).toBe('android-native');
       expect(service.getSnapshot().status).toBe('Connected');
       expect(service.hasUsableSendSession()).toBe(true);
-      expect(meshContext?.canSendChannelMessage).toBe(true);
+      expect(currentContext().canSendChannelMessage).toBe(true);
       await ReactTestRenderer.act(async () => {
-        await meshContext?.sendChannelMessage(4, 'A TO B NATIVE LIVE');
+        await currentContext().sendChannelMessage(4, 'A TO B NATIVE LIVE');
       });
       expect(nativeSession.sendChannelMessage).toHaveBeenCalledWith(
         4, 'A TO B NATIVE LIVE',
