@@ -146,7 +146,7 @@ export class ConvoyMembershipService implements AuthorizedConvoyDirectory {
    * Creation invokes the real GroupKeyManager.createGroup() with the local
    * identity as initial leader. No MeshCore provisioning occurs here.
    */
-  createConvoy(name: string): Promise<ConvoyRegistryEntry> {
+  createConvoy(name: string, foundingMembers: readonly {deviceId: string; fingerprint: string}[] = []): Promise<ConvoyRegistryEntry> {
     return this.mutate(async () => {
       assertName(name);
       const state = await this.store.load();
@@ -157,14 +157,30 @@ export class ConvoyMembershipService implements AuthorizedConvoyDirectory {
       if (state.convoys.some(value => value.convoyId === convoyId || value.groupId === groupId)) {
         throw new ConvoyMembershipError('CONFLICT', 'Convoy already exists');
       }
-      await this.security.createOwnerGroup(groupId);
+      if (foundingMembers.length > 32 ||
+        new Set(foundingMembers.map(value => value.deviceId)).size !== foundingMembers.length) {
+        throw new ConvoyMembershipError('INVALID_INPUT', 'Invalid or duplicate founding members');
+      }
+      for (const peer of foundingMembers) {
+        assertMemberId(peer.deviceId, 'founding member ID');
+        assertMemberId(peer.fingerprint, 'founding fingerprint');
+        if (peer.deviceId === identity.deviceId) {
+          throw new ConvoyMembershipError('INVALID_INPUT', 'Local owner cannot be a founding peer');
+        }
+        await this.security.assertTrustedPeer(peer.deviceId, peer.fingerprint);
+      }
+      await this.security.createOwnerGroup(groupId, foundingMembers.map(value => value.deviceId));
       const verified = await this.security.verifyLocalGroup(groupId);
       const leader = verified?.group.members.find(value =>
         value.deviceId === identity.deviceId &&
         value.identityFingerprint === identity.fingerprint &&
         value.role === 'leader' && value.state === 'active',
       );
-      if (!verified || !leader) {
+      if (!verified || !leader || foundingMembers.some(peer => !verified.group.members.some(member =>
+        member.deviceId === peer.deviceId &&
+        member.identityFingerprint === peer.fingerprint &&
+        member.role === 'member' && member.state === 'active',
+      ))) {
         throw new ConvoyMembershipError('SECURITY_UNAVAILABLE', 'Security v1 group creation was not verified');
       }
       const entry: ConvoyRegistryEntry = {
@@ -230,6 +246,35 @@ export class ConvoyMembershipService implements AuthorizedConvoyDirectory {
       this.notify();
       return entry;
     });
+  }
+
+  /**
+   * Actual Security v1 protected group-key distribution for a peer that was
+   * ALREADY added to a Security v1 group (e.g. at initial group creation).
+   * Does not itself add or approve a new member.
+   */
+  async wrapEnrolmentForMember(input: {
+    convoyId: string;
+    recipientDeviceId: string;
+    sessionId: string;
+    context: SecurityProtocolContext;
+  }): Promise<WrappedGroupKeyDistribution> {
+    assertMemberId(input.recipientDeviceId, 'recipient device ID');
+    assertMemberId(input.sessionId, 'direct session ID');
+    const state = await this.store.load();
+    const {entry, verified} = await this.requireAdministrator(
+      state, input.convoyId, 'invite',
+    );
+    const member = verified.group.members.find(value =>
+      value.deviceId === input.recipientDeviceId && value.state === 'active',
+    );
+    if (!member) {
+      throw new ConvoyMembershipError('MISSING_SECURITY_CONTRACT', 'No Security v1 member enrolment for this recipient');
+    }
+    await this.security.assertTrustedPeer(member.deviceId, member.identityFingerprint);
+    return this.security.wrapKeyForPeer(
+      entry.groupId, member.deviceId, input.sessionId, input.context,
+    );
   }
 
   async resolveAuthorized(

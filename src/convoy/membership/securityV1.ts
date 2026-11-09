@@ -26,7 +26,8 @@ export type VerifiedLocalGroup = {
 export interface ConvoySecurityV1Port {
   currentIdentity(): Promise<DeviceIdentity>;
   generateReference(prefix: 'bmc1_' | 'bmi1_' | 'bmr1_'): string;
-  createOwnerGroup(groupId: string): Promise<GroupRecord>;
+  createOwnerGroup(groupId: string, foundingMemberIds: readonly string[]): Promise<GroupRecord>;
+  wrapKeyForPeer(groupId: string, recipientDeviceId: string, sessionId: string, context: SecurityProtocolContext): Promise<WrappedGroupKeyDistribution>;
   verifyLocalGroup(groupId: string): Promise<VerifiedLocalGroup | null>;
   assertTrustedPeer(deviceId: string, fingerprint: string): Promise<PeerTrustRecord>;
   revokeGroupMember(groupId: string, deviceId: string): Promise<GroupRecord>;
@@ -65,9 +66,9 @@ export class SecurityV1ConvoyMembershipAdapter implements ConvoySecurityV1Port {
     private readonly trust: Pick<PeerTrustManager, 'assertTrusted'>,
     private readonly groups: Pick<
       GroupKeyManager,
-      'createGroup' | 'revokeMember' | 'installWrappedGroupKey' | 'decrypt'
+      'createGroup' | 'revokeMember' | 'installWrappedGroupKey' | 'wrapActiveKeyForPeer' | 'decrypt'
     >,
-    private readonly sessions: Pick<DirectSessionManager, 'decrypt' | 'assertPeerSession'>,
+    private readonly sessions: DirectSessionManager,
   ) {}
 
   currentIdentity(): Promise<DeviceIdentity> {
@@ -84,11 +85,23 @@ export class SecurityV1ConvoyMembershipAdapter implements ConvoySecurityV1Port {
     return prefix + suffix;
   }
 
-  async createOwnerGroup(groupId: string): Promise<GroupRecord> {
+  async createOwnerGroup(groupId: string, foundingMemberIds: readonly string[]): Promise<GroupRecord> {
     const identity = await this.currentIdentity();
     return this.groups.createGroup(groupId, [
       {deviceId: identity.deviceId, role: 'leader'},
+      ...foundingMemberIds.map(deviceId => ({deviceId, role: 'member' as const})),
     ]);
+  }
+
+  wrapKeyForPeer(
+    groupId: string,
+    recipientDeviceId: string,
+    sessionId: string,
+    context: SecurityProtocolContext,
+  ): Promise<WrappedGroupKeyDistribution> {
+    return this.groups.wrapActiveKeyForPeer(
+      groupId, recipientDeviceId, sessionId, this.sessions, context,
+    );
   }
 
   async verifyLocalGroup(groupId: string): Promise<VerifiedLocalGroup | null> {
@@ -134,7 +147,7 @@ export class SecurityV1ConvoyMembershipAdapter implements ConvoySecurityV1Port {
     distribution: WrappedGroupKeyDistribution,
     context: SecurityProtocolContext,
   ): Promise<GroupRecord> {
-    return this.groups.installWrappedGroupKey(distribution, this.sessions as DirectSessionManager, context);
+    return this.groups.installWrappedGroupKey(distribution, this.sessions, context);
   }
 
   async decryptAuthenticatedJoin(
