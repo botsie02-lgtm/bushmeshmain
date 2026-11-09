@@ -93,6 +93,7 @@ export type DriveDashboardModel = {
     headingLabel: string;
     accuracyLabel: string;
     simulated: boolean;
+    nativeSource: boolean;
   };
   maps: {
     status: 'ready' | 'no-route' | 'no-pack' | 'no-tiles' | 'uncovered';
@@ -242,7 +243,8 @@ export function deriveDriveDashboard(input: DriveDashboardInput): DriveDashboard
   const bindingChannel = scopedBinding(input, active);
   const linkReady = input.radioConnectionStatus === 'Connected' &&
     input.radioSession.transportReady && !!input.radioSession.identityRef;
-  const selfFresh = !!fix.fix && fix.freshness === 'live' && !fix.simulated;
+  const nativeSource = input.locationProviderLabel === 'Android GPS';
+  const selfFresh = !!fix.fix && fix.freshness === 'live' && nativeSource;
   const map = mapReadiness(input);
 
   const members: ConvoyMapMember[] = [];
@@ -296,7 +298,7 @@ export function deriveDriveDashboard(input: DriveDashboardInput): DriveDashboard
         : !linkReady
           ? 'Radio transport and identity are not ready.'
           : !selfFresh
-            ? 'Fresh, real GPS is required for location-based actions.'
+            ? 'Fresh Android GPS is required for location-based actions.'
             : '';
 
   const readiness = getTripReadiness({
@@ -348,6 +350,7 @@ export function deriveDriveDashboard(input: DriveDashboardInput): DriveDashboard
       accuracyLabel: fix.fix?.accuracyMeters == null
         ? '—' : '±' + Math.round(fix.fix.accuracyMeters) + ' m',
       simulated: fix.simulated,
+      nativeSource,
     },
     maps: map,
     incomingCarrierMessages: carrierMessages,
