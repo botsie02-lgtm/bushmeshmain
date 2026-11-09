@@ -28,6 +28,8 @@ export interface AuthorizedConvoyDirectory {
     convoyId: string,
     localIdentityRef: string,
   ): Promise<AuthorizedConvoyMembership | null>;
+  /** Security v1 notifies on revocation, identity rotation or trust changes. */
+  subscribeInvalidations?: (listener: () => void) => () => void;
 }
 
 export interface ActiveConvoySelectionStore {
