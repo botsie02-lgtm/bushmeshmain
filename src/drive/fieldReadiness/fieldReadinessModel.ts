@@ -286,11 +286,13 @@ function convoyCapability(
   if (!verified) {
     return {
       key: 'convoy',
-      state: 'awaiting-authorisation',
-      title: 'Awaiting convoy authorisation',
+      state: convoy.id === null ? 'awaiting-authorisation' : 'degraded',
+      title: convoy.id === null
+        ? 'Awaiting convoy authorisation'
+        : 'Verified roster unavailable',
       detail: convoy.id === null
         ? 'No active authorised convoy. Public MeshCore contacts do not count.'
-        : 'Active selection exists; verified remote membership is not available.',
+        : 'Operational convoy selected, but remote membership has not been verified.',
       name: convoy.id === null ? 'No active convoy' : convoy.name,
       remoteCount: null, live: null, recent: null, attention: null,
     };
