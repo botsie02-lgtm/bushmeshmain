@@ -11,6 +11,7 @@ import {ScreenMountGate} from '../ScreenMountGate';
 import {useActiveOperationalConvoy} from '../activeContext/ActiveOperationalConvoyContext';
 import {useViewedConversation} from '../activeContext/ViewedConversationContext';
 import {CarMessagingStatusBanner} from '../../components/CarMessagingStatusBanner';
+import {DeviceGpsSettingsPanel} from '../../components/DeviceGpsSettingsPanel';
 import {ConvoyFormationBanner} from '../../components/ConvoyFormationBanner';
 import {ConvoyFormationGapBanner} from '../../components/ConvoyFormationGapBanner';
 import {ConvoyLinkWatchBanner} from '../../components/ConvoyLinkWatchBanner';
@@ -295,6 +296,7 @@ export function AppShell(): React.JSX.Element {
   const [driveView, setDriveView] = useState<DriveView>('home');
   const [convoyView, setConvoyView] = useState<ConvoyView>('select');
   const [deviceView, setDeviceView] = useState<DeviceView>('hub');
+  const [gpsView, setGpsView] = useState<'controls' | 'preferences'>('controls');
   const [carrierProfile, setCarrierProfile] =
     useState<ActiveConvoyCarrierProfile | null>(null);
   const {activeConvoy} = useActiveOperationalConvoy();
@@ -448,13 +450,20 @@ export function AppShell(): React.JSX.Element {
                 <>
                   <Action label="Back to Device" onPress={() => setDeviceView('hub')} secondary />
                   <Text style={styles.subnavLabel}>
-                    {deviceView === 'gps' ? 'GPS settings' : 'Offline map packs'}
+                    {deviceView === 'gps' ? 'GPS / location' : 'Offline map packs'}
                   </Text>
+                  {deviceView === 'gps' ? (
+                    <Action
+                      label={gpsView === 'controls' ? 'GPS preferences' : 'GPS controls'}
+                      onPress={() => setGpsView(gpsView === 'controls' ? 'preferences' : 'controls')}
+                      secondary
+                    />
+                  ) : null}
                 </>
               )}
             </View>
             {deviceView === 'gps' ? (
-              <LocationScreen />
+              gpsView === 'preferences' ? <DeviceGpsSettingsPanel /> : <LocationScreen />
             ) : deviceView === 'maps' ? (
               <>
                 <LegacyNotice kind="map" />
