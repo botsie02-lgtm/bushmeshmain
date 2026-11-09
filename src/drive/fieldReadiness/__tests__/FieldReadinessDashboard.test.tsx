@@ -30,6 +30,7 @@ function model(): FieldReadinessModel {
     imagery: 'not-confirmed' as const,
     imageryLabel: 'Offline map imagery NOT confirmed loaded',
     inventoryLabel: '0 verified local packs / 0 registered',
+    coverageLabel: 'No trip points selected; map coverage not checked.',
     downloadLabel: 'No downloadable regional pack is registered.',
   };
   const convoy = {
