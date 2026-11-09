@@ -38,6 +38,8 @@ export type FieldReadinessInput = {
   packCatalog: readonly BushMeshMapPackCatalogEntry[];
   mapPackInstallSupported: boolean;
   mapPersistenceStatus: 'restoring' | 'ready' | 'unsupported' | 'error';
+  /** Actual OfflineMapContext.coverage counters; not a routing estimate. */
+  coverage?: {coveredPointCount: number; totalPointCount: number} | null;
   imageryEvidence?: MapImageryEvidence;
   /** From LocationSessionContext.latestFix; null is unknown, not stationary. */
   speedKmh?: number | null;
@@ -63,6 +65,7 @@ export type FieldReadinessModel = {
     imagery: 'loaded' | 'failed' | 'not-confirmed';
     imageryLabel: string;
     inventoryLabel: string;
+    coverageLabel: string;
     downloadLabel: string;
   };
   convoy: FieldCapability & {
@@ -204,6 +207,18 @@ function mapCapability(input: FieldReadinessInput): FieldReadinessModel['maps'] 
   );
   const inventoryLabel = installed + ' verified local pack' +
     (installed === 1 ? '' : 's') + ' / ' + packCatalog.length + ' registered';
+  const measured = input.coverage;
+  const coverageLabel = measured &&
+    Number.isSafeInteger(measured.totalPointCount) &&
+    Number.isSafeInteger(measured.coveredPointCount) &&
+    measured.totalPointCount >= 0 &&
+    measured.coveredPointCount >= 0 &&
+    measured.coveredPointCount <= measured.totalPointCount
+      ? measured.totalPointCount === 0
+        ? 'No trip points selected; map coverage not checked.'
+        : 'Verified pack coverage: ' + measured.coveredPointCount + '/' +
+          measured.totalPointCount + ' required trip points (not routing).'
+      : 'Trip-point coverage has not been reported.';
   let downloadLabel = 'No downloadable regional pack is registered.';
   if (input.mapPersistenceStatus === 'restoring') {
     downloadLabel = 'Checking saved map-pack inventory…';
@@ -275,7 +290,7 @@ function mapCapability(input: FieldReadinessInput): FieldReadinessModel['maps'] 
 
   return {
     key: 'maps', state, title, detail,
-    imagery, imageryLabel, inventoryLabel, downloadLabel,
+    imagery, imageryLabel, inventoryLabel, coverageLabel, downloadLabel,
   };
 }
 
