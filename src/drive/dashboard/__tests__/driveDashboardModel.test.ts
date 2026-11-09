@@ -1,11 +1,11 @@
-import type {AuthorizedConvoyMembership} from '../src/app/activeContext/operationalConvoy';
+import type {AuthorizedConvoyMembership} from '../../../app/activeContext/operationalConvoy';
 import {
   deriveDriveDashboard,
   type DriveDashboardInput,
-} from '../src/drive/dashboard/driveDashboardModel';
-import type {BushMeshMapPackCatalogEntry} from '../src/maps/mapPackCatalog';
-import type {DriveAlert} from '../src/state/DriveContext';
-import {BushMeshQuickActionCode} from '../src/bushmesh/legacyProtocol';
+} from '../driveDashboardModel';
+import type {BushMeshMapPackCatalogEntry} from '../../../maps/mapPackCatalog';
+import type {DriveAlert} from '../../../state/DriveContext';
+import {BushMeshQuickActionCode} from '../../../bushmesh/legacyProtocol';
 
 const NOW = 1_800_000_000_000;
 const own = 'RADIO-A';
