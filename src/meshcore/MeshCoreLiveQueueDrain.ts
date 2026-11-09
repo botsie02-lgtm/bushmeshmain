@@ -7,7 +7,7 @@ export type MeshCoreQueuedReply = {packetType: number | null};
 export type MeshCoreQueueStage =
   | 'push-0x83' | 'drain-scheduled' | 'sync-submitted' | 'queue-empty'
   | 'batch-continued' | 'drain-error';
-export type MeshCoreQueueFailure = 'timeout' | 'disconnected' | 'firmware-error' | 'unknown';
+export type MeshCoreQueueFailure = 'timeout' | 'disconnected' | 'firmware-error' | 'capacity' | 'unknown';
 
 const BATCH_LIMIT = 20;
 const CONTINUE_DELAY_MS = 75;
@@ -15,6 +15,7 @@ const FAILURE_RETRY_MS = 2_000;
 
 export function classifyMeshCoreQueueError(error: unknown): MeshCoreQueueFailure {
   const message = error instanceof Error ? error.message : '';
+  if (/at capacity|inbox is full/i.test(message)) return 'capacity';
   if (/PACKET_ERROR/i.test(message)) return 'firmware-error';
   if (/timed out/i.test(message)) return 'timeout';
   if (/disconnect|cancel|stop|not started|not active/i.test(message)) return 'disconnected';
