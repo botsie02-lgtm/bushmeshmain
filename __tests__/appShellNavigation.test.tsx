@@ -3,6 +3,12 @@ import ReactTestRenderer from 'react-test-renderer';
 
 import {AppShell, MAIN_TABS} from '../src/app/shell/AppShell';
 
+jest.mock('../src/state/LocationSessionContext', () => ({
+  useLocationSession: () => ({status: 'stopped', latestFix: null}),
+}));
+jest.mock('../src/state/OfflineMapContext', () => ({
+  useOfflineMaps: () => ({coverage: {complete: false}}),
+}));
 jest.mock('../src/state/BushMeshContext', () => ({
   useBushMesh: () => ({
     connectionStatus: 'Connected',
