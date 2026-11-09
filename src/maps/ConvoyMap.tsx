@@ -113,7 +113,12 @@ export function ConvoyMap({
   const [manualCenter, setManualCenter] = useState<MapCoordinate | null>(null);
   const [uris, setUris] = useState<Record<string, string>>({});
   const [tileState, setTileState] = useState<Record<string, TileLoadState>>({});
+  const requestedTilesRef = useRef(new Set<string>());
+  const sourceRef = useRef(tileSource);
+  const mountedRef = useRef(true);
   const lastFixRef = useRef<ConvoyMapFix | null>(null);
+
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   useEffect(() => {
     if (nowMs !== undefined) {
@@ -153,7 +158,10 @@ export function ConvoyMap({
       return Math.max(pack.manifest.minZoom, Math.min(pack.manifest.maxZoom, zoom));
     }
     return fitConvoyZoom(
-      scene.points.map(point => point.coordinate),
+      (scene.points.some(point => !point.lastKnown)
+        ? scene.points.filter(point => !point.lastKnown)
+        : scene.points
+      ).map(point => point.coordinate),
       center,
       viewport,
       pack.manifest.minZoom,
@@ -175,20 +183,33 @@ export function ConvoyMap({
   );
 
   useEffect(() => {
-    let active = true;
-    setUris({});
-    setTileState({});
+    if (sourceRef.current !== tileSource) {
+      sourceRef.current = tileSource;
+      requestedTilesRef.current.clear();
+      setUris({});
+      setTileState({});
+    }
     if (!pack || !tileSource.isAvailable() || tiles.length === 0) {
-      return () => { active = false; };
+      return;
     }
 
-    // Resolving a tile must not access the internet. An invalid remote URI is
-    // treated as missing, even if an injected reader erroneously returns one.
     const unique = new Map(tiles.map(tile => [tile.key, tile]));
+    // Keep a bounded cache across GPS updates and pans. Do not re-read the
+    // same tile every ten seconds as freshness changes.
+    if (requestedTilesRef.current.size > 256) {
+      requestedTilesRef.current.clear();
+      setUris({});
+      setTileState({});
+    }
     unique.forEach(tile => {
+      if (requestedTilesRef.current.has(tile.key)) {
+        return;
+      }
+      requestedTilesRef.current.add(tile.key);
+      // An injected implementation can only return offline local image URIs.
       tileSource.readTile({pack, z: tile.z, x: tile.x, y: tile.y})
         .then(uri => {
-          if (!active) {
+          if (!mountedRef.current) {
             return;
           }
           if (!uri || !isOfflineTileUri(uri)) {
@@ -199,13 +220,11 @@ export function ConvoyMap({
           setTileState(current => ({...current, [tile.key]: 'loading'}));
         })
         .catch(() => {
-          if (active) {
+          if (mountedRef.current) {
             setTileState(current => ({...current, [tile.key]: 'error'}));
           }
         });
     });
-
-    return () => { active = false; };
   }, [pack, tileSource, tiles]);
 
   const loadedTiles = tileKeys.filter(key => tileState[key] === 'loaded').length;
@@ -223,7 +242,9 @@ export function ConvoyMap({
           ? 'OFFLINE BASEMAP READY'
           : loadedTiles > 0
             ? 'PARTIAL OFFLINE BASEMAP'
-            : 'POSITION PLOT ONLY';
+            : missingTiles > 0
+              ? 'LOCAL TILES UNAVAILABLE'
+              : 'LOADING OFFLINE TILES';
 
   const panTo = useCallback((dx: number, dy: number) => {
     if (!center) {
@@ -373,6 +394,9 @@ export function ConvoyMap({
         </View>
       </View>
 
+      {loadedTiles > 0 && pack?.manifest.attribution ? (
+        <Text style={styles.attribution}>{pack.manifest.attribution}</Text>
+      ) : null}
       {pack && center && !coordinateInManifest(center, pack.manifest) ? (
         <Text style={styles.warning}>Outside the selected pack's declared coverage. Offline tiles may be missing here.</Text>
       ) : null}
@@ -451,6 +475,7 @@ const styles = StyleSheet.create({
   overlayPill: {position: 'absolute', top: -10, left: -45, width: 90, backgroundColor: colors.warning, borderRadius: 7, padding: 3},
   overlayText: {color: colors.background, fontSize: 8, fontWeight: '900', textAlign: 'center'},
   warning: {color: colors.warning, fontSize: 11, lineHeight: 16, marginTop: 9},
+  attribution: {color: colors.textSecondary, fontSize: 9, marginTop: 4},
   packChoices: {flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 12},
   packHeading: {color: colors.textMuted, fontSize: 9, fontWeight: '900'},
   summaryRow: {marginTop: 10, gap: 4},

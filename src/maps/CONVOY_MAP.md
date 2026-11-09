@@ -38,7 +38,7 @@ App Shell worker supplies authorised active-convoy membership.
 ## Current capabilities and hard prerequisite
 
 The viewport supports Web Mercator, pan, zoom, follow-self, frame-convoy,
-north-up/heading-up, position age and last-known warnings, headings, missing
+north-up/heading-up, fresh-first convoy framing, position age and last-known warnings, headings, missing
 member positions, antimeridian wrapping, an explicit regional pack selector,
 tile error/empty states, and offline-only raster tile rendering **when a tile
 source exists**. The map labels itself "position plot only" otherwise.

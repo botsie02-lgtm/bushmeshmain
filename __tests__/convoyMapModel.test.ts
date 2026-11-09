@@ -83,6 +83,17 @@ describe('authorised offline convoy map scene', () => {
     });
   });
 
+  it('frames fresh convoy fixes instead of ancient lost-position outliers', () => {
+    const scene = buildConvoyMapScene(self, [
+      {id: 'current', label: 'Current', position: {...self, longitude: 146.2}},
+      {id: 'lost', label: 'Lost', position: {...self, longitude: -60, receivedAtMs: now - 1_000_000}},
+    ], now);
+    const camera = resolveConvoyMapCamera(scene, 'frame-convoy', 'north-up', null);
+    expect(camera.center?.longitude).toBeGreaterThan(146);
+    expect(camera.center?.longitude).toBeLessThan(147);
+    expect(scene.points.some(point => point.id === 'lost')).toBe(true);
+  });
+
   it('handles missing GPS and preserves the last camera center', () => {
     const scene = buildConvoyMapScene(null, [], now);
     expect(resolveConvoyMapCamera(scene, 'follow-self', 'north-up', {latitude: -36, longitude: 147}).center)

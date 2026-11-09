@@ -166,7 +166,11 @@ export function resolveConvoyMapCamera(
   orientation: ConvoyMapOrientation,
   previousCenter: MapCoordinate | null,
 ): ConvoyMapCamera {
-  const coordinates = scene.points.map(point => point.coordinate);
+  // Avoid zooming far away just because a historically known vehicle is
+  // now lost; retain those markers, but frame current fixes preferentially.
+  const currentPoints = scene.points.filter(point => !point.lastKnown);
+  const coordinates = (currentPoints.length > 0 ? currentPoints : scene.points)
+    .map(point => point.coordinate);
   const fallback = isValidMapCoordinate(previousCenter) ? previousCenter : null;
   const framed = operationalBoundsForCoordinates(coordinates)?.center ?? null;
 
