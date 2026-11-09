@@ -310,7 +310,7 @@ export function ConvoyMap({
           stale && styles.lastKnownMarker,
           point.freshness === 'lost' && styles.lostMarker,
         ]}>
-          <Text style={[styles.heading, {transform: [{rotate: `${heading}deg`}]}}>
+          <Text style={[styles.heading, {transform: [{rotate: `${heading}deg`}]}]}>
             ▲
           </Text>
         </View>
