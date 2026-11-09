@@ -53,6 +53,8 @@ export function sanitizeNativeMeshCoreResponseForDiagnostics(
     parsed: response.parsed
       ? {
           ...response.parsed,
+          channelMessage: undefined,
+          contactMessage: undefined,
           lines:
             redactMeshCoreParsedLines(
               response.packetType,
