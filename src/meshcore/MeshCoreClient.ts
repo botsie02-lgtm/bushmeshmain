@@ -14,6 +14,7 @@ import {meshCoreSelfInfoToRadioProfile} from '../radio/meshCoreRadioProfile';
 import {MESHCORE_BLE} from './meshcoreBle';
 import {MeshCoreLiveQueueDrain} from './MeshCoreLiveQueueDrain';
 import {meshCoreInboundDiagnostics} from './meshcoreInboundDiagnostics';
+import {meshCoreInboundInbox, MESHCORE_INBOX_PENDING_LIMIT} from './meshcoreInboundInbox';
 import {
   MeshCoreChannelInfo,
   parseMeshCoreChannelInfo,
@@ -178,7 +179,12 @@ export class MeshCoreClient {
   private lifecycleGeneration = 0;
   private readonly radioSessionOwner = {};
   private readonly liveDrain = new MeshCoreLiveQueueDrain(
-    () => this.syncNextMessage(),
+    () => {
+      if (meshCoreInboundInbox.pendingCount() >= MESHCORE_INBOX_PENDING_LIMIT) {
+        throw new Error('MeshCore application inbox at capacity.');
+      }
+      return this.syncNextMessage();
+    },
     (stage, reason) => {
       meshCoreInboundDiagnostics.record(stage, reason ? {reason} : {});
       if (stage === 'drain-error') {
