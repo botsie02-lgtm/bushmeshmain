@@ -19,6 +19,22 @@ import {BushMeshDatagramRuntime} from '../../runtime/public';
 
 export type SimulatorNodeId = number;
 
+/** Opt-in, deliberately synthetic RF collision/capture domain. */
+export type SyntheticSharedChannelOptions = {
+  enabled: boolean;
+  /** null means no capture: mutually audible overlap corrupts both frames. */
+  captureMarginDb?: number | null;
+};
+
+type SyntheticAirFrame = {
+  packetId: number;
+  from: SimulatorNodeId;
+  to: SimulatorNodeId;
+  channelIndex: number;
+  endsAtMs: number;
+  collided: boolean;
+};
+
 export type DeterministicNetworkLinkConfig = {
   enabled?: boolean;
   lossRate?: number;
@@ -66,6 +82,8 @@ export type SimulatorTraceEvent = {
     | 'deferred'
     | 'tx-start'
     | 'tx-complete'
+    | 'channel-overlap'
+    | 'channel-collision'
     | 'dropped'
     | 'retry'
     | 'delivered'
@@ -113,6 +131,12 @@ export type DeterministicNetworkMetrics = {
   currentQueueBytes: number;
   droppedExpired: number;
   droppedLoss: number;
+  droppedCollision: number;
+  channelOverlaps: number;
+  senderContentions: number;
+  maxQueueWaitMs: number;
+  dutyCycleHoldMs: number;
+  transmissionsBySender: Record<string, number>;
   droppedUnavailable: number;
   droppedOversize: number;
   droppedCongestion: number;
@@ -598,6 +622,12 @@ function createMetrics(): DeterministicNetworkMetrics {
     currentQueueBytes: 0,
     droppedExpired: 0,
     droppedLoss: 0,
+    droppedCollision: 0,
+    channelOverlaps: 0,
+    senderContentions: 0,
+    maxQueueWaitMs: 0,
+    dutyCycleHoldMs: 0,
+    transmissionsBySender: {},
     droppedUnavailable: 0,
     droppedOversize: 0,
     droppedCongestion: 0,
@@ -622,6 +652,9 @@ export class DeterministicBushMeshNetworkSimulator {
   private readonly stalePeerReported = new Set<string>();
   private readonly observedPaths = new Map<string, string>();
   private readonly topologyChangedAt = new Map<string, number>();
+  private readonly senderBusy = new Set<SimulatorNodeId>();
+  private readonly activeAir = new Map<number, SyntheticAirFrame>();
+  private sharedChannel: SyntheticSharedChannelOptions = {enabled: false};
   private nextPacketId = 1;
   private nextEventId = 1;
 
@@ -629,6 +662,19 @@ export class DeterministicBushMeshNetworkSimulator {
     this.seed = seed;
     this.clock = new VirtualBushMeshClock(initialTimeMs);
     this.random = new DeterministicRandom(seed);
+  }
+
+  /** Enable before enqueueing traffic; no timing assumptions are changed by default. */
+  configureSharedChannel(options: SyntheticSharedChannelOptions): void {
+    if (this.activeAir.size || this.senderBusy.size || this.scheduled.length ||
+        this.metrics.attemptedDatagrams) {
+      throw new Error('Configure synthetic shared channel before traffic starts.');
+    }
+    const margin = options.captureMarginDb ?? null;
+    if (margin !== null && (!Number.isFinite(margin) || margin < 0)) {
+      throw new Error('Synthetic capture margin must be finite and non-negative.');
+    }
+    this.sharedChannel = {enabled: options.enabled, captureMarginDb: margin};
   }
 
   private pair(from: SimulatorNodeId, to: SimulatorNodeId): string {
@@ -997,14 +1043,94 @@ export class DeterministicBushMeshNetworkSimulator {
       detail: item.datagram.priority,
     });
     this.updateQueueMetrics();
+    if (this.sharedChannel.enabled && this.senderBusy.has(item.from)) {
+      this.metrics.senderContentions += 1;
+    }
     this.pumpLink(item.from, item.to);
   }
 
   private pumpLink(from: SimulatorNodeId, to: SimulatorNodeId): void {
-    const link = this.requireLink(from, to);
-    if (link.busy || link.queue.length === 0) {
-      return;
+    if (this.sharedChannel.enabled) {
+      this.pumpSender(from);
+    } else {
+      this.startQueuedLink(from, to);
     }
+  }
+
+  /**
+   * One half-duplex synthetic radio per sender. Select queued priority across
+   * all destinations, FIFO by packetId among equal-priority datagrams.
+   * No production route, carrier arbitration or shared MAC is implemented.
+   */
+  private pumpSender(from: SimulatorNodeId): void {
+    if (this.senderBusy.has(from)) return;
+    let chosen: {to: SimulatorNodeId; item: QueuedTransmission} | null = null;
+    for (const [key, link] of this.links.entries()) {
+      if (link.busy || !link.queue.length) continue;
+      const [source, destination] = key.split('>').map(Number);
+      if (source !== from) continue;
+      const candidate = link.queue[0];
+      if (!chosen ||
+          PRIORITY_RANK[candidate.datagram.priority] <
+            PRIORITY_RANK[chosen.item.datagram.priority] ||
+          (candidate.datagram.priority === chosen.item.datagram.priority &&
+            candidate.packetId < chosen.item.packetId)) {
+        chosen = {to: destination, item: candidate};
+      }
+    }
+    if (chosen) this.startQueuedLink(from, chosen.to);
+  }
+
+  /** A configured and currently reachable interferer is audible at receiver. */
+  private interferenceDbm(from: SimulatorNodeId, receiver: SimulatorNodeId): number | null {
+    if (from === receiver) return Number.POSITIVE_INFINITY; // half-duplex
+    const link = this.configuredLink(from, receiver);
+    return link && this.isAvailable(from, receiver) ? link.config.rssiDbm : null;
+  }
+
+  private registerAirframe(item: QueuedTransmission, airtimeMs: number): SyntheticAirFrame | null {
+    if (!this.sharedChannel.enabled) return null;
+    const frame: SyntheticAirFrame = {
+      packetId: item.packetId,
+      from: item.from,
+      to: item.to,
+      channelIndex: item.datagram.channelIndex,
+      endsAtMs: this.clock.now() + airtimeMs,
+      collided: false,
+    };
+    const margin = this.sharedChannel.captureMarginDb ?? null;
+    for (const previous of this.activeAir.values()) {
+      if (previous.endsAtMs <= this.clock.now() ||
+          previous.channelIndex !== frame.channelIndex ||
+          previous.from === frame.from) continue;
+      const againstNew = this.interferenceDbm(previous.from, frame.to);
+      const againstOld = this.interferenceDbm(frame.from, previous.to);
+      if (againstNew === null && againstOld === null) continue;
+      this.metrics.channelOverlaps += 1;
+      const newSignal = this.configuredLink(frame.from, frame.to)!.config.rssiDbm;
+      const oldSignal = this.configuredLink(previous.from, previous.to)!.config.rssiDbm;
+      const corrupt = (wanted: number, unwanted: number): boolean =>
+        margin === null || unwanted === Number.POSITIVE_INFINITY ||
+        unwanted > wanted - margin;
+      if (againstNew !== null && corrupt(newSignal, againstNew)) frame.collided = true;
+      if (againstOld !== null && corrupt(oldSignal, againstOld)) previous.collided = true;
+      this.record({
+        kind: 'channel-overlap',
+        from: frame.from, to: frame.to, packetId: frame.packetId,
+        detail: `with=${previous.packetId} channel=${frame.channelIndex}`,
+      });
+    }
+    this.activeAir.set(frame.packetId, frame);
+    this.schedule(frame.endsAtMs, () => {
+      this.activeAir.delete(frame.packetId);
+    });
+    return frame;
+  }
+
+  private startQueuedLink(from: SimulatorNodeId, to: SimulatorNodeId): void {
+    const link = this.requireLink(from, to);
+    if (link.busy || link.queue.length === 0 ||
+        (this.sharedChannel.enabled && this.senderBusy.has(from))) return;
 
     const item = link.queue.shift()!;
     link.queueBytes -= item.datagram.payload.length;
@@ -1015,11 +1141,8 @@ export class DeterministicBushMeshNetworkSimulator {
       this.pumpLink(from, to);
       return;
     }
-
-    if (
-      item.datagram.expiresAtMs !== null &&
-      item.datagram.expiresAtMs <= this.clock.now()
-    ) {
+    if (item.datagram.expiresAtMs !== null &&
+        item.datagram.expiresAtMs <= this.clock.now()) {
       this.metrics.failedDatagrams += 1;
       this.metrics.droppedExpired += 1;
       this.recordDrop(item, 'expired-in-queue');
@@ -1028,58 +1151,73 @@ export class DeterministicBushMeshNetworkSimulator {
     }
 
     link.busy = true;
+    if (this.sharedChannel.enabled) this.senderBusy.add(from);
+    this.metrics.maxQueueWaitMs = Math.max(
+      this.metrics.maxQueueWaitMs, this.clock.now() - item.enqueuedAtMs,
+    );
     this.metrics.transmissionAttempts += 1;
     this.metrics.totalTransmittedBytes += item.datagram.payload.length;
-
+    this.metrics.transmissionsBySender[from] =
+      (this.metrics.transmissionsBySender[from] ?? 0) + 1;
     const airtimeMs =
       (item.datagram.payload.length * 8 * 1000) / link.config.bitrateBps +
       link.config.airtimeOverheadMs;
     this.metrics.estimatedAirtimeMs += airtimeMs;
     this.record({
-      kind: 'tx-start',
-      from,
-      to,
-      packetId: item.packetId,
+      kind: 'tx-start', from, to, packetId: item.packetId,
       messageId: item.datagram.diagnostics.messageId,
       detail: `attempt=${item.attempt} airtimeMs=${airtimeMs.toFixed(3)}`,
     });
-
+    const airframe = this.registerAirframe(item, airtimeMs);
     const occupiedMs = airtimeMs / link.config.dutyCycle;
+    this.metrics.dutyCycleHoldMs += occupiedMs - airtimeMs;
     this.schedule(this.clock.now() + occupiedMs, async () => {
-      link.busy = false;
       this.record({
-        kind: 'tx-complete',
-        from,
-        to,
-        packetId: item.packetId,
+        kind: 'tx-complete', from, to, packetId: item.packetId,
         messageId: item.datagram.diagnostics.messageId,
       });
-      await this.completeTransmission(item, link);
-      this.pumpLink(from, to);
+      await this.completeTransmission(item, link, airframe);
+      link.busy = false;
+      if (this.sharedChannel.enabled) {
+        this.senderBusy.delete(from);
+        this.pumpSender(from);
+      } else {
+        this.pumpLink(from, to);
+      }
     });
   }
 
   private resumeAllLinks(): void {
+    if (this.sharedChannel.enabled) {
+      for (const from of this.nodes.keys()) this.pumpSender(from);
+      return;
+    }
     for (const key of this.links.keys()) {
       const [from, to] = key.split('>').map(Number);
       const link = this.requireLink(from, to);
-      if (!link.busy && link.queue.length > 0) {
-        this.pumpLink(from, to);
-      }
+      if (!link.busy && link.queue.length > 0) this.pumpLink(from, to);
     }
   }
 
   private async completeTransmission(
     item: QueuedTransmission,
     link: LinkState,
+    airframe: SyntheticAirFrame | null,
   ): Promise<void> {
     if (!this.isAvailable(item.from, item.to)) {
       this.enqueueOrDefer(item);
       return;
     }
 
-    if (this.random.chance(link.config.lossRate)) {
-      this.metrics.droppedLoss += 1;
+    const collided = airframe?.collided === true;
+    if (collided || this.random.chance(link.config.lossRate)) {
+      if (collided) {
+        this.metrics.droppedCollision += 1;
+        this.record({kind: 'channel-collision', from: item.from, to: item.to,
+          packetId: item.packetId, detail: `channel=${airframe?.channelIndex}`});
+      } else {
+        this.metrics.droppedLoss += 1;
+      }
       const retryIntent = item.datagram.retryIntent;
       if (
         retryIntent.mode === 'transport-retry' &&
@@ -1104,7 +1242,7 @@ export class DeterministicBushMeshNetworkSimulator {
         );
       } else {
         this.metrics.failedDatagrams += 1;
-        this.recordDrop(item, 'random-loss');
+        this.recordDrop(item, collided ? 'synthetic-channel-collision' : 'random-loss');
       }
       return;
     }
