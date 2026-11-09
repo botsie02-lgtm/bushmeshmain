@@ -293,6 +293,7 @@ export async function scenarioSecurityEpochUnderActiveTraffic(
   receiver.acceptedGroupEpochs.add(2);
   await send(1); // Alice epoch 2 now permitted
 
+  const bobBeforeForge = fleet.positionView(4, 2).lastSequence;
   // Accepted Security container with a *different embedded vehicle ID*.
   // The frozen runtime decodes it, and the application-facing audit rejects
   // using authenticated source/node binding. No app state is overwritten.
@@ -306,7 +307,7 @@ export async function scenarioSecurityEpochUnderActiveTraffic(
   await fleet.network.transmit(1, 4, forged);
   await fleet.network.runUntilIdle();
   statuses.push(fleet.node(4).lastInboundResult?.status ?? 'missing');
-  const bobBeforeReplay = fleet.positionView(4, 2).lastSequence;
+  const bobAfterForge = fleet.positionView(4, 2).lastSequence;
 
   alice.forceNextFakeGroupCounter(1);
   await send(1); // Reused fake epoch 2 counter rejected by injected provider
@@ -321,6 +322,7 @@ export async function scenarioSecurityEpochUnderActiveTraffic(
   receiver.approvedGroupDevices.delete('approved-alice');
   await send(1); // Revoked member remains rejected mid-position stream
   outsider.senderDeviceId = 'approved-bob'; // fake forged sender credential
+  outsider.senderEpoch = 2; // ensure binding, not retired epoch, rejects
   await send(3); // Receiver's external source/device binding denies forgery
   await send(2); // Still-approved member unaffected by Alice's revocation
 
@@ -335,7 +337,7 @@ export async function scenarioSecurityEpochUnderActiveTraffic(
   check(report.delivery.unauthorisedUpdatesRejected === 6,
     'six unauthorized/stale provider decisions were not rejected', failures);
   check(report.positionFreshness.unexpectedStateChanges.length === 1 &&
-    bobBeforeReplay === fleet.positionView(4, 2).lastSequence - 2,
+    bobBeforeForge === bobAfterForge && fleet.positionView(4, 2).lastSequence === 5,
     'embedded identity forgery was not isolated from authorized position ledger', failures);
   check(fleet.positionView(4, 3).freshness === 'never-seen',
     'unauthorized position unexpectedly entered recipient view', failures);
