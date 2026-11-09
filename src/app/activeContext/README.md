@@ -93,8 +93,9 @@ A MemoryActiveConvoySelectionStore is available for tests but is not durable.
   verified convoy membership before retiring the opt-in legacy warnings.
 - Radio/Contacts owners: connect conversation navigation to the separate
   ViewedConversationContext; the old RadioScreen presently follows a carrier.
-- Device/map owners: move offline map pack *settings* into Device as desired.
-  A Device entrypoint currently routes to existing map-pack controls in Drive.
+- Device/map owners: split map-pack settings from the legacy MapScreen
+  when practical. For now Device has an Offline map packs subview rendering
+  the existing controls; the same MapScreen remains under Drive.
 
 The shell does not merge branches, alter frozen Security/Protocol contracts,
 or control radio ownership.
