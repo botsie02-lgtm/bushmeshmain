@@ -44,7 +44,10 @@ export class MemoryConvoyMembershipStore implements ConvoyMembershipStore {
 export class SecureConvoyMembershipStore implements ConvoyMembershipStore {
   private readonly key = 'bushmesh/convoy/membership/v2';
 
-  constructor(private readonly secrets: SecureSecretStore) {}
+  constructor(
+    private readonly secrets: SecureSecretStore,
+    private readonly durable = false,
+  ) {}
 
   async load(): Promise<ConvoyMembershipSnapshot> {
     const raw = await this.secrets.getSecret(this.key);
@@ -75,7 +78,7 @@ export class SecureConvoyMembershipStore implements ConvoyMembershipStore {
   }
 
   isDurable(): boolean {
-    // Provider itself is responsible for actual restart-durability.
-    return true;
+    // Explicit production opt-in; do not infer durability from the interface.
+    return this.durable;
   }
 }

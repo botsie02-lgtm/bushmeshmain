@@ -3,7 +3,6 @@ import type {AuthorizedConvoyDirectory, AuthorizedConvoyMembership} from '../../
 import type {
   EncryptedDirectMessage,
   EncryptedGroupMessage,
-  GroupMembership,
   GroupRecord,
   SecurityProtocolContext,
   WrappedGroupKeyDistribution,
@@ -69,7 +68,13 @@ export class ConvoyMembershipService implements AuthorizedConvoyDirectory {
   }
 
   private notify(): void {
-    this.listeners.forEach(listener => listener());
+    this.listeners.forEach(listener => {
+      try {
+        listener();
+      } catch {
+        // Observers cannot roll back completed Security v1 state transitions.
+      }
+    });
   }
 
   subscribeInvalidations(listener: () => void): () => void {
@@ -323,8 +328,13 @@ export class ConvoyMembershipService implements AuthorizedConvoyDirectory {
   }
 
   async listAdministration(): Promise<ConvoyMembershipSnapshot> {
-    // All these records are proposal/presentation metadata, never credentials.
-    return this.store.load();
+    // Expiry is derived at read time; invitations never grant membership.
+    const state = await this.store.load();
+    const now = this.clock();
+    return {...state, invitations: state.invitations.map(value =>
+      value.state === 'pending' && value.expiresAt <= now
+        ? {...value, state: 'expired' as const} : value,
+    )};
   }
 
   invite(input: {
@@ -352,6 +362,15 @@ export class ConvoyMembershipService implements AuthorizedConvoyDirectory {
       );
       if (existing) {
         throw new ConvoyMembershipError('CONFLICT', 'Peer is already a group member');
+      }
+      const previous = state.invitations.find(value =>
+        value.convoyId === input.convoyId &&
+        value.recipientDeviceId === input.recipientDeviceId &&
+        value.recipientFingerprint === input.recipientFingerprint &&
+        value.state === 'pending' && value.expiresAt > now,
+      );
+      if (previous) {
+        return previous;
       }
       const invitation: ConvoyInvitation = {
         id: this.security.generateReference('bmi1_'),
@@ -600,16 +619,27 @@ export class ConvoyMembershipService implements AuthorizedConvoyDirectory {
       return [];
     }
     const now = this.clock();
-    return verified.group.members.map((member: GroupMembership) => ({
-      deviceId: member.deviceId,
-      identityFingerprint: member.identityFingerprint,
-      role: this.roleFor(entry, verified.group, member.deviceId, state),
-      securityGroupRole: member.role,
-      state: member.state,
-      presence: member.state === 'active'
-        ? presenceFromLastSeen(this.positionSeenAt.get(convoyId + ':' + member.deviceId) ?? null, now)
-        : 'disconnected',
-    }));
+    const results: ActiveConvoyMember[] = [];
+    for (const member of verified.group.members) {
+      let trusted = member.deviceId === verified.identity.deviceId;
+      if (!trusted && member.state === 'active') {
+        trusted = await this.security.assertTrustedPeer(
+          member.deviceId, member.identityFingerprint,
+        ).then(() => true, () => false);
+      }
+      const active = member.state === 'active' && trusted;
+      results.push({
+        deviceId: member.deviceId,
+        identityFingerprint: member.identityFingerprint,
+        role: active ? this.roleFor(entry, verified.group, member.deviceId, state) : 'member',
+        securityGroupRole: member.role,
+        state: active ? 'active' : 'revoked',
+        presence: active
+          ? presenceFromLastSeen(this.positionSeenAt.get(convoyId + ':' + member.deviceId) ?? null, now)
+          : 'disconnected',
+      });
+    }
+    return results;
   }
 
   /**
@@ -649,6 +679,15 @@ export class ConvoyMembershipService implements AuthorizedConvoyDirectory {
       after.identity.fingerprint !== before.identity.fingerprint) {
       plaintext.fill(0);
       return null;
+    }
+    if (sender.deviceId !== after.identity.deviceId) {
+      const stillTrusted = await this.security.assertTrustedPeer(
+        sender.deviceId, sender.identityFingerprint,
+      ).then(() => true, () => false);
+      if (!stillTrusted) {
+        plaintext.fill(0);
+        return null;
+      }
     }
     this.positionSeenAt.set(input.convoyId + ':' + sender.deviceId, this.clock());
     return {convoyId: input.convoyId, senderDeviceId: sender.deviceId, plaintext};
