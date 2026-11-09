@@ -13,6 +13,7 @@ import {
   safeMeshCoreChannel,
 } from '../meshcore/meshcoreChannelInfo';
 import {MeshCoreClient, MeshCoreLogItem} from '../meshcore/MeshCoreClient';
+import {meshCoreInboundInbox} from '../meshcore/meshcoreInboundInbox';
 import {
   MeshCoreBleDiscovery,
   discoverMeshCoreBle,
@@ -361,6 +362,10 @@ export class AppRadioConnectionService {
       const client = this.deps.createMeshCoreClient(manager, readyDevice, {
         onTxChunk: log => this.addChunk(log),
         onTxFrame: log => this.addFrame(log),
+        onChannelMessage: message => meshCoreInboundInbox.publish(message),
+        onMessagesWaiting: () => {
+          // The session schedules its own bounded drain on the serial queue.
+        },
         onStatus: statusDetail => this.patch({statusDetail}),
         onError: message => this.patch({status: 'Error', statusDetail: message}),
         onConnectionState: (state, detail) => {
@@ -1069,6 +1074,10 @@ export class AppRadioConnectionService {
     return this.deps.nativeCoordinator.start(address, label, {
       onStatus: statusDetail => this.patch({statusDetail}),
       onError: message => this.patch({status: 'Error', statusDetail: message}),
+      onChannelMessage: message => meshCoreInboundInbox.publish(message),
+      onMessagesWaiting: () => {
+        // Native session owns the queued read commands; never open JS GATT.
+      },
       onFrame: response => {
         if (response.selfInfo) this.patch({selfInfo: response.selfInfo});
         if (response.deviceInfo) this.patch({deviceInfo: response.deviceInfo});
@@ -1140,8 +1149,8 @@ export class AppRadioConnectionService {
         (await session.getBatteryStatus()).parsed?.batteryInfo ?? null;
       const contacts = (await session.syncContacts()).map(contactFromParsed);
       this.patch({deviceStatus: battery, contacts});
-      const queued = await session.syncQueuedMessages(20);
-      queued.forEach(response => this.addFrame(nativeResponseLog(response)));
+      // LiveQueueDrain starts during native session startup and also drains
+      // after reconnect. A second startup loop would race it for queued frames.
     } finally {
       this.patch({isWriting: false});
     }
