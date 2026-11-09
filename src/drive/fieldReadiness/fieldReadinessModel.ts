@@ -140,9 +140,10 @@ function gpsCapability(
     : 'lost';
   const actualGps = gps.nativeSource && !gps.simulated;
   const currentFix = actualGps && gps.tracking && freshness === 'live';
-  const accuracyKnown = hasFix && typeof fix.accuracyMeters === 'number' &&
-    Number.isFinite(fix.accuracyMeters) && fix.accuracyMeters >= 0;
-  const accuracySuitable = accuracyKnown && fix.accuracyMeters! <= 100;
+  const accuracyValue = hasFix && typeof fix?.accuracyMeters === 'number' &&
+    Number.isFinite(fix.accuracyMeters) && fix.accuracyMeters >= 0
+    ? fix.accuracyMeters : null;
+  const accuracySuitable = accuracyValue !== null && accuracyValue <= 100;
   let state: FieldCapabilityState;
   let title: string;
   let detail: string;
@@ -173,8 +174,8 @@ function gpsCapability(
     Number.isFinite(fix.headingDegrees)
     ? ((fix.headingDegrees % 360) + 360) % 360
     : null;
-  const accuracy = accuracyKnown
-    ? '±' + Math.round(fix.accuracyMeters) + ' m' : 'Unknown';
+  const accuracy = accuracyValue !== null
+    ? '±' + Math.round(accuracyValue) + ' m' : 'Unknown';
   return {
     key: 'gps', state, title, detail,
     latitude: hasFix ? fix.latitude.toFixed(5) : '—',
