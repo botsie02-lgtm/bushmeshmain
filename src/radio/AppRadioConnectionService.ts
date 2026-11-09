@@ -297,7 +297,7 @@ export class AppRadioConnectionService {
     const message = error instanceof Error ? error.message : '';
     if (/timed out/i.test(message)) return 'timeout';
     if (/PACKET_ERROR/i.test(message)) {
-      const firmwareCode = /PACKET_ERROR\\s*\\((\\d{1,3})\\)/i.exec(message)?.[1];
+      const firmwareCode = /PACKET_ERROR\s*\((\d{1,3})\)/i.exec(message)?.[1];
       return firmwareCode ? `firmware error code ${firmwareCode}` : 'firmware rejection';
     }
     if (/disconnect|stopp|cancel|not ready/i.test(message)) return 'disconnected';
@@ -710,9 +710,8 @@ export class AppRadioConnectionService {
       }
     } catch (error) {
       this.patch({
-        status: 'Error',
-        statusDetail:
-          error instanceof Error ? error.message : 'Startup sync failed.',
+        status: this.hasUsableSendSession() ? 'Connected' : 'Error',
+        statusDetail: `Startup sync incomplete (${this.nativeFailureReason(error)}). No BLE ownership was changed.`,
         isWriting: false,
       });
     }
@@ -831,9 +830,8 @@ export class AppRadioConnectionService {
       return mapped;
     } catch (error) {
       this.patch({
-        status: 'Error',
-        statusDetail:
-          error instanceof Error ? error.message : 'Failed to sync contacts.',
+        status: this.hasUsableSendSession() ? 'Connected' : 'Error',
+        statusDetail: `Contact synchronization failed (${this.nativeFailureReason(error)}). Radio session preserved.`,
       });
       return [];
     } finally {
@@ -1063,18 +1061,43 @@ export class AppRadioConnectionService {
   }
 
   async sendChannelMessage(channelIndex: number, message: string): Promise<void> {
-    if (
-      this.snapshot.connectionOwner === 'android-native' &&
-      this.nativeSession
-    ) {
-      await this.nativeSession.sendChannelMessage(channelIndex, message);
+    if (this.snapshot.connectionOwner === 'android-native') {
+      if (!this.hasUsableSendSession() || !this.nativeSession) {
+        nativeOutboundDiagnostics.record('session-disconnected', 'channel-text', {
+          channelSlot: channelIndex, reason: 'disconnected',
+        });
+        throw new Error('Android owns the radio but its native MeshCore command session is not ready. Recover its session or Stop; never switch BLE owners implicitly.');
+      }
+      nativeOutboundDiagnostics.record('command-queued', 'channel-text', {
+        channelSlot: channelIndex,
+      });
+      try {
+        const response = await this.nativeSession.sendChannelMessage(channelIndex, message);
+        if (response.packetType !== 0x00) {
+          throw new Error('Native channel submission returned an unexpected packet type.');
+        }
+        // Firmware PACKET_OK means carrier acceptance, not recipient delivery.
+        nativeOutboundDiagnostics.record('response-matched', 'channel-text', {
+          channelSlot: channelIndex, packetType: 0x00,
+        });
+      } catch (error) {
+        const reason = this.nativeFailureReason(error);
+        nativeOutboundDiagnostics.record(
+          reason === 'timeout' ? 'response-timeout'
+            : reason.startsWith('firmware') ? 'firmware-rejected' : 'write-failed',
+          'channel-text',
+          {channelSlot: channelIndex, reason: reason === 'timeout' ? 'timeout'
+            : reason.startsWith('firmware') ? 'firmware-error' : 'unknown'},
+        );
+        throw error;
+      }
       return;
     }
-    if (this.meshCoreClient) {
+    if (this.snapshot.connectionOwner === 'react-native' && this.meshCoreClient) {
       await this.meshCoreClient.sendChannelMessage(channelIndex, message);
       return;
     }
-    throw new Error('No active MeshCore radio session.');
+    throw new Error('No valid MeshCore command owner; no radio send was submitted.');
   }
 
   async sendAppStart(): Promise<void> {
@@ -1208,7 +1231,10 @@ export class AppRadioConnectionService {
   ): Promise<NativeMeshCoreSession> {
     return this.deps.nativeCoordinator.start(address, label, {
       onStatus: statusDetail => this.patch({statusDetail}),
-      onError: message => this.patch({status: 'Error', statusDetail: message}),
+      onError: message => this.patch({
+        status: this.hasUsableSendSession() ? 'Connected' : 'Error',
+        statusDetail: `Native frame warning (${this.nativeFailureReason(new Error(message))}).`,
+      }),
       onChannelMessage: message => meshCoreInboundInbox.publish(message),
       onMessagesWaiting: () => {
         // Native session owns the queued read commands; never open JS GATT.
