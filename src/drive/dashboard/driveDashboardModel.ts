@@ -229,8 +229,8 @@ function mapReadiness(input: DriveDashboardInput): DriveDashboardModel['maps'] {
   }
   return {
     status: 'ready',
-    label: 'Offline map coverage ready',
-    detail: 'Trip points are covered by verified local data. Routing not confirmed.',
+    label: 'Trip pack coverage verified',
+    detail: 'Archive coverage and tile reader are available; actual tiles and routing still need verification in the map.'
   };
 }
 
@@ -261,12 +261,22 @@ export function deriveDriveDashboard(input: DriveDashboardInput): DriveDashboard
         !validNow(position.receivedAtMs) ||
         position.receivedAtMs > input.nowMs + FUTURE_TOLERANCE_MS) {
         summary.noPosition += 1;
-        members.push({id: member.id, label: member.label, position: null});
+        members.push({
+          id: member.id,
+          label: typeof member.label === 'string' && member.label.trim()
+            ? member.label.trim() : member.id,
+          position: null,
+        });
         continue;
       }
       const freshness = getConvoyFreshness(position.receivedAtMs, input.nowMs);
       summary[freshness] += 1;
-      members.push({id: member.id, label: member.label, position});
+      members.push({
+        id: member.id,
+        label: typeof member.label === 'string' && member.label.trim()
+          ? member.label.trim() : member.id,
+        position,
+      });
     }
   }
 
