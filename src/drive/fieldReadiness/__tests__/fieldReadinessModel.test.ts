@@ -202,7 +202,8 @@ describe('field readiness presentation model', () => {
     const pending = operational();
     pending.convoy.memberRosterVerified = false;
     const view = deriveFieldReadiness(input({dashboard: pending}));
-    expect(view.convoy.state).toBe('awaiting-authorisation');
+    expect(view.convoy.state).toBe('degraded');
+    expect(view.convoy.title).toBe('Verified roster unavailable');
     expect(view.convoy.remoteCount).toBeNull();
     expect(view.alerts).toEqual([]);
   });
