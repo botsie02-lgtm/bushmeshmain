@@ -38,7 +38,8 @@ App Shell worker supplies authorised active-convoy membership.
 ## Current capabilities and hard prerequisite
 
 The viewport supports Web Mercator, pan, zoom, follow-self, frame-convoy,
-north-up/heading-up, fresh-first convoy framing, position age and last-known warnings, headings, missing
+north-up/heading-up, a **VIEW PACK** shortcut to the selected verified
+pack's geographic centre (works without a GPS fix), fresh-first convoy framing, position age and last-known warnings, headings, missing
 member positions, antimeridian wrapping, an explicit regional pack selector,
 tile error/empty states, and offline-only raster tile rendering **when a tile
 source exists**. The map labels itself "position plot only" otherwise.
@@ -135,3 +136,13 @@ membership from radio discovery.
 
 The existing UI does not auto-create map sources: without an actual downloaded
 raster pack and a suitable manifest, an offline basemap cannot be demonstrated.
+
+## Trusted Melbourne field-pack source
+
+The verified Melbourne CBD trial pack (96 genuine PNG raster tiles; z12–15;
+OpenStreetMap ODbL) and its reproducible provenance are described in
+[Australian raster provisioning](../../docs/AUSTRALIAN_RASTER_PACK_PROVISIONING.md).
+Use the reviewed manifest + Android document picker to install it. No
+installed archive is bundled with BushMesh, and this is a roads-only
+basemap, not a terrain-hillshade/topographic map. VIEW PACK recentres the
+map without changing location-session ownership or convoy authorisation.

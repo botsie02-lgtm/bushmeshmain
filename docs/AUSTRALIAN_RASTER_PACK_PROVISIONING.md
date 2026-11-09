@@ -179,7 +179,8 @@ out of Git. If redistributing derived OSM databases, review ODbL obligations.
 
 ~~~bash
 # WSL independent file-level and geographic validation:
-python tools/maps/validate_melbourne_mbtiles.py \
+"$HOME/bushmesh-melbourne-cbd/.venv/bin/python" \
+  tools/maps/validate_melbourne_mbtiles.py \
   "$HOME/bushmesh-melbourne-cbd/melbourne-cbd-roads.mbtiles" \
   --require-real \
   --source-pbf "$HOME/bushmesh-melbourne-cbd/melbourne-central.osm.pbf"

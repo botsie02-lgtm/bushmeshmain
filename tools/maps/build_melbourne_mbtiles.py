@@ -54,7 +54,7 @@ def real_roads(input_path):
     except ImportError as error:
         raise SystemExit('Install dependencies: pip install pillow osmium') from error
     if input_path.stat().st_size > MAX_SOURCE_BYTES:
-        raise ValueError('Clip the Victoria .osm.pbf to Melbourne first (max 64 MiB)')
+        raise ValueError('Clip the city/state .osm.pbf to CBD first (max 64 MiB)')
     roads = []
 
     class Handler(osmium.SimpleHandler):

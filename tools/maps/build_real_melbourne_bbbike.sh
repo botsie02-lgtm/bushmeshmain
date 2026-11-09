@@ -10,9 +10,11 @@ CITY="$WORK/Melbourne.osm.pbf"
 CHECKSUMS="$WORK/CHECKSUM.txt"
 CLIP="$WORK/melbourne-central.osm.pbf"
 ARCHIVE="$WORK/melbourne-cbd-roads.mbtiles"
-for program in curl osmium grep md5sum sha256sum python3; do
+for program in curl osmium grep md5sum sha256sum python3 realpath stat cut; do
   command -v "$program" >/dev/null || { echo "Missing: $program" >&2; exit 2; }
 done
+# Resolve relative paths before enforcing the out-of-Git staging rule.
+WORK="$(realpath -m "$WORK")"
 mkdir -p "$WORK"
 case "$WORK/" in "$REPO/"*) echo "Work directory must be OUTSIDE Git" >&2; exit 2 ;; esac
 
