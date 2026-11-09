@@ -285,6 +285,14 @@ describe('field readiness presentation model', () => {
       },
     });
     expect(staleEvidence.maps.imagery).toBe('not-confirmed');
+    const futureEvidence = deriveFieldReadiness({
+      ...props,
+      imageryEvidence: {
+        kind: 'loaded', packId: 'alpine-map',
+        packVersion: 'v1', observedAtMs: NOW + 1000,
+      },
+    });
+    expect(futureEvidence.maps.imagery).toBe('not-confirmed');
     const wrongPack = deriveFieldReadiness({
       ...props,
       imageryEvidence: {
