@@ -131,9 +131,7 @@ function AppContent(): React.JSX.Element {
         <ScreenMountGate active={activeTab === 'channels'}>
           <View style={styles.screenWrap}>
             <RadioScreen
-              onOpenCarrierDetails={
-                activeCarrierProfile ? () => setActiveTab('convoy') : undefined
-              }
+              onOpenCarrierDetails={() => setActiveTab('convoy')}
             />
           </View>
         </ScreenMountGate>
