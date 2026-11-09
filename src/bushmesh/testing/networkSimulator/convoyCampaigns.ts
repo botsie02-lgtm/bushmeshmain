@@ -293,7 +293,9 @@ export async function scenarioSecurityIdentityAndRevocation(
   receiverPolicy.approvedGroupDevices.add('vehicle-bob-key-v1');
   alicePolicy.senderDeviceId = 'vehicle-alice-key-v1';
   const alice = await sim.addNode({id: 1}, {securityAdapter: alicePolicy});
-  const bob = await sim.addNode({id: 2});
+  const bobPolicy = new SecurityDecisionTestAdapter();
+  bobPolicy.senderDeviceId = 'vehicle-bob-key-v1';
+  const bob = await sim.addNode({id: 2}, {securityAdapter: bobPolicy});
   const receiver = await sim.addNode({id: 3}, {securityAdapter: receiverPolicy});
   sim.setLink(1, 3, {});
   sim.setLink(2, 3, {});
@@ -352,9 +354,11 @@ export async function scenarioSecurityIdentityAndRevocation(
     );
   };
   await deliver(1, await groupPosition(alice, 1));
+  const retiredGroupMessage = await groupPosition(alice, 1);
   // Identity rotation: externally authorized new identity, old identity revoked.
   alicePolicy.senderDeviceId = 'vehicle-alice-key-v2';
   receiverPolicy.approvedGroupDevices.delete('vehicle-alice-key-v1');
+  await deliver(1, retiredGroupMessage);
   const deniedBeforeTrust = await groupPosition(alice, 1);
   await deliver(1, deniedBeforeTrust);
   receiverPolicy.approvedGroupDevices.add('vehicle-alice-key-v2');
@@ -362,20 +366,18 @@ export async function scenarioSecurityIdentityAndRevocation(
   // Removal from the group revokes even the newly accepted identity.
   receiverPolicy.approvedGroupDevices.delete('vehicle-alice-key-v2');
   await deliver(1, await groupPosition(alice, 1));
-  // Unrevoked second member still passes the same adapter.
-  // The existing bob node uses the default fake sender identity instead;
-  // its canonical message must therefore be denied, not silently accepted.
+  // Removing Alice from the group does not revoke Bob's distinct identity.
   await deliver(2, await groupPosition(bob, 2));
 
   const failures: string[] = [];
   const expected = [
     'accepted', 'rejected', 'accepted',
-    'accepted', 'rejected', 'accepted', 'rejected', 'rejected',
+    'accepted', 'rejected', 'rejected', 'accepted', 'rejected', 'accepted',
   ];
   assert(JSON.stringify(statuses) === JSON.stringify(expected),
     `Security lifecycle status sequence incorrect: ${statuses.join(',')}`, failures);
   assert(sim.metrics.runtimeRejected === 4, 'expected four externally denied Security objects', failures);
-  assert(sim.metrics.deliveredDatagrams === 4, 'unexpected accepted protected delivery count', failures);
+  assert(sim.metrics.deliveredDatagrams === 5, 'unrevoked group member should still deliver', failures);
   return {name: 'security-provider-identity-revocation', seed, failures, network: sim, statuses};
 }
 
