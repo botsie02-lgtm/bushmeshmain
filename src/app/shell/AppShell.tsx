@@ -113,7 +113,7 @@ function DriveHome({
   openLegacy: () => void;
 }): React.JSX.Element {
   const {activeConvoy, status, notice} = useActiveOperationalConvoy();
-  const {connectionStatus} = useBushMesh();
+  const {connectionStatus, activeChannel, contacts} = useBushMesh();
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.pageContent}>
@@ -146,6 +146,18 @@ function DriveHome({
           <Text style={styles.statValue}>{activeConvoy ? 'Verified' : 'Inactive'}</Text>
         </View>
       </View>
+      <Surface
+        eyebrow="SEPARATE RADIO CONTEXT"
+        title={activeChannel
+          ? 'Carrier: ' + activeChannel.channelName
+          : 'No MeshCore carrier selected'}
+        description={'Known MeshCore contacts: ' + (contacts?.length ?? 0) +
+          '. Neither a carrier channel nor discovered contacts prove authorised convoy membership.'}>
+        <Text style={styles.mutedText}>
+          The legacy Radio view currently follows the carrier channel. Explicit
+          conversation selection will be connected independently.
+        </Text>
+      </Surface>
       <Surface
         eyebrow="NAVIGATION"
         title="Offline maps"
@@ -390,13 +402,23 @@ export function AppShell(): React.JSX.Element {
           <View style={styles.screen}>
             <View style={styles.subnav}>
               {deviceView === 'hub' ? (
-                <Action label="GPS and location" onPress={() => setDeviceView('gps')} secondary />
+                <>
+                  <Action label="GPS and location" onPress={() => setDeviceView('gps')} secondary />
+                  <Action
+                    label="Offline map packs"
+                    onPress={() => {
+                      setDriveView('map');
+                      setActiveTab('drive');
+                    }}
+                    secondary
+                  />
+                </>
               ) : (
-                <Action label="Back to Device" onPress={() => setDeviceView('hub')} secondary />
+                <>
+                  <Action label="Back to Device" onPress={() => setDeviceView('hub')} secondary />
+                  <Text style={styles.subnavLabel}>GPS settings</Text>
+                </>
               )}
-              <Text style={styles.subnavLabel}>
-                {deviceView === 'gps' ? 'GPS settings' : 'Radio / maps / diagnostics'}
-              </Text>
             </View>
             {deviceView === 'gps' ? <LocationScreen /> : <DeviceHubScreen />}
           </View>
