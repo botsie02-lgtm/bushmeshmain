@@ -293,6 +293,19 @@ export class AppRadioConnectionService {
     ));
   }
 
+  /** Unknown Android status must never authorize a second BLE GATT owner. */
+  private async readNativeStatusForTakeover(): Promise<NativeRadioServiceStatus> {
+    try {
+      const status = await this.deps.getNativeStatus();
+      if (status) return status;
+    } catch {
+      // A status or binder exception is not proof of native disconnection.
+    }
+    throw new Error(
+      'Could not verify Android radio ownership; BLE takeover is blocked until Android status is available.',
+    );
+  }
+
   private nativeFailureReason(error: unknown): string {
     const message = error instanceof Error ? error.message : '';
     if (/timed out/i.test(message)) return 'timeout';
@@ -487,7 +500,7 @@ export class AppRadioConnectionService {
     this.stopScan();
     // Android's persisted target is authoritative even if an earlier
     // optional sync incorrectly cleared the React connection snapshot.
-    const androidStatus = await Promise.resolve().then(() => this.deps.getNativeStatus()).catch(() => null);
+    const androidStatus = await this.readNativeStatusForTakeover();
     if (this.coordinatorOwnsRadio() ||
         this.nativeServiceOwnsRadio(androidStatus) ||
         this.snapshot.connectionOwner === 'android-native') {
@@ -571,7 +584,16 @@ export class AppRadioConnectionService {
       this.patch({status: 'Error', statusDetail: 'Android native radio is unavailable.'});
       return;
     }
-    const androidStatus = await Promise.resolve().then(() => this.deps.getNativeStatus()).catch(() => null);
+    let androidStatus: NativeRadioServiceStatus;
+    try {
+      androidStatus = await this.readNativeStatusForTakeover();
+    } catch (error) {
+      this.patch({
+        status: 'Error',
+        statusDetail: error instanceof Error ? error.message : 'Android ownership status unavailable.',
+      });
+      return;
+    }
     if (this.snapshot.connectionOwner !== 'none' ||
         this.coordinatorOwnsRadio() || this.nativeServiceOwnsRadio(androidStatus)) {
       // No second GATT owner, even if the React snapshot has drifted to 'none'.
@@ -627,7 +649,13 @@ export class AppRadioConnectionService {
     }
     const address = this.snapshot.connectedDeviceAddress;
     const label = this.snapshot.connectedDeviceLabel ?? 'MeshCore radio';
-    const nativeStatus = await Promise.resolve().then(() => this.deps.getNativeStatus()).catch(() => null);
+    let nativeStatus: NativeRadioServiceStatus;
+    try {
+      nativeStatus = await this.readNativeStatusForTakeover();
+    } catch (error) {
+      this.patch({statusDetail: error instanceof Error ? error.message : 'Android ownership status unavailable.'});
+      return;
+    }
     if (this.coordinatorOwnsRadio() || this.nativeServiceOwnsRadio(nativeStatus)) {
       this.patch({statusDetail: 'Native ownership is already present; stop it before handoff.'});
       return;
@@ -669,6 +697,12 @@ export class AppRadioConnectionService {
   private async disconnectInternal(): Promise<void> {
     this.stopScan();
     const nativeStatus = await Promise.resolve().then(() => this.deps.getNativeStatus()).catch(() => null);
+    if (!nativeStatus && this.snapshot.connectionOwner === 'none' &&
+        !this.nativeSession && !this.coordinatorOwnsRadio() && !this.meshCoreClient) {
+      const detail = 'Cannot verify Android radio ownership; Stop is not confirmed. Retry once Android status is available.';
+      this.patch({status: 'Error', statusDetail: detail});
+      throw new Error(detail);
+    }
     const nativeOwner = this.snapshot.connectionOwner === 'android-native' ||
       this.nativeSession !== null || this.coordinatorOwnsRadio() ||
       this.nativeServiceOwnsRadio(nativeStatus);

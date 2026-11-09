@@ -368,7 +368,9 @@ class MeshCoreNativeBleRuntime private constructor(
 
     writeQueue.addLast(bytes.copyOf())
     processNextWrite()
-    return true
+    // A synchronous writeCharacteristic rejection may already have forced
+    // reconnect. Do not report such a rejected local GATT write as queued.
+    return state == "ready" && bluetoothGatt != null && rxCharacteristic != null
   }
 
   @Synchronized

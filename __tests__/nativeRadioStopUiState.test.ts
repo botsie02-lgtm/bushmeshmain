@@ -41,6 +41,13 @@ describe('Background Radio Stop visibility across ownership divergence', () => {
     )).toBe(true);
   });
 
+  it('offers native Stop from Android service address even when coordinator and app are stale', () => {
+    expect(isNativeRadioStopAvailable(
+      'none', coordinator('idle'),
+      {...releasedNativeOwnerStatus(), deviceAddress: 'AA:BB:CC:DD:EE:FF'},
+    )).toBe(true);
+  });
+
   it('does not show native Stop for an unrelated standalone JS BLE owner', () => {
     expect(isNativeRadioStopAvailable(
       'react-native', coordinator('idle'), releasedNativeOwnerStatus(),

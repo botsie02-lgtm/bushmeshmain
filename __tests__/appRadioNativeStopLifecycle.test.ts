@@ -387,4 +387,38 @@ describe('AppRadioConnectionService native stop lifecycle', () => {
     await service.dispose();
   });
 
+  it('fails closed rather than opening JS GATT when Android status cannot be read', async () => {
+    const {service, device, manager, getNativeStatus} = createHarness();
+    getNativeStatus.mockRejectedValue(new Error('Native bridge status unavailable'));
+    await expect(service.connectToDevice(device)).rejects.toThrow(/verify Android radio ownership/i);
+    expect(manager.connectToDevice).not.toHaveBeenCalled();
+    expect(service.getSnapshot().connectionOwner).toBe('none');
+  });
+
+  it('does not start Android GATT takeover when native ownership is unknown', async () => {
+    const {service, device, nativeCoordinator, getNativeStatus} = createHarness();
+    getNativeStatus.mockRejectedValue(new Error('Native bridge status unavailable'));
+    await service.handoffDiscoveredDeviceToAndroid(device);
+    expect(nativeCoordinator.start).not.toHaveBeenCalled();
+    expect(service.getSnapshot()).toMatchObject({
+      connectionOwner: 'none',
+      status: 'Error',
+    });
+    expect(service.getSnapshot().statusDetail).toMatch(/verify Android radio ownership/i);
+  });
+
+  it('keeps ambiguous orphan native Stop retryable until Android status can be queried', async () => {
+    const {service, getNativeStatus, stopNativeRadio, waitForNativeShutdown} = createHarness();
+    getNativeStatus.mockRejectedValueOnce(new Error('Android status binder unavailable'));
+    await expect(service.disconnect()).rejects.toThrow(/Stop is not confirmed/i);
+    expect(stopNativeRadio).not.toHaveBeenCalled();
+    expect(service.getSnapshot().status).toBe('Error');
+
+    getNativeStatus.mockResolvedValue(activeNativeStatus());
+    await service.disconnect();
+    expect(stopNativeRadio).toHaveBeenCalledTimes(1);
+    expect(waitForNativeShutdown).toHaveBeenCalledTimes(1);
+    expect(service.getSnapshot().connectionOwner).toBe('none');
+  });
+
 });

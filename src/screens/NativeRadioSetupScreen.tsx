@@ -33,7 +33,8 @@ export function isNativeRadioStopAvailable(
     Boolean(coordinator.deviceAddress && coordinator.state !== 'idle') ||
     android?.ownership === 'native-service' ||
     android?.persistedNativeTargetPresent === true ||
-    Boolean(android?.nativeBleDeviceAddress);
+    Boolean(android?.nativeBleDeviceAddress) ||
+    Boolean(android?.deviceAddress);
 }
 
 function deviceLabel(device: Device): string {
