@@ -178,6 +178,7 @@ export function FieldReadinessDashboard({
           <Text style={styles.emphasisText}>{model.maps.imageryLabel}</Text>
           <Text style={styles.bodyText}>{model.maps.detail}</Text>
           <Text style={styles.smallText}>{model.maps.inventoryLabel}</Text>
+          <Text style={styles.bodyText}>{model.maps.coverageLabel}</Text>
           <Text style={styles.smallText}>{model.maps.downloadLabel}</Text>
           <FieldButton label="Open ConvoyMap" emphasis onPress={onOpenMap} />
           <FieldButton
