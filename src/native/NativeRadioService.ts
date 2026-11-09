@@ -37,6 +37,8 @@ export type NativeRadioServiceStatus = {
   nativeBleConnectedAtMs?: number;
   nativeBleLastError?: string | null;
   nativeBleQueuedWrites?: number;
+  nativeBleCompletedGattWrites?: number;
+  nativeBleFailedGattWrites?: number;
   nativeBleBufferedFrames?: number;
   nativeBackgroundInboxCount?: number;
   nativeBackgroundChannelInboxCount?: number;
@@ -95,6 +97,8 @@ const unsupportedStatus: NativeRadioServiceStatus = {
   nativeBleConnectedAtMs: 0,
   nativeBleLastError: null,
   nativeBleQueuedWrites: 0,
+  nativeBleCompletedGattWrites: 0,
+  nativeBleFailedGattWrites: 0,
   nativeBleBufferedFrames: 0,
   nativeBackgroundInboxCount: 0,
   nativeBackgroundChannelInboxCount: 0,
