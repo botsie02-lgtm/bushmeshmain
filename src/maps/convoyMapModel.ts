@@ -210,6 +210,14 @@ export function selectRenderableMapPack(
   );
 }
 
+/** Centre of a reviewed region, including antimeridian-wrapping bounds. */
+export function mapPackBoundsCenter(manifest: BushMeshMapPackManifestV1): MapCoordinate {
+  const {south, north, west, east} = manifest.bounds;
+  const halfLongitude = west <= east ? (west + east) / 2 : (west + (east + 360)) / 2;
+  const longitude = ((halfLongitude + 180) % 360 + 360) % 360 - 180;
+  return {latitude: (south + north) / 2, longitude};
+}
+
 export function coordinateInManifest(
   coordinate: MapCoordinate,
   manifest: BushMeshMapPackManifestV1,

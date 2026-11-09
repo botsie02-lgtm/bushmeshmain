@@ -24,6 +24,7 @@ import {
   fitConvoyZoom,
   isOfflineTileUri,
   isValidMapCoordinate,
+  mapPackBoundsCenter,
   planConvoyMapTiles,
   resolveConvoyMapCamera,
   screenPixel,
@@ -251,7 +252,9 @@ export function ConvoyMap({
     ? 'NO VERIFIED OFFLINE PACK'
     : !hasReader
       ? 'TILE READER UNAVAILABLE'
-      : tiles.length === 0
+      : !center
+        ? 'TAP VIEW PACK OR START GPS'
+        : tiles.length === 0
         ? 'VIEW TOO LARGE FOR TILE BUDGET'
         : loadedTiles === tileKeys.length && tileKeys.length > 0
           ? 'OFFLINE BASEMAP READY'
@@ -371,6 +374,13 @@ export function ConvoyMap({
       <View style={styles.controls}>
         <MapButton label="FOLLOW" selected={cameraMode === 'follow-self'} onPress={() => setCameraMode('follow-self')} />
         <MapButton label="CONVOY" selected={cameraMode === 'frame-convoy'} onPress={() => setCameraMode('frame-convoy')} />
+        {pack ? (
+          <MapButton label="VIEW PACK" onPress={() => {
+            setManualCenter(mapPackBoundsCenter(pack.manifest));
+            setCameraMode('free');
+            setZoom(Math.max(pack.manifest.minZoom, Math.min(pack.manifest.maxZoom, 13)));
+          }} />
+        ) : null}
         <MapButton label={orientation === 'north-up' ? 'NORTH ↑' : 'HEADING ↑'}
           onPress={() => setOrientation(value => value === 'north-up' ? 'heading-up' : 'north-up')} />
         <MapButton label="−" onPress={() => {

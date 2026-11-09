@@ -7,6 +7,7 @@ import {
   resolveConvoyMapCamera,
   screenPixel,
   selectRenderableMapPack,
+  mapPackBoundsCenter,
 } from '../src/maps/convoyMapModel';
 import {BushMeshMapPackCatalogEntry} from '../src/maps/mapPackCatalog';
 
@@ -152,5 +153,25 @@ describe('verified offline tile planning', () => {
     expect(isOfflineTileUri('file:///data/user/0/tiles/1.png')).toBe(true);
     expect(isOfflineTileUri('data:image/png;base64,AAAA')).toBe(true);
     expect(isOfflineTileUri('javascript:alert(1)')).toBe(false);
+  });
+});
+
+describe('map pack field-test camera shortcut', () => {
+  it('centres on actual declared pack bounds without needing a GPS fix', () => {
+    const manifest = {
+      schemaVersion: 1 as const, id: 'melbourne-field-pack', name: 'Melbourne',
+      version: 'v1', format: 'mbtiles' as const,
+      bounds: {south: -37.84, west: 144.94, north: -37.78, east: 145.02},
+      minZoom: 12, maxZoom: 15, tileSize: 256 as const,
+      expectedBytes: 123, sha256: 'b'.repeat(64),
+      source: {kind: 'import' as const, displayName: 'melbourne.mbtiles'},
+    };
+    expect(mapPackBoundsCenter(manifest)).toEqual({
+      latitude: -37.81,
+      longitude: expect.closeTo(144.98, 6),
+    });
+    expect(mapPackBoundsCenter({
+      ...manifest, bounds: {south: -2, west: 170, north: 2, east: -170},
+    })).toEqual({latitude: 0, longitude: -180});
   });
 });
