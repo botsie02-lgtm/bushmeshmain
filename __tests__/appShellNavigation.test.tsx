@@ -69,13 +69,32 @@ function visibleText(renderer: ReactTestRenderer.ReactTestRenderer): string {
   return textNodes.map(node => node.props.children).flat(Infinity).join(' ');
 }
 
+function renderedTabs(renderer: ReactTestRenderer.ReactTestRenderer) {
+  // RN TouchableOpacity forwards accessibility props to multiple nested test
+  // nodes, so one label/role represents one tab, not one renderer node.
+  return MAIN_TABS.map(tab => {
+    const match = renderer.root.findAllByProps({accessibilityLabel: tab.label})
+      .find(node => node.props.accessibilityRole === 'tab' &&
+        node.props.accessibilityState !== undefined);
+    if (!match) throw new Error(`Missing main tab ${tab.label}`);
+    return match;
+  });
+}
+
+function pressByLabel(renderer: ReactTestRenderer.ReactTestRenderer, label: string): void {
+  const match = renderer.root.findAllByProps({accessibilityLabel: label})
+    .find(node => typeof node.props.onPress === 'function');
+  if (!match) throw new Error(`Missing interactive action ${label}`);
+  match.props.onPress();
+}
+
 test('five top tabs start on safe Drive, with no automatic public contacts or map', async () => {
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(() => {
     renderer = ReactTestRenderer.create(<AppShell />);
   });
 
-  const tabs = renderer.root.findAllByProps({accessibilityRole: 'tab'});
+  const tabs = renderedTabs(renderer);
   expect(MAIN_TABS.map(tab => tab.key)).toEqual([
     'drive', 'radio', 'convoy', 'contacts', 'device',
   ]);
@@ -88,37 +107,35 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
   expect(visibleText(renderer)).not.toContain('Convoy map');
 
   await ReactTestRenderer.act(() => {
-    const openMap = renderer.root.findByProps({accessibilityLabel: 'Open map'});
-    openMap.props.onPress();
+    pressByLabel(renderer, 'Open map');
   });
   expect(visibleText(renderer)).toContain('Map: unverified legacy telemetry');
   const map = renderer.root.findByType(MapScreen);
   expect(map.props.activeConvoyId).toBeNull();
   expect(map.props.authorisedMembers).toEqual([]);
-  expect(renderer.root.findAllByProps({accessibilityRole: 'tab'})).toHaveLength(5);
+  expect(renderedTabs(renderer)).toHaveLength(5);
 
   await ReactTestRenderer.act(() => {
-    const goDevice = renderer.root.findByProps({accessibilityLabel: 'Device'});
-    goDevice.props.onPress();
+    pressByLabel(renderer, 'Device');
   });
   expect(visibleText(renderer)).toContain('GPS and location');
 
   await ReactTestRenderer.act(() => {
-    renderer.root.findByProps({accessibilityLabel: 'GPS and location'}).props.onPress();
+    pressByLabel(renderer, 'GPS and location');
   });
   expect(visibleText(renderer)).toContain('GPS settings');
 
   await ReactTestRenderer.act(() => {
-    renderer.root.findByProps({accessibilityLabel: 'Back to Device'}).props.onPress();
+    pressByLabel(renderer, 'Back to Device');
   });
   await ReactTestRenderer.act(() => {
-    renderer.root.findByProps({accessibilityLabel: 'Offline map packs'}).props.onPress();
+    pressByLabel(renderer, 'Offline map packs');
   });
   expect(visibleText(renderer)).toContain('Offline map packs');
-  expect(renderer.root.findAllByProps({accessibilityRole: 'tab'})[4].props.accessibilityState.selected).toBe(true);
+  expect(renderedTabs(renderer)[4].props.accessibilityState.selected).toBe(true);
 
   await ReactTestRenderer.act(() => {
-    renderer.root.findByProps({accessibilityLabel: 'Radio'}).props.onPress();
+    pressByLabel(renderer, 'Radio');
   });
   const radio = renderer.root.findByType(RadioScreen);
   expect(typeof radio.props.onOpenCarrierDetails).toBe('function');
