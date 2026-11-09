@@ -60,6 +60,19 @@ export function useDriveDashboardController({
   const [actionResult, setActionResult] = useState<DashboardActionResult | null>(null);
   const inFlightRef = useRef(false);
   const sequenceRef = useRef(1);
+  const scopeKey = [
+    activeConvoy?.convoyId ?? '',
+    radioSession.identityRef ?? '',
+    activeCarrierChannelIndex ?? '',
+    carrierBinding?.convoyId ?? '',
+    carrierBinding?.channelIndex ?? '',
+  ].join('|');
+  const scopeRef = useRef(scopeKey);
+  scopeRef.current = scopeKey;
+
+  useEffect(() => {
+    setActionResult(null);
+  }, [scopeKey]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 5_000);
@@ -96,6 +109,7 @@ export function useDriveDashboardController({
     inFlightRef.current = true;
     setBusyAction(action);
     setActionResult(null);
+    const requestScope = scopeRef.current;
     const sequence = sequenceRef.current;
     sequenceRef.current = sequence >= 0xffff ? 1 : sequence + 1;
     try {
@@ -106,14 +120,18 @@ export function useDriveDashboardController({
         queueDriverAction,
         drainOnce,
       });
-      setActionResult(outcome);
+      if (scopeRef.current === requestScope) {
+        setActionResult(outcome);
+      }
       return outcome;
     } catch {
       const failed: DashboardActionResult = {
         kind: 'failed',
         message: 'Quick action was not submitted. No radio delivery confirmed.',
       };
-      setActionResult(failed);
+      if (scopeRef.current === requestScope) {
+        setActionResult(failed);
+      }
       return failed;
     } finally {
       inFlightRef.current = false;
