@@ -133,10 +133,13 @@ describe('offline map pack viewing without a GPS fix', () => {
       );
     });
     expect(JSON.stringify(tree!.toJSON())).toContain('TAP VIEW PACK OR START GPS');
-    const label = tree!.root.findAllByType(Text).find(node => node.props.children === 'VIEW PACK');
-    expect(label).toBeDefined();
+    const pressable = tree!.root.findAll(node =>
+      typeof node.props.onPress === 'function' &&
+      node.findAllByType(Text).some(child => child.props.children === 'VIEW PACK'),
+    )[0];
+    expect(pressable).toBeDefined();
     await act(async () => {
-      label!.parent!.props.onPress();
+      pressable.props.onPress();
     });
     expect(tree!.root.findAllByType(Image).length).toBeGreaterThan(0);
     expect(JSON.stringify(tree!.toJSON())).not.toContain('authorised-lead');
