@@ -205,9 +205,10 @@ export function DriveDashboard({
                 ? styles.good : styles.caution,
             ]}>
               {model.gps.simulated ? 'SIMULATED GPS' :
-                !model.gps.nativeSource ? 'UNVERIFIED GPS SOURCE' :
-                  model.gps.freshness === 'unknown' ? 'NO GPS FIX' :
-                    model.gps.freshness.toUpperCase() + ' GPS'}
+                !model.gps.tracking ? 'GPS NOT TRACKING · LAST FIX' :
+                  !model.gps.nativeSource ? 'UNVERIFIED GPS SOURCE' :
+                    model.gps.freshness === 'unknown' ? 'NO GPS FIX' :
+                      model.gps.freshness.toUpperCase() + ' GPS'}
             </Text>
             <Text style={styles.smallDetail}>{model.gps.ageLabel}</Text>
           </View>
@@ -219,6 +220,11 @@ export function DriveDashboard({
             <Metric label="LATITUDE" value={model.gps.latitudeLabel} />
             <Metric label="LONGITUDE" value={model.gps.longitudeLabel} />
           </View>
+          {!model.gps.tracking && model.gps.fix ? (
+            <Text style={styles.caution}>
+              GPS tracking is stopped. Coordinates are last known, not current.
+            </Text>
+          ) : null}
           {model.gps.freshness === 'stale' || model.gps.freshness === 'lost' ? (
             <Text style={styles.caution}>
               Last-known coordinates only. Do not navigate using stale GPS.
