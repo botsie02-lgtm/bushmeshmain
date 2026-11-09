@@ -5,6 +5,7 @@ import {
   nativeRadioService,
   waitForNativeRadioShutdown,
 } from '../native/NativeRadioService';
+import {nativeOutboundDiagnostics} from './nativeOutboundDiagnostics';
 import {
   MeshCoreFrameTransport,
   MeshCoreFrameTransportHandlers,
@@ -22,6 +23,7 @@ const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_MAX_FRAMES_PER_POLL = 32;
 const DEFAULT_READY_TIMEOUT_MS = 15_000;
 const DEFAULT_STOP_TIMEOUT_MS = 6_000;
+const GATT_WRITE_CONFIRMATION_TIMEOUT_MS = 4_000;
 
 /**
  * MeshCore raw-frame transport backed by the Android foreground BLE runtime.
@@ -42,6 +44,7 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
   private handlers: MeshCoreFrameTransportHandlers | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private polling = false;
+  private pollTask: Promise<void> | null = null;
   private started = false;
   private generation = 0;
 
@@ -104,17 +107,26 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
     this.generation += 1;
     this.handlers = null;
     this.clearPollTimer();
-
+    // Do not leave a previous-generation drain consuming frames while another
+    // foreground session is being constructed.
+    if (this.pollTask) await this.pollTask.catch(() => undefined);
+    nativeOutboundDiagnostics.record('stop-requested', 'radio-stop');
     const dispatched = await nativeRadioService.stop();
     if (!dispatched) {
       throw new Error('Android did not accept the native radio stop request.');
     }
 
-    const status = await waitForNativeRadioShutdown({
-      timeoutMs: this.stopTimeoutMs,
-      pollIntervalMs: this.pollIntervalMs,
-    });
-    this.onNativeStatus?.(status);
+    try {
+      const status = await waitForNativeRadioShutdown({
+        timeoutMs: this.stopTimeoutMs,
+        pollIntervalMs: this.pollIntervalMs,
+      });
+      this.onNativeStatus?.(status);
+      nativeOutboundDiagnostics.record('stop-confirmed', 'radio-stop');
+    } catch (error) {
+      nativeOutboundDiagnostics.record('stop-failed', 'radio-stop', {reason: 'shutdown-error'});
+      throw error;
+    }
   }
 
   async writeBase64(base64Frame: string): Promise<void> {
@@ -125,14 +137,51 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
       throw new Error('MeshCore BLE frame cannot be empty.');
     }
 
+    const generation = this.generation;
+    const previous = await nativeRadioService.getStatus();
+    const completed = previous.nativeBleCompletedGattWrites;
+    const failed = previous.nativeBleFailedGattWrites;
+    if (previous.nativeBleState !== 'ready' ||
+        typeof completed !== 'number' || typeof failed !== 'number') {
+      nativeOutboundDiagnostics.record('write-failed', 'channel-text', {reason: 'disconnected'});
+      throw new Error('Native GATT completion tracking is unavailable or transport is not ready.');
+    }
+    const bytes = Buffer.from(base64Frame, 'base64');
+    const maxPayload = (previous.nativeBleMtu ?? 23) - 3;
+    if (bytes.length > maxPayload) {
+      nativeOutboundDiagnostics.record('write-failed', 'channel-text', {reason: 'write-error'});
+      throw new Error('Native GATT MTU cannot carry this MeshCore command; submission not queued.');
+    }
+
     const accepted = await nativeRadioService.enqueueNativeBleWrite(base64Frame);
     if (!accepted) {
-      const status = await nativeRadioService.getStatus();
-      const detail = status.nativeBleLastError
-        ? ` ${status.nativeBleLastError}`
-        : '';
-      throw new Error(`Android native BLE transport rejected the write.${detail}`);
+      nativeOutboundDiagnostics.record('write-failed', 'channel-text', {reason: 'write-error'});
+      throw new Error('Native BLE command was rejected by Android before GATT write.');
     }
+    nativeOutboundDiagnostics.record('native-write-queued', 'channel-text');
+    // JNI enqueueWrite only confirms a local buffer insertion, not a BLE write.
+    // Wait for Android onCharacteristicWrite SUCCESS before letting the session
+    // report that this command was physically written over GATT.
+    const deadline = Date.now() + GATT_WRITE_CONFIRMATION_TIMEOUT_MS;
+    while (this.started && generation === this.generation) {
+      const status = await nativeRadioService.getStatus();
+      if ((status.nativeBleFailedGattWrites ?? failed) > failed ||
+          status.nativeBleState !== 'ready') {
+        nativeOutboundDiagnostics.record('write-failed', 'channel-text', {reason: 'write-error'});
+        throw new Error('Native GATT write failed or BLE link changed; radio submission is uncertain.');
+      }
+      if ((status.nativeBleCompletedGattWrites ?? completed) > completed) {
+        nativeOutboundDiagnostics.record('gatt-write-confirmed', 'channel-text');
+        return;
+      }
+      if (Date.now() >= deadline) {
+        nativeOutboundDiagnostics.record('write-failed', 'channel-text', {reason: 'timeout'});
+        throw new Error('Native GATT write acknowledgment timed out; packet may have transmitted. Do not automatically resend.');
+      }
+      await this.delay(this.pollIntervalMs);
+    }
+    nativeOutboundDiagnostics.record('session-disconnected', 'channel-text', {reason: 'disconnected'});
+    throw new Error('Native radio stopped while awaiting GATT write acknowledgment; submission uncertain.');
   }
 
   async ensureReady(): Promise<number | null> {
@@ -195,12 +244,16 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
     this.clearPollTimer();
     this.pollTimer = setTimeout(() => {
       this.pollTimer = null;
-      this.poll(generation).catch(error => {
+      const task = this.poll(generation);
+      this.pollTask = task;
+      task.catch(error => {
         this.handlers?.onError?.(
           error instanceof Error
             ? error.message
             : 'Native MeshCore BLE polling failed.',
         );
+      }).finally(() => {
+        if (this.pollTask === task) this.pollTask = null;
       });
     }, delayMs);
   }
