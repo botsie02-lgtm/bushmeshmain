@@ -275,7 +275,9 @@ export function DriveDashboard({
                   onPress={() => {
                     const action = confirmAction;
                     setConfirmAction(null);
-                    onQuickAction(action);
+                    if (action !== null) {
+                      onQuickAction(action);
+                    }
                   }}
                 />
               </View>
