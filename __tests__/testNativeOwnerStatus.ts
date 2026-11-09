@@ -1,4 +1,4 @@
-import {NativeRadioServiceStatus} from '../src/native/NativeRadioService';
+import {NativeRadioServiceStatus, isNativeRadioShutdownConfirmed} from '../src/native/NativeRadioService';
 
 /** A fully released Android target, unlike a missing status response. */
 export function releasedNativeOwnerStatus(): NativeRadioServiceStatus {
@@ -13,3 +13,13 @@ export function releasedNativeOwnerStatus(): NativeRadioServiceStatus {
     persistedNativeTargetPresent: false,
   };
 }
+
+
+describe('released Android owner status fixture', () => {
+  it('satisfies strict shutdown acknowledgment including persisted target removal', () => {
+    expect(isNativeRadioShutdownConfirmed(releasedNativeOwnerStatus())).toBe(true);
+    expect(isNativeRadioShutdownConfirmed({
+      ...releasedNativeOwnerStatus(), persistedNativeTargetPresent: true,
+    })).toBe(false);
+  });
+});
