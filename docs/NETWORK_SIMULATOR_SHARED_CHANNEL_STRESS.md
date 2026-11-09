@@ -56,7 +56,8 @@ New diagnostics: `channelOverlaps`, `droppedCollision`,
 | Scenario | Nodes | Main invariant |
 |---|---:|---|
 | Simultaneous 11-sender contention to one receiver | 12 | Overlapping airtime causes collision drops; every sender obtains virtual transmission turns and bounded queues drain |
-| RSSI capture and separate channel index | 4 | The stronger signal survives the same-channel overlap; transmissions with different channel indices do not collide |\n| Equal-power zero-margin overlap | 3 | Two equal-power overlapping transmissions both fail even with `captureMarginDb: 0` |
+| RSSI capture and separate channel index | 4 | The stronger signal survives the same-channel overlap; transmissions with different channel indices do not collide |
+| Equal-power zero-margin overlap | 3 | Two equal-power overlapping transmissions both fail even with `captureMarginDb: 0` |
 | Shared-sender FIFO and safety queue fairness | 8 | Only one transmitter per vehicle, no traffic loss without an interferer, high-priority message immediately follows in-flight ordinary traffic, duty-cycle wait applies |
 | Leader isolation, relay disappearance and regrouping | 8 | The synthetic physical path splits and heals, deferred opaque carrier legs drain when individually reconnected; no automatic multi-hop forwarding is claimed |
 | Extreme delay and position reorder | 2 | Newer authenticated location becomes visible first, old accepted sequence is ignored by test-only view, last known fix eventually becomes stale |
