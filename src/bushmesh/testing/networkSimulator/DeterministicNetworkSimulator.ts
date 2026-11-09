@@ -474,6 +474,7 @@ export class VirtualBushMeshNode {
 
   present = true;
   lastInboundResult: BushMeshInboundResult | null = null;
+  private readonly inboundObservers = new Set<(result: BushMeshInboundResult) => void>();
 
   private runtime: BushMeshDatagramRuntime;
   private readonly clock: VirtualBushMeshClock;
@@ -482,6 +483,7 @@ export class VirtualBushMeshNode {
     config: DeterministicNetworkNodeConfig,
     clock: VirtualBushMeshClock,
     persistence = new InMemoryBushMeshRuntimePersistence(),
+    securityAdapter?: BushMeshSecurityAdapter,
   ) {
     this.config = {
       ...config,
@@ -498,9 +500,9 @@ export class VirtualBushMeshNode {
       this.config.transport!,
       this.config.maxPayloadBytes!,
     );
-    this.security = this.config.useFakeSecurity
+    this.security = securityAdapter ?? (this.config.useFakeSecurity
       ? new FakeBushMeshSecurityAdapter()
-      : undefined;
+      : undefined);
     this.runtime = this.createRuntime();
   }
 
@@ -535,10 +537,19 @@ export class VirtualBushMeshNode {
     });
   }
 
+  /** Observe finalized canonical runtime results; never interpret the carrier payload. */
+  onInboundResult(observer: (result: BushMeshInboundResult) => void): () => void {
+    this.inboundObservers.add(observer);
+    return () => this.inboundObservers.delete(observer);
+  }
+
   async acceptInbound(
     datagram: Parameters<BushMeshDatagramRuntime['acceptInbound']>[0],
   ): Promise<BushMeshInboundResult> {
     this.lastInboundResult = await this.runtime.acceptInbound(datagram);
+    for (const observer of this.inboundObservers) {
+      observer(this.lastInboundResult);
+    }
     return this.lastInboundResult;
   }
 
@@ -641,11 +652,14 @@ export class DeterministicBushMeshNetworkSimulator {
 
   async addNode(
     config: DeterministicNetworkNodeConfig,
+    options: {securityAdapter?: BushMeshSecurityAdapter} = {},
   ): Promise<VirtualBushMeshNode> {
     if (this.nodes.has(config.id)) {
       throw new Error(`Simulator node ${config.id} already exists.`);
     }
-    const node = new VirtualBushMeshNode(config, this.clock);
+    const node = new VirtualBushMeshNode(
+      config, this.clock, undefined, options.securityAdapter,
+    );
     await node.initialize();
     this.nodes.set(config.id, node);
     this.record(
