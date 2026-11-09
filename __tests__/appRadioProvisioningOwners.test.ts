@@ -322,4 +322,35 @@ describe('AppRadioConnectionService provisioning owners', () => {
 
     await service.dispose();
   });
+  it.each([false, true])('reveals an existing PSK read-only on native=%s without rewriting carrier settings', async nativeSupported => {
+    const {service, device, react, native, manager} = createHarness(nativeSupported);
+    await service.initialize();
+    if (nativeSupported) {
+      await service.handoffDiscoveredDeviceToAndroid(device);
+    } else {
+      await service.connectToDevice(device);
+    }
+    const stored = await service.createPrivateChannel({
+      channelName: 'Existing Private Carrier',
+      channelIndex: 2,
+    });
+    const owner = nativeSupported ? native : react;
+    owner.session.writeChannel.mockClear();
+    owner.session.setRadioParams.mockClear();
+    owner.session.setRadioTxPower.mockClear();
+
+    const revealed = await service.revealChannelSecret(2, 'Existing Private Carrier');
+    expect(revealed).toBe(stored.secretHex);
+    await expect(service.revealChannelSecret(2, 'Wrong channel name')).rejects.toThrow(
+      /name changed/i,
+    );
+    expect(owner.session.readChannel).toHaveBeenCalledWith(2);
+    expect(owner.session.writeChannel).not.toHaveBeenCalled();
+    expect(owner.session.setRadioParams).not.toHaveBeenCalled();
+    expect(owner.session.setRadioTxPower).not.toHaveBeenCalled();
+    if (nativeSupported) expect(manager.connectToDevice).not.toHaveBeenCalled();
+    await service.disconnect();
+    await service.dispose();
+  });
+
 });
