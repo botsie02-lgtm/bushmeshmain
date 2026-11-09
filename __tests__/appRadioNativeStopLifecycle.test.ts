@@ -241,4 +241,150 @@ describe('AppRadioConnectionService native stop lifecycle', () => {
     expect(service.getSnapshot().connectionOwner).toBe('none');
     await service.dispose();
   });
+  it('keeps native ownership and a usable send session after a post-connect channel sync error', async () => {
+    const {service, device, manager, nativeSession} = createHarness();
+    (nativeSession.readChannel as jest.Mock).mockRejectedValueOnce(
+      new Error('CMD_GET_CHANNEL timed out'),
+    );
+    await service.initialize();
+    await service.handoffDiscoveredDeviceToAndroid(device);
+    expect(service.getSnapshot()).toMatchObject({
+      status: 'Connected',
+      connectionOwner: 'android-native',
+      connectedDeviceAddress: device.id,
+    });
+    expect(service.hasUsableSendSession()).toBe(true);
+    await service.sendChannelMessage(4, 'A TO B FROM NATIVE');
+    expect(nativeSession.sendChannelMessage).toHaveBeenCalledWith(4, 'A TO B FROM NATIVE');
+    expect(manager.connectToDevice).not.toHaveBeenCalled();
+    await service.disconnect();
+    await service.dispose();
+  });
+
+  it('retains send ownership if optional contact enumeration fails after radio startup', async () => {
+    const {service, device, nativeSession} = createHarness();
+    (nativeSession.syncContacts as jest.Mock).mockRejectedValueOnce(
+      new Error('CMD_GET_CONTACTS timed out'),
+    );
+    await service.initialize();
+    await service.handoffDiscoveredDeviceToAndroid(device);
+    expect(service.getSnapshot().status).toBe('Connected');
+    expect(service.getSnapshot().connectionOwner).toBe('android-native');
+    expect(service.hasUsableSendSession()).toBe(true);
+    await service.sendChannelMessage(4, 'NATIVE TX');
+    await service.disconnect();
+    await service.dispose();
+  });
+
+  it('recovers an active coordinator session from ERROR/no BLE owner without creating another GATT owner', async () => {
+    const {service, device, manager, nativeSession, nativeCoordinator, getNativeStatus} = createHarness();
+    await service.initialize();
+    await service.handoffDiscoveredDeviceToAndroid(device);
+    getNativeStatus.mockResolvedValue(activeNativeStatus());
+    const coordinator = nativeCoordinator as NativeMeshCoreSessionCoordinator & {
+      getSession: jest.Mock;
+      getSnapshot: jest.Mock;
+    };
+    let owned = true;
+    coordinator.getSession = jest.fn(() => owned ? nativeSession : null);
+    coordinator.getSnapshot = jest.fn(() => ({
+      state: owned ? 'active' : 'idle',
+      deviceAddress: owned ? device.id : null,
+      deviceLabel: owned ? 'Test Heltec' : null,
+    }));
+    (nativeCoordinator.stop as jest.Mock).mockImplementation(async () => {owned = false;});
+    const internals = service as unknown as {
+      snapshot: ReturnType<typeof service.getSnapshot>;
+      nativeSession: NativeMeshCoreSession | null;
+    };
+    internals.snapshot = {...internals.snapshot, status: 'Error', connectionOwner: 'none'};
+    internals.nativeSession = null;
+
+    expect(service.hasUsableSendSession()).toBe(false);
+    expect(await service.recoverNativeCommandSession()).toBe(true);
+    expect(service.getSnapshot().connectionOwner).toBe('android-native');
+    await service.sendChannelMessage(4, 'RECOVERED NATIVE TX');
+    expect(nativeSession.sendChannelMessage).toHaveBeenCalledWith(4, 'RECOVERED NATIVE TX');
+    expect(nativeCoordinator.start).toHaveBeenCalledTimes(1);
+    expect(manager.connectToDevice).not.toHaveBeenCalled();
+    getNativeStatus.mockResolvedValue(releasedNativeStatus());
+    await service.disconnect();
+    await service.dispose();
+  });
+
+  it('Stop succeeds with app owner none but live native coordinator, then BLE Tools may connect', async () => {
+    const {service, device, manager, nativeCoordinator, getNativeStatus} = createHarness();
+    await service.initialize();
+    await service.handoffDiscoveredDeviceToAndroid(device);
+    const internals = service as unknown as {
+      snapshot: ReturnType<typeof service.getSnapshot>;
+    };
+    internals.snapshot = {...internals.snapshot, status: 'Error', connectionOwner: 'none'};
+    getNativeStatus.mockResolvedValue(activeNativeStatus());
+    // Stop dispatch is requested by coordinator; status release is observed.
+    (nativeCoordinator.stop as jest.Mock).mockImplementation(async () => {
+      getNativeStatus.mockResolvedValue(releasedNativeStatus());
+    });
+
+    await service.disconnect();
+    expect(nativeCoordinator.stop).toHaveBeenCalledTimes(1);
+    expect(service.getSnapshot().connectionOwner).toBe('none');
+    await service.connectToDevice(device);
+    expect(manager.connectToDevice).toHaveBeenCalledTimes(1);
+    await service.disconnect();
+    await service.dispose();
+  });
+
+  it('stops Android from service evidence when the coordinator and app have lost their session', async () => {
+    const {service, device, manager, nativeCoordinator, getNativeStatus,
+      stopNativeRadio, waitForNativeShutdown} = createHarness();
+    await service.initialize();
+    getNativeStatus.mockResolvedValue(activeNativeStatus());
+    await expect(service.connectToDevice(device)).rejects.toThrow(/Android still owns/i);
+    expect(manager.connectToDevice).not.toHaveBeenCalled();
+
+    await service.disconnect();
+    expect(nativeCoordinator.stop).not.toHaveBeenCalled();
+    expect(stopNativeRadio).toHaveBeenCalledTimes(1);
+    expect(waitForNativeShutdown).toHaveBeenCalledTimes(1);
+    expect(service.getSnapshot().connectionOwner).toBe('none');
+    getNativeStatus.mockResolvedValue(releasedNativeStatus());
+    await service.connectToDevice(device);
+    expect(manager.connectToDevice).toHaveBeenCalledWith(device.id);
+    await service.disconnect();
+    await service.dispose();
+  });
+
+  it('failed Android shutdown acknowledgement remains error/retryable until persisted owner is released', async () => {
+    const {service, nativeCoordinator, getNativeStatus, stopNativeRadio,
+      waitForNativeShutdown} = createHarness();
+    await service.initialize();
+    getNativeStatus.mockResolvedValue(activeNativeStatus());
+    waitForNativeShutdown.mockRejectedValueOnce(new Error('persisted target still present'));
+    await expect(service.disconnect()).rejects.toThrow(/persisted target still present/);
+    expect(service.getSnapshot()).toMatchObject({
+      status: 'Error',
+      connectionOwner: 'android-native',
+      isWriting: false,
+    });
+    expect(nativeCoordinator.stop).not.toHaveBeenCalled();
+    await service.disconnect();
+    expect(stopNativeRadio).toHaveBeenCalledTimes(2);
+    expect(service.getSnapshot().connectionOwner).toBe('none');
+    await service.dispose();
+  });
+
+  it('never tears down unrelated JS BLE owner when Android status unexpectedly claims native ownership', async () => {
+    const {service, device, manager, getNativeStatus, stopNativeRadio} = createHarness();
+    await service.initialize();
+    await service.connectToDevice(device);
+    getNativeStatus.mockResolvedValue(activeNativeStatus());
+    await expect(service.disconnect()).rejects.toThrow(/Conflicting native and React Native/i);
+    expect(stopNativeRadio).not.toHaveBeenCalled();
+    expect(manager.cancelDeviceConnection).not.toHaveBeenCalled();
+    getNativeStatus.mockResolvedValue(releasedNativeStatus());
+    await service.disconnect();
+    await service.dispose();
+  });
+
 });
