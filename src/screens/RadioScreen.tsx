@@ -1,5 +1,5 @@
 import {Buffer} from 'buffer';
-import React, {useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -13,6 +13,7 @@ import {
   classifyChannelSubmissionFailure,
   formatChannelSubmissionFailure,
 } from '../meshcore/channelSendDiagnostics';
+import {meshCoreInboundDiagnostics} from '../meshcore/meshcoreInboundDiagnostics';
 import {estimateLoRaAirtimeMs} from '../radio/loraAirtime';
 import {
   BushMeshChannel,
@@ -85,6 +86,15 @@ export function RadioScreen({
   const [messageText, setMessageText] = useState('');
   const [sendStatus, setSendStatus] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [inboundMetrics, setInboundMetrics] = useState(() =>
+    meshCoreInboundDiagnostics.snapshot(),
+  );
+  useEffect(() => meshCoreInboundDiagnostics.subscribe(() => {
+    setInboundMetrics(meshCoreInboundDiagnostics.snapshot());
+  }), []);
+  const inboundFailure = inboundMetrics.events.find(item =>
+    item.stage === 'drain-error' || item.stage === 'persistence-error',
+  );
 
   const visibleChannels = useMemo(
     () =>
@@ -316,6 +326,24 @@ export function RadioScreen({
         {sendStatus ? <Text style={styles.sendStatus}>{sendStatus}</Text> : null}
       </View>
 
+      <View style={styles.inboundDiagnostics}>
+        <Text style={styles.inboundTitle}>LIVE INBOUND · MESHCORE QUEUE</Text>
+        <Text style={styles.inboundMeta}>
+          0x83 push {inboundMetrics.counts['push-0x83'] ?? 0} · drain scheduled {inboundMetrics.counts['drain-scheduled'] ?? 0} · sync 0x0A {inboundMetrics.counts['sync-submitted'] ?? 0}
+        </Text>
+        <Text style={styles.inboundMeta}>
+          received 0x08 {inboundMetrics.counts['received-0x08'] ?? 0} · 0x11 {inboundMetrics.counts['received-0x11'] ?? 0} · channel parsed {inboundMetrics.counts['channel-parsed'] ?? 0}
+        </Text>
+        <Text style={styles.inboundMeta}>
+          inbox {inboundMetrics.counts['inbox-accepted'] ?? 0} · persisted {inboundMetrics.counts.persisted ?? 0} · history visible {inboundMetrics.counts['history-visible'] ?? 0} · duplicate {inboundMetrics.counts.duplicate ?? 0} · queue empty {inboundMetrics.counts['queue-empty'] ?? 0}
+        </Text>
+        {inboundFailure ? (
+          <Text style={styles.inboundFailure}>
+            Last inbound issue: {inboundFailure.stage} / {inboundFailure.reason ?? 'unknown'}
+          </Text>
+        ) : null}
+      </View>
+
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Radio history</Text>
         <Text style={styles.sectionMeta}>{activeHistory.length} messages</Text>
@@ -482,6 +510,18 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {opacity: 0.35},
   sendButtonText: {color: colors.background, fontSize: 13, fontWeight: '900'},
   sendStatus: {color: colors.textSecondary, fontSize: 11, lineHeight: 17, marginTop: 9},
+  inboundDiagnostics: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSoft,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 17,
+    gap: 6,
+  },
+  inboundTitle: {color: colors.textPrimary, fontSize: 11, fontWeight: '900'},
+  inboundMeta: {color: colors.textSecondary, fontSize: 10, lineHeight: 15},
+  inboundFailure: {color: colors.warning, fontSize: 10},
   messageCard: {
     backgroundColor: colors.surface,
     borderWidth: 1,
