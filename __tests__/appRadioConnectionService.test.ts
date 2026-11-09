@@ -1,6 +1,7 @@
 import {Device} from 'react-native-ble-plx';
 
 import {AppRadioConnectionService} from '../src/radio/AppRadioConnectionService';
+import {releasedNativeOwnerStatus} from './testNativeOwnerStatus';
 import {NativeMeshCoreSessionCoordinator} from '../src/meshcore/NativeMeshCoreSessionCoordinator';
 
 function fakeDevice(id = 'AA:BB'): Device {
@@ -111,7 +112,7 @@ describe('AppRadioConnectionService', () => {
       }),
       nativeCoordinator,
       nativeSupported: () => options.nativeSupported ?? false,
-      getNativeStatus: jest.fn(),
+      getNativeStatus: jest.fn().mockResolvedValue(releasedNativeOwnerStatus()),
     });
 
     return {
