@@ -186,6 +186,14 @@ describe('field readiness presentation model', () => {
     inaccurate.gps.fix = {...inaccurate.gps.fix!, accuracyMeters: -1};
     expect(deriveFieldReadiness(input({dashboard: inaccurate})).gps.accuracy)
       .toBe('Unknown');
+    expect(deriveFieldReadiness(input({dashboard: inaccurate})).gps.state)
+      .toBe('degraded');
+    const imprecise = operational();
+    imprecise.gps.fix = {...imprecise.gps.fix!, accuracyMeters: 250};
+    const weak = deriveFieldReadiness(input({dashboard: imprecise}));
+    expect(weak.gps.state).toBe('degraded');
+    expect(weak.gps.accuracy).toBe('±250 m');
+    expect(weak.allChecksReady).toBe(false);
   });
 
   test('missing, revoked or unverified membership hides remote counts and alerts', () => {
@@ -223,7 +231,7 @@ describe('field readiness presentation model', () => {
       mapPackInstallSupported: true,
     }));
     expect(notInstalled.maps.state).toBe('unavailable');
-    expect(notInstalled.maps.downloadLabel).toContain('available for download');
+    expect(notInstalled.maps.downloadLabel).toContain('download needs connectivity');
     const installing = deriveFieldReadiness(input({
       packCatalog: [registeredPack('installing')],
       mapPackInstallSupported: true,
@@ -317,5 +325,11 @@ describe('field readiness presentation model', () => {
       dashboard: operational(),
       speedKmh: 35,
     })).previewReason).toContain('Stop in a safe place');
+    const poorGps = operational();
+    poorGps.gps.fix = {...poorGps.gps.fix!, accuracyMeters: 250};
+    expect(deriveFieldReadiness(input({
+      dashboard: poorGps,
+      speedKmh: 35,
+    })).previewAvailable).toBe(false);
   });
 });
