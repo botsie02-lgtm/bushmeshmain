@@ -277,7 +277,16 @@ export function deriveDriveDashboard(input: DriveDashboardInput): DriveDashboard
         id: member.id,
         label: typeof member.label === 'string' && member.label.trim()
           ? member.label.trim() : member.id,
-        position,
+        position: {
+          latitude: position.latitude,
+          longitude: position.longitude,
+          receivedAtMs: position.receivedAtMs,
+          headingDegrees: normalizedHeading(position.headingDegrees),
+          accuracyMeters: position.accuracyMeters != null &&
+            Number.isFinite(position.accuracyMeters) &&
+            position.accuracyMeters >= 0
+              ? position.accuracyMeters : null,
+        },
       });
     }
   }
