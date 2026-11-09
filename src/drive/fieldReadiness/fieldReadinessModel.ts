@@ -242,7 +242,9 @@ function mapCapability(input: FieldReadinessInput): FieldReadinessModel['maps'] 
     dashboard.maps.status !== 'no-pack' &&
     evidence.packId === verified.manifest.id &&
     evidence.packVersion === verified.manifest.version &&
-    validTime(evidence.observedAtMs, nowMs) &&
+    Number.isFinite(evidence.observedAtMs) &&
+    evidence.observedAtMs >= 0 &&
+    evidence.observedAtMs <= nowMs &&
     nowMs - evidence.observedAtMs <= 60_000;
   const imagery = matchingEvidence && evidence
     ? evidence.kind : 'not-confirmed';
