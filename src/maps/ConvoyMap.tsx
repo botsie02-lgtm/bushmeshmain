@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   Image,
   LayoutChangeEvent,
@@ -166,7 +166,7 @@ export function ConvoyMap({
       pack && center
         ? planConvoyMapTiles(pack, center, displayZoom, viewport, camera.rotationDegrees)
         : [],
-    [pack, center, displayZoom, viewport, camera.rotationDegrees],
+    [pack, center?.latitude, center?.longitude, displayZoom, viewport, camera.rotationDegrees],
   );
 
   const tileKeys = useMemo(
@@ -225,7 +225,7 @@ export function ConvoyMap({
             ? 'PARTIAL OFFLINE BASEMAP'
             : 'POSITION PLOT ONLY';
 
-  const panTo = (dx: number, dy: number) => {
+  const panTo = useCallback((dx: number, dy: number) => {
     if (!center) {
       return;
     }
@@ -234,7 +234,7 @@ export function ConvoyMap({
     const mapDy = dx * Math.sin(angle) + dy * Math.cos(angle);
     setManualCenter(coordinateFromScreenOffset(center, displayZoom, mapDx, mapDy));
     setCameraMode('free');
-  };
+  }, [center, displayZoom, camera.rotationDegrees]);
 
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_event, gesture) =>
@@ -245,14 +245,11 @@ export function ConvoyMap({
       }
     },
     onPanResponderTerminationRequest: () => true,
-  // Recreate the responder as camera/zoom change, so each drag closes over
-  // the correct geographical center.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [center, displayZoom, camera.rotationDegrees]);
+  }), [panTo]);
 
   const onLayout = (event: LayoutChangeEvent) => {
     const width = Math.round(event.nativeEvent.layout.width);
-    if (width > 0 && width !== viewport.width) {
+    if (width > 0 && (width !== viewport.width || height !== viewport.height)) {
       setViewport({width, height});
     }
   };
@@ -277,7 +274,7 @@ export function ConvoyMap({
           stale && styles.lastKnownMarker,
           point.freshness === 'lost' && styles.lostMarker,
         ]}>
-          <Text style={[styles.heading, {transform: [{rotate: `${heading}deg`}, {rotate: `${-camera.rotationDegrees}deg`}]}}>
+          <Text style={[styles.heading, {transform: [{rotate: `${heading}deg`}]}}>
             ▲
           </Text>
         </View>

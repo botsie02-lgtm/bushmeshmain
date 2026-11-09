@@ -19,6 +19,7 @@ import {
   removeMapPackCatalogEntry,
 } from '../maps/mapPackCatalog';
 import {BushMeshMapPackManifestV1} from '../maps/mapPackManifest';
+import {revalidateRestoredMapCatalog} from '../maps/mapPackRecovery';
 import {
   MapCoordinate,
   OfflineMapPack,
@@ -150,7 +151,15 @@ export function OfflineMapProvider({
       try {
         const persisted = await androidMapStatePersistence.load();
         if (persisted && active) {
-          setPackCatalog(persisted.catalog);
+          const checkedCatalog = mapPackInstallSupported
+            ? await revalidateRestoredMapCatalog(persisted.catalog, manifest =>
+                nativeMapPacks.verify(manifest),
+              )
+            : persisted.catalog;
+          if (!active) {
+            return;
+          }
+          setPackCatalog(checkedCatalog);
           setSimulatedPacks(persisted.simulatedPacks.map(clonePack));
           setRequiredTripPointsState(
             persisted.requiredTripPoints.map(point => ({...point})),
@@ -204,7 +213,7 @@ export function OfflineMapProvider({
     return () => {
       active = false;
     };
-  }, []);
+  }, [mapPackInstallSupported]);
 
   useEffect(() => {
     if (

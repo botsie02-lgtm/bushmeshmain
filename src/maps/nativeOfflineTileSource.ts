@@ -1,5 +1,5 @@
 import {NativeModules, Platform} from 'react-native';
-import {ConvoyMapTileSource} from './ConvoyMap';
+import type {ConvoyMapTileSource} from './ConvoyMap';
 
 /**
  * Optional native archive reader contract.
