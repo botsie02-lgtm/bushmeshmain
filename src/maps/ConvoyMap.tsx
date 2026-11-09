@@ -180,7 +180,7 @@ export function ConvoyMap({
       pack && center
         ? planConvoyMapTiles(pack, center, displayZoom, viewport, camera.rotationDegrees)
         : [],
-    [pack, center?.latitude, center?.longitude, displayZoom, viewport, camera.rotationDegrees],
+    [pack, center, displayZoom, viewport, camera.rotationDegrees],
   );
 
   const tileKeys = useMemo(

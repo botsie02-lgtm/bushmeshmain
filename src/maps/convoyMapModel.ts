@@ -1,6 +1,5 @@
 import {
   ConvoyFreshness,
-  Coordinate,
   getConvoyFreshness,
 } from '../convoy/convoy';
 import {
