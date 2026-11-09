@@ -12,6 +12,7 @@ on:
       - '__tests__/bushmeshConvoyCampaigns.test.ts'
       - 'tsconfig.network-simulator-v1.json'
       - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
+      - 'docs/NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md'
       - '.github/workflows/network-simulator-v1.yml'
   pull_request:
     paths:
@@ -22,6 +23,7 @@ on:
       - '__tests__/bushmeshConvoyCampaigns.test.ts'
       - 'tsconfig.network-simulator-v1.json'
       - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
+      - 'docs/NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md'
       - '.github/workflows/network-simulator-v1.yml'
 
 jobs:
