@@ -65,7 +65,8 @@ jest.mock('../src/components/SpeechPttPanel', () => ({SpeechPttPanel: () => null
 jest.mock('../src/components/SpeechStatusBanner', () => ({SpeechStatusBanner: () => null}));
 
 function visibleText(renderer: ReactTestRenderer.ReactTestRenderer): string {
-  const textNodes = renderer.root.findAllByType('Text');
+  // React Native test-renderer host node; not a DOM JSX intrinsic type.
+  const textNodes = renderer.root.findAllByType('Text' as unknown as React.ElementType);
   return textNodes.map(node => node.props.children).flat(Infinity).join(' ');
 }
 
