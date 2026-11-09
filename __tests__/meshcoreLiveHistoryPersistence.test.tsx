@@ -99,6 +99,8 @@ describe('MeshCore live Radio History durable bridge', () => {
         context?.setChannels([
           {channelIndex: '4', channelName: 'Existing private convoy', secret: 'Configured (redacted)'},
         ]);
+      });
+      await ReactTestRenderer.act(async () => {
         meshCoreInboundInbox.publish(incoming);
         await until(() => meshCoreInboundDiagnostics.snapshot().counts.duplicate! >= 2, 'restart duplicate');
       });
