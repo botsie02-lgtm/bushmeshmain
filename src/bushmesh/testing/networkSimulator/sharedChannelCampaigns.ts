@@ -196,6 +196,7 @@ export async function scenarioLeaderSplitAndIntermittentRelay(
   await fleet.network.advanceBy(27_000);
   fleet.setPresent(4, true);
   const recoveredRelayPath = fleet.network.observePhysicalPath(2, 8);
+  await fleet.network.runUntilIdle(); // relay carrier drains before leader returns
   fleet.move(1, 0);
   const joinedPath = fleet.network.observePhysicalPath(1, 8);
   await fleet.network.runUntilIdle();
