@@ -14,11 +14,27 @@ import {
   nativeMeshCoreSessionCoordinator,
 } from '../meshcore/NativeMeshCoreSessionCoordinator';
 import {nativeRadioService, NativeRadioServiceStatus} from '../native/NativeRadioService';
+import type {AppRadioConnectionSnapshot} from '../radio/AppRadioConnectionService';
 import {useRadioConnection} from '../state/RadioConnectionContext';
 import {colors} from '../theme/colors';
 
 const initialOwnership: NativeMeshCoreOwnershipSnapshot =
   nativeMeshCoreSessionCoordinator.getSnapshot();
+
+/** Stop is offered from independent coordinator/Android evidence even when the
+ * app reports ERROR/no BLE owner. Only an explicit user action issues STOP. */
+export function isNativeRadioStopAvailable(
+  owner: AppRadioConnectionSnapshot['connectionOwner'],
+  coordinator: NativeMeshCoreOwnershipSnapshot,
+  android: NativeRadioServiceStatus | null,
+): boolean {
+  return owner === 'android-native' ||
+    coordinator.state === 'active' ||
+    Boolean(coordinator.deviceAddress && coordinator.state !== 'idle') ||
+    android?.ownership === 'native-service' ||
+    android?.persistedNativeTargetPresent === true ||
+    Boolean(android?.nativeBleDeviceAddress);
+}
 
 function deviceLabel(device: Device): string {
   return device.name ?? device.localName ?? 'Unnamed BLE device';
@@ -75,13 +91,9 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
 
   const nativeBusy = ownership.state === 'stopping' || stopping || recovering;
   const takingOver = ownership.state === 'taking-over' || snapshot.status === 'Connecting';
-  const nativeActive =
-    ownership.state === 'active' ||
-    Boolean(ownership.deviceAddress && ownership.state !== 'idle') ||
-    snapshot.connectionOwner === 'android-native' ||
-    androidStatus?.ownership === 'native-service' ||
-    androidStatus?.persistedNativeTargetPresent === true ||
-    Boolean(androidStatus?.nativeBleDeviceAddress);
+  const nativeActive = isNativeRadioStopAvailable(
+    snapshot.connectionOwner, ownership, androidStatus,
+  );
   const commandSessionReady = nativeActive &&
     ownership.state === 'active' &&
     snapshot.connectionOwner === 'android-native' &&
@@ -176,8 +188,8 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
   };
 
   const displayedError =
-    ownership.errorMessage ??
     setupError ??
+    ownership.errorMessage ??
     (snapshot.status === 'Error' ? snapshot.statusDetail : null);
   const displayedStatus = ownership.statusMessage ?? snapshot.statusDetail ?? setupStatus;
 
