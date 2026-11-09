@@ -14,6 +14,7 @@ import {
 } from '../meshcore/meshcoreChannelInfo';
 import {MeshCoreClient, MeshCoreLogItem} from '../meshcore/MeshCoreClient';
 import {meshCoreInboundInbox} from '../meshcore/meshcoreInboundInbox';
+import {nativeOutboundDiagnostics} from '../meshcore/nativeOutboundDiagnostics';
 import {
   MeshCoreBleDiscovery,
   discoverMeshCoreBle,
@@ -38,7 +39,12 @@ import {
   NativeMeshCoreSessionCoordinator,
   nativeMeshCoreSessionCoordinator,
 } from '../meshcore/NativeMeshCoreSessionCoordinator';
-import {nativeRadioService} from '../native/NativeRadioService';
+import {
+  NativeRadioServiceStatus,
+  isNativeRadioShutdownConfirmed,
+  nativeRadioService,
+  waitForNativeRadioShutdown,
+} from '../native/NativeRadioService';
 import {
   BushMeshChannel,
   BushMeshContact,
@@ -107,6 +113,8 @@ type Dependencies = {
   nativeCoordinator: NativeMeshCoreSessionCoordinator;
   nativeSupported: () => boolean;
   getNativeStatus: typeof nativeRadioService.getStatus;
+  stopNativeRadio: typeof nativeRadioService.stop;
+  waitForNativeShutdown: typeof waitForNativeRadioShutdown;
   randomBytes: (length: number) => Promise<Uint8Array>;
 };
 
@@ -208,6 +216,8 @@ export class AppRadioConnectionService {
       nativeCoordinator: nativeMeshCoreSessionCoordinator,
       nativeSupported: () => nativeRadioService.isSupported(),
       getNativeStatus: () => nativeRadioService.getStatus(),
+      stopNativeRadio: () => nativeRadioService.stop(),
+      waitForNativeShutdown: options => waitForNativeRadioShutdown(options),
       randomBytes: length => nativeRadioService.secureRandomBytes(length),
       ...deps,
     };
@@ -238,6 +248,25 @@ export class AppRadioConnectionService {
 
   get nativeHandoffSupported(): boolean {
     return this.deps.nativeSupported();
+  }
+
+  /** Connected UI alone is insufficient: a live native coordinator must own
+   * the exact same command session before Radio may register its send handler. */
+  hasUsableSendSession(): boolean {
+    if (this.snapshot.status !== 'Connected') return false;
+    if (this.snapshot.connectionOwner === 'react-native') {
+      return this.meshCoreClient !== null;
+    }
+    if (this.snapshot.connectionOwner !== 'android-native' || !this.nativeSession) {
+      return false;
+    }
+    const coordinator = this.deps.nativeCoordinator;
+    // Test adapters may not implement the coordinator inspection extensions.
+    if (typeof coordinator.getSession === 'function' &&
+        coordinator.getSession() !== this.nativeSession) return false;
+    if (typeof coordinator.getSnapshot === 'function' &&
+        coordinator.getSnapshot().state !== 'active') return false;
+    return true;
   }
 
   async initialize(): Promise<void> {
