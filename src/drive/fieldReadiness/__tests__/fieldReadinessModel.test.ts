@@ -243,6 +243,24 @@ describe('field readiness presentation model', () => {
     expect(invalid.maps.downloadLabel).toContain('failed verification');
   });
 
+  test('coverage shows measured required trip points, never invented routing', () => {
+    const unknown = deriveFieldReadiness(input());
+    expect(unknown.maps.coverageLabel).toContain('not been reported');
+    const partial = deriveFieldReadiness(input({
+      coverage: {coveredPointCount: 2, totalPointCount: 5},
+    }));
+    expect(partial.maps.coverageLabel).toContain('2/5');
+    expect(partial.maps.coverageLabel).toContain('not routing');
+    const empty = deriveFieldReadiness(input({
+      coverage: {coveredPointCount: 0, totalPointCount: 0},
+    }));
+    expect(empty.maps.coverageLabel).toContain('not checked');
+    const invalid = deriveFieldReadiness(input({
+      coverage: {coveredPointCount: 8, totalPointCount: 4},
+    }));
+    expect(invalid.maps.coverageLabel).toContain('not been reported');
+  });
+
   test('verified archive/coverage never becomes an image-loaded claim by itself', () => {
     const props = input({
       dashboard: operational(),
