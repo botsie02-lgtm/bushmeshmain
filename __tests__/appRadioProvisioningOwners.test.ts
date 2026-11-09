@@ -2,6 +2,7 @@ import {Device} from 'react-native-ble-plx';
 
 import {NativeMeshCoreSessionCoordinator} from '../src/meshcore/NativeMeshCoreSessionCoordinator';
 import {AppRadioConnectionService} from '../src/radio/AppRadioConnectionService';
+import {releasedNativeOwnerStatus} from './testNativeOwnerStatus';
 
 const deviceInfo = {
   firmwareVersion: 9,
@@ -111,7 +112,7 @@ function mutableSession() {
     exportContact: jest.fn().mockResolvedValue(Uint8Array.from([0x0b, 1, 2, 3])),
     importContact: jest.fn().mockResolvedValue(undefined),
     syncQueuedMessages: jest.fn().mockResolvedValue([]),
-    sendChannelMessage: jest.fn().mockResolvedValue({}),
+    sendChannelMessage: jest.fn().mockResolvedValue({packetType: 0x00}),
     getChannel: jest.fn().mockResolvedValue({}),
   };
   return {session, slots};
@@ -145,7 +146,7 @@ function createHarness(nativeSupported: boolean) {
     }),
     nativeCoordinator,
     nativeSupported: () => nativeSupported,
-    getNativeStatus: jest.fn(),
+    getNativeStatus: jest.fn().mockResolvedValue(releasedNativeOwnerStatus()),
     randomBytes: jest.fn(async length => {
       if (length === 16) return randomSecret;
       return new Uint8Array(length).fill(9);
