@@ -164,6 +164,12 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
   await ReactTestRenderer.act(() => {
     pressByLabel(renderer, 'Device');
   });
+  // Returning from Drive preserves the last Device subsection; it does not
+  // remount providers or silently replace manually selected GPS preferences.
+  expect(visibleText(renderer)).toContain('GPS settings');
+  await ReactTestRenderer.act(() => {
+    pressByLabel(renderer, 'Back to Device');
+  });
   expect(visibleText(renderer)).toContain('GPS and location');
 
   await ReactTestRenderer.act(() => {

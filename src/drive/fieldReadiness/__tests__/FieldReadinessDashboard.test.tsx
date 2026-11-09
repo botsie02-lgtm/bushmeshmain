@@ -65,6 +65,18 @@ function makeProps(current = model()) {
   };
 }
 
+function visibleText(renderer: TestRenderer.ReactTestRenderer): string {
+  // RN renders adjacent static/dynamic fragments as separate child nodes.
+  // Compare the actual visible text, not JSON serialization boundaries.
+  return renderer.root.findAllByType('Text' as unknown as React.ElementType)
+    .map(node => Array.isArray(node.props.children)
+      ? node.props.children.flat(Infinity)
+          .filter((value: unknown) => typeof value === 'string' || typeof value === 'number')
+          .join('')
+      : String(node.props.children ?? ''))
+    .join(' ');
+}
+
 function press(renderer: TestRenderer.ReactTestRenderer, label: string) {
   const node = renderer.root.findAllByProps({accessibilityLabel: label})
     .find(item => typeof item.props.onPress === 'function');
@@ -79,7 +91,7 @@ describe('FieldReadinessDashboard safety UX', () => {
     await act(async () => {
       renderer = TestRenderer.create(<FieldReadinessDashboard {...props} />);
     });
-    const text = JSON.stringify(renderer.toJSON());
+    const text = visibleText(renderer);
     expect(text).toContain('PRE-TRIP CHECK NEEDED');
     expect(text).toContain('No active convoy');
     expect(text).toContain('Verified convoy alert feed unavailable');
@@ -118,14 +130,14 @@ describe('FieldReadinessDashboard safety UX', () => {
       renderer = TestRenderer.create(<FieldReadinessDashboard {...props} />);
     });
     await act(async () => {press(renderer, 'Preview STOP');});
-    expect(JSON.stringify(renderer.toJSON())).toContain('Preview STOP?');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('NOT TRANSMITTED.');
+    expect(visibleText(renderer)).toContain('Preview STOP?');
+    expect(visibleText(renderer)).not.toContain('NOT TRANSMITTED.');
     await act(async () => {press(renderer, 'Cancel preview');});
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Preview STOP?');
+    expect(visibleText(renderer)).not.toContain('Preview STOP?');
     await act(async () => {press(renderer, 'Preview HELP');});
     await act(async () => {press(renderer, 'Confirm local HELP preview');});
-    expect(JSON.stringify(renderer.toJSON())).toContain('LOCAL PREVIEW — HELP');
-    expect(JSON.stringify(renderer.toJSON())).toContain('NOT TRANSMITTED');
+    expect(visibleText(renderer)).toContain('LOCAL PREVIEW — HELP');
+    expect(visibleText(renderer)).toContain('NOT TRANSMITTED');
     await act(async () => {renderer.unmount();});
   });
 
@@ -137,10 +149,10 @@ describe('FieldReadinessDashboard safety UX', () => {
     });
     for (const label of ['HAZARD', 'REGROUP']) {
       await act(async () => {press(renderer, 'Preview ' + label);});
-      expect(JSON.stringify(renderer.toJSON())).toContain(
+      expect(visibleText(renderer)).toContain(
         'LOCAL PREVIEW — ' + label,
       );
-      expect(JSON.stringify(renderer.toJSON())).toContain('NOT TRANSMITTED');
+      expect(visibleText(renderer)).toContain('NOT TRANSMITTED');
       await act(async () => {press(renderer, 'Close preview');});
     }
     await act(async () => {renderer.unmount();});
@@ -156,12 +168,12 @@ describe('FieldReadinessDashboard safety UX', () => {
       renderer = TestRenderer.create(<FieldReadinessDashboard {...props} />);
     });
     await act(async () => {press(renderer, 'Preview STOP');});
-    expect(JSON.stringify(renderer.toJSON())).toContain('Preview STOP?');
+    expect(visibleText(renderer)).toContain('Preview STOP?');
     const after = model();
     await act(async () => {
       renderer.update(<FieldReadinessDashboard {...props} model={after} />);
     });
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Preview STOP?');
+    expect(visibleText(renderer)).not.toContain('Preview STOP?');
     await act(async () => {renderer.unmount();});
   });
 
@@ -180,7 +192,7 @@ describe('FieldReadinessDashboard safety UX', () => {
     }).filter(node => typeof node.props.onPress === 'function');
     expect(controls[0].props.disabled).toBe(true);
     await act(async () => {press(renderer, 'Preview STOP');});
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Preview STOP?');
+    expect(visibleText(renderer)).not.toContain('Preview STOP?');
     const packButton = renderer.root.findAllByProps({
       accessibilityLabel: 'Manage offline map packs',
     }).find(node => typeof node.props.onPress === 'function');
@@ -209,8 +221,8 @@ describe('FieldReadinessDashboard safety UX', () => {
         <FieldReadinessDashboard {...makeProps(current)} />,
       );
     });
-    expect(JSON.stringify(renderer.toJSON())).toContain('VERIFIED-PEER');
-    expect(JSON.stringify(renderer.toJSON())).toContain('Stop when it is safe');
+    expect(visibleText(renderer)).toContain('VERIFIED-PEER');
+    expect(visibleText(renderer)).toContain('Stop when it is safe');
     const button = renderer.root.findAllByProps({
       accessibilityLabel: 'Open ConvoyMap',
     }).find(node => typeof node.props.onPress === 'function');
