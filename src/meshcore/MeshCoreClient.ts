@@ -12,6 +12,8 @@ import {
 } from '../radio/ReceivedDatagram';
 import {meshCoreSelfInfoToRadioProfile} from '../radio/meshCoreRadioProfile';
 import {MESHCORE_BLE} from './meshcoreBle';
+import {MeshCoreLiveQueueDrain} from './MeshCoreLiveQueueDrain';
+import {meshCoreInboundDiagnostics} from './meshcoreInboundDiagnostics';
 import {
   MeshCoreChannelInfo,
   parseMeshCoreChannelInfo,
@@ -175,6 +177,15 @@ export class MeshCoreClient {
   private stopped = true;
   private lifecycleGeneration = 0;
   private readonly radioSessionOwner = {};
+  private readonly liveDrain = new MeshCoreLiveQueueDrain(
+    () => this.syncNextMessage(),
+    (stage, reason) => {
+      meshCoreInboundDiagnostics.record(stage, reason ? {reason} : {});
+      if (stage === 'drain-error') {
+        this.events.onStatus(`MeshCore inbound queue drain deferred: ${reason ?? 'unknown'}.`);
+      }
+    },
+  );
 
   constructor(
     manager: BleManager,
@@ -194,6 +205,7 @@ export class MeshCoreClient {
     this.resyncAttempt = 0;
     this.installDisconnectMonitor();
     this.activateConnectedRuntime('claim');
+    if (this.transportActive) this.liveDrain.start();
 
     const detail = 'MeshCore client started. Listening for TX packets.';
     this.events.onStatus(detail);
@@ -807,6 +819,7 @@ export class MeshCoreClient {
     reason: string,
     ownership: 'suspend' | 'release',
   ): void {
+    this.liveDrain.stop();
     this.transportActive = false;
 
     this.txSubscription?.remove();
@@ -957,6 +970,7 @@ export class MeshCoreClient {
     try {
       await this.sendAppStart('BushMesh');
       await this.sendDeviceQuery();
+      this.liveDrain.start();
 
       if (
         this.stopped ||
@@ -1101,11 +1115,15 @@ export class MeshCoreClient {
     this.events.onTxFrame(frameLog);
 
     if (decoded.packetType === 0x83) {
+      this.liveDrain.notifyWaiting();
       this.events.onStatus('Messages waiting on companion node.');
       this.events.onMessagesWaiting?.();
     }
 
     if (parsed?.channelMessage) {
+      meshCoreInboundDiagnostics.record(
+        decoded.packetType === 0x11 ? 'received-0x11' : 'received-0x08',
+      );
       this.events.onChannelMessage?.(parsed.channelMessage);
     }
 
