@@ -32,6 +32,7 @@ import {SecureDataStatusBanner} from '../../components/SecureDataStatusBanner';
 import {SpeechPttPanel} from '../../components/SpeechPttPanel';
 import {SpeechStatusBanner} from '../../components/SpeechStatusBanner';
 import {ActiveConvoyCarrierProfile} from '../../convoy/carrierCredentials';
+import {ConnectedDriveDashboard} from '../../drive/dashboard/ConnectedDriveDashboard';
 import type {ConvoyMapMember} from '../../maps/convoyMapModel';
 import {ContactsScreen} from '../../screens/ContactsScreen';
 import {ConvoyScreen} from '../../screens/ConvoyScreen';
@@ -40,9 +41,6 @@ import {DriveScreen} from '../../screens/DriveScreen';
 import {LocationScreen} from '../../screens/LocationScreen';
 import {MapScreen} from '../../screens/MapScreen';
 import {RadioScreen} from '../../screens/RadioScreen';
-import {useBushMesh} from '../../state/BushMeshContext';
-import {useLocationSession} from '../../state/LocationSessionContext';
-import {useOfflineMaps} from '../../state/OfflineMapContext';
 import {colors} from '../../theme/colors';
 
 export type MainTab = 'drive' | 'radio' | 'convoy' | 'contacts' | 'device';
@@ -110,93 +108,6 @@ function Surface({
       <Text style={styles.description}>{description}</Text>
       {children}
     </View>
-  );
-}
-
-function DriveHome({
-  openConvoy,
-  openMap,
-  openLegacy,
-}: {
-  openConvoy: () => void;
-  openMap: () => void;
-  openLegacy: () => void;
-}): React.JSX.Element {
-  const {activeConvoy, status, notice} = useActiveOperationalConvoy();
-  const {connectionStatus, activeChannel, contacts} = useBushMesh();
-  const {status: gpsStatus, latestFix} = useLocationSession();
-  const {coverage} = useOfflineMaps();
-
-  return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.pageContent}>
-      <Text style={styles.eyebrow}>DRIVE / OPERATIONAL OVERVIEW</Text>
-      <Text style={styles.heroTitle}>Ready for the road.</Text>
-      <Text style={styles.lead}>
-        Your driving home, with operational convoy status kept separate from
-        nearby radio traffic.
-      </Text>
-      <Surface
-        eyebrow="ACTIVE CONVOY"
-        title={activeConvoy?.displayName ?? (status === 'checking'
-          ? 'Checking convoy membership…'
-          : 'No active convoy')}
-        description={activeConvoy
-          ? 'Membership verified by the Security v1 integration boundary. Shared vehicle positions will appear here after membership-scoped tracking is connected.'
-          : 'No authorised convoy is selected. Public MeshCore contacts, carrier channels and received positions are not convoy members.'}>
-        {notice ? <Text style={styles.warningText}>{notice}</Text> : null}
-        <Action label={activeConvoy ? 'Manage active convoy' : 'Choose a convoy'} onPress={openConvoy} />
-      </Surface>
-      <View style={styles.statsRow}>
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>RADIO</Text>
-          <Text style={styles.statValue}>
-            {connectionStatus === 'Connected' ? 'Connected' : 'Offline'}
-          </Text>
-        </View>
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>LOCAL GPS</Text>
-          <Text style={styles.statValue}>
-            {gpsStatus === 'tracking' || gpsStatus === 'tracking-no-link'
-              ? (latestFix ? 'Tracking' : 'Acquiring')
-              : 'Not tracking'}
-          </Text>
-        </View>
-      </View>
-      <View style={styles.statsRow}>
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>MEMBERSHIP</Text>
-          <Text style={styles.statValue}>{activeConvoy ? 'Verified' : 'Inactive'}</Text>
-        </View>
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>OFFLINE MAPS</Text>
-          <Text style={styles.statValue}>{coverage.complete ? 'Ready' : 'Check packs'}</Text>
-        </View>
-      </View>
-      <Surface
-        eyebrow="SEPARATE RADIO CONTEXT"
-        title={activeChannel
-          ? 'Carrier: ' + activeChannel.channelName
-          : 'No MeshCore carrier selected'}
-        description={'Known MeshCore contacts: ' + (contacts?.length ?? 0) +
-          '. Neither a carrier channel nor discovered contacts prove authorised convoy membership.'}>
-        <Text style={styles.mutedText}>
-          The legacy Radio view currently follows the carrier channel. Explicit
-          conversation selection will be connected independently.
-        </Text>
-      </Surface>
-      <Surface
-        eyebrow="NAVIGATION"
-        title="Offline maps"
-        description="Open the existing map and location tools. Legacy radio positions on the map are not an authenticated convoy roster.">
-        <Action label="Open map" onPress={openMap} secondary />
-      </Surface>
-      <Surface
-        eyebrow="EXISTING DRIVE TOOLS"
-        title="Legacy driver dashboard"
-        description="Quick actions, trip readiness and unscoped radio telemetry remain available on request while verified convoy data filtering is integrated.">
-        <Action label="Open legacy drive tools" onPress={openLegacy} secondary />
-      </Surface>
-    </ScrollView>
   );
 }
 
@@ -329,10 +240,15 @@ export function AppShell(): React.JSX.Element {
       <View style={styles.content}>
         <ScreenMountGate active={activeTab === 'drive'}>
           {driveView === 'home' ? (
-            <DriveHome
-              openConvoy={openConvoy}
-              openMap={() => setDriveView('map')}
-              openLegacy={() => setDriveView('legacy')}
+            <ConnectedDriveDashboard
+              onOpenConvoy={openConvoy}
+              onOpenMap={() => setDriveView('map')}
+              onOpenRadio={() => setActiveTab('radio')}
+              onOpenDevice={() => {setDeviceView('hub'); setActiveTab('device');}}
+              roster={null}
+              verifiedAlerts={null}
+              carrierBinding={null}
+              showInlineMap={false}
             />
           ) : (
             <View style={styles.screen}>

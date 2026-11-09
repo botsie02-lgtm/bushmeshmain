@@ -2,6 +2,7 @@ import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
 import {AppShell, MAIN_TABS} from '../src/app/shell/AppShell';
+import {ConnectedDriveDashboard} from '../src/drive/dashboard/ConnectedDriveDashboard';
 import {MapScreen} from '../src/screens/MapScreen';
 import {RadioScreen} from '../src/screens/RadioScreen';
 
@@ -36,6 +37,7 @@ jest.mock('../src/app/activeContext/ActiveOperationalConvoyContext', () => ({
 }));
 
 jest.mock('../src/screens/DriveScreen', () => ({DriveScreen: () => null}));
+jest.mock('../src/drive/dashboard/ConnectedDriveDashboard', () => ({ConnectedDriveDashboard: () => null}));
 jest.mock('../src/screens/MapScreen', () => ({MapScreen: () => null}));
 jest.mock('../src/screens/ConvoyScreen', () => ({ConvoyScreen: () => null}));
 jest.mock('../src/screens/RadioScreen', () => ({RadioScreen: () => null}));
@@ -102,13 +104,17 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
   expect(tabs).toHaveLength(5);
   expect(tabs[0].props.accessibilityState.selected).toBe(true);
   expect(visibleText(renderer)).toContain('No active convoy');
-  expect(visibleText(renderer)).toContain('Choose a convoy');
-  expect(visibleText(renderer)).toContain('Carrier: Public carrier');
+  const dashboard = renderer.root.findByType(ConnectedDriveDashboard);
+  expect(dashboard.props.roster).toBeNull();
+  expect(dashboard.props.verifiedAlerts).toBeNull();
+  expect(dashboard.props.carrierBinding).toBeNull();
+  expect(typeof dashboard.props.onOpenConvoy).toBe('function');
+  expect(typeof dashboard.props.onOpenRadio).toBe('function');
+  expect(typeof dashboard.props.onOpenDevice).toBe('function');
   expect(visibleText(renderer)).not.toContain('UNTRUSTED PUBLIC DEVICE');
-  expect(visibleText(renderer)).not.toContain('Convoy map');
 
   await ReactTestRenderer.act(() => {
-    pressByLabel(renderer, 'Open map');
+    dashboard.props.onOpenMap();
   });
   expect(visibleText(renderer)).toMatch(/Map\s*:\s*unverified legacy telemetry/);
   const map = renderer.root.findByType(MapScreen);
