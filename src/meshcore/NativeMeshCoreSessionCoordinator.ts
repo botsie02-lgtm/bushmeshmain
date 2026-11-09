@@ -183,6 +183,8 @@ export class NativeMeshCoreSessionCoordinator {
         this.emit();
         this.events.onFrame?.(diagnosticResponse);
       },
+      onMessagesWaiting: () => this.events.onMessagesWaiting?.(),
+      onChannelMessage: message => this.events.onChannelMessage?.(message),
       onReceivedDatagram: datagram => {
         this.events.onReceivedDatagram?.(datagram);
       },
