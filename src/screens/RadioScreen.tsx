@@ -344,13 +344,16 @@ export function RadioScreen({
           queued {nativeTxMetrics.counts['command-queued'] ?? 0} · transport ready {nativeTxMetrics.counts['transport-ready'] ?? 0} · Android write queued {nativeTxMetrics.counts['native-write-queued'] ?? 0}
         </Text>
         <Text style={styles.inboundMeta}>
+          GATT callback confirmed (all commands) {nativeTxMetrics.counts['gatt-write-confirmed'] ?? 0} · write failures {nativeTxMetrics.counts['write-failed'] ?? 0}
+        </Text>
+        <Text style={styles.inboundMeta}>
           response observed {nativeTxMetrics.counts['response-observed'] ?? 0} · matched 0x00 {nativeTxMetrics.counts['response-matched'] ?? 0} · timeout {nativeTxMetrics.counts['response-timeout'] ?? 0} · firmware rejected {nativeTxMetrics.counts['firmware-rejected'] ?? 0}
         </Text>
         <Text style={styles.inboundMeta}>
           Stop requested {nativeTxMetrics.counts['stop-requested'] ?? 0} · confirmed {nativeTxMetrics.counts['stop-confirmed'] ?? 0} · failed {nativeTxMetrics.counts['stop-failed'] ?? 0}
         </Text>
         <Text style={styles.inboundMeta}>
-          Android write queued is not a confirmed GATT callback. PACKET_OK (0x00) means radio accepted, not peer delivery.
+          Android write queued, confirmed GATT callback, and PACKET_OK (0x00) are distinct stages. None confirms peer delivery.
         </Text>
         {nativeTxIssue ? (
           <Text style={styles.inboundFailure}>
