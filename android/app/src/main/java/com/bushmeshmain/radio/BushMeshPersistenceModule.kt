@@ -28,6 +28,7 @@ class BushMeshPersistenceModule(
     private const val MAP_STATE_KEY = "encrypted_map_state_snapshot"
     private const val FORMATION_KEY = "encrypted_formation_snapshot"
     private const val CANONICAL_RUNTIME_KEY = "encrypted_canonical_runtime_state"
+    private const val GPS_PREFERENCES_KEY = "encrypted_gps_preferences_v1"
     private const val DEVICE_PREFERENCES_KEY = "encrypted_device_preferences_v1"
     private const val OUTBOX_KEY_ALIAS = "bushmesh_outbox_aes_v1"
     private const val TRACK_KEY_ALIAS = "bushmesh_track_aes_v1"
@@ -36,6 +37,7 @@ class BushMeshPersistenceModule(
     private const val MAP_STATE_KEY_ALIAS = "bushmesh_map_state_aes_v1"
     private const val FORMATION_KEY_ALIAS = "bushmesh_formation_aes_v1"
     private const val CANONICAL_RUNTIME_KEY_ALIAS = "bushmesh_canonical_runtime_aes_v1"
+    private const val GPS_PREFERENCES_KEY_ALIAS = "bushmesh_gps_preferences_aes_v1"
     private const val DEVICE_PREFERENCES_KEY_ALIAS = "bushmesh_device_preferences_aes_v1"
     private const val ENVELOPE_VERSION = "v1"
     private const val OUTBOX_AAD = ENVELOPE_VERSION
@@ -45,6 +47,7 @@ class BushMeshPersistenceModule(
     private const val MAP_STATE_AAD = "$ENVELOPE_VERSION:map-state"
     private const val FORMATION_AAD = "$ENVELOPE_VERSION:formation"
     private const val CANONICAL_RUNTIME_AAD = "$ENVELOPE_VERSION:canonical-runtime"
+    private const val GPS_PREFERENCES_AAD = "$ENVELOPE_VERSION:gps-preferences"
     private const val DEVICE_PREFERENCES_AAD = "$ENVELOPE_VERSION:device-preferences"
     private const val GCM_TAG_BITS = 128
     private const val GCM_IV_BYTES = 12
@@ -247,6 +250,29 @@ class BushMeshPersistenceModule(
     clearSecureValue(
       DEVICE_PREFERENCES_KEY, "device preferences",
       "BUSHMESH_DEVICE_PREFERENCES_CLEAR_FAILED", promise,
+    )
+  }
+
+  /**
+   * Isolated app-private GPS UI settings. Only non-sensitive, whitelisted
+   * preferences are sent from JS; this method never stores location fixes.
+   * Uses the existing Android Keystore-backed persistence owner.
+   */
+  @ReactMethod
+  fun loadGpsPreferences(promise: Promise) {
+    loadSecureValue(
+      GPS_PREFERENCES_KEY, GPS_PREFERENCES_KEY_ALIAS,
+      GPS_PREFERENCES_AAD, "GPS preferences",
+      "BUSHMESH_GPS_PREFERENCES_LOAD_FAILED", promise,
+    )
+  }
+
+  @ReactMethod
+  fun saveGpsPreferences(serialized: String, promise: Promise) {
+    saveSecureValue(
+      GPS_PREFERENCES_KEY, GPS_PREFERENCES_KEY_ALIAS,
+      GPS_PREFERENCES_AAD, "GPS preferences",
+      "BUSHMESH_GPS_PREFERENCES_SAVE_FAILED", serialized, promise,
     )
   }
 

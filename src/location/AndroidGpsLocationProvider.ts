@@ -5,6 +5,7 @@ import {
   EmitterSubscription,
 } from 'react-native';
 
+import {gpsPreferences} from '../device/gps/gpsPreferences';
 import {
   BushMeshLocationProvider,
   LocationErrorHandler,
@@ -12,6 +13,7 @@ import {
   LocationProviderStop,
 } from './LocationProvider';
 import {BushMeshLocationFix} from './positionPlanner';
+import {gpsAcquisitionHint} from '../device/gps/gpsPreferenceCodec';
 
 type NativeGpsFix = {
   latitude: number;
@@ -23,9 +25,7 @@ type NativeGpsFix = {
   accuracyMeters: number | null;
 };
 
-type NativeGpsError = {
-  message?: string;
-};
+type NativeGpsError = {message?: string};
 
 type NativeGpsModule = {
   start: (minTimeMs: number, minDistanceMeters: number) => Promise<boolean>;
@@ -65,9 +65,18 @@ function toLocationFix(value: NativeGpsFix): BushMeshLocationFix | null {
   };
 }
 
+/**
+ * The existing shared GPS provider is the only writer of native location
+ * start/stop commands. Reads stored acquisition hints on explicit start.
+ * Requests are serialized, so a late preference restore or a stop/start
+ * handoff cannot restart GPS after the caller cancelled an old session.
+ */
 export class AndroidGpsLocationProvider implements BushMeshLocationProvider {
   readonly id = 'android-gps';
   readonly label = 'Android GPS';
+
+  private lifecycle: Promise<void> = Promise.resolve();
+  private generation = 0;
 
   isSupported(): boolean {
     return Platform.OS === 'android' && nativeModule !== undefined;
@@ -83,8 +92,12 @@ export class AndroidGpsLocationProvider implements BushMeshLocationProvider {
     }
 
     const emitter = new NativeEventEmitter(nativeModule as never);
+    let stopped = false;
+    let startAttempted = false;
+    const generation = ++this.generation;
     const subscriptions: EmitterSubscription[] = [
       emitter.addListener('BushMeshLocationFix', (value: NativeGpsFix) => {
+        if (stopped) return;
         const fix = toLocationFix(value);
         if (!fix) {
           onError?.(new Error('Android GPS returned an invalid location fix.'));
@@ -93,31 +106,41 @@ export class AndroidGpsLocationProvider implements BushMeshLocationProvider {
         onFix(fix);
       }),
       emitter.addListener('BushMeshLocationError', (value: NativeGpsError) => {
-        onError?.(
-          new Error(value?.message || 'Android GPS provider reported an error.'),
-        );
+        if (!stopped) {
+          onError?.(
+            new Error(value?.message || 'Android GPS provider reported an error.'),
+          );
+        }
       }),
     ];
 
-    let stopped = false;
-    nativeModule.start(1_000, 0).catch(error => {
-      if (stopped) {
-        return;
+    const begin = this.lifecycle.catch(() => undefined).then(async () => {
+      await gpsPreferences.initialize();
+      if (stopped || generation !== this.generation) return;
+      const hint = gpsAcquisitionHint(gpsPreferences.snapshot().acquisitionMode);
+      startAttempted = true;
+      await nativeModule.start(hint.minTimeMs, hint.minDistanceMeters);
+    }).catch(error => {
+      if (!stopped) {
+        onError?.(
+          error instanceof Error
+            ? error
+            : new Error('Android GPS could not be started.'),
+        );
       }
-      onError?.(
-        error instanceof Error
-          ? error
-          : new Error('Android GPS could not be started.'),
-      );
     });
+    this.lifecycle = begin;
 
     return () => {
-      if (stopped) {
-        return;
-      }
+      if (stopped) return;
       stopped = true;
+      if (this.generation === generation) this.generation += 1;
       subscriptions.forEach(subscription => subscription.remove());
-      nativeModule.stop().catch(() => undefined);
+      // Stop after the queued start finishes, never while a new session is
+      // already starting. A cancelled pre-start never reaches native.start.
+      this.lifecycle = this.lifecycle.catch(() => undefined).then(async () => {
+        if (startAttempted) await nativeModule.stop();
+      }).catch(() => undefined);
     };
   }
 }
