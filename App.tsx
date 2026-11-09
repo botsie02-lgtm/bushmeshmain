@@ -4,6 +4,7 @@ import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 
 import {AppProviders} from './src/app/AppProviders';
 import {ActiveOperationalConvoyProvider} from './src/app/activeContext/ActiveOperationalConvoyContext';
+import {ViewedConversationProvider} from './src/app/activeContext/ViewedConversationContext';
 import {AppShell} from './src/app/shell/AppShell';
 import {useRadioSession} from './src/state/RadioSessionContext';
 import {colors} from './src/theme/colors';
@@ -17,7 +18,9 @@ function OperationalShell(): React.JSX.Element {
 
   return (
     <ActiveOperationalConvoyProvider localIdentityRef={snapshot.identityRef}>
-      <AppShell />
+      <ViewedConversationProvider>
+        <AppShell />
+      </ViewedConversationProvider>
     </ActiveOperationalConvoyProvider>
   );
 }
