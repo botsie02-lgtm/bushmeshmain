@@ -176,7 +176,7 @@ export function BushMeshProvider({
     useState<SyncContactsHandler | null>(null);
 
   const queueMessageSnapshotWrite = useCallback(
-    (messages: BushMeshChannelMessage[]): Promise<void> => {
+    (_messages: BushMeshChannelMessage[]): Promise<void> => {
       if (!androidMessagePersistence.isSupported()) {
         return Promise.resolve();
       }
