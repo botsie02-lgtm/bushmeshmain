@@ -39,10 +39,13 @@ import {
   parseMeshCoreDeviceInfo,
 } from './meshcoreDeviceInfo';
 import {MeshCoreFrameTransport} from './MeshCoreFrameTransport';
+import {MeshCoreLiveQueueDrain} from './MeshCoreLiveQueueDrain';
+import {meshCoreInboundDiagnostics} from './meshcoreInboundDiagnostics';
 import {meshCoreFrameToReceivedDatagram} from './MeshCoreReceivedDatagramAdapter';
 import {decodeMeshCoreBytes} from './meshcorePackets';
 import {
   ParsedContactInfo,
+  ParsedChannelMessage,
   ParsedMeshCorePacket,
   parseMeshCorePacketFields,
 } from './meshcoreParsers';
@@ -82,6 +85,8 @@ export type NativeMeshCoreSessionEvents = {
   onStatus?: (message: string) => void;
   onError?: (message: string) => void;
   onFrame?: (response: NativeMeshCoreResponse) => void;
+  onMessagesWaiting?: () => void;
+  onChannelMessage?: (message: ParsedChannelMessage) => void;
   onReceivedDatagram?: (datagram: ReceivedDatagram) => void;
 };
 
@@ -113,6 +118,15 @@ export class NativeMeshCoreSession {
   private pendingCommand: PendingCommand | null = null;
   private started = false;
   private lastDeviceInfo: MeshCoreDeviceInfo | null = null;
+  private readonly liveDrain = new MeshCoreLiveQueueDrain(
+    () => this.syncNextMessage(),
+    (stage, reason) => {
+      meshCoreInboundDiagnostics.record(stage, reason ? {reason} : {});
+      if (stage === 'drain-error') {
+        this.events.onStatus?.(`MeshCore inbound queue drain deferred: ${reason ?? 'unknown'}.`);
+      }
+    },
+  );
 
   constructor(
     private readonly transport: MeshCoreFrameTransport,
@@ -139,6 +153,7 @@ export class NativeMeshCoreSession {
     try {
       await this.sendAppStart(appName);
       await this.sendDeviceQuery();
+      this.liveDrain.start();
       this.events.onStatus?.('Native MeshCore session is ready.');
     } catch (error) {
       await this.stop();
@@ -147,6 +162,7 @@ export class NativeMeshCoreSession {
   }
 
   async stop(): Promise<void> {
+    this.liveDrain.stop();
     this.started = false;
     this.commandQueue.cancelPending();
     this.rejectPending(new Error('Native MeshCore session stopped.'));
@@ -589,6 +605,17 @@ export class NativeMeshCoreSession {
     };
 
     this.events.onFrame?.(response);
+
+    if (decoded.packetType === 0x83) {
+      this.events.onMessagesWaiting?.();
+      this.liveDrain.notifyWaiting();
+    }
+    if (parsed?.channelMessage) {
+      meshCoreInboundDiagnostics.record(
+        decoded.packetType === 0x11 ? 'received-0x11' : 'received-0x08',
+      );
+      this.events.onChannelMessage?.(parsed.channelMessage);
+    }
 
     if (decoded.packetType === 0x01) {
       const code = bytes[1];
