@@ -173,6 +173,9 @@ export class SecureJoinCompatibilityV3 {
     }
     // Request ID reuse, trust revocation or key epoch rotation never revives a
     // stored plan. No identity epoch is invented for diagnostics.
+    if (!observation) {
+      return this.blockedView(requestId);
+    }
     if (observation.groupId !== entry.groupId ||
         observation.requester.deviceId !== request.deviceId ||
         observation.requester.fingerprint !== request.fingerprint ||
@@ -203,7 +206,7 @@ export class SecureJoinCompatibilityV3 {
       }
     }
     if (observation.phase === 'authenticated-request-observed' &&
-        request.state === 'rejected') {
+        request.state === 'rejected' && clock <= expiry) {
       observation = observeJoinEvent(observation, {
         id: 'v2-rejected:' + requestId, kind: 'reject',
         atMs: Math.max(request.createdAt, clock),
