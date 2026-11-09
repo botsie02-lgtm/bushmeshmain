@@ -4,6 +4,7 @@ import {Device} from 'react-native-ble-plx';
 
 import {NativeMeshCoreSessionCoordinator} from '../src/meshcore/NativeMeshCoreSessionCoordinator';
 import {AppRadioConnectionService} from '../src/radio/AppRadioConnectionService';
+import {releasedNativeOwnerStatus} from './testNativeOwnerStatus';
 import {BushMeshProvider, useBushMesh} from '../src/state/BushMeshContext';
 import {
   RadioConnectionProvider,
@@ -79,7 +80,7 @@ function createServiceHarness() {
     }),
     nativeCoordinator,
     nativeSupported: () => false,
-    getNativeStatus: jest.fn(),
+    getNativeStatus: jest.fn().mockResolvedValue(releasedNativeOwnerStatus()),
   });
 
   return {service, manager, client, createBleManager, device};
