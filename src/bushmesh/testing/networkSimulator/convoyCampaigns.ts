@@ -318,21 +318,6 @@ export async function scenarioSecurityIdentityAndRevocation(
         : {sourceNodeId: sourceId, destinationNodeId: 3},
     });
   };
-  // Convoy-group traffic must use packet type Convoy, not Message.
-  const sendGroup = async (node: typeof alice, sourceId: number) => {
-    const id = nextMessageId++;
-    const wire = encodeBushMeshWire({
-      type: BushMeshPacketType.Convoy,
-      priority: BushMeshPriority.Location,
-      messageId: id,
-      payload: [9, sourceId & 0xff, 1, 0, 0, 0],
-    });
-    return node.prepareOutbound(wire, {
-      trafficClass: 'convoy-group',
-      identityAssociation: {kind: 'group', groupId: 'test-membership'},
-      securityRouting: {sourceNodeId: sourceId, groupId: 'test-membership'},
-    });
-  };
   const deliver = async (sourceId: number, outbound: Awaited<ReturnType<typeof alice.prepareOutbound>>) => {
     await sim.transmit(sourceId, 3, outbound);
     await sim.runUntilIdle();
@@ -378,8 +363,6 @@ export async function scenarioSecurityIdentityAndRevocation(
   receiverPolicy.approvedGroupDevices.delete('vehicle-alice-key-v2');
   await deliver(1, await groupPosition(alice, 1));
   // Unrevoked second member still passes the same adapter.
-  const bobSender = new SecurityDecisionTestAdapter();
-  bobSender.senderDeviceId = 'vehicle-bob-key-v1';
   // The existing bob node uses the default fake sender identity instead;
   // its canonical message must therefore be denied, not silently accepted.
   await deliver(2, await groupPosition(bob, 2));
