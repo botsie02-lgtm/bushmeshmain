@@ -44,7 +44,7 @@ import {colors} from '../../theme/colors';
 export type MainTab = 'drive' | 'radio' | 'convoy' | 'contacts' | 'device';
 type DriveView = 'home' | 'map' | 'legacy';
 type ConvoyView = 'select' | 'tools';
-type DeviceView = 'hub' | 'gps';
+type DeviceView = 'hub' | 'gps' | 'maps';
 
 export const MAIN_TABS: ReadonlyArray<{key: MainTab; label: string}> = [
   {key: 'drive', label: 'Drive'},
@@ -413,21 +413,29 @@ export function AppShell(): React.JSX.Element {
                   <Action label="GPS and location" onPress={() => setDeviceView('gps')} secondary />
                   <Action
                     label="Offline map packs"
-                    onPress={() => {
-                      setDriveView('map');
-                      setActiveTab('drive');
-                    }}
+                    onPress={() => setDeviceView('maps')}
                     secondary
                   />
                 </>
               ) : (
                 <>
                   <Action label="Back to Device" onPress={() => setDeviceView('hub')} secondary />
-                  <Text style={styles.subnavLabel}>GPS settings</Text>
+                  <Text style={styles.subnavLabel}>
+                    {deviceView === 'gps' ? 'GPS settings' : 'Offline map packs'}
+                  </Text>
                 </>
               )}
             </View>
-            {deviceView === 'gps' ? <LocationScreen /> : <DeviceHubScreen />}
+            {deviceView === 'gps' ? (
+              <LocationScreen />
+            ) : deviceView === 'maps' ? (
+              <>
+                <LegacyNotice kind="map" />
+                <MapScreen />
+              </>
+            ) : (
+              <DeviceHubScreen />
+            )}
           </View>
         </ScreenMountGate>
       </View>
