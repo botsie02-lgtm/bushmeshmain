@@ -198,6 +198,7 @@ export class AppRadioConnectionService {
   private manager: BleManager | null = null;
   private meshCoreClient: MeshCoreClient | null = null;
   private nativeSession: NativeMeshCoreSession | null = null;
+  private disconnectPromise: Promise<void> | null = null;
   private connectedDevice: Device | null = null;
   private snapshot = initialSnapshot();
   private scanTimer: ReturnType<typeof setTimeout> | null = null;
@@ -611,30 +612,63 @@ export class AppRadioConnectionService {
   }
 
   async disconnect(): Promise<void> {
+    if (this.disconnectPromise) return this.disconnectPromise;
+    const operation = this.disconnectInternal();
+    this.disconnectPromise = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.disconnectPromise === operation) this.disconnectPromise = null;
+    }
+  }
+
+  private async disconnectInternal(): Promise<void> {
     this.stopScan();
-    const nativeOwner = this.snapshot.connectionOwner === 'android-native';
-    const nativeAddress = this.snapshot.connectedDeviceAddress;
-    const nativeLabel = this.snapshot.connectedDeviceLabel;
+    const nativeStatus = await this.deps.getNativeStatus().catch(() => null);
+    const nativeOwner = this.snapshot.connectionOwner === 'android-native' ||
+      this.nativeSession !== null || this.coordinatorOwnsRadio() ||
+      this.nativeServiceOwnsRadio(nativeStatus);
+
+    if (nativeOwner &&
+        (this.meshCoreClient !== null || this.snapshot.connectionOwner === 'react-native')) {
+      throw new Error('Conflicting native and React Native ownership; refusing to stop an unrelated BLE owner.');
+    }
+    const address = this.snapshot.connectedDeviceAddress ??
+      nativeStatus?.nativeBleDeviceAddress ?? nativeStatus?.deviceAddress ?? null;
+    const label = this.snapshot.connectedDeviceLabel ??
+      nativeStatus?.nativeBleDeviceLabel ?? nativeStatus?.deviceLabel ?? null;
     this.patch({isWriting: true});
 
     if (nativeOwner) {
+      nativeOutboundDiagnostics.record('stop-requested', 'radio-stop');
       try {
-        await this.deps.nativeCoordinator.stop();
+        if (this.coordinatorOwnsRadio()) {
+          await this.deps.nativeCoordinator.stop();
+        }
+        const afterCoordinator = await this.deps.getNativeStatus();
+        if (!afterCoordinator || !isNativeRadioShutdownConfirmed(afterCoordinator)) {
+          // A failed sync can leave Android owning the radio while the JS
+          // coordinator has no session to stop. The native service is still
+          // authoritative; dispatch STOP and await actual target release.
+          const dispatched = await this.deps.stopNativeRadio();
+          if (!dispatched) throw new Error('Android rejected the radio stop request.');
+          await this.deps.waitForNativeShutdown({
+            getStatus: this.deps.getNativeStatus,
+          });
+        }
         this.nativeSession = null;
         this.connectedDevice = null;
-        this.snapshot = {...initialSnapshot(), statusDetail: 'Device disconnected.'};
+        this.snapshot = {...initialSnapshot(), statusDetail: 'Native radio fully stopped and target cleared.'};
+        nativeOutboundDiagnostics.record('stop-confirmed', 'radio-stop');
         this.emit();
       } catch (error) {
-        const detail =
-          error instanceof Error
-            ? error.message
-            : 'Android native radio did not confirm shutdown.';
+        nativeOutboundDiagnostics.record('stop-failed', 'radio-stop', {reason: 'shutdown-error'});
         this.patch({
           status: 'Error',
-          statusDetail: `Background radio stop failed: ${detail}`,
-          connectedDeviceAddress: nativeAddress,
-          connectedDeviceLabel: nativeLabel,
+          statusDetail: `Background Radio stop did not verify (${this.nativeFailureReason(error)}). Retry Stop.`,
           connectionOwner: 'android-native',
+          connectedDeviceAddress: address,
+          connectedDeviceLabel: label,
           isWriting: false,
         });
         throw error;
@@ -645,12 +679,10 @@ export class AppRadioConnectionService {
     try {
       this.meshCoreClient?.stop();
       this.meshCoreClient = null;
-      const address =
-        this.connectedDevice?.id ?? this.snapshot.connectedDeviceAddress;
-      if (address)
-        await this.ensureManager()
-          .cancelDeviceConnection(address)
-          .catch(() => undefined);
+      const deviceAddress = this.connectedDevice?.id ?? this.snapshot.connectedDeviceAddress;
+      if (deviceAddress) {
+        await this.ensureManager().cancelDeviceConnection(deviceAddress);
+      }
     } finally {
       this.connectedDevice = null;
       this.snapshot = {...initialSnapshot(), statusDetail: 'Device disconnected.'};
@@ -1124,45 +1156,49 @@ export class AppRadioConnectionService {
 
   private async recoverNativeOwner(generation: number): Promise<void> {
     if (!this.nativeHandoffSupported) return;
+    let address = '';
+    let label = 'MeshCore radio';
     try {
       const nativeStatus = await this.deps.getNativeStatus();
       if (!this.isActiveLifecycle(generation)) return;
-      const address = nativeStatus.nativeBleDeviceAddress?.trim() ?? '';
-      if (nativeStatus.ownership !== 'native-service' || !address) return;
-      const label =
-        nativeStatus.nativeBleDeviceLabel ??
-        nativeStatus.deviceLabel ??
-        'MeshCore radio';
+      const coordinator = this.deps.nativeCoordinator;
+      const coordinatorSnapshot = typeof coordinator.getSnapshot === 'function'
+        ? coordinator.getSnapshot()
+        : null;
+      address = nativeStatus?.nativeBleDeviceAddress?.trim() ??
+        nativeStatus?.deviceAddress?.trim() ??
+        coordinatorSnapshot?.deviceAddress ?? '';
+      if (!address || !(this.nativeServiceOwnsRadio(nativeStatus) ||
+          this.coordinatorOwnsRadio())) return;
+      label = nativeStatus?.nativeBleDeviceLabel ??
+        nativeStatus?.deviceLabel ??
+        coordinatorSnapshot?.deviceLabel ??
+        label;
       this.patch({
         status: 'Connecting',
-        statusDetail: 'Recovering Android-owned MeshCore radio session...',
+        statusDetail: 'Recovering existing Android-owned command session...',
         connectedDeviceAddress: address,
         connectedDeviceLabel: label,
         connectionOwner: 'android-native',
         meshCoreBle: null,
       });
-      const session = await this.startNativeSession(address, label);
+
+      // Never open a second native GATT session if a healthy coordinator
+      // already holds the exact radio's command session.
+      const existing = this.coordinatorSession();
+      const session = existing && coordinatorSnapshot?.state === 'active' &&
+        coordinatorSnapshot.deviceAddress === address
+        ? existing : await this.startNativeSession(address, label);
       if (!this.isActiveLifecycle(generation)) {
         await this.deps.nativeCoordinator.stop().catch(() => undefined);
         return;
       }
       this.nativeSession = session;
-      this.patch({status: 'Connected'});
-      await this.runNativeStartupSync(session);
-      await this.refreshNativeDeviceState(session);
+      this.patch({status: 'Connected', connectionOwner: 'android-native'});
+      await this.syncNativeOptionalMetadata(session);
     } catch (error) {
       if (!this.isActiveLifecycle(generation)) return;
-      this.nativeSession = null;
-      this.patch({
-        status: 'Error',
-        statusDetail:
-          error instanceof Error
-            ? `Native radio recovery failed: ${error.message}`
-            : 'Native radio recovery failed.',
-        connectedDeviceAddress: null,
-        connectedDeviceLabel: null,
-        connectionOwner: 'none',
-      });
+      await this.recoverNativeFailure(address, label, 'recovery', error);
     }
   }
 
@@ -1219,8 +1255,7 @@ export class AppRadioConnectionService {
   ): Promise<void> {
     this.patch({
       isWriting: true,
-      channels: [],
-      statusDetail: 'Android session: loading radio profile and configured channels...',
+      statusDetail: 'Android session: reading configured channels (no channel writes)...',
     });
     try {
       const self = await session.sendAppStart('BushMesh');
