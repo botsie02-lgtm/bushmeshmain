@@ -33,6 +33,7 @@ import {SpeechPttPanel} from '../../components/SpeechPttPanel';
 import {SpeechStatusBanner} from '../../components/SpeechStatusBanner';
 import {ActiveConvoyCarrierProfile} from '../../convoy/carrierCredentials';
 import {ConnectedDriveDashboard} from '../../drive/dashboard/ConnectedDriveDashboard';
+import {ConnectedFieldReadinessDashboard} from '../../drive/fieldReadiness/ConnectedFieldReadinessDashboard';
 import type {ConvoyMapMember} from '../../maps/convoyMapModel';
 import {ContactsScreen} from '../../screens/ContactsScreen';
 import {ConvoyScreen} from '../../screens/ConvoyScreen';
@@ -44,7 +45,7 @@ import {RadioScreen} from '../../screens/RadioScreen';
 import {colors} from '../../theme/colors';
 
 export type MainTab = 'drive' | 'radio' | 'convoy' | 'contacts' | 'device';
-type DriveView = 'home' | 'map' | 'legacy';
+type DriveView = 'home' | 'dashboard' | 'map' | 'legacy';
 type ConvoyView = 'select' | 'tools';
 type DeviceView = 'hub' | 'gps' | 'maps';
 
@@ -240,16 +241,49 @@ export function AppShell(): React.JSX.Element {
       <View style={styles.content}>
         <ScreenMountGate active={activeTab === 'drive'}>
           {driveView === 'home' ? (
-            <ConnectedDriveDashboard
-              onOpenConvoy={openConvoy}
-              onOpenMap={() => setDriveView('map')}
-              onOpenRadio={() => setActiveTab('radio')}
-              onOpenDevice={() => {setDeviceView('hub'); setActiveTab('device');}}
-              roster={null}
-              verifiedAlerts={null}
-              carrierBinding={null}
-              showInlineMap={false}
-            />
+            <View style={styles.screen}>
+              <View style={styles.subnav}>
+                <Action
+                  label="Detailed Drive dashboard"
+                  onPress={() => setDriveView('dashboard')}
+                  secondary
+                />
+              </View>
+              <ConnectedFieldReadinessDashboard
+                onOpenMap={() => setDriveView('map')}
+                onManageMapPacks={() => {
+                  setDeviceView('maps');
+                  setActiveTab('device');
+                }}
+                onOpenConvoy={openConvoy}
+                onOpenRadio={() => setActiveTab('radio')}
+                onOpenGpsSettings={() => {
+                  setDeviceView('gps');
+                  setGpsView('preferences');
+                  setActiveTab('device');
+                }}
+                roster={null}
+                verifiedAlerts={null}
+                carrierBinding={null}
+              />
+            </View>
+          ) : driveView === 'dashboard' ? (
+            <View style={styles.screen}>
+              <View style={styles.subnav}>
+                <Action label="Back to Drive" onPress={() => setDriveView('home')} secondary />
+                <Text style={styles.subnavLabel}>Detailed Drive dashboard</Text>
+              </View>
+              <ConnectedDriveDashboard
+                onOpenConvoy={openConvoy}
+                onOpenMap={() => setDriveView('map')}
+                onOpenRadio={() => setActiveTab('radio')}
+                onOpenDevice={() => {setDeviceView('hub'); setActiveTab('device');}}
+                roster={null}
+                verifiedAlerts={null}
+                carrierBinding={null}
+                showInlineMap={false}
+              />
+            </View>
           ) : (
             <View style={styles.screen}>
               <View style={styles.subnav}>

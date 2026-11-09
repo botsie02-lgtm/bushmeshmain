@@ -3,6 +3,7 @@ import ReactTestRenderer from 'react-test-renderer';
 
 import {AppShell, MAIN_TABS} from '../src/app/shell/AppShell';
 import {ConnectedDriveDashboard} from '../src/drive/dashboard/ConnectedDriveDashboard';
+import {ConnectedFieldReadinessDashboard} from '../src/drive/fieldReadiness/ConnectedFieldReadinessDashboard';
 import {MapScreen} from '../src/screens/MapScreen';
 import {RadioScreen} from '../src/screens/RadioScreen';
 
@@ -38,6 +39,7 @@ jest.mock('../src/app/activeContext/ActiveOperationalConvoyContext', () => ({
 
 jest.mock('../src/screens/DriveScreen', () => ({DriveScreen: () => null}));
 jest.mock('../src/drive/dashboard/ConnectedDriveDashboard', () => ({ConnectedDriveDashboard: () => null}));
+jest.mock('../src/drive/fieldReadiness/ConnectedFieldReadinessDashboard', () => ({ConnectedFieldReadinessDashboard: () => null}));
 jest.mock('../src/screens/MapScreen', () => ({MapScreen: () => null}));
 jest.mock('../src/screens/ConvoyScreen', () => ({ConvoyScreen: () => null}));
 jest.mock('../src/screens/RadioScreen', () => ({RadioScreen: () => null}));
@@ -105,23 +107,59 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
   expect(tabs).toHaveLength(5);
   expect(tabs[0].props.accessibilityState.selected).toBe(true);
   expect(visibleText(renderer)).toContain('No active convoy');
-  const dashboard = renderer.root.findByType(ConnectedDriveDashboard);
-  expect(dashboard.props.roster).toBeNull();
-  expect(dashboard.props.verifiedAlerts).toBeNull();
-  expect(dashboard.props.carrierBinding).toBeNull();
-  expect(typeof dashboard.props.onOpenConvoy).toBe('function');
-  expect(typeof dashboard.props.onOpenRadio).toBe('function');
-  expect(typeof dashboard.props.onOpenDevice).toBe('function');
+  const field = renderer.root.findByType(ConnectedFieldReadinessDashboard);
+  expect(field.props.roster).toBeNull();
+  expect(field.props.verifiedAlerts).toBeNull();
+  expect(field.props.carrierBinding).toBeNull();
+  expect(field.props.imageryEvidence).toBeUndefined();
+  expect(typeof field.props.onManageMapPacks).toBe('function');
+  expect(typeof field.props.onOpenGpsSettings).toBe('function');
   expect(visibleText(renderer)).not.toContain('UNTRUSTED PUBLIC DEVICE');
 
   await ReactTestRenderer.act(() => {
-    dashboard.props.onOpenMap();
+    field.props.onOpenMap();
   });
   expect(visibleText(renderer)).toMatch(/Map\s*:\s*unverified legacy telemetry/);
   const map = renderer.root.findByType(MapScreen);
   expect(map.props.activeConvoyId).toBeNull();
   expect(map.props.authorisedMembers).toEqual([]);
   expect(renderedTabs(renderer)).toHaveLength(5);
+
+  await ReactTestRenderer.act(() => {
+    pressByLabel(renderer, 'Back to Drive');
+  });
+  await ReactTestRenderer.act(() => {
+    renderer.root.findByType(ConnectedFieldReadinessDashboard).props.onManageMapPacks();
+  });
+  expect(renderedTabs(renderer)[4].props.accessibilityState.selected).toBe(true);
+  expect(visibleText(renderer)).toContain('Offline map packs');
+
+  await ReactTestRenderer.act(() => {
+    pressByLabel(renderer, 'Drive');
+  });
+  await ReactTestRenderer.act(() => {
+    renderer.root.findByType(ConnectedFieldReadinessDashboard).props.onOpenGpsSettings();
+  });
+  expect(renderedTabs(renderer)[4].props.accessibilityState.selected).toBe(true);
+  expect(visibleText(renderer)).toContain('GPS settings');
+  expect(visibleText(renderer)).toContain('GPS controls');
+
+  await ReactTestRenderer.act(() => {
+    pressByLabel(renderer, 'Drive');
+  });
+  await ReactTestRenderer.act(() => {
+    pressByLabel(renderer, 'Detailed Drive dashboard');
+  });
+  const dashboard = renderer.root.findByType(ConnectedDriveDashboard);
+  expect(dashboard.props.roster).toBeNull();
+  expect(dashboard.props.verifiedAlerts).toBeNull();
+  expect(dashboard.props.carrierBinding).toBeNull();
+  expect(typeof dashboard.props.onOpenMap).toBe('function');
+  await ReactTestRenderer.act(() => {
+    pressByLabel(renderer, 'Back to Drive');
+  });
+  expect(renderer.root.findAllByType(ConnectedFieldReadinessDashboard)).toHaveLength(1);
+  expect(renderer.root.findAllByType(ConnectedDriveDashboard)).toHaveLength(0);
 
   await ReactTestRenderer.act(() => {
     pressByLabel(renderer, 'Device');
