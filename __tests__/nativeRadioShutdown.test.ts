@@ -1,4 +1,5 @@
 import {NativeMeshCoreFrameTransport} from '../src/meshcore/NativeMeshCoreFrameTransport';
+import {nativeOutboundDiagnostics} from '../src/meshcore/nativeOutboundDiagnostics';
 import {
   NativeMeshCoreOwnershipSnapshot,
   NativeMeshCoreSessionCoordinator,
@@ -159,6 +160,48 @@ describe('native radio shutdown acknowledgement', () => {
     ).rejects.toThrow(
       /did not confirm shutdown.*radioRequested=true.*ownership=native-service.*nativeBleState=reconnecting.*persistedTarget=true/i,
     );
+  });
+
+
+  it('records real Android GATT callbacks separately from queued send and PACKET_OK', async () => {
+    let callbacks = 0;
+    let stopped = false;
+    jest.spyOn(nativeRadioService, 'isSupported').mockReturnValue(true);
+    jest.spyOn(nativeRadioService, 'startNativeBle').mockResolvedValue(true);
+    jest.spyOn(nativeRadioService, 'enqueueNativeBleWrite').mockImplementation(async () => {
+      callbacks += 1; // Simulates a completed Android onCharacteristicWrite callback.
+      return true;
+    });
+    jest.spyOn(nativeRadioService, 'drainNativeBleFrames').mockResolvedValue([]);
+    jest.spyOn(nativeRadioService, 'getStatus').mockImplementation(async () =>
+      stopped ? releasedStatus() : activeStatus({nativeBleGattWriteConfirmedCount: callbacks}));
+    jest.spyOn(nativeRadioService, 'stop').mockImplementation(async () => {
+      stopped = true;
+      return true;
+    });
+    nativeOutboundDiagnostics.reset();
+    const transport = new NativeMeshCoreFrameTransport(
+      'AA:BB:CC:DD:EE:FF', 'Test Heltec', {pollIntervalMs: 25},
+    );
+    try {
+      await transport.start({onFrame: jest.fn()});
+      await transport.ensureReady();
+      await transport.writeBase64('AwAE'); // CMD_SEND_CHANNEL_MESSAGE, slot 4
+      for (let i = 0; i < 30 &&
+          !nativeOutboundDiagnostics.snapshot().counts['gatt-write-confirmed']; i += 1) {
+        await new Promise<void>(resolve => setTimeout(resolve, 20));
+      }
+      const events = nativeOutboundDiagnostics.snapshot().events;
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          stage: 'gatt-write-confirmed', command: 'channel-text', channelSlot: 4,
+        }),
+      ]));
+      expect(events.some(event => event.stage === 'response-matched')).toBe(false);
+    } finally {
+      await transport.stop();
+      nativeOutboundDiagnostics.reset();
+    }
   });
 
   it('transport stop does not resolve at ACTION_STOP dispatch alone', async () => {

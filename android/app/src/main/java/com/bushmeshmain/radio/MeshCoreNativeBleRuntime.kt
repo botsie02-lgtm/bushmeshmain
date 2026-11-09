@@ -45,6 +45,8 @@ class MeshCoreNativeBleRuntime private constructor(
     val lastError: String?,
     val queuedWrites: Int,
     val bufferedFrames: Int,
+    val gattWriteConfirmedCount: Long,
+    val gattWriteFailedCount: Long,
   )
 
   companion object {
@@ -84,6 +86,9 @@ class MeshCoreNativeBleRuntime private constructor(
   private var rxCharacteristic: BluetoothGattCharacteristic? = null
   private var txCharacteristic: BluetoothGattCharacteristic? = null
   private var writeInFlight = false
+  // Monotonic callbacks: local Android GATT acceptance, never MeshCore/RF delivery.
+  private var gattWriteConfirmedCount = 0L
+  private var gattWriteFailedCount = 0L
   private var reconnectRunnable: Runnable? = null
 
   @Volatile private var state: String = "disconnected"
@@ -223,16 +228,20 @@ class MeshCoreNativeBleRuntime private constructor(
     }
 
     override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-      if (gatt !== bluetoothGatt || characteristic.uuid != RX_UUID) {
-        return
-      }
+      synchronized(this@MeshCoreNativeBleRuntime) {
+        if (gatt !== bluetoothGatt || characteristic.uuid != RX_UUID) {
+          return@synchronized
+        }
 
-      writeInFlight = false
-      if (status != BluetoothGatt.GATT_SUCCESS) {
-        failAndReconnect("MeshCore BLE write failed with GATT status $status.")
-        return
+        writeInFlight = false
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+          gattWriteFailedCount += 1
+          failAndReconnect("MeshCore BLE write failed with GATT status $status.")
+          return@synchronized
+        }
+        gattWriteConfirmedCount += 1
+        processNextWrite()
       }
-      processNextWrite()
     }
   }
 
@@ -396,6 +405,8 @@ class MeshCoreNativeBleRuntime private constructor(
       lastError = lastError,
       queuedWrites = writeQueue.size + if (writeInFlight) 1 else 0,
       bufferedFrames = frameBuffer.size,
+      gattWriteConfirmedCount = gattWriteConfirmedCount,
+      gattWriteFailedCount = gattWriteFailedCount,
     )
   }
 

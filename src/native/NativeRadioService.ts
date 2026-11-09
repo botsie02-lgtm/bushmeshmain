@@ -38,6 +38,9 @@ export type NativeRadioServiceStatus = {
   nativeBleLastError?: string | null;
   nativeBleQueuedWrites?: number;
   nativeBleBufferedFrames?: number;
+  /** Confirmed Android onCharacteristicWrite successes, not MeshCore/RF delivery. */
+  nativeBleGattWriteConfirmedCount?: number;
+  nativeBleGattWriteFailedCount?: number;
   nativeBackgroundInboxCount?: number;
   nativeBackgroundChannelInboxCount?: number;
   persistedNativeTargetPresent?: boolean;
@@ -96,6 +99,8 @@ const unsupportedStatus: NativeRadioServiceStatus = {
   nativeBleLastError: null,
   nativeBleQueuedWrites: 0,
   nativeBleBufferedFrames: 0,
+  nativeBleGattWriteConfirmedCount: 0,
+  nativeBleGattWriteFailedCount: 0,
   nativeBackgroundInboxCount: 0,
   nativeBackgroundChannelInboxCount: 0,
   persistedNativeTargetPresent: false,

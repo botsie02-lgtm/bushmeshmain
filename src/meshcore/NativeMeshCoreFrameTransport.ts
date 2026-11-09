@@ -1,5 +1,6 @@
 import {Buffer} from 'buffer';
 
+import {nativeOutboundDiagnostics} from './nativeOutboundDiagnostics';
 import {
   NativeRadioServiceStatus,
   nativeRadioService,
@@ -44,6 +45,9 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
   private polling = false;
   private started = false;
   private generation = 0;
+  private observedGATTSuccesses: number | null = null;
+  private observedGATTFailures: number | null = null;
+  private pendingNativeWrites: Array<{command: 'channel-text' | 'other'; channelSlot?: number}> = [];
 
   constructor(
     private readonly deviceAddress: string,
@@ -96,6 +100,9 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
 
     this.started = true;
     this.generation += 1;
+    this.observedGATTSuccesses = null;
+    this.observedGATTFailures = null;
+    this.pendingNativeWrites = [];
     this.schedulePoll(0, this.generation);
   }
 
@@ -104,6 +111,9 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
     this.generation += 1;
     this.handlers = null;
     this.clearPollTimer();
+    this.pendingNativeWrites = [];
+    this.observedGATTSuccesses = null;
+    this.observedGATTFailures = null;
 
     const dispatched = await nativeRadioService.stop();
     if (!dispatched) {
@@ -133,6 +143,14 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
         : '';
       throw new Error(`Android native BLE transport rejected the write.${detail}`);
     }
+    // This means Android queued the command only. The GATT callback is tracked
+    // separately from status counters, without delaying or retrying submissions.
+    const frame = Buffer.from(base64Frame, 'base64');
+    if (this.pendingNativeWrites.length >= 64) this.pendingNativeWrites.shift();
+    this.pendingNativeWrites.push({
+      command: frame[0] === 0x03 ? 'channel-text' : 'other',
+      channelSlot: frame[0] === 0x03 ? frame[2] : undefined,
+    });
   }
 
   async ensureReady(): Promise<number | null> {
@@ -147,6 +165,7 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
     while (this.started && generation === this.generation) {
       const status = await nativeRadioService.getStatus();
       lastStatus = status;
+      this.observeGattCallbacks(status);
       this.onNativeStatus?.(status);
 
       if (status.nativeBleState === 'ready') {
@@ -225,6 +244,7 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
         return;
       }
 
+      this.observeGattCallbacks(status);
       this.onNativeStatus?.(status);
       this.handlers?.onStatus?.(
         `Native BLE ${status.nativeBleState ?? 'unknown'}${
@@ -251,6 +271,42 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
       if (this.started && generation === this.generation) {
         this.schedulePoll(this.pollIntervalMs, generation);
       }
+    }
+  }
+
+  /**
+   * A successful Android onCharacteristicWrite callback confirms a local GATT
+   * write only. It must never be treated as firmware PACKET_OK or peer receipt.
+   * We deliberately do not wait on these counters or retransmit on uncertainty.
+   */
+  private observeGattCallbacks(status: NativeRadioServiceStatus): void {
+    const successes = status.nativeBleGattWriteConfirmedCount;
+    const failures = status.nativeBleGattWriteFailedCount;
+    if (typeof successes === 'number' && Number.isSafeInteger(successes) && successes >= 0) {
+      const prior = this.observedGATTSuccesses;
+      if (prior !== null && successes >= prior) {
+        for (let i = 0; i < Math.min(64, successes - prior); i += 1) {
+          const pending = this.pendingNativeWrites.shift();
+          nativeOutboundDiagnostics.record('gatt-write-confirmed', pending?.command ?? 'other', {
+            channelSlot: pending?.channelSlot,
+          });
+        }
+      }
+      this.observedGATTSuccesses = successes;
+    }
+    if (typeof failures === 'number' && Number.isSafeInteger(failures) && failures >= 0) {
+      const prior = this.observedGATTFailures;
+      if (prior !== null && failures > prior) {
+        // A GATT failure drops the native queue and its remaining attribution.
+        for (const pending of this.pendingNativeWrites) {
+          nativeOutboundDiagnostics.record('write-failed', pending.command, {
+            channelSlot: pending.channelSlot,
+            reason: 'write-error',
+          });
+        }
+        this.pendingNativeWrites = [];
+      }
+      this.observedGATTFailures = failures;
     }
   }
 

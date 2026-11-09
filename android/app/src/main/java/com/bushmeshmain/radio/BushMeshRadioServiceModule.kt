@@ -223,6 +223,8 @@ class BushMeshRadioServiceModule(
       putString("nativeBleLastError", nativeStatus.lastError)
       putDouble("nativeBleQueuedWrites", nativeStatus.queuedWrites.toDouble())
       putDouble("nativeBleBufferedFrames", nativeStatus.bufferedFrames.toDouble())
+      putDouble("nativeBleGattWriteConfirmedCount", nativeStatus.gattWriteConfirmedCount.toDouble())
+      putDouble("nativeBleGattWriteFailedCount", nativeStatus.gattWriteFailedCount.toDouble())
       putDouble("nativeBackgroundInboxCount", nativeInbox.size().toDouble())
       putDouble("nativeBackgroundChannelInboxCount", nativeChannelInbox.size().toDouble())
       putBoolean(
