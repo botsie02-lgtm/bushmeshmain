@@ -319,7 +319,7 @@ test('v2 epoch-distribution wrapper binds intended peer, group and encrypted env
   expect(() => encodeProposedEnrolmentControl({...draft,
     wrappedKey: {...wrapped, recipientFingerprint: 'attacker'}})).toThrow();
   expect(() => encodeProposedEnrolmentControl({...draft,
-    wrappedKey: {...wrapped, encryptedPayload: {...wrapped.encryptedPayload, psk: 'secret'}}}))
+    wrappedKey: {...wrapped, encryptedPayload: ({...wrapped.encryptedPayload, psk: 'secret'} as typeof wrapped.encryptedPayload)}}))
     .toThrow();
 });
 

@@ -44,8 +44,11 @@ jobs:
       - run: npm ci
       - name: Extend Gradle distribution download timeout in CI checkout only
         run: sed -i 's/networkTimeout=10000/networkTimeout=120000/' android/gradle/wrapper/gradle-wrapper.properties
-      - name: Android debug compile
+      - name: Android debug compile (retry transient dependency downloads)
         working-directory: android
         run: |
           chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon && exit 0
+          echo "Retrying Android build after dependency download/build failure"
+          sleep 15
           ./gradlew assembleDebug --no-daemon
