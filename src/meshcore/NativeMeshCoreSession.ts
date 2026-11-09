@@ -42,6 +42,7 @@ import {MeshCoreFrameTransport} from './MeshCoreFrameTransport';
 import {MeshCoreLiveQueueDrain} from './MeshCoreLiveQueueDrain';
 import {meshCoreInboundDiagnostics} from './meshcoreInboundDiagnostics';
 import {meshCoreInboundInbox, MESHCORE_INBOX_PENDING_LIMIT} from './meshcoreInboundInbox';
+import {nativeOutboundDiagnostics} from './nativeOutboundDiagnostics';
 import {meshCoreFrameToReceivedDatagram} from './MeshCoreReceivedDatagramAdapter';
 import {decodeMeshCoreBytes} from './meshcorePackets';
 import {
@@ -516,6 +517,11 @@ export class NativeMeshCoreSession {
     }
     return this.commandQueue.enqueue(label, async () => {
       await this.transport.ensureReady();
+      if (label.startsWith('CMD_SEND_CHANNEL_MESSAGE_')) {
+        nativeOutboundDiagnostics.record('transport-ready', 'channel-text', {
+          channelSlot: Number(label.slice('CMD_SEND_CHANNEL_MESSAGE_'.length)),
+        });
+      }
       return task();
     });
   }
@@ -529,7 +535,20 @@ export class NativeMeshCoreSession {
     this.events.onStatus?.(`${label} sending over native BLE…`);
     try {
       await this.transport.writeBase64(base64Command);
+      if (label.startsWith('CMD_SEND_CHANNEL_MESSAGE_')) {
+        // Android has only accepted the local queue; this is not a GATT
+        // callback, MeshCore acceptance, or confirmed RF delivery.
+        nativeOutboundDiagnostics.record('native-write-queued', 'channel-text', {
+          channelSlot: Number(label.slice('CMD_SEND_CHANNEL_MESSAGE_'.length)),
+        });
+      }
     } catch (error) {
+      if (label.startsWith('CMD_SEND_CHANNEL_MESSAGE_')) {
+        nativeOutboundDiagnostics.record('write-failed', 'channel-text', {
+          channelSlot: Number(label.slice('CMD_SEND_CHANNEL_MESSAGE_'.length)),
+          reason: 'write-error',
+        });
+      }
       this.rejectPending(
         error instanceof Error
           ? error
@@ -553,7 +572,13 @@ export class NativeMeshCoreSession {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         if (this.pendingCommand?.label === label) this.pendingCommand = null;
-        reject(new Error(`${label} timed out waiting for a MeshCore response.`));
+        if (label.startsWith('CMD_SEND_CHANNEL_MESSAGE_')) {
+          nativeOutboundDiagnostics.record('response-timeout', 'channel-text', {
+            channelSlot: Number(label.slice('CMD_SEND_CHANNEL_MESSAGE_'.length)),
+            reason: 'timeout',
+          });
+        }
+        reject(new Error(`${label} timed out waiting for a MeshCore response. Packet may have transmitted; do not automatically resend.`));
       }, COMMAND_TIMEOUT_MS);
       this.pendingCommand = {label, expectedPacketTypes, resolve, reject, timeout};
     });
@@ -623,8 +648,25 @@ export class NativeMeshCoreSession {
       this.events.onChannelMessage?.(parsed.channelMessage);
     }
 
+    const activeLabel = this.pendingCommand?.label;
+    if (activeLabel?.startsWith('CMD_SEND_CHANNEL_MESSAGE_') &&
+        decoded.packetType !== null && decoded.packetType !== 0x83) {
+      nativeOutboundDiagnostics.record('response-observed', 'channel-text', {
+        channelSlot: Number(activeLabel.slice('CMD_SEND_CHANNEL_MESSAGE_'.length)),
+        packetType: decoded.packetType,
+      });
+    }
+
     if (decoded.packetType === 0x01) {
       const code = bytes[1];
+      if (activeLabel?.startsWith('CMD_SEND_CHANNEL_MESSAGE_')) {
+        nativeOutboundDiagnostics.record('firmware-rejected', 'channel-text', {
+          channelSlot: Number(activeLabel.slice('CMD_SEND_CHANNEL_MESSAGE_'.length)),
+          packetType: 0x01,
+          firmwareCode: code,
+          reason: 'firmware-error',
+        });
+      }
       this.rejectPending(
         new Error(
           `${this.pendingCommand?.label ?? 'Native MeshCore command'} returned PACKET_ERROR${
@@ -647,6 +689,12 @@ export class NativeMeshCoreSession {
     clearTimeout(pending.timeout);
     this.pendingCommand = null;
     this.events.onStatus?.(`${pending.label} matched ${decoded.label}.`);
+    if (pending.label.startsWith('CMD_SEND_CHANNEL_MESSAGE_')) {
+      nativeOutboundDiagnostics.record('response-matched', 'channel-text', {
+        channelSlot: Number(pending.label.slice('CMD_SEND_CHANNEL_MESSAGE_'.length)),
+        packetType: decoded.packetType,
+      });
+    }
     pending.resolve(response);
   }
 
