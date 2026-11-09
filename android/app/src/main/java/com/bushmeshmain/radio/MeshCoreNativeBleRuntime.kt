@@ -45,6 +45,9 @@ class MeshCoreNativeBleRuntime private constructor(
     val lastError: String?,
     val queuedWrites: Int,
     val bufferedFrames: Int,
+    /** Monotonic completion counters; never include payloads in diagnostics. */
+    val completedGattWrites: Long,
+    val failedGattWrites: Long,
   )
 
   companion object {
@@ -91,6 +94,8 @@ class MeshCoreNativeBleRuntime private constructor(
   @Volatile private var reconnectAttempt: Int = 0
   @Volatile private var connectedAtMs: Long = 0L
   @Volatile private var lastError: String? = null
+  @Volatile private var completedGattWrites: Long = 0L
+  @Volatile private var failedGattWrites: Long = 0L
 
   private val callback = object : BluetoothGattCallback() {
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -223,16 +228,18 @@ class MeshCoreNativeBleRuntime private constructor(
     }
 
     override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-      if (gatt !== bluetoothGatt || characteristic.uuid != RX_UUID) {
-        return
+      synchronized(this@MeshCoreNativeBleRuntime) {
+        if (gatt !== bluetoothGatt || characteristic.uuid != RX_UUID) {
+          return
+        }
+        writeInFlight = false
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+          failAndReconnect("MeshCore BLE write failed with GATT status $status.")
+          return
+        }
+        completedGattWrites += 1L
+        processNextWrite()
       }
-
-      writeInFlight = false
-      if (status != BluetoothGatt.GATT_SUCCESS) {
-        failAndReconnect("MeshCore BLE write failed with GATT status $status.")
-        return
-      }
-      processNextWrite()
     }
   }
 
@@ -394,6 +401,8 @@ class MeshCoreNativeBleRuntime private constructor(
       lastError = lastError,
       queuedWrites = writeQueue.size + if (writeInFlight) 1 else 0,
       bufferedFrames = frameBuffer.size,
+      completedGattWrites = completedGattWrites,
+      failedGattWrites = failedGattWrites,
     )
   }
 
@@ -503,6 +512,9 @@ class MeshCoreNativeBleRuntime private constructor(
 
   @Synchronized
   private fun failAndReconnect(message: String) {
+    // Distinguish a queued JS submission from a completed native GATT write.
+    // Any in-flight or queued write is now ambiguous, never auto-retried.
+    if (writeInFlight || writeQueue.isNotEmpty()) failedGattWrites += 1L
     lastError = message
     state = "reconnecting"
     connectedAtMs = 0L
