@@ -38,6 +38,7 @@ function model(allowed = false): DriveDashboardModel {
       accuracyLabel: '—',
       simulated: false,
       nativeSource: false,
+      tracking: false,
     },
     maps: {
       status: 'no-tiles',
