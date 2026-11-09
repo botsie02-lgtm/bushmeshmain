@@ -115,10 +115,14 @@ export function ConvoyMap({
   const [tileState, setTileState] = useState<Record<string, TileLoadState>>({});
   const requestedTilesRef = useRef(new Set<string>());
   const sourceRef = useRef(tileSource);
+  const activeArtifactRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const lastFixRef = useRef<ConvoyMapFix | null>(null);
 
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     if (nowMs !== undefined) {
@@ -183,6 +187,15 @@ export function ConvoyMap({
   );
 
   useEffect(() => {
+    const artifactKey = pack?.artifact
+      ? `${pack.manifest.id}/${pack.manifest.version}/${pack.artifact.localUri}/${pack.artifact.verifiedAtMs}`
+      : null;
+    if (activeArtifactRef.current !== artifactKey) {
+      activeArtifactRef.current = artifactKey;
+      requestedTilesRef.current.clear();
+      setUris({});
+      setTileState({});
+    }
     if (sourceRef.current !== tileSource) {
       sourceRef.current = tileSource;
       requestedTilesRef.current.clear();
