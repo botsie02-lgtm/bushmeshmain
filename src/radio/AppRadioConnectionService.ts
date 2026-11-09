@@ -440,6 +440,14 @@ export class AppRadioConnectionService {
 
   async connectToDevice(device: Device): Promise<void> {
     this.stopScan();
+    // Android's persisted target is authoritative even if an earlier
+    // optional sync incorrectly cleared the React connection snapshot.
+    const androidStatus = await this.deps.getNativeStatus().catch(() => null);
+    if (this.coordinatorOwnsRadio() ||
+        this.nativeServiceOwnsRadio(androidStatus) ||
+        this.snapshot.connectionOwner === 'android-native') {
+      throw new Error('Android still owns the radio. Stop Background Radio and confirm release before BLE Tools connects.');
+    }
     const manager = this.ensureManager();
     this.patch({
       status: 'Connecting',
@@ -460,11 +468,9 @@ export class AppRadioConnectionService {
         connectedDeviceLabel: label,
         connectionOwner: 'react-native',
         meshCoreBle: discovery,
-        txChunks: [],
-        txFrames: [],
-        rxLogs: [],
         channels: [],
         contacts: [],
+        deviceStatus: null,
         deviceInfo: null,
         selfInfo: null,
         deviceTimeSeconds: null,
@@ -482,7 +488,7 @@ export class AppRadioConnectionService {
         onTxFrame: log => this.addFrame(log),
         onChannelMessage: message => meshCoreInboundInbox.publish(message),
         onMessagesWaiting: () => {
-          // The session schedules its own bounded drain on the serial queue.
+          // JS-GATT session schedules its own bounded inbound drain.
         },
         onStatus: statusDetail => this.patch({statusDetail}),
         onError: message => this.patch({status: 'Error', statusDetail: message}),
@@ -508,6 +514,8 @@ export class AppRadioConnectionService {
     }
   }
 
+
+
   /**
    * Hands a scan-only discovery directly to Android. No react-native-ble-plx
    * GATT connection is created on this path, so native ownership never races a
@@ -515,17 +523,15 @@ export class AppRadioConnectionService {
    */
   async handoffDiscoveredDeviceToAndroid(device: Device): Promise<void> {
     if (!this.nativeHandoffSupported) {
-      this.patch({
-        status: 'Error',
-        statusDetail: 'Android native radio ownership is unavailable in this build.',
-      });
+      this.patch({status: 'Error', statusDetail: 'Android native radio is unavailable.'});
       return;
     }
-    if (this.snapshot.connectionOwner !== 'none') {
+    const androidStatus = await this.deps.getNativeStatus().catch(() => null);
+    if (this.snapshot.connectionOwner !== 'none' ||
+        this.coordinatorOwnsRadio() || this.nativeServiceOwnsRadio(androidStatus)) {
+      // No second GATT owner, even if the React snapshot has drifted to 'none'.
       this.patch({
-        status: 'Error',
-        statusDetail:
-          'Disconnect the current radio owner before starting Android ownership.',
+        statusDetail: 'An existing native or React Native owner must be stopped before taking over.',
       });
       return;
     }
@@ -561,50 +567,33 @@ export class AppRadioConnectionService {
         meshCoreBle: null,
         status: 'Connected',
       });
-      await this.runNativeStartupSync(session);
-      await this.refreshNativeDeviceState(session);
+      await this.syncNativeOptionalMetadata(session);
     } catch (error) {
-      this.nativeSession = null;
-      this.connectedDevice = null;
-      this.patch({
-        status: 'Error',
-        statusDetail:
-          error instanceof Error
-            ? `Android radio handoff failed: ${error.message}`
-            : 'Android radio handoff failed.',
-        connectedDeviceAddress: null,
-        connectedDeviceLabel: null,
-        connectionOwner: 'none',
-        meshCoreBle: null,
-      });
+      await this.recoverNativeFailure(address, label, 'handoff', error);
     }
   }
 
   async handoffToAndroid(): Promise<void> {
-    if (
-      !this.snapshot.connectedDeviceAddress ||
-      this.snapshot.connectionOwner === 'android-native'
-    )
-      return;
+    if (!this.snapshot.connectedDeviceAddress ||
+        this.snapshot.connectionOwner === 'android-native') return;
     if (!this.nativeHandoffSupported) {
-      this.patch({
-        status: 'Error',
-        statusDetail: 'Android native radio ownership is unavailable in this build.',
-      });
+      this.patch({status: 'Error', statusDetail: 'Android native radio is unavailable.'});
       return;
     }
     const address = this.snapshot.connectedDeviceAddress;
     const label = this.snapshot.connectedDeviceLabel ?? 'MeshCore radio';
+    const nativeStatus = await this.deps.getNativeStatus().catch(() => null);
+    if (this.coordinatorOwnsRadio() || this.nativeServiceOwnsRadio(nativeStatus)) {
+      this.patch({statusDetail: 'Native ownership is already present; stop it before handoff.'});
+      return;
+    }
     this.stopScan();
     const manager = this.ensureManager();
-    this.patch({
-      isWriting: true,
-      statusDetail: 'Handing MeshCore BLE ownership to Android...',
-    });
+    this.patch({isWriting: true, statusDetail: 'Handing BLE ownership to Android...'});
     try {
       this.meshCoreClient?.stop();
       this.meshCoreClient = null;
-      await manager.cancelDeviceConnection(address).catch(() => undefined);
+      await manager.cancelDeviceConnection(address);
       this.connectedDevice = null;
       const session = await this.startNativeSession(address, label);
       this.nativeSession = session;
@@ -613,22 +602,9 @@ export class AppRadioConnectionService {
         meshCoreBle: null,
         status: 'Connected',
       });
-      await this.runNativeStartupSync(session);
-      await this.refreshNativeDeviceState(session);
+      await this.syncNativeOptionalMetadata(session);
     } catch (error) {
-      this.nativeSession = null;
-      this.connectedDevice = null;
-      this.patch({
-        status: 'Error',
-        statusDetail:
-          error instanceof Error
-            ? `Android radio handoff failed: ${error.message}`
-            : 'Android radio handoff failed.',
-        connectedDeviceAddress: null,
-        connectedDeviceLabel: null,
-        connectionOwner: 'none',
-        meshCoreBle: null,
-      });
+      await this.recoverNativeFailure(address, label, 'BLE handoff', error);
     } finally {
       this.patch({isWriting: false});
     }
