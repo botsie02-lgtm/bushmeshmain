@@ -1,0 +1,63 @@
+name: Trusted Australian raster map packs
+
+on:
+  push:
+    branches:
+      - feature/trusted-australian-map-packs-v1
+  workflow_dispatch:
+
+jobs:
+  map-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install map fixture tooling
+        run: python -m pip install -r tools/maps/requirements.txt
+      - name: Create, inspect and verify bounded synthetic MBTiles
+        run: python -m unittest discover -s tools/maps -p 'test_*.py'
+  js-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npm test -- --runInBand
+      - run: npx tsc --noEmit
+      - run: npm run lint
+  android-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Extend Gradle distribution download timeout for GitHub-hosted runners
+        run: sed -i 's/networkTimeout=10000/networkTimeout=120000/' android/gradle/wrapper/gradle-wrapper.properties
+      - name: Android map fixture tests and APK compilation
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleDebug --no-daemon
+      - name: Publish hardware-test APK only if build and native fixtures passed
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-trusted-australian-maps-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7

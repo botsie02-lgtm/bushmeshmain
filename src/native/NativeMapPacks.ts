@@ -51,6 +51,14 @@ type NativeMapPackModule = {
     expectedSha256: string,
     format: string,
   ) => Promise<NativeMapPackArtifact>;
+  /** Native SAF picker; JS never supplies a path or content URI. */
+  importPack?: (
+    packId: string,
+    manifestVersion: string,
+    expectedBytes: number,
+    expectedSha256: string,
+    format: string,
+  ) => Promise<NativeMapPackArtifact | null>;
   cancelDownload: (packId: string) => Promise<boolean>;
   verifyPack: (
     packId: string,
@@ -174,6 +182,35 @@ function assertArtifactMatchesManifest(
 export const nativeMapPacks = {
   isSupported(): boolean {
     return Platform.OS === 'android' && module !== undefined;
+  },
+
+  canImport(): boolean {
+    return this.isSupported() && typeof module?.importPack === 'function';
+  },
+
+  async importDocument(
+    manifest: BushMeshMapPackManifestV1,
+  ): Promise<BushMeshInstalledMapArtifact | null> {
+    validateMapPackManifest(manifest);
+    if (manifest.source.kind !== 'import') {
+      throw new Error('Local import requires a reviewed import-source manifest.');
+    }
+    if (!this.canImport() || !module?.importPack) {
+      throw new Error('This Android build does not support local map-pack import.');
+    }
+    const returned = await module.importPack(
+      manifest.id,
+      manifest.version,
+      manifest.expectedBytes,
+      manifest.sha256,
+      manifest.format,
+    );
+    if (returned === null) {
+      return null; // User dismissed the system document picker.
+    }
+    const artifact = artifactFromNative(returned);
+    assertArtifactMatchesManifest(manifest, artifact);
+    return artifact;
   },
 
   subscribeProgress(

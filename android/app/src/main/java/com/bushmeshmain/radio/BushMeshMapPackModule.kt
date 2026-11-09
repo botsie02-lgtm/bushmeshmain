@@ -8,6 +8,10 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.File
 import java.io.FileOutputStream
+import android.app.Activity
+import android.content.Intent
+import com.facebook.react.bridge.BaseActivityEventListener
+import java.util.concurrent.atomic.AtomicReference
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -26,6 +30,9 @@ class BushMeshMapPackModule(
     private const val MAX_REDIRECTS = 5
     private const val BUFFER_BYTES = 64 * 1024
     private const val PROGRESS_EMIT_BYTES = 1024 * 1024L
+    private const val IMPORT_REQUEST_CODE = 49271
+    // Bounded development/user import; statewide archives need a separate policy.
+    private const val MAX_IMPORT_BYTES = 512L * 1024L * 1024L
     private val PACK_ID_REGEX = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
     private val SHA256_REGEX = Regex("^[0-9A-Fa-f]{64}$")
   }
@@ -35,6 +42,44 @@ class BushMeshMapPackModule(
   private val executor = Executors.newSingleThreadExecutor()
   private val activeDownloads = ConcurrentHashMap<String, AtomicBoolean>()
   private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
+  private data class PendingImport(
+    val packId: String,
+    val manifestVersion: String,
+    val format: String,
+    val expectedBytes: Long,
+    val expectedSha256: String,
+    val promise: Promise,
+  )
+
+  private val pendingImport = AtomicReference<PendingImport?>(null)
+  private val importPickerListener = object : BaseActivityEventListener() {
+    override fun onActivityResult(
+      activity: Activity,
+      requestCode: Int,
+      resultCode: Int,
+      data: Intent?,
+    ) {
+      if (requestCode != IMPORT_REQUEST_CODE) return
+      val request = pendingImport.getAndSet(null) ?: return
+      val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+      if (uri == null) {
+        request.promise.resolve(null) // User cancelled document picker.
+        return
+      }
+      // Only system picker selections are admitted. JavaScript never supplies a URI.
+      if (uri.scheme != "content") {
+        request.promise.reject("BUSHMESH_MAP_PACK_IMPORT_FAILED", "Only Android document-provider selections are allowed.")
+        return
+      }
+      executor.execute {
+        importSelectedDocument(request, uri)
+      }
+    }
+  }
+
+  init {
+    reactContext.addActivityEventListener(importPickerListener)
+  }
 
   override fun getName(): String = "BushMeshMapPacks"
 
@@ -154,6 +199,7 @@ class BushMeshMapPackModule(
         }
 
         throwIfCancelled(cancellation)
+        BushMeshRasterPackInspection.assertRaster(partial, normalizedFormat)
         promoteVerifiedFile(partial, target)
         BushMeshVerifiedMapPackStore.record(
           reactContext.filesDir, packId, manifestVersion, normalizedFormat,
@@ -183,6 +229,111 @@ class BushMeshMapPackModule(
         activeConnections.remove(packId)?.disconnect()
         activeDownloads.remove(packId, cancellation)
       }
+    }
+  }
+
+  /**
+   * Opens Android's Storage Access Framework. JS supplies a reviewed manifest's
+   * identity/hash only, NEVER an arbitrary filesystem path or a document URI.
+   */
+  @ReactMethod
+  fun importPack(
+    packId: String,
+    manifestVersion: String,
+    expectedBytesValue: Double,
+    expectedSha256: String,
+    format: String,
+    promise: Promise,
+  ) {
+    try {
+      val expectedBytes = validateExpectedBytes(expectedBytesValue)
+      val normalized = validateInputs(packId, expectedSha256, format)
+      require(manifestVersion.isNotBlank() && manifestVersion.length <= 120) {
+        "Invalid map-pack version."
+      }
+      require(expectedBytes <= MAX_IMPORT_BYTES) {
+        "Local map-pack import exceeds the 512 MiB safety limit."
+      }
+      require(activeDownloads[packId] == null) {
+        "A map pack download/import is already active for this pack."
+      }
+      val activity = reactContext.currentActivity ?: throw IllegalStateException("Open the map screen before importing.")
+      val request = PendingImport(
+        packId, manifestVersion, normalized, expectedBytes, expectedSha256, promise,
+      )
+      require(pendingImport.compareAndSet(null, request)) {
+        "A map-pack document picker is already open."
+      }
+      val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+        addCategory(Intent.CATEGORY_OPENABLE)
+        type = "*/*"
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      activity.runOnUiThread {
+        try {
+          activity.startActivityForResult(intent, IMPORT_REQUEST_CODE)
+        } catch (error: Exception) {
+          if (pendingImport.compareAndSet(request, null)) {
+            promise.reject("BUSHMESH_MAP_PACK_IMPORT_FAILED", error.message, error)
+          }
+        }
+      }
+    } catch (error: Exception) {
+      promise.reject("BUSHMESH_MAP_PACK_IMPORT_FAILED", error.message, error)
+    }
+  }
+
+  private fun importSelectedDocument(request: PendingImport, uri: android.net.Uri) {
+    val cancellation = AtomicBoolean(false)
+    if (activeDownloads.putIfAbsent(request.packId, cancellation) != null) {
+      request.promise.reject("BUSHMESH_MAP_PACK_BUSY", "A map-pack operation is already active.")
+      return
+    }
+    try {
+      val directory = packDirectory(request.packId)
+      if (!directory.exists() && !directory.mkdirs()) {
+        throw IllegalStateException("Could not create app-private map storage.")
+      }
+      val partial = File(directory, "pack.${request.format}.part")
+      val target = File(directory, "pack.${request.format}")
+      partial.delete()
+      try {
+        val input = reactContext.contentResolver.openInputStream(uri)
+          ?: throw IllegalStateException("Document provider did not return a readable stream.")
+        input.use { stream ->
+          BushMeshLocalMapImport.copyAndVerify(
+            stream,
+            partial,
+            request.expectedBytes,
+            request.expectedSha256,
+            cancelled = { cancellation.get() },
+            progress = { bytes ->
+              emitProgress(request.packId, bytes, request.expectedBytes, "downloading")
+            },
+          )
+        }
+        throwIfCancelled(cancellation)
+        BushMeshRasterPackInspection.assertRaster(partial, request.format)
+        throwIfCancelled(cancellation)
+        promoteVerifiedFile(partial, target)
+        BushMeshVerifiedMapPackStore.record(
+          reactContext.filesDir, request.packId, request.manifestVersion,
+          request.format, request.expectedBytes, request.expectedSha256,
+        )
+        emitProgress(request.packId, request.expectedBytes, request.expectedBytes, "ready")
+        request.promise.resolve(artifactResult(
+          request.packId, request.manifestVersion, request.format, target,
+          request.expectedBytes, request.expectedSha256.lowercase(),
+          System.currentTimeMillis(),
+        ))
+      } finally {
+        partial.delete()
+      }
+    } catch (error: Exception) {
+      emitProgress(request.packId, 0L, request.expectedBytes, "failed")
+      request.promise.reject("BUSHMESH_MAP_PACK_IMPORT_FAILED", error.message, error)
+    } finally {
+      activeDownloads.remove(request.packId, cancellation)
     }
   }
 
@@ -237,6 +388,7 @@ class BushMeshMapPackModule(
           return@execute
         }
 
+        BushMeshRasterPackInspection.assertRaster(file, normalizedFormat)
         BushMeshVerifiedMapPackStore.record(
           reactContext.filesDir, packId, manifestVersion, normalizedFormat,
           file.length(), actualSha256,
@@ -295,6 +447,8 @@ class BushMeshMapPackModule(
     activeDownloads.values.forEach { cancellation -> cancellation.set(true) }
     activeConnections.values.forEach { connection -> connection.disconnect() }
     activeConnections.clear()
+    pendingImport.getAndSet(null)?.promise?.resolve(null)
+    reactContext.removeActivityEventListener(importPickerListener)
     executor.shutdownNow()
     super.invalidate()
   }

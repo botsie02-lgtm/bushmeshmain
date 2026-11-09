@@ -44,6 +44,12 @@ jobs:
       - name: Isolated deterministic simulator compile
         run: npx tsc -p tsconfig.network-simulator-v1.json --noEmit
 
+      - name: Install synthetic MBTiles fixture dependencies
+        run: python -m pip install "Pillow>=11,<14"
+
+      - name: Generate and inspect deterministic MBTiles raster fixture
+        run: python -m unittest discover -s tools/maps -p 'test_*.py'
+
   android-debug:
     if: startsWith(github.ref, 'refs/heads/integration/')
     runs-on: ubuntu-latest

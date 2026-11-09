@@ -2,6 +2,7 @@ import React, {useMemo, useState} from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 
 import {BushMeshMapPackCatalogEntry} from '../maps/mapPackCatalog';
+import {TrustedMapPackProvisioner} from './TrustedMapPackProvisioner';
 import {BushMeshMapPackProgress} from '../native/NativeMapPacks';
 import {useOfflineMaps} from '../state/OfflineMapContext';
 import {colors} from '../theme/colors';
@@ -23,6 +24,9 @@ function installLabel(
   entry: BushMeshMapPackCatalogEntry,
   progress: BushMeshMapPackProgress | undefined,
 ): string {
+  if (entry.installState === 'invalid' && /^unsupported:/i.test(entry.lastError ?? '')) {
+    return 'UNSUPPORTED';
+  }
   if (progress?.state === 'verifying') {
     return 'VERIFYING';
   }
@@ -35,7 +39,7 @@ function installLabel(
 
   switch (entry.installState) {
     case 'ready':
-      return 'VERIFIED';
+      return 'INSTALLED · VERIFIED';
     case 'installing':
       return 'INSTALLING';
     case 'invalid':
@@ -86,7 +90,9 @@ export function MapPackCatalogPanel(): React.JSX.Element {
     mapPersistenceStatus,
     mapPersistenceError,
     mapPackInstallSupported,
+    mapPackImportSupported,
     installMapPack,
+    importMapPack,
     cancelMapPackInstall,
     verifyMapPack,
     removePack,
@@ -114,6 +120,22 @@ export function MapPackCatalogPanel(): React.JSX.Element {
       } else {
         setMessage(text);
       }
+    } finally {
+      setBusyPackId(null);
+    }
+  };
+
+  const runImport = async (packId: string) => {
+    setBusyPackId(packId);
+    setPendingRemovalId(null);
+    setMessage(null);
+    try {
+      const imported = await importMapPack(packId);
+      setMessage(imported
+        ? 'Local raster archive copied to private storage and SHA-256 verified.'
+        : 'Document selection cancelled; no new archive installed.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Local map-pack import failed.');
     } finally {
       setBusyPackId(null);
     }
@@ -211,12 +233,15 @@ export function MapPackCatalogPanel(): React.JSX.Element {
       ) : null}
       {message ? <Text style={styles.message}>{message}</Text> : null}
 
+      <TrustedMapPackProvisioner />
+
       {packCatalog.length === 0 ? (
         <View style={styles.emptyBox}>
           <Text style={styles.emptyTitle}>No real pack manifests registered</Text>
           <Text style={styles.emptyText}>
             The demo coverage pack is intentionally excluded from this catalog.
-            A trusted manifest/catalog source will feed verified regional packs here.
+            Use ADD REVIEWED MAP PACK above to register a locally generated,
+            independently reviewed archive manifest. No pack is bundled by default.
           </Text>
         </View>
       ) : (
@@ -230,6 +255,11 @@ export function MapPackCatalogPanel(): React.JSX.Element {
           const localBusy = busyPackId === manifest.id && !nativeInstalling;
           const busy = localBusy || nativeInstalling;
           const remote = manifest.source.kind === 'remote';
+          const canImport =
+            !remote &&
+            mapPackImportSupported &&
+            entry.installState !== 'ready' &&
+            !nativeInstalling;
           const canInstall =
             remote &&
             mapPackInstallSupported &&
@@ -282,6 +312,9 @@ export function MapPackCatalogPanel(): React.JSX.Element {
                 </View>
               ) : null}
 
+              {!remote && !mapPackImportSupported ? (
+                <Text style={styles.packError}>UNSUPPORTED: this Android build has no document import bridge.</Text>
+              ) : null}
               {entry.lastError ? (
                 <Text style={styles.packError}>{entry.lastError}</Text>
               ) : null}
@@ -294,6 +327,16 @@ export function MapPackCatalogPanel(): React.JSX.Element {
                       runCancel(manifest.id).catch(() => undefined);
                     }}>
                     <Text style={styles.actionDangerText}>CANCEL</Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                {canImport ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    style={[styles.actionPrimary, localBusy && styles.disabled]}
+                    disabled={localBusy}
+                    onPress={() => { runImport(manifest.id).catch(() => undefined); }}>
+                    <Text style={styles.actionPrimaryText}>IMPORT FILE</Text>
                   </TouchableOpacity>
                 ) : null}
 
@@ -310,7 +353,7 @@ export function MapPackCatalogPanel(): React.JSX.Element {
                   </TouchableOpacity>
                 ) : null}
 
-                {entry.installState === 'ready' ? (
+                {entry.installState !== 'installing' ? (
                   <TouchableOpacity
                     style={[styles.actionSecondary, busy && styles.disabled]}
                     disabled={busy}
