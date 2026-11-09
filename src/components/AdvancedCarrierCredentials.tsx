@@ -48,6 +48,14 @@ export function AdvancedCarrierCredentials({
     setBusy(true);
     setStatus(null);
     try {
+      const configured = snapshot.channels.find(channel =>
+        channel.channelIndex === String(profile.channelIndex) &&
+        channel.channelName === profile.channelName &&
+        channel.secret === 'Configured (redacted)',
+      );
+      if (!configured) {
+        throw new Error('Configured channel changed. Refresh the radio channels before revealing a secret.');
+      }
       const secretHex = normalizeCarrierPskHex(
         await revealChannelSecret(profile.channelIndex),
       );
@@ -92,6 +100,11 @@ export function AdvancedCarrierCredentials({
       <Text style={styles.eyebrow}>ADVANCED CARRIER CREDENTIALS</Text>
       <Text style={styles.title}>Hardware / manual-node setup</Text>
       <Text style={styles.warning}>{MESHCORE_CARRIER_PSK_DISTINCTION}</Text>
+      {profile.origin === 'recovered' ? (
+        <Text style={styles.warning}>
+          Read-only carrier recovery does not verify BushMesh convoy enrollment or Security v1 group membership.
+        </Text>
+      ) : null}
 
       <View style={styles.details}>
         <CredentialRow label="Convoy name" value={details.convoyName} />
