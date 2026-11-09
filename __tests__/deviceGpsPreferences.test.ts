@@ -94,7 +94,7 @@ describe('Device GPS preferences', () => {
       store.update({staleAfterSeconds: 45}),
       store.update({acquisitionMode: 'balanced'}),
     ]);
-    const persisted = decodeGpsPreferences(saved as string);
+    const persisted = decodeGpsPreferences(String(saved));
     expect(persisted).toMatchObject({
       showCoordinates: true, staleAfterSeconds: 45, acquisitionMode: 'balanced',
     });

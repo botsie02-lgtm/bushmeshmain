@@ -6,7 +6,6 @@ import {
   formatGpsAge,
 } from '../device/gps/gpsDiagnostics';
 import {
-  DEFAULT_GPS_PREFERENCES,
   GpsAcquisitionMode,
   GpsPreferencesV1,
   gpsAcquisitionHint,

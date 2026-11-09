@@ -4,13 +4,9 @@ import {gpsPreferences} from '../src/device/gps/gpsPreferences';
 import {DEFAULT_GPS_PREFERENCES} from '../src/device/gps/gpsPreferenceCodec';
 import {AndroidGpsLocationProvider} from '../src/location/AndroidGpsLocationProvider';
 
-jest.mock('react-native', () => {
-  const original = jest.requireActual('react-native');
-  return {
-    ...original,
-    Platform: {...original.Platform, OS: 'android'},
+jest.mock('react-native', () => ({
+    Platform: {OS: 'android'},
     NativeModules: {
-      ...original.NativeModules,
       BushMeshLocation: {
         start: jest.fn(async () => true),
         stop: jest.fn(async () => true),
@@ -24,8 +20,7 @@ jest.mock('react-native', () => {
     NativeEventEmitter: jest.fn().mockImplementation(() => ({
       addListener: jest.fn(() => ({remove: jest.fn()})),
     })),
-  };
-});
+}));
 
 const native = NativeModules.BushMeshLocation as {
   start: jest.Mock;
