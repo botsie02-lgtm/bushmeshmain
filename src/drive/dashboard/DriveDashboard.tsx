@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {
   ScrollView, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
@@ -85,18 +85,34 @@ export function DriveDashboard({
   onQuickAction, onDismissVerifiedAlert, busyAction = null, actionResult = null,
   showInlineMap = false, nowMs,
 }: DriveDashboardProps): React.JSX.Element {
-  const [confirmAction, setConfirmAction] = useState<BushMeshQuickActionCode | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    code: BushMeshQuickActionCode;
+    convoyId: string;
+    channelIndex: number;
+  } | null>(null);
   const canTransmit = model.actionAvailability.canTransmit;
+  useEffect(() => {
+    setConfirmAction(null);
+  }, [
+    model.convoy.id,
+    model.actionAvailability.canTransmit,
+    model.actionAvailability.channelIndex,
+  ]);
   const pressAction = (action: BushMeshQuickActionCode) => {
     if (busyAction !== null) {
       return;
     }
     // Avoid an accidental critical transmission while driving. Previews
     // require no confirmation because they never enter the radio queue.
-    if (canTransmit &&
+    if (canTransmit && model.convoy.id !== null &&
+      model.actionAvailability.channelIndex !== null &&
       (action === BushMeshQuickActionCode.Stop ||
         action === BushMeshQuickActionCode.Help)) {
-      setConfirmAction(action);
+      setConfirmAction({
+        code: action,
+        convoyId: model.convoy.id,
+        channelIndex: model.actionAvailability.channelIndex,
+      });
       return;
     }
     setConfirmAction(null);
@@ -271,23 +287,28 @@ export function DriveDashboard({
             );
           })}
         </View>
-        {confirmAction !== null && canTransmit ? (
+        {confirmAction !== null && canTransmit &&
+          confirmAction.convoyId === model.convoy.id &&
+          confirmAction.channelIndex === model.actionAvailability.channelIndex ? (
           <View style={styles.confirmBox}>
             <Text style={styles.confirmText}>
-              {'Confirm ' + getQuickActionDefinition(confirmAction).shortLabel +
+              {'Confirm ' + getQuickActionDefinition(confirmAction.code).shortLabel +
                 ' radio action. This may be heard by other carrier participants.'}
             </Text>
             <View style={styles.confirmRow}>
               <View style={styles.confirmCell}>
                 <LargeButton
-                  label={'Confirm ' + getQuickActionDefinition(confirmAction).shortLabel}
+                  label={'Confirm ' + getQuickActionDefinition(confirmAction.code).shortLabel}
                   variant="danger"
                   disabled={busyAction !== null}
                   onPress={() => {
-                    const action = confirmAction;
+                    const pending = confirmAction;
                     setConfirmAction(null);
-                    if (action !== null) {
-                      onQuickAction(action);
+                    if (pending !== null &&
+                      model.actionAvailability.canTransmit &&
+                      pending.convoyId === model.convoy.id &&
+                      pending.channelIndex === model.actionAvailability.channelIndex) {
+                      onQuickAction(pending.code);
                     }
                   }}
                 />
