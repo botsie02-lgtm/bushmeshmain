@@ -2,7 +2,7 @@
 
 **Recorded:** 2026-11-09 (date this report was received; exact field-test timestamp not supplied)  
 **Repository:** botsie02-lgtm/bushmeshmain  
-**Tested commit / protected rollback anchor:** \`9956ef244881c79a64e582a08136eceb0a90dce5\`  
+**Tested commit / protected rollback anchor:** `9956ef244881c79a64e582a08136eceb0a90dce5`  
 **Hardware reported:** physical Samsung Galaxy S22+, Heltec A, LilyGo B  
 **Scope:** Wave 2 staging physical checks reported by the tester, not independently executed by CI or this coordinator.
 
@@ -23,8 +23,8 @@
 
 - Keep this exact SHA available as the physical rollback baseline. Wave 3 must begin from it without rewriting Wave 2 staging history.
 - Do not clear application data or regenerate channel credentials during Wave 3 field testing.
-- Preserve Heltec A / LilyGo B carrier interoperability, existing private channel #4 and its PSK, MeshCore Australia (Narrow), BLE ownership exclusivity, native outgoing GATT and \`PACKET_OK (0x00)\`, inbound \`0x83\` handling, encrypted Radio History, and shutdown/reconnect cleanup.
+- Preserve Heltec A / LilyGo B carrier interoperability, existing private channel #4 and its PSK, MeshCore Australia (Narrow), BLE ownership exclusivity, native outgoing GATT and `PACKET_OK (0x00)`, inbound `0x83` handling, encrypted Radio History, and shutdown/reconnect cleanup.
 - Passing these seven checks does **not** authorize authenticated convoy membership, verified remote positions, admin grants, or real Drive quick actions.
 - Wave 3 hardware validation is a **new** requirement. The Wave 2 result must not be silently promoted into a Wave 3 pass.
 
-See \`docs/WAVE3_ANDROID_RASTER_ACCEPTANCE.md\` for the previously blocked map test, and \`docs/WAVE3_INTEGRATION_PLAN.md\` for merge gates.
+See `docs/WAVE3_ANDROID_RASTER_ACCEPTANCE.md` for the previously blocked map test, and `docs/WAVE3_INTEGRATION_PLAN.md` for merge gates.
