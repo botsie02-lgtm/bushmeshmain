@@ -181,8 +181,9 @@ export function BushMeshProvider({
         return Promise.resolve();
       }
 
-      const snapshot = createMessageSnapshot(messages, Date.now());
       const operation = messageWriteChainRef.current.then(async () => {
+        // Snapshot at execution time: stale render writes cannot erase durable inbox data.
+        const snapshot = createMessageSnapshot(channelMessagesRef.current, Date.now());
         if (snapshot.messages.length === 0) {
           await androidMessagePersistence.clear();
         } else {
