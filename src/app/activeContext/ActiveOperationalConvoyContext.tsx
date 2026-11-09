@@ -125,6 +125,12 @@ export function ActiveOperationalConvoyProvider({
           return false;
         }
         if (!verified) {
+          // A failed selection must not silently restore an older choice on
+          // the next launch.
+          await store.clear().catch(() => undefined);
+          if (token !== generation.current || identityRef.current !== localIdentityRef) {
+            return false;
+          }
           setActive(null);
           setStatus('ready');
           setNotice('No authenticated membership for this convoy.');
