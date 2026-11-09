@@ -32,7 +32,7 @@ export function TrustedMapPackProvisioner(): React.JSX.Element {
       }
       const manifest = decodeOperatorReviewedMapManifest(raw, reviewedSha, confirmed);
       registerMapPackManifest(manifest);
-      setNotice(\`Reviewed manifest registered: \${manifest.name}. This does not install any archive.\`);
+      setNotice(`Reviewed manifest registered: ${manifest.name}. This does not install any archive.`);
       setConfirmed(false);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not register reviewed map manifest.');
@@ -83,7 +83,7 @@ export function TrustedMapPackProvisioner(): React.JSX.Element {
               <Text style={styles.copy}>
                 {preview.expectedBytes} bytes · {preview.source.kind === 'remote'
                   ? preview.source.url
-                  : \`LOCAL FILE PICKER (\${preview.source.displayName})\`}
+                  : `LOCAL FILE PICKER (${preview.source.displayName})`}
               </Text>
               <Text style={styles.copy}>Attribution: {preview.attribution}</Text>
               <Text selectable style={styles.digest}>SHA-256: {preview.sha256}</Text>
