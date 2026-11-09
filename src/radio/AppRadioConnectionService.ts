@@ -359,6 +359,50 @@ export class AppRadioConnectionService {
     }
   }
 
+  /** Explicit recovery for a usable Android-owned command session after a
+   * React-state divergence; never starts a JS-GATT connection or writes radio
+   * configuration. The existing coordinator session is reused if active. */
+  async recoverNativeCommandSession(): Promise<boolean> {
+    if (this.snapshot.connectionOwner === 'react-native' || this.meshCoreClient) {
+      throw new Error('Disconnect BLE Tools before recovering the native session.');
+    }
+    const nativeStatus = await this.deps.getNativeStatus();
+    if (!this.nativeServiceOwnsRadio(nativeStatus) && !this.coordinatorOwnsRadio()) {
+      return false;
+    }
+    const coordinator = this.deps.nativeCoordinator;
+    const coordinatorSnapshot = typeof coordinator.getSnapshot === 'function'
+      ? coordinator.getSnapshot() : null;
+    const address = nativeStatus?.nativeBleDeviceAddress?.trim() ??
+      nativeStatus?.deviceAddress?.trim() ??
+      coordinatorSnapshot?.deviceAddress ?? '';
+    const label = nativeStatus?.nativeBleDeviceLabel ??
+      nativeStatus?.deviceLabel ??
+      coordinatorSnapshot?.deviceLabel ?? 'MeshCore radio';
+    if (!address) throw new Error('Android native target address is missing; Stop must be confirmed before a fresh scan.');
+    this.patch({
+      status: 'Connecting',
+      statusDetail: 'Recovering existing native MeshCore command session...',
+      connectionOwner: 'android-native',
+      connectedDeviceAddress: address,
+      connectedDeviceLabel: label,
+    });
+    try {
+      const existing = this.coordinatorSession();
+      const session = existing && coordinatorSnapshot?.state === 'active' &&
+        coordinatorSnapshot.deviceAddress === address
+        ? existing
+        : await this.startNativeSession(address, label);
+      this.nativeSession = session;
+      this.patch({status: 'Connected', connectionOwner: 'android-native'});
+      await this.syncNativeOptionalMetadata(session);
+      return this.hasUsableSendSession();
+    } catch (error) {
+      await this.recoverNativeFailure(address, label, 'command-session recovery', error);
+      return this.hasUsableSendSession();
+    }
+  }
+
   async initialize(): Promise<void> {
     if (this.initializePromise) return this.initializePromise;
     if (this.disposed) {
