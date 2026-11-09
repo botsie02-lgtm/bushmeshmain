@@ -215,6 +215,25 @@ describe('frozen Protocol v1 multi-node convoy regression campaigns', () => {
     expect(campaign.report.delivery.droppedCollision).toBe(1);
   });
 
+  it('corrupts equal-power overlaps with zero capture margin', async () => {
+    const fleet = new ConvoyMobilityHarness(0xb10c0111, {
+      radioRangeMetres: 100,
+      link: {bitrateBps: 1_500, baseDelayMs: 1},
+    });
+    await fleet.addFleet(3, 12);
+    fleet.network.configureSharedChannel({enabled: true, captureMarginDb: 0});
+    fleet.overrideLink(1, 3, {rssiDbm: -80});
+    fleet.overrideLink(2, 3, {rssiDbm: -80});
+    await fleet.sendMessage(1, 3);
+    await fleet.sendMessage(2, 3);
+    await fleet.network.runUntilIdle();
+    capture({name: 'equal-power-zero-margin-collision', seed: fleet.network.seed,
+      report: fleet.report(), failures: []});
+    expect(fleet.network.metrics.channelOverlaps).toBe(1);
+    expect(fleet.network.metrics.droppedCollision).toBe(2);
+    expect(fleet.network.metrics.deliveredDatagrams).toBe(0);
+  });
+
   it('enforces one transmitter per vehicle, safety priority and queue fairness', async () => {
     const campaign = await scenarioHalfDuplexFairness();
     capture(campaign);
