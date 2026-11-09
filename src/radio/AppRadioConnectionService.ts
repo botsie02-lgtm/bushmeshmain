@@ -316,7 +316,7 @@ export class AppRadioConnectionService {
     const state = typeof coordinator.getSnapshot === 'function'
       ? coordinator.getSnapshot().state
       : session ? 'active' : 'idle';
-    const status = await this.deps.getNativeStatus().catch(() => null);
+    const status = await Promise.resolve().then(() => this.deps.getNativeStatus()).catch(() => null);
     const nativeOwned = state !== 'idle' || this.nativeServiceOwnsRadio(status) ||
       this.nativeSession !== null;
     const usable = Boolean(session && state === 'active');
@@ -487,7 +487,7 @@ export class AppRadioConnectionService {
     this.stopScan();
     // Android's persisted target is authoritative even if an earlier
     // optional sync incorrectly cleared the React connection snapshot.
-    const androidStatus = await this.deps.getNativeStatus().catch(() => null);
+    const androidStatus = await Promise.resolve().then(() => this.deps.getNativeStatus()).catch(() => null);
     if (this.coordinatorOwnsRadio() ||
         this.nativeServiceOwnsRadio(androidStatus) ||
         this.snapshot.connectionOwner === 'android-native') {
@@ -571,7 +571,7 @@ export class AppRadioConnectionService {
       this.patch({status: 'Error', statusDetail: 'Android native radio is unavailable.'});
       return;
     }
-    const androidStatus = await this.deps.getNativeStatus().catch(() => null);
+    const androidStatus = await Promise.resolve().then(() => this.deps.getNativeStatus()).catch(() => null);
     if (this.snapshot.connectionOwner !== 'none' ||
         this.coordinatorOwnsRadio() || this.nativeServiceOwnsRadio(androidStatus)) {
       // No second GATT owner, even if the React snapshot has drifted to 'none'.
@@ -627,7 +627,7 @@ export class AppRadioConnectionService {
     }
     const address = this.snapshot.connectedDeviceAddress;
     const label = this.snapshot.connectedDeviceLabel ?? 'MeshCore radio';
-    const nativeStatus = await this.deps.getNativeStatus().catch(() => null);
+    const nativeStatus = await Promise.resolve().then(() => this.deps.getNativeStatus()).catch(() => null);
     if (this.coordinatorOwnsRadio() || this.nativeServiceOwnsRadio(nativeStatus)) {
       this.patch({statusDetail: 'Native ownership is already present; stop it before handoff.'});
       return;
@@ -668,7 +668,7 @@ export class AppRadioConnectionService {
 
   private async disconnectInternal(): Promise<void> {
     this.stopScan();
-    const nativeStatus = await this.deps.getNativeStatus().catch(() => null);
+    const nativeStatus = await Promise.resolve().then(() => this.deps.getNativeStatus()).catch(() => null);
     const nativeOwner = this.snapshot.connectionOwner === 'android-native' ||
       this.nativeSession !== null || this.coordinatorOwnsRadio() ||
       this.nativeServiceOwnsRadio(nativeStatus);
