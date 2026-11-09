@@ -1,12 +1,12 @@
-import {BushMeshQuickActionCode} from '../src/bushmesh/legacyProtocol';
+import {BushMeshQuickActionCode} from '../../../bushmesh/legacyProtocol';
 import {
   decideDashboardAction,
   performDashboardAction,
   type DashboardActionPorts,
-} from '../src/drive/dashboard/quickActionController';
-import {deriveDriveDashboard} from '../src/drive/dashboard/driveDashboardModel';
-import type {DriveDashboardInput} from '../src/drive/dashboard/driveDashboardModel';
-import type {TransmissionAttemptResult} from '../src/radio/BushMeshTransmissionController';
+} from '../quickActionController';
+import {deriveDriveDashboard} from '../driveDashboardModel';
+import type {DriveDashboardInput} from '../driveDashboardModel';
+import type {TransmissionAttemptResult} from '../../../radio/BushMeshTransmissionController';
 
 const NOW = 1_800_000_000_000;
 
