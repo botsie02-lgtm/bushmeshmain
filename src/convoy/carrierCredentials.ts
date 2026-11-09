@@ -5,6 +5,8 @@ export type ActiveConvoyCarrierProfile = {
   convoyName: string;
   channelName: string;
   channelIndex: number;
+  /** Recovered means read-only MeshCore carrier data, not convoy enrollment. */
+  origin?: 'enrolled' | 'recovered';
 };
 
 export type CarrierCredentialDetails = {
