@@ -126,6 +126,11 @@ export function DriveDashboard({
           </Text>
         </View>
         <Text style={styles.smallDetail}>{model.connectionDetail}</Text>
+        <LargeButton
+          label="Open ConvoyMap"
+          variant="primary"
+          onPress={onOpenMap}
+        />
       </View>
 
       <Section title="Safety alerts">
@@ -300,7 +305,6 @@ export function DriveDashboard({
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>{model.maps.label}</Text>
           <Text style={styles.panelHint}>{model.maps.detail}</Text>
-          <LargeButton label="Open ConvoyMap" variant="primary" onPress={onOpenMap} />
           {showInlineMap ? (
             <View style={styles.mapInline}>
               <ConvoyMap
