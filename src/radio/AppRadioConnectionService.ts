@@ -269,6 +269,95 @@ export class AppRadioConnectionService {
     return true;
   }
 
+  private coordinatorSession(): NativeMeshCoreSession | null {
+    const coordinator = this.deps.nativeCoordinator;
+    return typeof coordinator.getSession === 'function'
+      ? coordinator.getSession()
+      : this.nativeSession;
+  }
+
+  private coordinatorOwnsRadio(): boolean {
+    const coordinator = this.deps.nativeCoordinator;
+    if (this.coordinatorSession()) return true;
+    return typeof coordinator.getSnapshot === 'function' &&
+      coordinator.getSnapshot().state !== 'idle';
+  }
+
+  private nativeServiceOwnsRadio(status: NativeRadioServiceStatus | null | undefined): boolean {
+    return Boolean(status && (
+      status.ownership === 'native-service' ||
+      status.persistedNativeTargetPresent === true ||
+      status.deviceAddress ||
+      status.nativeBleDeviceAddress
+    ));
+  }
+
+  private nativeFailureReason(error: unknown): string {
+    const message = error instanceof Error ? error.message : '';
+    if (/timed out/i.test(message)) return 'timeout';
+    if (/PACKET_ERROR/i.test(message)) {
+      const firmwareCode = /PACKET_ERROR\\s*\\((\\d{1,3})\\)/i.exec(message)?.[1];
+      return firmwareCode ? `firmware error code ${firmwareCode}` : 'firmware rejection';
+    }
+    if (/disconnect|stopp|cancel|not ready/i.test(message)) return 'disconnected';
+    if (/invalid|malformed|parse/i.test(message)) return 'invalid response';
+    return 'unknown command failure';
+  }
+
+  private async recoverNativeFailure(
+    address: string,
+    label: string,
+    stage: string,
+    error: unknown,
+  ): Promise<void> {
+    const coordinator = this.deps.nativeCoordinator;
+    const session = this.coordinatorSession();
+    const state = typeof coordinator.getSnapshot === 'function'
+      ? coordinator.getSnapshot().state
+      : session ? 'active' : 'idle';
+    const status = await this.deps.getNativeStatus().catch(() => null);
+    const nativeOwned = state !== 'idle' || this.nativeServiceOwnsRadio(status) ||
+      this.nativeSession !== null;
+    const usable = Boolean(session && state === 'active');
+    this.nativeSession = usable ? session : null;
+    this.connectedDevice = null;
+    this.patch({
+      status: usable ? 'Connected' : 'Error',
+      statusDetail: `Native ${stage} failed (${this.nativeFailureReason(error)}). ${usable
+        ? 'Command session remains ACTIVE; send and Stop are available.'
+        : nativeOwned ? 'Android ownership remains; Stop can be retried.'
+          : 'No native radio owner was confirmed.'}`,
+      connectionOwner: nativeOwned ? 'android-native' : 'none',
+      connectedDeviceAddress: nativeOwned ? status?.nativeBleDeviceAddress ??
+        status?.deviceAddress ?? address : null,
+      connectedDeviceLabel: nativeOwned ? status?.nativeBleDeviceLabel ??
+        status?.deviceLabel ?? label : null,
+      meshCoreBle: null,
+      isWriting: false,
+    });
+  }
+
+  private async syncNativeOptionalMetadata(session: NativeMeshCoreSession): Promise<void> {
+    for (const step of [
+      {name: 'channel synchronization', run: () => this.runNativeStartupSync(session)},
+      {name: 'contacts and battery synchronization',
+        run: () => this.refreshNativeDeviceState(session)},
+    ]) {
+      try {
+        await step.run();
+      } catch (error) {
+        // Startup, contact and channel enumeration are NOT BLE ownership
+        // changes. A healthy MeshCore command session can still send/receive.
+        this.patch({
+          status: this.hasUsableSendSession() ? 'Connected' : 'Error',
+          statusDetail: `Native radio ${step.name} failed (${this.nativeFailureReason(error)}). ` +
+            'The configured carrier and BLE ownership were not changed.',
+          isWriting: false,
+        });
+      }
+    }
+  }
+
   async initialize(): Promise<void> {
     if (this.initializePromise) return this.initializePromise;
     if (this.disposed) {
