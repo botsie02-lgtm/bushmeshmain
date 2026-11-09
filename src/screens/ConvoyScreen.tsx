@@ -10,6 +10,7 @@ import {
 
 import {AdvancedCarrierCredentials} from '../components/AdvancedCarrierCredentials';
 import {ActiveConvoyCarrierProfile} from '../convoy/carrierCredentials';
+import {recoverMeshCoreCarrierProfile} from '../convoy/recoveredCarrier';
 import {
   bearingDegrees,
   compassDirection,
@@ -101,7 +102,7 @@ export function ConvoyScreen({
   onActiveCarrierProfileChange,
 }: ConvoyScreenProps = {}): React.JSX.Element {
   const {vehicles, localPosition, loadDemoConvoy, clearConvoy} = useConvoy();
-  const {connectionStatus, setActiveChannelIndex} = useBushMesh();
+  const {connectionStatus, activeChannelIndex, setActiveChannelIndex} = useBushMesh();
   const {snapshot, createConvoy, joinConvoy} = useRadioConnection();
   const [, setClockTick] = useState(0);
   const [convoyName, setConvoyName] = useState('BushMesh Test Convoy');
@@ -117,7 +118,18 @@ export function ConvoyScreen({
   );
   const [localEnrollmentProfile, setLocalEnrollmentProfile] =
     useState<ActiveConvoyCarrierProfile | null>(null);
-  const enrollmentProfile = activeCarrierProfile ?? localEnrollmentProfile;
+  const enrolledProfile = activeCarrierProfile ?? localEnrollmentProfile;
+  const recoveredProfile = useMemo(
+    () => connectionStatus === 'Connected'
+      ? recoverMeshCoreCarrierProfile(snapshot.channels, activeChannelIndex)
+      : null,
+    [connectionStatus, snapshot.channels, activeChannelIndex],
+  );
+  const enrollmentProfile = enrolledProfile && snapshot.channels.some(channel =>
+    channel.channelIndex === String(enrolledProfile.channelIndex) &&
+    channel.channelName === enrolledProfile.channelName &&
+    channel.secret === 'Configured (redacted)',
+  ) ? enrolledProfile : recoveredProfile;
 
   const canProvision = connectionStatus === 'Connected' && !snapshot.isWriting;
 
@@ -363,9 +375,19 @@ export function ConvoyScreen({
         </View>
         {enrollmentProfile ? (
           <View style={styles.profileBox}>
-            <Text style={styles.sectionEyebrow}>ACTIVE CONVOY PROFILE</Text>
+            <Text style={styles.sectionEyebrow}>
+              {enrollmentProfile.origin === 'recovered'
+                ? 'RECOVERED MESHCORE CARRIER — NOT CONVOY ENROLLMENT'
+                : 'ACTIVE CONVOY PROFILE'}
+            </Text>
             <Text style={styles.profileTitle}>{enrollmentProfile.convoyName}</Text>
-            <Text style={styles.profileText}>ID {enrollmentProfile.convoyId}</Text>
+            {enrollmentProfile.origin !== 'recovered' ? (
+              <Text style={styles.profileText}>ID {enrollmentProfile.convoyId}</Text>
+            ) : (
+              <Text style={styles.profileText}>
+                Read-only carrier recovered from this node. BushMesh convoy enrollment is not verified.
+              </Text>
+            )}
             <Text style={styles.profileText}>
               Carrier {enrollmentProfile.channelName} · slot {enrollmentProfile.channelIndex}
             </Text>
