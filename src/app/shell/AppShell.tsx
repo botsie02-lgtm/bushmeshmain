@@ -450,7 +450,7 @@ export function AppShell(): React.JSX.Element {
                 <>
                   <Action label="Back to Device" onPress={() => setDeviceView('hub')} secondary />
                   <Text style={styles.subnavLabel}>
-                    {deviceView === 'gps' ? 'GPS / location' : 'Offline map packs'}
+                    {deviceView === 'gps' ? 'GPS settings' : 'Offline map packs'}
                   </Text>
                   {deviceView === 'gps' ? (
                     <Action
