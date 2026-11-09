@@ -23,6 +23,7 @@ type RadioConnectionContextValue = {
   handoffDiscoveredDeviceToAndroid: AppRadioConnectionService['handoffDiscoveredDeviceToAndroid'];
   handoffToAndroid: () => Promise<void>;
   disconnect: () => Promise<void>;
+  recoverNativeCommandSession: AppRadioConnectionService['recoverNativeCommandSession'];
   runActiveStartupSync: () => Promise<void>;
   getBatteryStatus: () => Promise<void>;
   getDeviceTime: AppRadioConnectionService['getDeviceTime'];
@@ -115,11 +116,10 @@ export function RadioConnectionProvider({
   // application radio service.
   useEffect(() => {
     setConnectedDeviceName(snapshot.connectedDeviceLabel);
-    setConnectionStatus(
-      snapshot.status === 'Connected' ? 'Connected' : 'Disconnected',
-    );
+    const usableCommandSession = service.hasUsableSendSession();
+    setConnectionStatus(usableCommandSession ? 'Connected' : 'Disconnected');
 
-    if (snapshot.status === 'Connected') {
+    if (usableCommandSession) {
       setSendChannelMessageHandler((channelIndex, message) =>
         service.sendChannelMessage(channelIndex, message),
       );
@@ -132,6 +132,7 @@ export function RadioConnectionProvider({
     service,
     snapshot.connectedDeviceLabel,
     snapshot.status,
+    snapshot.connectionOwner,
     setConnectionStatus,
     setConnectedDeviceName,
     setSendChannelMessageHandler,
@@ -157,6 +158,7 @@ export function RadioConnectionProvider({
         service.handoffDiscoveredDeviceToAndroid(device),
       handoffToAndroid: () => service.handoffToAndroid(),
       disconnect: () => service.disconnect(),
+      recoverNativeCommandSession: () => service.recoverNativeCommandSession(),
       runActiveStartupSync: () => service.runActiveStartupSync(),
       getBatteryStatus: () => service.getBatteryStatus(),
       getDeviceTime: () => service.getDeviceTime(),
