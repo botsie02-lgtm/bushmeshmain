@@ -4,7 +4,7 @@ import {
   encodeBushMeshConvoyWire,
   encodeBushMeshWire,
 } from '../../protocol/public';
-import type {BushMeshInboundResult} from '../../runtime/public';
+import type {BushMeshInboundResult, BushMeshSecurityAdapter} from '../../runtime/public';
 import {
   DeterministicBushMeshNetworkSimulator,
   DeterministicNetworkLinkConfig,
@@ -55,6 +55,8 @@ export type ConvoyRegressionReport = {
     failed: number;
     duplicatesSuppressed: number;
     runtimeRejected: number;
+    unauthorisedUpdatesRejected: number;
+    droppedCollision: number;
     transportRetries: number;
     storeAndForwardRecoveries: number;
     deliveryRatio: number;
@@ -67,8 +69,18 @@ export type ConvoyRegressionReport = {
     droppedCongestion: number;
     droppedExpired: number;
     droppedUnavailable: number;
+    maxQueueWaitMs: number;
   };
-  airtime: {transmissionAttempts: number; estimatedMs: number; transmittedBytes: number};
+  airtime: {
+    transmissionAttempts: number;
+    estimatedMs: number;
+    transmittedBytes: number;
+    channelOverlaps: number;
+    senderContentions: number;
+    dutyCycleHoldMs: number;
+    transmissionsBySender: Record<string, number>;
+  };
+  recovery: {carrierReconnects: number; storeAndForwardRecoveries: number; partitionHeals: number; nodeReturns: number};
   positionFreshness: {
     fresh: number;
     stale: number;
@@ -92,6 +104,7 @@ export type ConvoyMobilityOptions = {
   radioRangeMetres?: number;
   positionStaleAfterMs?: number;
   link?: DeterministicNetworkLinkConfig;
+  securityAdapters?: Record<number, BushMeshSecurityAdapter>;
 };
 
 export class ConvoyMobilityHarness {
@@ -102,6 +115,7 @@ export class ConvoyMobilityHarness {
   readonly positionStaleAfterMs: number;
 
   private readonly linkOptions: DeterministicNetworkLinkConfig;
+  private readonly securityAdapters: Record<number, BushMeshSecurityAdapter>;
   private readonly vehicles = new Map<number, VirtualVehicle>();
   private readonly lastAppliedLinks = new Map<string, string>();
   private readonly overrides = new Map<string, DeterministicNetworkLinkConfig>();
@@ -119,6 +133,7 @@ export class ConvoyMobilityHarness {
     this.radioRangeMetres = options.radioRangeMetres ?? 180;
     this.positionStaleAfterMs = options.positionStaleAfterMs ?? 30_000;
     this.linkOptions = {...options.link};
+    this.securityAdapters = options.securityAdapters ?? {};
     if (!Number.isFinite(this.radioRangeMetres) || this.radioRangeMetres <= 0) {
       throw new Error('The synthetic radio range must be positive.');
     }
@@ -132,7 +147,10 @@ export class ConvoyMobilityHarness {
       throw new Error('A fleet must contain 2–20 nodes and can only be initialized once.');
     }
     for (let id = 1; id <= count; id += 1) {
-      const node = await this.network.addNode({id, name: `vehicle-${id}`});
+      const node = await this.network.addNode(
+        {id, name: `vehicle-${id}`},
+        {securityAdapter: this.securityAdapters[id]},
+      );
       this.vehicles.set(id, {id, eastMetres: (id - 1) * spacingMetres, northMetres: 0});
       node.onInboundResult(result => this.observe(id, result));
       this.network.setGpsFix(id);
@@ -409,6 +427,10 @@ export class ConvoyMobilityHarness {
         failed: metrics.failedDatagrams,
         duplicatesSuppressed: metrics.runtimeDuplicates,
         runtimeRejected: metrics.runtimeRejected,
+        unauthorisedUpdatesRejected: this.network.trace.filter(e =>
+          e.kind === 'runtime-rejected' && e.detail?.startsWith('security-failed:')
+        ).length,
+        droppedCollision: metrics.droppedCollision,
         transportRetries: metrics.transportRetries,
         storeAndForwardRecoveries: metrics.storeAndForwardRecoveries,
         deliveryRatio: metrics.attemptedDatagrams
@@ -422,11 +444,22 @@ export class ConvoyMobilityHarness {
         droppedCongestion: metrics.droppedCongestion,
         droppedExpired: metrics.droppedExpired,
         droppedUnavailable: metrics.droppedUnavailable,
+        maxQueueWaitMs: metrics.maxQueueWaitMs,
       },
       airtime: {
         transmissionAttempts: metrics.transmissionAttempts,
         estimatedMs: metrics.estimatedAirtimeMs,
         transmittedBytes: metrics.totalTransmittedBytes,
+        channelOverlaps: metrics.channelOverlaps,
+        senderContentions: metrics.senderContentions,
+        dutyCycleHoldMs: metrics.dutyCycleHoldMs,
+        transmissionsBySender: {...metrics.transmissionsBySender},
+      },
+      recovery: {
+        carrierReconnects: metrics.carrierReconnects,
+        storeAndForwardRecoveries: metrics.storeAndForwardRecoveries,
+        partitionHeals: this.network.trace.filter(e => e.kind === 'partition-healed').length,
+        nodeReturns: this.network.trace.filter(e => e.kind === 'node-presence' && e.detail === 'present').length,
       },
       positionFreshness: {
         ...counts,
