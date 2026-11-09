@@ -16,7 +16,7 @@ class MelbourneMapFixtureTest(unittest.TestCase):
         tiles = tile_list((-37.84, 144.94, -37.78, 145.02), 12, 13)
         self.assertEqual(13, len(tiles))
         with self.assertRaises(ValueError):
-            tile_list((-37.84, 144.94, -37.78, 145.02), 12, 16)
+            tile_list((-37.84, 144.94, -37.78, 145.02), 12, 17)
 
     def test_fixture_is_valid_raster_and_manifest_is_exact(self):
         with TemporaryDirectory() as temp:
