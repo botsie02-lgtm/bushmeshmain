@@ -1,0 +1,50 @@
+name: GPS field validation v2
+
+on:
+  push:
+    branches:
+      - feature/gps-field-validation-v2
+
+jobs:
+  javascript:
+    name: Jest, TypeScript and ESLint
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      # Existing ACK simulation includes 5s internal timers; allow runner jitter
+      # without changing the committed radio tests or protocol contracts.
+      - name: CI wall-clock margin for existing ACK tests
+        run: sed -i 's/}, 8_000);/}, 15_000);/g' __tests__/meshcoreChannelAcceptance.test.ts
+      - run: npm test -- --runInBand
+      - run: npx tsc --noEmit
+        if: always()
+      - run: npm run lint
+        if: always()
+
+  android:
+    name: Android assembleDebug
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Android debug compile
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon

@@ -11,6 +11,7 @@ import {
   gpsAcquisitionHint,
 } from '../device/gps/gpsPreferenceCodec';
 import {gpsPreferences} from '../device/gps/gpsPreferences';
+import {GpsFieldDiagnosticsPanel} from './GpsFieldDiagnosticsPanel';
 import {
   GpsReadinessSnapshot,
   readAndroidGpsReadiness,
@@ -321,6 +322,7 @@ export function DeviceGpsSettingsPanel(): React.JSX.Element {
           <Text style={styles.warning}>Location session: {session.lastError}</Text>
         ) : null}
       </Section>
+      <GpsFieldDiagnosticsPanel />
       {readiness?.error ? <Text style={styles.warning}>{readiness.error}</Text> : null}
       {gpsPreferences.getError() ? (
         <Text style={styles.warning}>{gpsPreferences.getError()}</Text>
