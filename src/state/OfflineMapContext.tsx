@@ -51,6 +51,9 @@ type OfflineMapContextValue = {
   installOrUpdatePack: (pack: OfflineMapPack) => void;
   registerMapPackManifest: (manifest: BushMeshMapPackManifestV1) => void;
   installMapPack: (packId: string) => Promise<void>;
+  /** User-approved Android document picker; only a manifest hash is passed native. */
+  importMapPack: (packId: string) => Promise<boolean>;
+  mapPackImportSupported: boolean;
   cancelMapPackInstall: (packId: string) => Promise<boolean>;
   verifyMapPack: (packId: string) => Promise<boolean>;
   removePack: (id: string) => Promise<void>;
@@ -108,6 +111,7 @@ export function OfflineMapProvider({
   const writeChainRef = useRef<Promise<void>>(Promise.resolve());
 
   const mapPackInstallSupported = nativeMapPacks.isSupported();
+  const mapPackImportSupported = nativeMapPacks.canImport();
   const packs = useMemo(
     () => [
       ...offlineMapPacksFromCatalog(packCatalog),
@@ -333,6 +337,39 @@ export function OfflineMapProvider({
     [mapPackInstallSupported, packCatalog],
   );
 
+  const importMapPack = useCallback(
+    async (packId: string): Promise<boolean> => {
+      const entry = packCatalog.find(item => item.manifest.id === packId);
+      if (!entry) {
+        throw new Error(`Unknown Bushmesh map pack ${packId}.`);
+      }
+      if (entry.manifest.source.kind !== 'import') {
+        throw new Error('Local import requires a reviewed local-source manifest.');
+      }
+      if (!mapPackImportSupported) {
+        throw new Error('Local archive import is unavailable in this Android build.');
+      }
+      setPackCatalog(current => markMapPackInstalling(current, packId));
+      try {
+        const artifact = await nativeMapPacks.importDocument(entry.manifest);
+        if (artifact === null) {
+          setPackCatalog(current => markMapPackNotInstalled(current, packId));
+          return false;
+        }
+        setPackCatalog(current =>
+          applyVerifiedMapPackArtifact(current, packId, artifact),
+        );
+        setMapPersistenceError(null);
+        return true;
+      } catch (error) {
+        const message = errorMessage(error, 'Map-pack import failed.');
+        setPackCatalog(current => markMapPackInvalid(current, packId, message));
+        throw error;
+      }
+    },
+    [mapPackImportSupported, packCatalog],
+  );
+
   const cancelMapPackInstall = useCallback(
     async (packId: string): Promise<boolean> => {
       if (!mapPackInstallSupported) {
@@ -467,9 +504,11 @@ export function OfflineMapProvider({
       mapPersistenceStatus,
       mapPersistenceError,
       mapPackInstallSupported,
+      mapPackImportSupported,
       installOrUpdatePack,
       registerMapPackManifest,
       installMapPack,
+      importMapPack,
       cancelMapPackInstall,
       verifyMapPack,
       removePack,
@@ -489,6 +528,7 @@ export function OfflineMapProvider({
       installOrUpdatePack,
       registerMapPackManifest,
       installMapPack,
+      importMapPack,
       cancelMapPackInstall,
       verifyMapPack,
       removePack,
