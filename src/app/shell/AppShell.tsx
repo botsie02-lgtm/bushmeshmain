@@ -39,6 +39,8 @@ import {LocationScreen} from '../../screens/LocationScreen';
 import {MapScreen} from '../../screens/MapScreen';
 import {RadioScreen} from '../../screens/RadioScreen';
 import {useBushMesh} from '../../state/BushMeshContext';
+import {useLocationSession} from '../../state/LocationSessionContext';
+import {useOfflineMaps} from '../../state/OfflineMapContext';
 import {colors} from '../../theme/colors';
 
 export type MainTab = 'drive' | 'radio' | 'convoy' | 'contacts' | 'device';
@@ -115,6 +117,8 @@ function DriveHome({
 }): React.JSX.Element {
   const {activeConvoy, status, notice} = useActiveOperationalConvoy();
   const {connectionStatus, activeChannel, contacts} = useBushMesh();
+  const {status: gpsStatus, latestFix} = useLocationSession();
+  const {coverage} = useOfflineMaps();
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.pageContent}>
@@ -143,8 +147,22 @@ function DriveHome({
           </Text>
         </View>
         <View style={styles.stat}>
+          <Text style={styles.statLabel}>LOCAL GPS</Text>
+          <Text style={styles.statValue}>
+            {gpsStatus === 'tracking' || gpsStatus === 'tracking-no-link'
+              ? (latestFix ? 'Tracking' : 'Acquiring')
+              : 'Not tracking'}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.statsRow}>
+        <View style={styles.stat}>
           <Text style={styles.statLabel}>MEMBERSHIP</Text>
           <Text style={styles.statValue}>{activeConvoy ? 'Verified' : 'Inactive'}</Text>
+        </View>
+        <View style={styles.stat}>
+          <Text style={styles.statLabel}>OFFLINE MAPS</Text>
+          <Text style={styles.statValue}>{coverage.complete ? 'Ready' : 'Check packs'}</Text>
         </View>
       </View>
       <Surface
