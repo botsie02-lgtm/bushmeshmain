@@ -317,13 +317,13 @@ export function sendChannelMessageCommandHex(
 ): string {
   assertByte(channelIndex, 'MeshCore channel index');
   const messageBytes = Array.from(Buffer.from(message, 'utf8'));
+  // Diagnostics must not export the channel plaintext, even as hex.
   return bytesToHex([
     0x03,
     0x00,
     channelIndex,
     ...writeUInt32LE(timestampSeconds),
-    ...messageBytes,
-  ]);
+  ]) + ` <${messageBytes.length} UTF-8 text bytes redacted>`;
 }
 
 function sendContactMessageCommandBytes(
