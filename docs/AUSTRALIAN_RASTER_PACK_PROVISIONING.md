@@ -70,7 +70,18 @@ source outside the repository. Typical Ubuntu/WSL preparation:
     sudo apt-get install -y osmium-tool python3 python3-pip
     python -m pip install -r tools/maps/requirements.txt
 
-1. Download the official **Victoria OSM PBF**, not tiles:
+1. **Preferred: request a SMALL Melbourne OSM PBF**, not a statewide
+   download, from the [BBBike custom OSM extract service](https://extract.bbbike.org/).
+   Choose PBF/Protocol Buffer (raw OSM data), select a rectangle around
+   Melbourne roughly west 144.92, south -37.86, east 145.04, north -37.76
+   and request the extract. Download the actual unique link supplied by
+   BBBike; do not invent a static URL. Record its checksum and source.
+   Name your local file `melbourne-central.osm.pbf` and proceed directly
+   to step 3 below. BBBike provides raw OSM extracts under the applicable
+   OSM data licence; it is NOT an offline raster tile server.
+
+   **Alternative when using the official Geofabrik Victoria source**:
+   Download the larger **Victoria OSM PBF**, not tiles:
 
        curl --fail --location --output victoria-latest.osm.pbf \
          https://download.geofabrik.de/australia-oceania/australia/victoria-latest.osm.pbf
@@ -79,14 +90,14 @@ source outside the repository. Typical Ubuntu/WSL preparation:
    SHA-256; ideally use a dated Geofabrik extract for reproducible source
    provenance. Save it in a working directory OUTSIDE Git.
 
-2. Clip the Melbourne source first, adding a margin to preserve complete ways:
+2. **Only for the larger Geofabrik source:** clip Melbourne first, adding a margin to preserve complete ways:
 
        osmium extract --strategy complete_ways \
          --bbox 144.92,-37.86,145.04,-37.76 \
          -o melbourne-central.osm.pbf victoria-latest.osm.pbf
        sha256sum melbourne-central.osm.pbf
 
-   The clip must be below 64 MiB for the intentionally bounded builder.
+   The smaller BBBike extract or the Geofabrik clip must be below 64 MiB for the intentionally bounded builder.
    If it is larger, reduce the region; do not raise the limit casually.
 
 3. Generate a local PNG raster MBTiles **from OSM data**:
