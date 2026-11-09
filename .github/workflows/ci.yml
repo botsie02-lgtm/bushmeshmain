@@ -84,3 +84,11 @@ jobs:
       - name: Native raster reader JVM fixtures
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Publish Wave 3 unified physical-test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-wave3-debug-${{ github.sha }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
