@@ -59,7 +59,7 @@ export function GpsFieldDiagnosticsPanel(): React.JSX.Element {
   const [readiness, setReadiness] = useState<GpsReadinessSnapshot | null>(null);
   const [checkedError, setCheckedError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
-  const [generation, setGeneration] = useState(0);
+  const [, setGeneration] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [includeCoordinates, setIncludeCoordinates] = useState(false);
@@ -125,11 +125,9 @@ export function GpsFieldDiagnosticsPanel(): React.JSX.Element {
     setGeneration(value => value + 1);
   }, [monitor, input]);
 
-  // The revision is incremented by observation, never by report computation.
-  const report = useMemo(
-    () => monitor.report(input),
-    [monitor, input, generation],
-  );
+  // Bounded in-memory calculation; refresh on observations and reset.
+  // A memo dependency on the reset generation would be redundant for Hooks.
+  const report = monitor.report(input);
 
   const reset = () => {
     monitor.reset(input);
