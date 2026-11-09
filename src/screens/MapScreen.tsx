@@ -23,7 +23,9 @@ import {
   OperationalMarker,
   activeOperationalMarkers,
 } from '../convoy/operationalMarkers';
-import {buildOperationalPicture} from '../maps/operationalPicture';
+import {ConvoyMap, ConvoyMapTileSource} from '../maps/ConvoyMap';
+import {ConvoyMapMember, ConvoyMapOverlay} from '../maps/convoyMapModel';
+import {MapPackCatalogPanel} from '../components/MapPackCatalogPanel';
 import {useConvoy} from '../state/ConvoyContext';
 import {useDrive} from '../state/DriveContext';
 import {useLocationSession} from '../state/LocationSessionContext';
@@ -72,7 +74,19 @@ function fieldTargetFromMarker(marker: OperationalMarker): FieldNavigationTarget
   };
 }
 
-export function MapScreen(): React.JSX.Element {
+export type MapScreenProps = {
+  activeConvoyId?: string | null;
+  authorisedMembers?: readonly ConvoyMapMember[];
+  overlays?: readonly ConvoyMapOverlay[];
+  tileSource?: ConvoyMapTileSource;
+};
+
+export function MapScreen({
+  activeConvoyId = null,
+  authorisedMembers = [],
+  overlays = [],
+  tileSource,
+}: MapScreenProps = {}): React.JSX.Element {
   const {
     vehicles,
     buddyTails,
@@ -86,6 +100,7 @@ export function MapScreen(): React.JSX.Element {
   } = useConvoy();
   const {operationalMarkers} = useDrive();
   const {
+    latestFix,
     trackPoints,
     trackDistanceMeters,
     trackStartedAtMs,
@@ -93,6 +108,7 @@ export function MapScreen(): React.JSX.Element {
   } = useLocationSession();
   const {
     packs,
+    packCatalog,
     coverage,
     requiredTripPoints,
     loadDemoHighCountryPack,
@@ -121,35 +137,11 @@ export function MapScreen(): React.JSX.Element {
     () => getFieldTargetGuidance(localPosition, navigationFieldTarget, nowMs),
     [localPosition, navigationFieldTarget, nowMs],
   );
-  const operationalPicture = useMemo(
-    () =>
-      buildOperationalPicture({
-        localPosition,
-        vehicles,
-        buddyTails,
-        operationalMarkers,
-        trackPoints,
-        navigationTargetVehicleId,
-        navigationFieldTarget,
-        nowMs,
-      }),
-    [
-      localPosition,
-      vehicles,
-      buddyTails,
-      operationalMarkers,
-      trackPoints,
-      navigationTargetVehicleId,
-      navigationFieldTarget,
-      nowMs,
-    ],
-  );
   const buddyTailByVehicle = useMemo(
     () => new Map(buddyTails.map(tail => [tail.vehicleId, tail])),
     [buddyTails],
   );
 
-  const focus = operationalPicture.focusBounds;
   const hasNavigationTarget =
     navigationTargetVehicleId !== null || navigationFieldTarget !== null;
 
@@ -172,65 +164,33 @@ export function MapScreen(): React.JSX.Element {
           </View>
         </View>
         <Text style={styles.body}>
-          Bushmesh now builds one renderer-neutral picture from your GPS,
-          convoy fixes, field alerts, breadcrumbs and buddy tails. The native
-          map renderer can consume this contract without re-implementing convoy
-          trust or freshness logic.
+          Offline map tiles appear only when a verified local pack and a compatible
+          tile reader are available. This map plots only explicitly authorised
+          active-convoy members; other radio-heard positions remain diagnostics.
         </Text>
       </View>
 
-      <View style={styles.canvas}>
-        <View style={styles.canvasTopRow}>
-          <View style={styles.canvasCopy}>
-            <Text style={styles.canvasLabel}>RENDERER CONTRACT READY</Text>
-            <Text style={styles.canvasTitle}>
-              {focus
-                ? `${focus.center.latitude.toFixed(5)}, ${focus.center.longitude.toFixed(5)}`
-                : 'Waiting for map points'}
-            </Text>
-          </View>
-          <View style={styles.rendererPill}>
-            <Text style={styles.rendererPillText}>NO TILE RENDERER YET</Text>
-          </View>
-        </View>
-
-        <Text style={styles.canvasDetail}>
-          {operationalPicture.points.length} points ·{' '}
-          {operationalPicture.polylines.length} path layers ·{' '}
-          {operationalPicture.summary.activeMarkerCount} active field markers
-        </Text>
-
-        {focus ? (
-          <Text style={styles.focusText}>
-            AUTO-FRAME · {focus.south.toFixed(3)} to {focus.north.toFixed(3)} lat ·{' '}
-            {focus.west.toFixed(3)} to {focus.east.toFixed(3)} lon
-            {focus.crossesAntimeridian ? ' · ANTIMERIDIAN' : ''}
-          </Text>
-        ) : null}
-
-        <View style={styles.canvasGrid}>
-          <View style={styles.canvasMetric}>
-            <Text style={styles.canvasMetricValue}>
-              {operationalPicture.summary.liveVehicleCount +
-                operationalPicture.summary.recentVehicleCount}
-            </Text>
-            <Text style={styles.canvasMetricLabel}>TRUSTWORTHY VEHICLES</Text>
-          </View>
-          <View style={styles.canvasMetric}>
-            <Text style={styles.canvasMetricValue}>
-              {operationalPicture.summary.staleVehicleCount +
-                operationalPicture.summary.lostVehicleCount}
-            </Text>
-            <Text style={styles.canvasMetricLabel}>STALE / LOST</Text>
-          </View>
-          <View style={styles.canvasMetric}>
-            <Text style={styles.canvasMetricValue}>
-              {operationalPicture.summary.buddyTailCount}
-            </Text>
-            <Text style={styles.canvasMetricLabel}>BUDDY TAILS</Text>
-          </View>
-        </View>
-      </View>
+      <ConvoyMap
+        activeConvoyId={activeConvoyId}
+        authorisedMembers={authorisedMembers}
+        selfFix={
+          latestFix
+            ? {
+                latitude: latestFix.latitude,
+                longitude: latestFix.longitude,
+                headingDegrees: latestFix.headingDegrees ?? null,
+                accuracyMeters: latestFix.accuracyMeters ?? null,
+                receivedAtMs: latestFix.timestampMs,
+              }
+            : localPosition
+              ? {...localPosition, headingDegrees: null, receivedAtMs: 0}
+              : null
+        }
+        packCatalog={packCatalog}
+        overlays={overlays}
+        tileSource={tileSource}
+      />
+      <MapPackCatalogPanel />
 
       {hasNavigationTarget ? (
         <View
@@ -352,7 +312,7 @@ export function MapScreen(): React.JSX.Element {
       ) : null}
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Convoy positions</Text>
+        <Text style={styles.sectionTitle}>Radio-heard positions (not automatically plotted)</Text>
         <Text style={styles.sectionMeta}>{vehicles.length} heard</Text>
       </View>
 
@@ -541,8 +501,8 @@ export function MapScreen(): React.JSX.Element {
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>No map packs registered yet</Text>
           <Text style={styles.emptyText}>
-            The development pack below is metadata-only. It lets us exercise trip
-            coverage logic before native tile downloads are installed.
+            Demo packs are metadata-only and cannot supply a basemap. Register a
+            trusted regional manifest to download and verify a real archive.
           </Text>
         </View>
       ) : (

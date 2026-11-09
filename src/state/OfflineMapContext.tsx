@@ -19,6 +19,7 @@ import {
   removeMapPackCatalogEntry,
 } from '../maps/mapPackCatalog';
 import {BushMeshMapPackManifestV1} from '../maps/mapPackManifest';
+import {revalidateRestoredMapCatalog} from '../maps/mapPackRecovery';
 import {
   MapCoordinate,
   OfflineMapPack,
@@ -150,7 +151,20 @@ export function OfflineMapProvider({
       try {
         const persisted = await androidMapStatePersistence.load();
         if (persisted && active) {
-          setPackCatalog(persisted.catalog);
+          // An unsupported platform cannot substantiate a stored ready claim.
+          // Keep manifests for later registration, but never expose old
+          // metadata as verified offline map coverage without a native check.
+          const checkedCatalog = await revalidateRestoredMapCatalog(
+            persisted.catalog,
+            manifest =>
+              mapPackInstallSupported
+                ? nativeMapPacks.verify(manifest)
+                : Promise.resolve(null),
+          );
+          if (!active) {
+            return;
+          }
+          setPackCatalog(checkedCatalog);
           setSimulatedPacks(persisted.simulatedPacks.map(clonePack));
           setRequiredTripPointsState(
             persisted.requiredTripPoints.map(point => ({...point})),
@@ -204,7 +218,7 @@ export function OfflineMapProvider({
     return () => {
       active = false;
     };
-  }, []);
+  }, [mapPackInstallSupported]);
 
   useEffect(() => {
     if (
