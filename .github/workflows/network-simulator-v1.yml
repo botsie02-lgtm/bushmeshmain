@@ -10,7 +10,8 @@ on:
       - 'src/bushmesh/protocol/**'
       - '__tests__/bushmeshNetworkSimulator.test.ts'
       - '__tests__/bushmeshConvoyCampaigns.test.ts'
-      - 'tsconfig.network-simulator-v1.json'\n      - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
+      - 'tsconfig.network-simulator-v1.json'
+      - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
       - '.github/workflows/network-simulator-v1.yml'
   pull_request:
     paths:
@@ -19,7 +20,8 @@ on:
       - 'src/bushmesh/protocol/**'
       - '__tests__/bushmeshNetworkSimulator.test.ts'
       - '__tests__/bushmeshConvoyCampaigns.test.ts'
-      - 'tsconfig.network-simulator-v1.json'\n      - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
+      - 'tsconfig.network-simulator-v1.json'
+      - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
       - '.github/workflows/network-simulator-v1.yml'
 
 jobs:
