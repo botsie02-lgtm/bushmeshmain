@@ -1,6 +1,6 @@
 # BushMesh Deterministic Network Simulator v1
 
-Branch: `test/network-simulator-v1`
+Branch: `test/network-simulator-v1`\n\nExpanded 2–20 vehicle mobility, seeded chaos, Security-provider lifecycle and\nposition-freshness regression campaigns are documented in\n[NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md](NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md).\nThe CI suite emits machine-readable deterministic campaign reports as a GitHub\nActions artifact in addition to full seed/timeline diagnostics on failure.
 
 Protocol v1 regression baseline: `67327e641b169ec94600a7b07188946058c067b7`
 
