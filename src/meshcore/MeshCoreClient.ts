@@ -1112,7 +1112,11 @@ export class MeshCoreClient {
       receivedDatagram,
     };
 
-    this.events.onTxFrame(frameLog);
+    this.events.onTxFrame({
+      ...frameLog,
+      channelMessage: undefined,
+      contactMessage: undefined,
+    });
 
     if (decoded.packetType === 0x83) {
       this.liveDrain.notifyWaiting();
