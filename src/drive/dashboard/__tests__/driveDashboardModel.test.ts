@@ -221,6 +221,18 @@ describe('Drive dashboard trust separation', () => {
       latestFix: {...trusted().latestFix!, timestampMs: NOW + 90_000},
     }));
     expect(future.gps.fix).toBeNull();
+    const stopped = deriveDriveDashboard(trusted({
+      locationStatus: 'stopped',
+    }));
+    expect(stopped.gps.fix).not.toBeNull();
+    expect(stopped.gps.tracking).toBe(false);
+    expect(stopped.status).toBe('attention');
+    expect(stopped.actionAvailability.canTransmit).toBe(false);
+    const unverifiedProvider = deriveDriveDashboard(trusted({
+      locationProviderLabel: 'Unknown provider',
+    }));
+    expect(unverifiedProvider.gps.nativeSource).toBe(false);
+    expect(unverifiedProvider.actionAvailability.canTransmit).toBe(false);
   });
 
   test('verified archive metadata is not mistaken for readable tiles or a route', () => {
