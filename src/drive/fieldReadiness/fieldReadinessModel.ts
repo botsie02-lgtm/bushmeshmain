@@ -140,6 +140,9 @@ function gpsCapability(
     : 'lost';
   const actualGps = gps.nativeSource && !gps.simulated;
   const currentFix = actualGps && gps.tracking && freshness === 'live';
+  const accuracyKnown = hasFix && typeof fix.accuracyMeters === 'number' &&
+    Number.isFinite(fix.accuracyMeters) && fix.accuracyMeters >= 0;
+  const accuracySuitable = accuracyKnown && fix.accuracyMeters! <= 100;
   let state: FieldCapabilityState;
   let title: string;
   let detail: string;
@@ -151,14 +154,16 @@ function gpsCapability(
     state = 'stale';
     title = 'GPS position stale';
     detail = 'Last-known coordinates only. Do not navigate from this fix.';
-  } else if (!currentFix) {
+  } else if (!currentFix || !accuracySuitable) {
     state = 'degraded';
-    title = gps.simulated ? 'Simulated location' : 'GPS not operational';
+    title = gps.simulated ? 'Simulated location' : 'GPS needs checking';
     detail = !gps.tracking
       ? 'Tracking stopped. The displayed fix is last known.'
       : !actualGps
         ? 'Only an Android GPS source can satisfy field readiness.'
-        : 'Position is recent, but not live.';
+        : freshness !== 'live'
+          ? 'Position is recent, but not live.'
+          : 'GPS accuracy is unknown or worse than 100 m.';
   } else {
     state = 'connected';
     title = 'GPS current';
@@ -168,8 +173,7 @@ function gpsCapability(
     Number.isFinite(fix.headingDegrees)
     ? ((fix.headingDegrees % 360) + 360) % 360
     : null;
-  const accuracy = hasFix && typeof fix.accuracyMeters === 'number' &&
-    Number.isFinite(fix.accuracyMeters) && fix.accuracyMeters >= 0
+  const accuracy = accuracyKnown
     ? '±' + Math.round(fix.accuracyMeters) + ' m' : 'Unknown';
   return {
     key: 'gps', state, title, detail,
@@ -209,7 +213,7 @@ function mapCapability(input: FieldReadinessInput): FieldReadinessModel['maps'] 
   } else if (damaged) {
     downloadLabel = 'An archive failed verification; manage or replace it.';
   } else if (remoteAvailable && input.mapPackInstallSupported) {
-    downloadLabel = 'Regional pack available for download in Device.';
+    downloadLabel = 'Remote pack registered; download needs connectivity in Device.';
   } else if (remoteAvailable) {
     downloadLabel = 'Pack registered; installation is unavailable on this device.';
   } else if (installed > 0) {
@@ -360,7 +364,11 @@ export function deriveFieldReadiness(input: FieldReadinessInput): FieldReadiness
     trip.canStartConvoy && trip.canNavigateOffline;
   const moving = typeof input.speedKmh === 'number' &&
     Number.isFinite(input.speedKmh) && input.speedKmh > 5 &&
-    gps.state === 'connected';
+    dashboard.gps.nativeSource && !dashboard.gps.simulated &&
+    dashboard.gps.tracking && dashboard.gps.fix !== null &&
+    isValidMapCoordinate(dashboard.gps.fix) &&
+    validTime(dashboard.gps.fix.receivedAtMs, input.nowMs) &&
+    getConvoyFreshness(dashboard.gps.fix.receivedAtMs, input.nowMs) === 'live';
   const alerts = relevantAlerts(
     dashboard, input.nowMs, convoy.remoteCount !== null,
   );
