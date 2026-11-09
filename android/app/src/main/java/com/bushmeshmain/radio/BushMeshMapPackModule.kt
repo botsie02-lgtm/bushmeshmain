@@ -257,7 +257,7 @@ class BushMeshMapPackModule(
       require(activeDownloads[packId] == null) {
         "A map pack download/import is already active for this pack."
       }
-      val activity = currentActivity ?: throw IllegalStateException("Open the map screen before importing.")
+      val activity = reactContext.currentActivity ?: throw IllegalStateException("Open the map screen before importing.")
       val request = PendingImport(
         packId, manifestVersion, normalized, expectedBytes, expectedSha256, promise,
       )
