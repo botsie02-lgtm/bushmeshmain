@@ -1,3 +1,5 @@
+import {encodeBushMeshConvoyWire} from '../src/bushmesh/protocol/public';
+
 import {
   ConvoyMobilityHarness,
   scenarioAsymmetricRetryChaos,
@@ -66,7 +68,7 @@ describe('frozen Protocol v1 multi-node convoy regression campaigns', () => {
     }
     expect(campaign.statuses).toEqual([
       'accepted', 'rejected', 'accepted',
-      'accepted', 'rejected', 'accepted', 'rejected', 'rejected',
+      'accepted', 'rejected', 'rejected', 'accepted', 'rejected', 'accepted',
     ]);
     expect(campaign.network.metrics.runtimeRejected).toBe(4);
   });
@@ -95,6 +97,31 @@ describe('frozen Protocol v1 multi-node convoy regression campaigns', () => {
     throwConvoyCampaignFailure(replay);
     expect(first.report).toEqual(replay.report);
     expect(first.network.trace).toEqual(replay.network.trace);
+  });
+
+  it('flags an authenticated routing source / embedded convoy identity mismatch without rewriting packets', async () => {
+    const fleet = new ConvoyMobilityHarness(0xadeff001);
+    await fleet.addFleet(2);
+    const mismatched = encodeBushMeshConvoyWire({
+      convoyId: 9,
+      nodeId: 2, // Deliberately inconsistent with authenticated source 1.
+      sequence: 1,
+      orderIndex: 0,
+      role: 0,
+      locationUnavailable: true,
+    }, 920_000);
+    const outbound = await fleet.node(1).prepareOutbound(mismatched, {
+      identityAssociation: {kind: 'group', groupId: fleet.groupId},
+      securityRouting: {sourceNodeId: 1, groupId: fleet.groupId},
+    });
+    await fleet.network.transmit(1, 2, outbound);
+    await fleet.network.runUntilIdle();
+
+    // The frozen datagram runtime authenticates/decodes and leaves the
+    // application-level convoy node binding to its consumer.
+    expect(fleet.node(2).lastInboundResult?.status).toBe('accepted');
+    expect(fleet.report().positionFreshness.unexpectedStateChanges).toHaveLength(1);
+    expect(fleet.positionView(2, 1).freshness).toBe('never-seen');
   });
 
   it('rejects fleets outside 2–20 nodes, without creating partial fleets', async () => {
