@@ -109,7 +109,7 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
   await ReactTestRenderer.act(() => {
     pressByLabel(renderer, 'Open map');
   });
-  expect(visibleText(renderer)).toContain('Map: unverified legacy telemetry');
+  expect(visibleText(renderer)).toMatch(/Map\s*:\s*unverified legacy telemetry/);
   const map = renderer.root.findByType(MapScreen);
   expect(map.props.activeConvoyId).toBeNull();
   expect(map.props.authorisedMembers).toEqual([]);
