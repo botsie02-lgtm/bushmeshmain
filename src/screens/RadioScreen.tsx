@@ -14,6 +14,7 @@ import {
   formatChannelSubmissionFailure,
 } from '../meshcore/channelSendDiagnostics';
 import {meshCoreInboundDiagnostics} from '../meshcore/meshcoreInboundDiagnostics';
+import {nativeOutboundDiagnostics} from '../meshcore/nativeOutboundDiagnostics';
 import {estimateLoRaAirtimeMs} from '../radio/loraAirtime';
 import {
   BushMeshChannel,
@@ -86,6 +87,17 @@ export function RadioScreen({
   const [messageText, setMessageText] = useState('');
   const [sendStatus, setSendStatus] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [nativeTxMetrics, setNativeTxMetrics] = useState(() =>
+    nativeOutboundDiagnostics.snapshot(),
+  );
+  useEffect(() => nativeOutboundDiagnostics.subscribe(() => {
+    setNativeTxMetrics(nativeOutboundDiagnostics.snapshot());
+  }), []);
+  const nativeTxIssue = nativeTxMetrics.events.find(item =>
+    item.stage === 'response-timeout' || item.stage === 'firmware-rejected' ||
+    item.stage === 'write-failed' || item.stage === 'stop-failed' ||
+    item.stage === 'session-disconnected',
+  );
   const [inboundMetrics, setInboundMetrics] = useState(() =>
     meshCoreInboundDiagnostics.snapshot(),
   );
@@ -324,6 +336,28 @@ export function RadioScreen({
           </Text>
         </TouchableOpacity>
         {sendStatus ? <Text style={styles.sendStatus}>{sendStatus}</Text> : null}
+      </View>
+
+      <View style={styles.inboundDiagnostics}>
+        <Text style={styles.inboundTitle}>NATIVE OUTBOUND · MESHCORE COMMANDS</Text>
+        <Text style={styles.inboundMeta}>
+          queued {nativeTxMetrics.counts['command-queued'] ?? 0} · transport ready {nativeTxMetrics.counts['transport-ready'] ?? 0} · Android write queued {nativeTxMetrics.counts['native-write-queued'] ?? 0}
+        </Text>
+        <Text style={styles.inboundMeta}>
+          response observed {nativeTxMetrics.counts['response-observed'] ?? 0} · matched 0x00 {nativeTxMetrics.counts['response-matched'] ?? 0} · timeout {nativeTxMetrics.counts['response-timeout'] ?? 0} · firmware rejected {nativeTxMetrics.counts['firmware-rejected'] ?? 0}
+        </Text>
+        <Text style={styles.inboundMeta}>
+          Stop requested {nativeTxMetrics.counts['stop-requested'] ?? 0} · confirmed {nativeTxMetrics.counts['stop-confirmed'] ?? 0} · failed {nativeTxMetrics.counts['stop-failed'] ?? 0}
+        </Text>
+        <Text style={styles.inboundMeta}>
+          Android write queued is not a confirmed GATT callback. PACKET_OK (0x00) means radio accepted, not peer delivery.
+        </Text>
+        {nativeTxIssue ? (
+          <Text style={styles.inboundFailure}>
+            Last native issue: {nativeTxIssue.stage} / {nativeTxIssue.reason ?? 'unknown'}
+            {nativeTxIssue.firmwareCode === undefined ? '' : ` · firmware code ${nativeTxIssue.firmwareCode}`}
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.inboundDiagnostics}>
