@@ -9,7 +9,9 @@ export type MeshCoreInboundEnvelope = {
 
 type Consumer = (event: MeshCoreInboundEnvelope) => Promise<void>;
 
-class MeshCoreInboundInbox {
+export const MESHCORE_INBOX_PENDING_LIMIT = 128;
+
+export class MeshCoreInboundInbox {
   private pending: MeshCoreInboundEnvelope[] = [];
   private consumer: Consumer | null = null;
   private busy = false;
@@ -24,6 +26,10 @@ class MeshCoreInboundInbox {
     );
     // Never record text in diagnostics. Retain all receive events until
     // persistence acknowledges them, rather than dropping a mutable lastFrame.
+    if (this.pending.length >= MESHCORE_INBOX_PENDING_LIMIT) {
+      meshCoreInboundDiagnostics.record('persistence-error', {reason: 'capacity'});
+      throw new Error('MeshCore application inbox is full; radio queue drain must pause.');
+    }
     this.pending.push({message: {...message}, receivedAtMs: Date.now()});
     meshCoreInboundDiagnostics.record('inbox-accepted', {channelIndex});
     this.flush();
