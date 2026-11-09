@@ -13,10 +13,18 @@ import {
   scenarioTwentyNodeMobileChaos,
   scenarioVehicleSeparationAndRegroup,
   throwConvoyCampaignFailure,
+  scenarioSimultaneousTransmitters,
+  scenarioCaptureAndChannelIsolation,
+  scenarioHalfDuplexFairness,
+  scenarioLeaderSplitAndIntermittentRelay,
+  scenarioDelayedPositionAntiRollback,
+  scenarioSecurityEpochUnderActiveTraffic,
+  scenarioExtendedSharedChannelSoak,
+  throwSharedChannelFailure,
 } from '../src/bushmesh/testing/networkSimulator';
 
 describe('frozen Protocol v1 multi-node convoy regression campaigns', () => {
-  jest.setTimeout(60_000);
+  jest.setTimeout(90_000);
 
   const regressionReports: unknown[] = [];
   const capture = (campaign: {
@@ -190,4 +198,89 @@ describe('frozen Protocol v1 multi-node convoy regression campaigns', () => {
       expect(fleet.ids()).toEqual([]);
     }
   });
+  it('models simultaneous contention among eleven transmitters without fabricated delivery', async () => {
+    const campaign = await scenarioSimultaneousTransmitters();
+    capture(campaign);
+    throwSharedChannelFailure(campaign);
+    expect(campaign.report.airtime.channelOverlaps).toBeGreaterThan(0);
+    expect(campaign.report.delivery.droppedCollision).toBeGreaterThan(0);
+    expect(Object.keys(campaign.report.airtime.transmissionsBySender)).toHaveLength(11);
+  });
+
+  it('applies synthetic signal-strength capture and channel-index isolation', async () => {
+    const campaign = await scenarioCaptureAndChannelIsolation();
+    capture(campaign);
+    throwSharedChannelFailure(campaign);
+    expect(campaign.report.delivery.accepted).toBe(3);
+    expect(campaign.report.delivery.droppedCollision).toBe(1);
+  });
+
+  it('enforces one transmitter per vehicle, safety priority and queue fairness', async () => {
+    const campaign = await scenarioHalfDuplexFairness();
+    capture(campaign);
+    throwSharedChannelFailure(campaign);
+    expect(campaign.report.airtime.transmissionsBySender['1']).toBe(26);
+    expect(campaign.report.queue.currentDepth).toBe(0);
+  });
+
+  it('separates a leader, loses an intermediate relay and recovers queued carrier legs', async () => {
+    const campaign = await scenarioLeaderSplitAndIntermittentRelay();
+    capture(campaign);
+    throwSharedChannelFailure(campaign);
+    expect(campaign.report.recovery.storeAndForwardRecoveries).toBe(2);
+  });
+
+  it('does not roll back the location projection when an older position arrives much later', async () => {
+    const campaign = await scenarioDelayedPositionAntiRollback();
+    capture(campaign);
+    throwSharedChannelFailure(campaign);
+    expect(campaign.report.positionFreshness.olderSequenceIgnored).toBe(1);
+  });
+
+  it('rejects retired Security epochs, counter replays and member traffic while live convoy positions flow', async () => {
+    const campaign = await scenarioSecurityEpochUnderActiveTraffic();
+    capture(campaign);
+    throwSharedChannelFailure(campaign);
+    expect(campaign.report.delivery.unauthorisedUpdatesRejected).toBe(6);
+    expect(campaign.report.positionFreshness.unexpectedStateChanges).toHaveLength(1);
+    expect(campaign.report.recovery.carrierReconnects).toBe(1);
+  });
+
+  it.each([0x55a71ee1, 0x55a71ee2, 0x55a71ee3])(
+    'completes extended 20-vehicle shared RF seeded chaos soak %i', async seed => {
+      const campaign = await scenarioExtendedSharedChannelSoak(seed);
+      capture(campaign);
+      throwSharedChannelFailure(campaign);
+      expect(campaign.report.delivery.attempted).toBe(401);
+      expect(campaign.network.pendingWorkCount()).toBe(0);
+    },
+  );
+
+  it('reproduces identical shared-airtime collision/soak trace and report from the same seed', async () => {
+    const seed = 0x51d0c0de;
+    const first = await scenarioExtendedSharedChannelSoak(seed);
+    const second = await scenarioExtendedSharedChannelSoak(seed);
+    capture(first);
+    capture(second);
+    throwSharedChannelFailure(first);
+    throwSharedChannelFailure(second);
+    expect(first.report).toEqual(second.report);
+    expect(first.network.trace).toEqual(second.network.trace);
+    expect(first.network.metrics).toEqual(second.network.metrics);
+  });
+
+  it('rejects synthetic capture configuration changes during active traffic', async () => {
+    const fleet = new ConvoyMobilityHarness(0xabc1);
+    await fleet.addFleet(2);
+    expect(() => fleet.network.configureSharedChannel({
+      enabled: true, captureMarginDb: -1,
+    })).toThrow();
+    fleet.network.configureSharedChannel({enabled: true, captureMarginDb: 8});
+    await fleet.sendMessage(1, 2);
+    expect(() => fleet.network.configureSharedChannel({enabled: false})).toThrow();
+    await fleet.network.runUntilIdle();
+    capture({name: 'invalid-channel-configuration', seed: 0xabc1,
+      report: fleet.report(), failures: []});
+  });
+
 });
