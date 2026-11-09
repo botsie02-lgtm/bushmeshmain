@@ -7,7 +7,6 @@ import type {
   BushMeshRuntimeClock,
   BushMeshRuntimePersistence,
   BushMeshSecurityAdapter,
-  BushMeshSecurityAssociation,
   BushMeshSecurityProtectionRequest,
   BushMeshSecurityProtectionResult,
   BushMeshSecurityUnprotectionRequest,
