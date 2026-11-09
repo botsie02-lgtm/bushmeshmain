@@ -147,7 +147,15 @@ export class SecureJoinCompatibilityV3 {
     const leader = verified?.group.members.find(m =>
       m.deviceId === identity.deviceId && m.identityFingerprint === identity.fingerprint &&
       m.role === 'leader' && m.state === 'active');
-    if (!entry || !verified || !leader) {
+    const localHasV2AdminIntent = !!entry && (
+      entry.ownerDeviceId === identity.deviceId ||
+      state.adminGrants.some(grant =>
+        grant.convoyId === entry.convoyId &&
+        grant.deviceId === identity.deviceId &&
+        grant.grantedByDeviceId === entry.ownerDeviceId)
+    );
+    if (!entry || !verified || !leader || !localHasV2AdminIntent) {
+      // A group leader alone is not the app owner or administrator.
       return this.blockedView(requestId);
     }
     const trustedRecord = await this.security.assertTrustedPeer(
