@@ -171,8 +171,9 @@ export function DriveDashboard({
                 ? styles.good : styles.caution,
             ]}>
               {model.gps.simulated ? 'SIMULATED GPS' :
-                model.gps.freshness === 'unknown' ? 'NO GPS FIX' :
-                  model.gps.freshness.toUpperCase() + ' GPS'}
+                !model.gps.nativeSource ? 'UNVERIFIED GPS SOURCE' :
+                  model.gps.freshness === 'unknown' ? 'NO GPS FIX' :
+                    model.gps.freshness.toUpperCase() + ' GPS'}
             </Text>
             <Text style={styles.smallDetail}>{model.gps.ageLabel}</Text>
           </View>
@@ -262,8 +263,8 @@ export function DriveDashboard({
         {confirmAction !== null && canTransmit ? (
           <View style={styles.confirmBox}>
             <Text style={styles.confirmText}>
-              Confirm {getQuickActionDefinition(confirmAction).shortLabel} radio
-              action. This may be heard by other carrier participants.
+              {'Confirm ' + getQuickActionDefinition(confirmAction).shortLabel +
+                ' radio action. This may be heard by other carrier participants.'}
             </Text>
             <View style={styles.confirmRow}>
               <View style={styles.confirmCell}>
