@@ -1109,9 +1109,11 @@ export class DeterministicBushMeshNetworkSimulator {
       this.metrics.channelOverlaps += 1;
       const newSignal = this.configuredLink(frame.from, frame.to)!.config.rssiDbm;
       const oldSignal = this.configuredLink(previous.from, previous.to)!.config.rssiDbm;
+      // Equal power is never a capture win, even with a zero-dB margin.
+      // A difference exactly equal to a positive capture margin is sufficient.
       const corrupt = (wanted: number, unwanted: number): boolean =>
         margin === null || unwanted === Number.POSITIVE_INFINITY ||
-        unwanted > wanted - margin;
+        unwanted >= wanted || wanted - unwanted < margin;
       if (againstNew !== null && corrupt(newSignal, againstNew)) frame.collided = true;
       if (againstOld !== null && corrupt(oldSignal, againstOld)) previous.collided = true;
       this.record({
