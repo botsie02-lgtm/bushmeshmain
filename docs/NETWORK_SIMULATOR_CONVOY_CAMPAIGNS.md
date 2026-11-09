@@ -36,10 +36,10 @@ network events. No wall-clock sleeping or Heltec hardware is used.
 | Asymmetric retries and duplicate/reordering chaos | 2 | Directed loss can differ; carrier retries honor public retry intent; real runtime dedup prevents inflated logical deliveries |
 | Congestion, duty-cycle airtime and safety priority | 12 | Synthetic per-link duty-cycle occupancy, bounded queue drops and safety-class queue ordering are observable |
 | Partition and healing | 5 | Deliberately deferred opaque datagram is held across a partition and drained on reconnect |
-| Security adapter identity transition and member revocation | 3 | Receiver-provided Security adapter rejects retired session, unapproved rotated identity and revoked group sender, without runtime downgrade |
+| Security adapter identity transition and member revocation | 3 | Receiver-provided Security adapter rejects retired session, old/unapproved rotated identities and revoked group sender, while an unaffected authorized member still delivers |
 | Moving seeded chaos fleet | 20 | Reproducible split/heal, loss/duplication, peer disappearance, BLE/carrier interruption, GPS outage, retries, queue bounds and final fresh position |
 | Reproducibility | 2 and 20 | Same seed produces identical report, metrics and complete event trace |
-| Fleet input limits | 1 and 21 rejected | Invalid fleet cardinality cannot create a partially initialized test topology |
+| Deliberately mismatched convoy identity | 2 | An accepted group packet with embedded node ID different from authenticated routing source is flagged by the test-only position audit, not silently applied |\n| Fleet input limits | 1 and 21 rejected | Invalid fleet cardinality cannot create a partially initialized test topology |
 
 The established ten deterministic baseline scenarios (including the 600-message
 five-node soak, fragment-pending, protected direct/group containers and AAD
