@@ -884,9 +884,14 @@ export class AppRadioConnectionService {
     }
   }
 
-  async revealChannelSecret(channelIndex: number): Promise<string> {
+  async revealChannelSecret(channelIndex: number, expectedChannelName?: string): Promise<string> {
     const channel = await this.requireProvisioningPort().readChannel(channelIndex);
-    if (channel.empty) throw new Error('This channel slot is empty.');
+    if (channel.empty || channel.secret.every(byte => byte === 0)) {
+      throw new Error('This channel slot has no private MeshCore carrier secret.');
+    }
+    if (expectedChannelName !== undefined && channel.channelName !== expectedChannelName) {
+      throw new Error('Carrier name changed since channel refresh; PSK reveal cancelled.');
+    }
     return meshCoreSecretToHex(channel.secret);
   }
 
