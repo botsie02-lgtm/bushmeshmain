@@ -1,0 +1,40 @@
+name: Melbourne CBD real licensed OSM raster test pack
+
+on:
+  push:
+    branches:
+      - feature/trusted-australian-map-packs-v1
+    paths:
+      - .github/workflows/melbourne-real-raster-pack.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-melbourne-real-osm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install osmium-tool and Python venv
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y osmium-tool python3-venv
+      - name: Fetch BBBike raw Melbourne OSM, clip and rasterize genuine roads
+        run: bash tools/maps/build_real_melbourne_bbbike.sh "$RUNNER_TEMP/bushmesh-melbourne"
+      - name: Publish REAL raster pack, manifest, checksum and provenance (no source PBF)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-melbourne-cbd-real-osm-mbtiles
+          path: |
+            ${{ runner.temp }}/bushmesh-melbourne/melbourne-cbd-roads.mbtiles
+            ${{ runner.temp }}/bushmesh-melbourne/melbourne-cbd-roads.mbtiles.manifest.json
+            ${{ runner.temp }}/bushmesh-melbourne/melbourne-cbd-roads.mbtiles.sha256
+            ${{ runner.temp }}/bushmesh-melbourne/melbourne-cbd-roads.mbtiles.provenance.json
+            ${{ runner.temp }}/bushmesh-melbourne/source-checksums.txt
+          if-no-files-found: error
+          retention-days: 7
