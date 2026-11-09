@@ -24,7 +24,8 @@ export function classifyMeshCoreQueueError(error: unknown): MeshCoreQueueFailure
 
 export class MeshCoreLiveQueueDrain {
   private active = false;
-  private running = false;
+  // Generation-bound so an old disconnected read cannot block a new session.
+  private runningGeneration: number | null = null;
   private scheduled: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
   private generation = 0;
@@ -55,7 +56,7 @@ export class MeshCoreLiveQueueDrain {
 
   private trigger(): void {
     this.dirty = true;
-    if (this.active && !this.running && this.scheduled === null) {
+    if (this.active && this.runningGeneration !== this.generation && this.scheduled === null) {
       this.schedule(0);
     }
   }
@@ -71,8 +72,8 @@ export class MeshCoreLiveQueueDrain {
   }
 
   private async drain(generation: number): Promise<void> {
-    if (this.running || !this.active || generation !== this.generation) return;
-    this.running = true;
+    if (this.runningGeneration === generation || !this.active || generation !== this.generation) return;
+    this.runningGeneration = generation;
     this.dirty = false;
     let continued = false;
     let failed = false;
@@ -96,7 +97,7 @@ export class MeshCoreLiveQueueDrain {
         this.stage('drain-error', classifyMeshCoreQueueError(error));
       }
     } finally {
-      this.running = false;
+      if (this.runningGeneration === generation) this.runningGeneration = null;
       if (this.active && generation === this.generation && (continued || failed || this.dirty)) {
         this.schedule(failed ? FAILURE_RETRY_MS : CONTINUE_DELAY_MS);
       }
