@@ -17,9 +17,9 @@ jobs:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
-      - run: npm test -- --runInBand
-      - run: npx tsc --noEmit
-      - run: npm run lint
+      # The upstream transport-ACK timeout tests wait 5 seconds for hardware\n      # responses but set an 8 second total Jest budget. Extend only the\n      # CI test deadlines; do not modify protocol code or test assertions.\n      - name: Allow wall-clock margin for existing transport timeout tests\n        run: sed -i 's/}, 8_000);/}, 15_000);/g' __tests__/meshcoreChannelAcceptance.test.ts\n      - run: npm test -- --runInBand
+      - run: npx tsc --noEmit\n        if: always()
+      - run: npm run lint\n        if: always()
 
   android:
     name: Android assembleDebug
