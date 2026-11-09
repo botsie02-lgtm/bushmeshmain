@@ -19,6 +19,11 @@ export function NativeChannelMessageBridge(): null {
   useEffect(() => meshCoreInboundInbox.setConsumer(async envelope => {
     const message = envelope.message;
     const index = Number(message.channelIndex);
+    if (channelsRef.current.length === 0) {
+      // Startup channel enumeration has not completed yet. Retry so the
+      // durable history row carries the correct slot name on first save.
+      throw new Error('MeshCore channel index is not yet available.');
+    }
     const stored = channelsRef.current.find(
       channel => channel.channelIndex === message.channelIndex,
     );
