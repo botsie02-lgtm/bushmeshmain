@@ -6,6 +6,9 @@ import {AppShell, MAIN_TABS} from '../src/app/shell/AppShell';
 jest.mock('../src/state/BushMeshContext', () => ({
   useBushMesh: () => ({connectionStatus: 'Disconnected'}),
 }));
+jest.mock('../src/app/activeContext/ViewedConversationContext', () => ({
+  useViewedConversation: () => ({viewedConversation: null, setViewedConversation: jest.fn()}),
+}));
 jest.mock('../src/app/activeContext/ActiveOperationalConvoyContext', () => ({
   useActiveOperationalConvoy: () => ({
     activeConvoy: null,
