@@ -206,7 +206,11 @@ export class NativeMeshCoreFrameTransport implements MeshCoreFrameTransport {
   }
 
   private async poll(generation: number): Promise<void> {
-    if (!this.started || this.polling || generation !== this.generation) {
+    if (!this.started || generation !== this.generation) return;
+    if (this.polling) {
+      // A prior generation may still be awaiting Android's buffered-frame read.
+      // Do not drain concurrently or lose the new generation's one-shot timer.
+      this.schedulePoll(this.pollIntervalMs, generation);
       return;
     }
 
