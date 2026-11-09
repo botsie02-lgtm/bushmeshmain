@@ -3,6 +3,7 @@ import type {BleManager, Device} from 'react-native-ble-plx';
 
 import {MeshCoreClient} from '../src/meshcore/MeshCoreClient';
 import {MeshCoreFrameTransport} from '../src/meshcore/MeshCoreFrameTransport';
+import {MeshCoreLiveQueueDrain} from '../src/meshcore/MeshCoreLiveQueueDrain';
 import {NativeMeshCoreSession} from '../src/meshcore/NativeMeshCoreSession';
 import {MeshCoreInboundInbox} from '../src/meshcore/meshcoreInboundInbox';
 import {meshCoreInboundMessageId, meshCoreSha256Hex} from '../src/meshcore/meshcoreInboundIdentity';
@@ -219,6 +220,34 @@ describe('MeshCore live inbound queue drain / serial command paths', () => {
     await until(() => h.onChannelMessage.mock.calls.length > 0, 'JS receive while send');
     expect(h.onChannelMessage.mock.calls[0][0].channelIndex).toBe('4');
     h.client.stop();
+  });
+});
+
+describe('MeshCore reconnect generation safety', () => {
+  it('an orphaned pre-disconnect queue read does not block the fresh session', async () => {
+    let resolveOld: ((value: {packetType: number}) => void) | null = null;
+    let attempts = 0;
+    let queueEmptyCount = 0;
+    const drain = new MeshCoreLiveQueueDrain(
+      () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return new Promise(resolve => {resolveOld = resolve;});
+        }
+        return Promise.resolve({packetType: 0x0a});
+      },
+      stage => {if (stage === 'queue-empty') queueEmptyCount += 1;},
+    );
+    drain.start();
+    await until(() => attempts === 1, 'old command started');
+    drain.stop();
+    drain.start();
+    await until(() => attempts === 2 && queueEmptyCount === 1, 'fresh queue drained');
+    const oldResolver = resolveOld as unknown as (value: {packetType: number}) => void;
+    oldResolver({packetType: 0x0a});
+    await delay(20);
+    expect(queueEmptyCount).toBe(1);
+    drain.stop();
   });
 });
 
