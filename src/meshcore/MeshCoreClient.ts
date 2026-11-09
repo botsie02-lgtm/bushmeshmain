@@ -183,7 +183,9 @@ export class MeshCoreClient {
       if (meshCoreInboundInbox.pendingCount() >= MESHCORE_INBOX_PENDING_LIMIT) {
         throw new Error('MeshCore application inbox at capacity.');
       }
-      return this.syncNextMessage();
+      return this.syncNextMessage().then(result => ({
+        packetType: result.rawBytes?.[0] ?? null,
+      }));
     },
     (stage, reason) => {
       meshCoreInboundDiagnostics.record(stage, reason ? {reason} : {});
