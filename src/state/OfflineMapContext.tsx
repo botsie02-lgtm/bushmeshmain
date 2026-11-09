@@ -151,11 +151,16 @@ export function OfflineMapProvider({
       try {
         const persisted = await androidMapStatePersistence.load();
         if (persisted && active) {
-          const checkedCatalog = mapPackInstallSupported
-            ? await revalidateRestoredMapCatalog(persisted.catalog, manifest =>
-                nativeMapPacks.verify(manifest),
-              )
-            : persisted.catalog;
+          // An unsupported platform cannot substantiate a stored ready claim.
+          // Keep manifests for later registration, but never expose old
+          // metadata as verified offline map coverage without a native check.
+          const checkedCatalog = await revalidateRestoredMapCatalog(
+            persisted.catalog,
+            manifest =>
+              mapPackInstallSupported
+                ? nativeMapPacks.verify(manifest)
+                : Promise.resolve(null),
+          );
           if (!active) {
             return;
           }

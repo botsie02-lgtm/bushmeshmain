@@ -133,9 +133,11 @@ export function ConvoyMap({
     return () => clearInterval(interval);
   }, [nowMs]);
 
-  if (isValidMapCoordinate(selfFix) && Number.isFinite(selfFix.receivedAtMs)) {
-    lastFixRef.current = selfFix;
-  }
+  useEffect(() => {
+    if (isValidMapCoordinate(selfFix) && Number.isFinite(selfFix.receivedAtMs)) {
+      lastFixRef.current = selfFix;
+    }
+  }, [selfFix]);
   const effectiveSelf = selfFix ?? lastFixRef.current;
   const scene = useMemo(
     () => buildConvoyMapScene(
@@ -371,8 +373,14 @@ export function ConvoyMap({
         <MapButton label="CONVOY" selected={cameraMode === 'frame-convoy'} onPress={() => setCameraMode('frame-convoy')} />
         <MapButton label={orientation === 'north-up' ? 'NORTH ↑' : 'HEADING ↑'}
           onPress={() => setOrientation(value => value === 'north-up' ? 'heading-up' : 'north-up')} />
-        <MapButton label="−" onPress={() => setZoom(value => Math.max(pack?.manifest.minZoom ?? 0, value - 1))} />
-        <MapButton label="+" onPress={() => setZoom(value => Math.min(pack?.manifest.maxZoom ?? 20, value + 1))} />
+        <MapButton label="−" onPress={() => {
+          if (center) { setManualCenter(center); setCameraMode('free'); }
+          setZoom(Math.max(pack?.manifest.minZoom ?? 0, displayZoom - 1));
+        }} />
+        <MapButton label="+" onPress={() => {
+          if (center) { setManualCenter(center); setCameraMode('free'); }
+          setZoom(Math.min(pack?.manifest.maxZoom ?? 20, displayZoom + 1));
+        }} />
       </View>
 
       <View style={[styles.canvas, {height}]} onLayout={onLayout} {...panResponder.panHandlers}>
