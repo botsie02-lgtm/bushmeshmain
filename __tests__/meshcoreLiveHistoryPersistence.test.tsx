@@ -34,6 +34,8 @@ describe('MeshCore live Radio History durable bridge', () => {
     });
 
     let context: ReturnType<typeof useBushMesh> | null = null;
+    const currentContext = (): ReturnType<typeof useBushMesh> | null => context;
+    const storedSnapshot = (): BushMeshMessageSnapshotV1 | null => persisted;
     function Probe(): null {
       context = useBushMesh();
       return null;
@@ -53,9 +55,9 @@ describe('MeshCore live Radio History durable bridge', () => {
         renderer = ReactTestRenderer.create(<App />);
         await pause(20);
       });
-      await until(() => context?.messagePersistenceStatus === 'ready', 'encrypted store ready');
+      await until(() => currentContext()?.messagePersistenceStatus === 'ready', 'encrypted store ready');
       await ReactTestRenderer.act(async () => {
-        context?.setChannels([
+        currentContext()?.setChannels([
           {channelIndex: '4', channelName: 'Existing private convoy', secret: 'Configured (redacted)'},
           {channelIndex: '2', channelName: 'Other private', secret: 'Configured (redacted)'},
         ]);
@@ -71,13 +73,13 @@ describe('MeshCore live Radio History durable bridge', () => {
         await until(() => meshCoreInboundDiagnostics.snapshot().counts['persistence-error']! >= 1, 'failed first write');
       });
       expect(meshCoreInboundInbox.pendingCount()).toBe(1);
-      expect(persisted?.messages.some(message => message.text === incoming.text) ?? false).toBe(false);
+      expect(storedSnapshot()?.messages.some(message => message.text === incoming.text) ?? false).toBe(false);
 
       await ReactTestRenderer.act(async () => {
-        await until(() => (persisted?.messages.length ?? 0) === 1, 'durable retry', 4_000);
+        await until(() => (storedSnapshot()?.messages.length ?? 0) === 1, 'durable retry', 4_000);
       });
-      expect(context?.channelMessages).toHaveLength(1);
-      expect(context?.channelMessages[0]).toMatchObject({
+      expect(currentContext()?.channelMessages).toHaveLength(1);
+      expect(currentContext()?.channelMessages[0]).toMatchObject({
         channelIndex: '4', channelName: 'Existing private convoy', status: 'confirmed',
       });
       expect(meshCoreInboundInbox.pendingCount()).toBe(0);
@@ -87,16 +89,16 @@ describe('MeshCore live Radio History durable bridge', () => {
         meshCoreInboundInbox.publish({...incoming, snr: -1, pathLength: 2});
         await until(() => meshCoreInboundDiagnostics.snapshot().counts.duplicate! >= 1, 'duplicate suppressed');
       });
-      expect(context?.channelMessages).toHaveLength(1);
+      expect(currentContext()?.channelMessages).toHaveLength(1);
 
       await ReactTestRenderer.act(async () => {renderer?.unmount();});
       await ReactTestRenderer.act(async () => {
         renderer = ReactTestRenderer.create(<App />);
         await pause(20);
       });
-      await until(() => context?.messagePersistenceStatus === 'ready', 'restart restore');
+      await until(() => currentContext()?.messagePersistenceStatus === 'ready', 'restart restore');
       await ReactTestRenderer.act(async () => {
-        context?.setChannels([
+        currentContext()?.setChannels([
           {channelIndex: '4', channelName: 'Existing private convoy', secret: 'Configured (redacted)'},
         ]);
       });
@@ -104,8 +106,8 @@ describe('MeshCore live Radio History durable bridge', () => {
         meshCoreInboundInbox.publish(incoming);
         await until(() => meshCoreInboundDiagnostics.snapshot().counts.duplicate! >= 2, 'restart duplicate');
       });
-      expect(context?.channelMessages).toHaveLength(1);
-      expect(persisted?.messages).toHaveLength(1);
+      expect(currentContext()?.channelMessages).toHaveLength(1);
+      expect(storedSnapshot()?.messages).toHaveLength(1);
       expect(save).toHaveBeenCalled();
       expect(meshCoreInboundDiagnostics.snapshot().counts['history-visible']).toBe(1);
     } finally {
