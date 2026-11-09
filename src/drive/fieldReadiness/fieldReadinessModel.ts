@@ -218,6 +218,8 @@ function mapCapability(input: FieldReadinessInput): FieldReadinessModel['maps'] 
 
   const evidence = input.imageryEvidence;
   const matchingEvidence = !!verified && !!evidence &&
+    dashboard.maps.status !== 'no-tiles' &&
+    dashboard.maps.status !== 'no-pack' &&
     evidence.packId === verified.manifest.id &&
     evidence.packVersion === verified.manifest.version &&
     validTime(evidence.observedAtMs, nowMs) &&
@@ -237,6 +239,10 @@ function mapCapability(input: FieldReadinessInput): FieldReadinessModel['maps'] 
     state = 'degraded';
     title = 'Checking map inventory';
     detail = 'Saved map-pack verification is still in progress.';
+  } else if (input.mapPersistenceStatus === 'error') {
+    state = 'degraded';
+    title = 'Map inventory needs repair';
+    detail = 'Map storage could not be restored reliably; verify packs in Device.';
   } else if (!verified) {
     state = 'unavailable';
     title = 'No verified offline map';
@@ -340,13 +346,15 @@ export function deriveFieldReadiness(input: FieldReadinessInput): FieldReadiness
     radioConnected: radio.state === 'connected',
     radioTransportReady: radio.state === 'connected',
     radioIdentityReady: radio.state === 'connected',
-    channelSelected: dashboard.actionAvailability.channelIndex !== null,
+    channelSelected: dashboard.actionAvailability.canTransmit &&
+      dashboard.actionAvailability.channelIndex !== null,
     localPositionReady: gps.state === 'connected',
     convoyMembersKnown: convoy.remoteCount !== null,
     offlineMapReady: maps.state === 'connected',
     navigationRequired: true,
   });
   const allChecksReady = capabilities.every(item => item.state === 'connected') &&
+    dashboard.actionAvailability.canTransmit &&
     trip.canStartConvoy && trip.canNavigateOffline;
   const moving = typeof input.speedKmh === 'number' &&
     Number.isFinite(input.speedKmh) && input.speedKmh > 5 &&
