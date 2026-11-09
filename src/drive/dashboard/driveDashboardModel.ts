@@ -94,6 +94,7 @@ export type DriveDashboardModel = {
     accuracyLabel: string;
     simulated: boolean;
     nativeSource: boolean;
+    tracking: boolean;
   };
   maps: {
     status: 'ready' | 'no-route' | 'no-pack' | 'no-tiles' | 'uncovered';
@@ -174,8 +175,6 @@ function safeFix(input: DriveDashboardInput): {
   const source = input.latestFix;
   if (
     !source ||
-    input.locationStatus === 'stopped' ||
-    input.locationStatus === 'error' ||
     validateLocationFix(source) !== null ||
     !validNow(input.nowMs) ||
     source.timestampMs > input.nowMs + FUTURE_TOLERANCE_MS
@@ -244,7 +243,10 @@ export function deriveDriveDashboard(input: DriveDashboardInput): DriveDashboard
   const linkReady = input.radioConnectionStatus === 'Connected' &&
     input.radioSession.transportReady && !!input.radioSession.identityRef;
   const nativeSource = input.locationProviderLabel === 'Android GPS';
-  const selfFresh = !!fix.fix && fix.freshness === 'live' && nativeSource;
+  const gpsTracking = input.locationStatus === 'tracking' ||
+    input.locationStatus === 'tracking-no-link';
+  const selfFresh = gpsTracking && !!fix.fix &&
+    fix.freshness === 'live' && nativeSource;
   const map = mapReadiness(input);
 
   const members: ConvoyMapMember[] = [];
@@ -308,7 +310,7 @@ export function deriveDriveDashboard(input: DriveDashboardInput): DriveDashboard
         : !linkReady
           ? 'Radio transport and identity are not ready.'
           : !selfFresh
-            ? 'Fresh Android GPS is required for location-based actions.'
+            ? 'Active Android GPS tracking with a fresh fix is required for location-based actions.'
             : '';
 
   const readiness = getTripReadiness({
@@ -361,6 +363,7 @@ export function deriveDriveDashboard(input: DriveDashboardInput): DriveDashboard
         ? '—' : '±' + Math.round(fix.fix.accuracyMeters) + ' m',
       simulated: fix.simulated,
       nativeSource,
+      tracking: gpsTracking,
     },
     maps: map,
     incomingCarrierMessages: carrierMessages,
