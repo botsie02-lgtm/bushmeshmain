@@ -155,6 +155,10 @@ class BushMeshMapPackModule(
 
         throwIfCancelled(cancellation)
         promoteVerifiedFile(partial, target)
+        BushMeshVerifiedMapPackStore.record(
+          reactContext.filesDir, packId, manifestVersion, normalizedFormat,
+          totalBytes, actualSha256,
+        )
         emitProgress(packId, totalBytes, expectedBytes, "ready")
         promise.resolve(
           artifactResult(
@@ -215,10 +219,12 @@ class BushMeshMapPackModule(
         val normalizedFormat = validateInputs(packId, expectedSha256, format)
         val file = File(packDirectory(packId), "pack.$normalizedFormat")
         if (!file.isFile) {
+          BushMeshVerifiedMapPackStore.forget(reactContext.filesDir, packId)
           promise.resolve(null)
           return@execute
         }
         if (file.length() != expectedBytes) {
+          BushMeshVerifiedMapPackStore.forget(reactContext.filesDir, packId)
           promise.resolve(null)
           return@execute
         }
@@ -226,10 +232,15 @@ class BushMeshMapPackModule(
         emitProgress(packId, file.length(), expectedBytes, "verifying")
         val actualSha256 = sha256(file)
         if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
+          BushMeshVerifiedMapPackStore.forget(reactContext.filesDir, packId)
           promise.resolve(null)
           return@execute
         }
 
+        BushMeshVerifiedMapPackStore.record(
+          reactContext.filesDir, packId, manifestVersion, normalizedFormat,
+          file.length(), actualSha256,
+        )
         emitProgress(packId, file.length(), expectedBytes, "ready")
         promise.resolve(
           artifactResult(
@@ -258,6 +269,7 @@ class BushMeshMapPackModule(
       try {
         require(PACK_ID_REGEX.matches(packId)) { "Invalid Bushmesh map-pack ID." }
         val directory = packDirectory(packId)
+        BushMeshVerifiedMapPackStore.forget(reactContext.filesDir, packId)
         val removed = !directory.exists() || directory.deleteRecursively()
         if (!removed) {
           throw IllegalStateException("Could not remove Bushmesh map-pack files.")
