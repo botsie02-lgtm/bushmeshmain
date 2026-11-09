@@ -43,6 +43,7 @@ jest.mock('../src/screens/ConvoyScreen', () => ({ConvoyScreen: () => null}));
 jest.mock('../src/screens/RadioScreen', () => ({RadioScreen: () => null}));
 jest.mock('../src/screens/ContactsScreen', () => ({ContactsScreen: () => null}));
 jest.mock('../src/screens/LocationScreen', () => ({LocationScreen: () => null}));
+jest.mock('../src/components/DeviceGpsSettingsPanel', () => ({DeviceGpsSettingsPanel: () => null}));
 jest.mock('../src/screens/DeviceHubScreen', () => ({DeviceHubScreen: () => null}));
 
 jest.mock('../src/components/CarMessagingStatusBanner', () => ({CarMessagingStatusBanner: () => null}));
@@ -131,6 +132,14 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
     pressByLabel(renderer, 'GPS and location');
   });
   expect(visibleText(renderer)).toContain('GPS settings');
+  await ReactTestRenderer.act(() => {
+    pressByLabel(renderer, 'GPS preferences');
+  });
+  expect(visibleText(renderer)).toContain('GPS controls');
+  await ReactTestRenderer.act(() => {
+    pressByLabel(renderer, 'GPS controls');
+  });
+  expect(visibleText(renderer)).toContain('GPS preferences');
 
   await ReactTestRenderer.act(() => {
     pressByLabel(renderer, 'Back to Device');

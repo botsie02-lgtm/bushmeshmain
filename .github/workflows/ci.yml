@@ -41,6 +41,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Isolated deterministic simulator compile
+        run: npx tsc -p tsconfig.network-simulator-v1.json --noEmit
+
   android-debug:
     if: startsWith(github.ref, 'refs/heads/integration/')
     runs-on: ubuntu-latest

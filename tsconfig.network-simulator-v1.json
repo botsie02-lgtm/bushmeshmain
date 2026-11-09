@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["jest", "node"],
+    "lib": ["ES2020", "DOM"]
+  },
+  "include": [
+    "src/bushmesh/protocol/**/*.ts",
+    "src/bushmesh/runtime/BushMeshDatagramRuntime.ts",
+    "src/bushmesh/runtime/integration.ts",
+    "src/bushmesh/runtime/public.ts",
+    "src/bushmesh/testing/networkSimulator/**/*.ts",
+    "__tests__/bushmeshNetworkSimulator.test.ts",
+    "__tests__/bushmeshConvoyCampaigns.test.ts"
+  ],
+  "exclude": ["**/node_modules", "**/Pods"]
+}
