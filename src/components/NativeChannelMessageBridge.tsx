@@ -1,87 +1,45 @@
-import {Buffer} from 'buffer';
 import {useEffect, useRef} from 'react';
-
-import {nativeMeshCoreSessionCoordinator} from '../meshcore/NativeMeshCoreSessionCoordinator';
-import {nativeMessageReceipt} from '../native/NativeMessageReceipt';
+import {meshCoreInboundMessageId} from '../meshcore/meshcoreInboundIdentity';
+import {meshCoreInboundInbox} from '../meshcore/meshcoreInboundInbox';
+import {meshCoreInboundDiagnostics} from '../meshcore/meshcoreInboundDiagnostics';
+import {androidMessagePersistence} from '../persistence/AndroidMessagePersistence';
 import {useBushMesh} from '../state/BushMeshContext';
 
 /**
- * Feeds Android-native MeshCore channel text into Bushmesh message history.
- *
- * The native radio may replay buffered/queued frames after reconnect or process
- * restart. A persistent SHA-256 frame receipt is therefore claimed before a
- * message enters history. Android Auto notifications intentionally use a
- * separate receipt registry so notification delivery cannot consume history.
+ * Application-lifetime inbox consumer for BOTH native-owned and JS-GATT
+ * MeshCore channel text. Never use the coordinator's mutable lastFrame.
+ * Persistence-first: only acknowledge the event after encrypted history save.
+ * A failed write is retried, not prematurely claimed in a receipt registry.
  */
 export function NativeChannelMessageBridge(): null {
-  const {channels, addLocalChannelMessage} = useBushMesh();
-  const lastObservedFrameRef = useRef<string | null>(null);
-  const fallbackReceiptsRef = useRef(new Set<string>());
+  const {channels, addDurableChannelMessage} = useBushMesh();
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
 
-  useEffect(() => {
-    let active = true;
-
-    const ingestLatest = async () => {
-      const response = nativeMeshCoreSessionCoordinator.getSnapshot().lastFrame;
-      const channelMessage = response?.parsed?.channelMessage;
-      if (!response || !channelMessage || response.bytes.length === 0) {
-        return;
-      }
-
-      const text = channelMessage.text.trim();
-      if (!text) {
-        return;
-      }
-
-      const frameBase64 = Buffer.from(response.bytes).toString('base64');
-      if (lastObservedFrameRef.current === frameBase64) {
-        return;
-      }
-      lastObservedFrameRef.current = frameBase64;
-
-      let firstSighting = true;
-      if (nativeMessageReceipt.isSupported()) {
-        try {
-          firstSighting = await nativeMessageReceipt.claimFrame(frameBase64);
-        } catch {
-          // If durable receipt storage is temporarily unavailable, fall back to
-          // process-local dedupe rather than dropping a legitimate radio text.
-          firstSighting = !fallbackReceiptsRef.current.has(frameBase64);
-          fallbackReceiptsRef.current.add(frameBase64);
-        }
-      } else {
-        firstSighting = !fallbackReceiptsRef.current.has(frameBase64);
-        fallbackReceiptsRef.current.add(frameBase64);
-      }
-
-      if (!active || !firstSighting) {
-        return;
-      }
-
-      const channelName =
-        channels.find(
-          channel => channel.channelIndex === channelMessage.channelIndex,
-        )?.channelName ?? `Channel ${channelMessage.channelIndex}`;
-
-      addLocalChannelMessage({
-        channelIndex: channelMessage.channelIndex,
-        channelName,
-        text,
-        direction: 'received',
-        status: 'confirmed',
-      });
-    };
-
-    const unsubscribe = nativeMeshCoreSessionCoordinator.subscribe(() => {
-      ingestLatest().catch(() => undefined);
+  useEffect(() => meshCoreInboundInbox.setConsumer(async envelope => {
+    const message = envelope.message;
+    const index = Number(message.channelIndex);
+    const stored = channelsRef.current.find(
+      channel => channel.channelIndex === message.channelIndex,
+    );
+    const inserted = await addDurableChannelMessage({
+      id: meshCoreInboundMessageId(message),
+      channelIndex: message.channelIndex,
+      channelName: stored?.channelName ?? `Channel ${index}`,
+      text: message.text.trim(),
+      direction: 'received',
+      status: 'confirmed',
+      createdAt: new Date(envelope.receivedAtMs).toISOString(),
     });
-    ingestLatest().catch(() => undefined);
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [addLocalChannelMessage, channels]);
+    if (inserted) {
+      if (androidMessagePersistence.isSupported()) {
+        meshCoreInboundDiagnostics.record('persisted', {channelIndex: index});
+      }
+      meshCoreInboundDiagnostics.record('history-visible', {channelIndex: index});
+    } else {
+      meshCoreInboundDiagnostics.record('duplicate', {channelIndex: index});
+    }
+  }), [addDurableChannelMessage]);
 
   return null;
 }
