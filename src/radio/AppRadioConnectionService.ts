@@ -1115,26 +1115,13 @@ export class AppRadioConnectionService {
       nativeOutboundDiagnostics.record('command-queued', 'channel-text', {
         channelSlot: channelIndex,
       });
-      try {
-        const response = await this.nativeSession.sendChannelMessage(channelIndex, message);
-        if (response.packetType !== 0x00) {
-          throw new Error('Native channel submission returned an unexpected packet type.');
-        }
-        // Firmware PACKET_OK means carrier acceptance, not recipient delivery.
-        nativeOutboundDiagnostics.record('response-matched', 'channel-text', {
-          channelSlot: channelIndex, packetType: 0x00,
-        });
-      } catch (error) {
-        const reason = this.nativeFailureReason(error);
-        nativeOutboundDiagnostics.record(
-          reason === 'timeout' ? 'response-timeout'
-            : reason.startsWith('firmware') ? 'firmware-rejected' : 'write-failed',
-          'channel-text',
-          {channelSlot: channelIndex, reason: reason === 'timeout' ? 'timeout'
-            : reason.startsWith('firmware') ? 'firmware-error' : 'unknown'},
-        );
-        throw error;
+      const response = await this.nativeSession.sendChannelMessage(channelIndex, message);
+      if (response.packetType !== 0x00) {
+        throw new Error('Native channel submission returned an unexpected packet type.');
       }
+      // Command-specific native session diagnostics record the *single*
+      // observed PACKET_OK match or firmware failure. Duplicating them here
+      // would falsely inflate per-command counts. Peer delivery remains unknown.
       return;
     }
     if (this.snapshot.connectionOwner === 'react-native' && this.meshCoreClient) {
