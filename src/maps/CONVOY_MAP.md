@@ -107,8 +107,12 @@ membership from radio discovery.
    type PNG/JPEG/WebP, internal+tile compression none/gzip) with accurate bounds,
    zoom range, length, SHA-256, source URL, and required attribution in its
    V1 manifest. Avoid vector-only PMTiles packs.
-2. While online, register the trusted manifest using the existing catalog
-   workflow and explicitly choose **Download**. Wait for SHA-256 verification.
+2. While online, provision a **trusted** manifest into `OfflineMapProvider`
+   via `registerMapPackManifest` (or a trusted catalog integration) and
+   explicitly choose **Download**. The base branch's pack-management panel
+   lists registered packs but does not itself discover or register new regions:
+   a prepared trusted manifest/test integration is a prerequisite. Wait for
+   SHA-256 verification.
    Use **Verify** in map-pack management to establish the native receipt.
 3. Open Drive / Map, choose the verified region. With phone GPS on and the
    camera centered **inside the downloaded coverage**, check that actual
