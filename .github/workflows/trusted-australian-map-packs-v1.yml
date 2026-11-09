@@ -47,6 +47,8 @@ jobs:
           java-version: '17'
           cache: gradle
       - run: npm ci
+      - name: Extend Gradle distribution download timeout for GitHub-hosted runners
+        run: sed -i 's/networkTimeout=10000/networkTimeout=120000/' android/gradle/wrapper/gradle-wrapper.properties
       - name: Android map fixture tests and APK compilation
         working-directory: android
         run: |

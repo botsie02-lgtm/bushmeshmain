@@ -525,6 +525,7 @@ export function OfflineMapProvider({
       mapPersistenceStatus,
       mapPersistenceError,
       mapPackInstallSupported,
+      mapPackImportSupported,
       installOrUpdatePack,
       registerMapPackManifest,
       installMapPack,
