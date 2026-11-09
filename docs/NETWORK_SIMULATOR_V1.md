@@ -5,6 +5,12 @@ Branch: `test/network-simulator-v1`
 Expanded 2–20 vehicle mobility, seeded chaos, Security-provider lifecycle and
 position-freshness regression campaigns are documented in
 [NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md](NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md).
+
+Opt-in synthetic shared-channel overlap, capture, simultaneous convoy contention,
+per-sender airtime/queue fairness, delayed positions, active epoch/revocation
+injection and fixed-seed 20-vehicle soaks are documented in
+[NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md](NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md).
+These scenarios expressly do not prove real LoRa interference or Security key enrolment.
 The CI suite emits machine-readable deterministic campaign reports as a GitHub
 Actions artifact in addition to full seed/timeline diagnostics on failure.
 
