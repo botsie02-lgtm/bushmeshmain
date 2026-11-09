@@ -10,7 +10,7 @@ on:
       - 'src/bushmesh/protocol/**'
       - '__tests__/bushmeshNetworkSimulator.test.ts'
       - '__tests__/bushmeshConvoyCampaigns.test.ts'
-      - 'tsconfig.network-simulator-v1.json'
+      - 'tsconfig.network-simulator-v1.json'\n      - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
       - '.github/workflows/network-simulator-v1.yml'
   pull_request:
     paths:
@@ -19,7 +19,7 @@ on:
       - 'src/bushmesh/protocol/**'
       - '__tests__/bushmeshNetworkSimulator.test.ts'
       - '__tests__/bushmeshConvoyCampaigns.test.ts'
-      - 'tsconfig.network-simulator-v1.json'
+      - 'tsconfig.network-simulator-v1.json'\n      - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
       - '.github/workflows/network-simulator-v1.yml'
 
 jobs:
@@ -35,3 +35,10 @@ jobs:
       - run: npm ci
       - run: npx tsc -p tsconfig.network-simulator-v1.json --noEmit
       - run: npm test -- --runInBand __tests__/bushmeshNetworkSimulator.test.ts __tests__/bushmeshConvoyCampaigns.test.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bushmesh-convoy-regression-reports
+          path: artifacts/network-simulator/convoy-regressions.json
+          if-no-files-found: ignore
+          retention-days: 30
