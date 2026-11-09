@@ -389,7 +389,11 @@ export function AppShell(): React.JSX.Element {
             <View style={styles.subnav}>
               {deviceView === 'hub' ? (
                 <>
-                  <Action label="GPS and location" onPress={() => setDeviceView('gps')} secondary />
+                  <Action
+                    label="GPS and location"
+                    onPress={() => {setGpsView('controls'); setDeviceView('gps');}}
+                    secondary
+                  />
                   <Action
                     label="Offline map packs"
                     onPress={() => setDeviceView('maps')}
