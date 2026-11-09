@@ -42,6 +42,13 @@ network events. No wall-clock sleeping or Heltec hardware is used.
 | Deliberately mismatched convoy identity | 2 | An accepted group packet with embedded node ID different from authenticated routing source is flagged by the test-only position audit, not silently applied |
 | Fleet input limits | 1 and 21 rejected | Invalid fleet cardinality cannot create a partially initialized test topology |
 
+The follow-on synthetic shared-channel/active Security stress suite is documented
+in [NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md](NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md).
+Its additional counters cover overlap, synthetic collision drops, sender queue
+fairness/cooldown and carrier/partition/node recovery. The combined scoped
+CI gate currently contains 43 deterministic regression tests. No production
+RF, routing or incremental Security enrolment guarantee is implied.
+
 The established ten deterministic baseline scenarios (including the 600-message
 five-node soak, fragment-pending, protected direct/group containers and AAD
 tampering) remain part of the same CI check.
