@@ -60,6 +60,17 @@ function releasedNativeStatus(): NativeRadioServiceStatus {
   };
 }
 
+function activeNativeStatus(): NativeRadioServiceStatus {
+  return {
+    ...releasedNativeStatus(), running: true, radioRequested: true,
+    deviceLabel: 'Test Heltec', deviceAddress: 'AA:BB:CC:DD:EE:FF',
+    ownership: 'native-service', nativeBleState: 'ready',
+    nativeBleDeviceAddress: 'AA:BB:CC:DD:EE:FF',
+    nativeBleDeviceLabel: 'Test Heltec', nativeBleMtu: 185,
+    persistedNativeTargetPresent: true,
+  };
+}
+
 function createHarness() {
   const device = fakeDevice();
   const manager = {
@@ -90,7 +101,7 @@ function createHarness() {
     readChannel: jest.fn(async (channelIndex: number) => emptyChannel(channelIndex)),
     writeChannel: jest.fn().mockResolvedValue(undefined),
     probeChannels: jest.fn().mockResolvedValue([]),
-    sendChannelMessage: jest.fn().mockResolvedValue({}),
+    sendChannelMessage: jest.fn().mockResolvedValue({packetType: 0x00}),
     getBatteryStatus: jest.fn().mockResolvedValue({parsed: {batteryInfo: null}}),
     syncContacts: jest.fn().mockResolvedValue([]),
     syncQueuedMessages: jest.fn().mockResolvedValue([]),
@@ -102,6 +113,9 @@ function createHarness() {
     start: jest.fn().mockResolvedValue(nativeSession),
     stop: jest.fn().mockResolvedValue(undefined),
   } as unknown as NativeMeshCoreSessionCoordinator;
+  const getNativeStatus = jest.fn().mockResolvedValue(releasedNativeStatus());
+  const stopNativeRadio = jest.fn().mockResolvedValue(true);
+  const waitForNativeShutdown = jest.fn().mockResolvedValue(releasedNativeStatus());
   const service = new AppRadioConnectionService({
     createBleManager: jest.fn(() => manager as never),
     createMeshCoreClient: jest.fn(() => client as never),
@@ -113,7 +127,9 @@ function createHarness() {
     }),
     nativeCoordinator,
     nativeSupported: () => true,
-    getNativeStatus: jest.fn().mockResolvedValue(releasedNativeStatus()),
+    getNativeStatus,
+    stopNativeRadio,
+    waitForNativeShutdown,
   });
 
   return {
@@ -123,6 +139,9 @@ function createHarness() {
     client,
     nativeSession,
     nativeCoordinator,
+    getNativeStatus,
+    stopNativeRadio,
+    waitForNativeShutdown,
   };
 }
 
