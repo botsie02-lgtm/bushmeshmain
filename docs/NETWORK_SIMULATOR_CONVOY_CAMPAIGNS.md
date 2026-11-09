@@ -46,7 +46,7 @@ The follow-on synthetic shared-channel/active Security stress suite is documente
 in [NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md](NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md).
 Its additional counters cover overlap, synthetic collision drops, sender queue
 fairness/cooldown and carrier/partition/node recovery. The combined scoped
-CI gate currently contains 43 deterministic regression tests. No production
+CI gate currently contains 44 deterministic regression tests. No production
 RF, routing or incremental Security enrolment guarantee is implied.
 
 The established ten deterministic baseline scenarios (including the 600-message
