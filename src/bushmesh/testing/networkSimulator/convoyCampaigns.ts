@@ -1,6 +1,7 @@
 import {
   BushMeshPacketType,
   BushMeshPriority,
+  encodeBushMeshConvoyWire,
   encodeBushMeshWire,
 } from '../../protocol/public';
 import type {
@@ -339,7 +340,6 @@ export async function scenarioSecurityIdentityAndRevocation(
   // Use real canonical convoy encoding for group membership checks.
   const groupPosition = async (node: typeof alice, sourceId: number) => {
     const id = nextMessageId++;
-    const {encodeBushMeshConvoyWire} = await import('../../protocol/public');
     return node.prepareOutbound(
       encodeBushMeshConvoyWire({
         convoyId: 9, nodeId: sourceId, sequence: id, orderIndex: sourceId - 1,
