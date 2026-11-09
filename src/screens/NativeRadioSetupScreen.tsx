@@ -13,6 +13,7 @@ import {
   NativeMeshCoreOwnershipSnapshot,
   nativeMeshCoreSessionCoordinator,
 } from '../meshcore/NativeMeshCoreSessionCoordinator';
+import {nativeRadioService, NativeRadioServiceStatus} from '../native/NativeRadioService';
 import {useRadioConnection} from '../state/RadioConnectionContext';
 import {colors} from '../theme/colors';
 
@@ -37,6 +38,7 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
     stopScan,
     handoffDiscoveredDeviceToAndroid,
     disconnect,
+    recoverNativeCommandSession,
   } = useRadioConnection();
   const [ownership, setOwnership] =
     useState<NativeMeshCoreOwnershipSnapshot>(initialOwnership);
@@ -44,6 +46,9 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
     'Scan for a MeshCore companion node, then let Android own the radio connection.',
   );
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [androidStatus, setAndroidStatus] = useState<NativeRadioServiceStatus | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
     return nativeMeshCoreSessionCoordinator.subscribe(() => {
@@ -51,12 +56,36 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
     });
   }, []);
 
-  const nativeBusy =
-    ownership.state === 'taking-over' ||
-    ownership.state === 'stopping' ||
-    snapshot.status === 'Connecting';
+  useEffect(() => {
+    let mounted = true;
+    const readNativeOwnership = async () => {
+      try {
+        const status = await nativeRadioService.getStatus();
+        if (mounted) setAndroidStatus(status);
+      } catch {
+        // A status read failure must not erase the last known Android owner.
+      }
+    };
+    readNativeOwnership().catch(() => undefined);
+    const timer = setInterval(() => {
+      readNativeOwnership().catch(() => undefined);
+    }, 1_500);
+    return () => {mounted = false; clearInterval(timer);};
+  }, []);
+
+  const nativeBusy = ownership.state === 'stopping' || stopping || recovering;
+  const takingOver = ownership.state === 'taking-over' || snapshot.status === 'Connecting';
   const nativeActive =
-    ownership.state === 'active' || snapshot.connectionOwner === 'android-native';
+    ownership.state === 'active' ||
+    Boolean(ownership.deviceAddress && ownership.state !== 'idle') ||
+    snapshot.connectionOwner === 'android-native' ||
+    androidStatus?.ownership === 'native-service' ||
+    androidStatus?.persistedNativeTargetPresent === true ||
+    Boolean(androidStatus?.nativeBleDeviceAddress);
+  const commandSessionReady = nativeActive &&
+    ownership.state === 'active' &&
+    snapshot.connectionOwner === 'android-native' &&
+    snapshot.status === 'Connected';
   const isScanning = snapshot.status === 'Scanning';
 
   const sortedDevices = useMemo(
@@ -73,7 +102,7 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
   );
 
   const scan = async () => {
-    if (!nativeHandoffSupported || nativeBusy || nativeActive) {
+    if (!nativeHandoffSupported || nativeBusy || nativeActive || takingOver) {
       return;
     }
 
@@ -89,7 +118,7 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
   };
 
   const startNativeRadio = async (device: Device) => {
-    if (nativeBusy || nativeActive) {
+    if (nativeBusy || nativeActive || takingOver) {
       return;
     }
 
@@ -111,10 +140,8 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
   };
 
   const stopNativeRadio = async () => {
-    if (nativeBusy) {
-      return;
-    }
-
+    if (nativeBusy) return;
+    setStopping(true);
     setSetupError(null);
     setSetupStatus('Stopping Android-owned MeshCore session…');
     try {
@@ -126,6 +153,25 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
           ? error.message
           : 'Background radio could not be stopped cleanly.',
       );
+    } finally {
+      setStopping(false);
+      setAndroidStatus(await nativeRadioService.getStatus().catch(() => null));
+    }
+  };
+
+  const recoverNativeSession = async () => {
+    if (nativeBusy || !nativeActive) return;
+    setRecovering(true);
+    setSetupError(null);
+    try {
+      const recovered = await recoverNativeCommandSession();
+      setSetupStatus(recovered
+        ? 'Native command session recovered. Radio sending may resume.'
+        : 'Android ownership is unavailable; use Stop before reconnecting.');
+    } catch (error) {
+      setSetupError(error instanceof Error ? error.message : 'Native command session recovery failed.');
+    } finally {
+      setRecovering(false);
     }
   };
 
@@ -152,7 +198,9 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
         <View style={styles.statusRow}>
           <Text style={styles.label}>Ownership</Text>
           <Text style={nativeActive ? styles.ready : styles.value}>
-            {ownership.state.toUpperCase()}
+            {nativeActive && ownership.state === 'idle'
+              ? 'ANDROID OWNS RADIO / APP STATE STALE'
+              : ownership.state.toUpperCase()}
           </Text>
         </View>
         <View style={styles.statusRow}>
@@ -161,6 +209,8 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
             {ownership.deviceLabel ??
               ownership.deviceAddress ??
               snapshot.connectedDeviceLabel ??
+              androidStatus?.nativeBleDeviceLabel ??
+              androidStatus?.nativeBleDeviceAddress ??
               'None'}
           </Text>
         </View>
@@ -170,7 +220,21 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
         ) : null}
       </View>
 
-      {nativeActive ? <RadioSettingsPanel /> : null}
+      {commandSessionReady ? <RadioSettingsPanel /> : null}
+      {nativeActive && !commandSessionReady ? (
+        <View style={styles.warningCard}>
+          <Text style={styles.warningTitle}>Native command session needs recovery</Text>
+          <Text style={styles.body}>
+            Android may still own BLE and receive messages. Sending requires a verified
+            command session; native BLE readiness alone is not sufficient.
+          </Text>
+          <TouchableOpacity style={[styles.button, styles.primaryButton]}
+            accessibilityLabel="Recover native command session"
+            onPress={recoverNativeSession} disabled={nativeBusy}>
+            <Text style={styles.primaryButtonText}>Recover command session</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {nativeActive ? (
         <TouchableOpacity
@@ -183,7 +247,7 @@ export function NativeRadioSetupScreen(): React.JSX.Element {
         <TouchableOpacity
           style={[styles.button, styles.primaryButton]}
           onPress={scan}
-          disabled={!nativeHandoffSupported || nativeBusy || isScanning}>
+          disabled={!nativeHandoffSupported || nativeBusy || takingOver || isScanning}>
           <Text style={styles.primaryButtonText}>
             {isScanning ? 'Scanning…' : 'Scan for MeshCore radio'}
           </Text>
