@@ -57,7 +57,7 @@ export function AdvancedCarrierCredentials({
         throw new Error('Configured channel changed. Refresh the radio channels before revealing a secret.');
       }
       const secretHex = normalizeCarrierPskHex(
-        await revealChannelSecret(profile.channelIndex),
+        await revealChannelSecret(profile.channelIndex, profile.channelName),
       );
       setRevealedPsk(secretHex);
       setStatus('Carrier PSK revealed for this verified MeshCore channel slot.');
