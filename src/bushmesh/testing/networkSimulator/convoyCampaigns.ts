@@ -242,11 +242,31 @@ export class SecurityDecisionTestAdapter implements BushMeshSecurityAdapter {
   private readonly fake = new FakeBushMeshSecurityAdapter();
   readonly activeSessions = new Set<string>();
   readonly approvedGroupDevices = new Set<string>();
+  readonly acceptedGroupEpochs = new Set<number>([1]);
+  readonly boundSourceBySenderDevice = new Map<string, number>();
+  private readonly sendCounters = new Map<string, number>();
+  private readonly receivedCounters = new Map<string, number>();
   senderDeviceId = 'sim-node-1';
+  senderEpoch = 1;
+  enforceReplayCounters = false;
+
+  /**
+   * Simulates a sender reboot/replay reusing an old counter. This is test-only
+   * fault injection, not a key or nonce manager.
+   */
+  forceNextFakeGroupCounter(counter: number): void {
+    if (!Number.isSafeInteger(counter) || counter < 1) {
+      throw new Error('Fake group counter must be a positive safe integer.');
+    }
+    this.sendCounters.set(`${this.senderDeviceId}:${this.senderEpoch}`, counter - 1);
+  }
 
   async protect(request: BushMeshSecurityProtectionRequest): Promise<BushMeshSecurityProtectionResult> {
     const protectedResult = await this.fake.protect(request);
     if (protectedResult.protectedPayload.kind === 'group') {
+      const key = `${this.senderDeviceId}:${this.senderEpoch}`;
+      const nextCounter = (this.sendCounters.get(key) ?? 0) + 1;
+      this.sendCounters.set(key, nextCounter);
       return {
         ...protectedResult,
         protectedPayload: {
@@ -254,6 +274,8 @@ export class SecurityDecisionTestAdapter implements BushMeshSecurityAdapter {
           message: {
             ...protectedResult.protectedPayload.message,
             senderDeviceId: this.senderDeviceId,
+            epoch: this.senderEpoch,
+            counter: String(nextCounter),
           },
         },
       };
@@ -266,12 +288,31 @@ export class SecurityDecisionTestAdapter implements BushMeshSecurityAdapter {
       if (!this.activeSessions.has(request.protectedPayload.message.sessionId)) {
         throw new Error('Test Security provider denies retired direct session.');
       }
-    } else {
-      if (!this.approvedGroupDevices.has(request.protectedPayload.message.senderDeviceId)) {
-        throw new Error('Test Security provider denies revoked group membership.');
-      }
+      return this.fake.unprotect(request);
     }
-    return this.fake.unprotect(request);
+    const message = request.protectedPayload.message;
+    if (!this.approvedGroupDevices.has(message.senderDeviceId)) {
+      throw new Error('Test Security provider denies revoked group membership.');
+    }
+    if (!this.acceptedGroupEpochs.has(message.epoch)) {
+      throw new Error('Test Security provider denies stale/unavailable group epoch.');
+    }
+    const boundSource = this.boundSourceBySenderDevice.get(message.senderDeviceId);
+    if (boundSource !== undefined && boundSource !== request.routing.sourceNodeId) {
+      throw new Error('Test Security provider rejects mismatched source/device binding.');
+    }
+    const replayKey = `${message.groupId}:${message.senderDeviceId}:${message.epoch}`;
+    const counter = Number(message.counter);
+    if (this.enforceReplayCounters &&
+        (!Number.isSafeInteger(counter) || counter < 1 ||
+         counter <= (this.receivedCounters.get(replayKey) ?? 0))) {
+      throw new Error('Test Security provider rejects reused/out-of-order fake counter.');
+    }
+    const result = await this.fake.unprotect(request);
+    if (this.enforceReplayCounters) {
+      this.receivedCounters.set(replayKey, counter);
+    }
+    return result;
   }
 }
 
