@@ -28,6 +28,7 @@ class BushMeshPersistenceModule(
     private const val MAP_STATE_KEY = "encrypted_map_state_snapshot"
     private const val FORMATION_KEY = "encrypted_formation_snapshot"
     private const val CANONICAL_RUNTIME_KEY = "encrypted_canonical_runtime_state"
+    private const val DEVICE_PREFERENCES_KEY = "encrypted_device_preferences_v1"
     private const val OUTBOX_KEY_ALIAS = "bushmesh_outbox_aes_v1"
     private const val TRACK_KEY_ALIAS = "bushmesh_track_aes_v1"
     private const val CONTACTS_KEY_ALIAS = "bushmesh_contacts_aes_v1"
@@ -35,6 +36,7 @@ class BushMeshPersistenceModule(
     private const val MAP_STATE_KEY_ALIAS = "bushmesh_map_state_aes_v1"
     private const val FORMATION_KEY_ALIAS = "bushmesh_formation_aes_v1"
     private const val CANONICAL_RUNTIME_KEY_ALIAS = "bushmesh_canonical_runtime_aes_v1"
+    private const val DEVICE_PREFERENCES_KEY_ALIAS = "bushmesh_device_preferences_aes_v1"
     private const val ENVELOPE_VERSION = "v1"
     private const val OUTBOX_AAD = ENVELOPE_VERSION
     private const val TRACK_AAD = "$ENVELOPE_VERSION:track"
@@ -43,6 +45,7 @@ class BushMeshPersistenceModule(
     private const val MAP_STATE_AAD = "$ENVELOPE_VERSION:map-state"
     private const val FORMATION_AAD = "$ENVELOPE_VERSION:formation"
     private const val CANONICAL_RUNTIME_AAD = "$ENVELOPE_VERSION:canonical-runtime"
+    private const val DEVICE_PREFERENCES_AAD = "$ENVELOPE_VERSION:device-preferences"
     private const val GCM_TAG_BITS = 128
     private const val GCM_IV_BYTES = 12
   }
@@ -212,6 +215,38 @@ class BushMeshPersistenceModule(
       "BUSHMESH_CANONICAL_RUNTIME_RESET_FAILED",
       "canonical runtime",
       promise,
+    )
+  }
+
+
+  /**
+   * Non-sensitive UI preferences use the existing encrypted persistence owner
+   * under a distinct key and Keystore alias. This never stores MeshCore channel
+   * PSKs, Security v1 private keys or native BLE connection credentials.
+   */
+  @ReactMethod
+  fun loadDevicePreferences(promise: Promise) {
+    loadSecureValue(
+      DEVICE_PREFERENCES_KEY, DEVICE_PREFERENCES_KEY_ALIAS,
+      DEVICE_PREFERENCES_AAD, "device preferences",
+      "BUSHMESH_DEVICE_PREFERENCES_LOAD_FAILED", promise,
+    )
+  }
+
+  @ReactMethod
+  fun saveDevicePreferences(serialized: String, promise: Promise) {
+    saveSecureValue(
+      DEVICE_PREFERENCES_KEY, DEVICE_PREFERENCES_KEY_ALIAS,
+      DEVICE_PREFERENCES_AAD, "device preferences",
+      "BUSHMESH_DEVICE_PREFERENCES_SAVE_FAILED", serialized, promise,
+    )
+  }
+
+  @ReactMethod
+  fun clearDevicePreferences(promise: Promise) {
+    clearSecureValue(
+      DEVICE_PREFERENCES_KEY, "device preferences",
+      "BUSHMESH_DEVICE_PREFERENCES_CLEAR_FAILED", promise,
     )
   }
 
