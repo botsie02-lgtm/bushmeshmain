@@ -92,11 +92,14 @@ The exact TypeScript shapes live in ProposedSecurityV2EnrolmentPort:
    Return committedEpoch, rosterDigest and transactionRef. Distinct event IDs
    with conflicting commitments must fail, repeated identical IDs idempotent.
 3. wrapCommittedEpoch({transactionRef,recipient,sessionId,context}):
-   only after atomic commit; individually wraps epoch secret plus exact
-   transaction ID, group, roster digest, recipient fingerprint and epoch
-   through trusted Security v1-compatible direct session and canonical AAD.
-   All already-authorized peers remain on roster and receive the new epoch;
-   failed deliveries remain pending, without rolling back used keys.
+   only after atomic commit; individually wraps the current epoch secret
+   through an authenticated Security v1-compatible direct session and returns
+   a NEW signed BoundEpochDistributionV2. Its signed metadata binds the exact
+   transaction ID, group, roster digest, recipient fingerprint and epoch to
+   the full canonical encoding/hash of the frozen wrapped ciphertext.
+   The v1 WrappedGroupKeyDistribution alone is NOT sufficient proof of v2
+   enrolment. Existing authorized peers remain listed and receive the new
+   epoch; failed deliveries remain pending, without rolling back used keys.
 4. installCommittedEpoch({transactionId,convoyId,distribution,context}):
    verify authenticated issuer authority, trusted direct session, signed
    roster/transaction binding, new key and monotonic epoch; install atomically
@@ -158,14 +161,23 @@ without the protected direct container.
   kind="approval", proposal, credential, signature. Approval signature is
   over the canonical proposal transcript, and MUST be checked against the
   credential's subject, group, epoch and an anchored, non-revoked role.
+- BoundEpochDistributionV2:
+  kind="epoch-distribution", schema, version, transactionId, convoyId,
+  groupId, committedEpoch, rosterDigest, credentialId, sender identity,
+  recipient identity, wrappedKey (exact frozen v1 WrappedGroupKeyDistribution),
+  signature. The new authority signature MUST bind the canonical encoded
+  distribution bytes (including AEAD encrypted payload) by SHA-256 digest,
+  as well as every outer field. Parser checks are only structural; a v2
+  provider must verify signature, encrypted binding, current group epoch and
+  trusted direct session. A naked v1 key distribution cannot bypass this.
 - EnrolmentInstallAckV2:
   kind="install-ack", schema, version, transactionId, convoyId, groupId,
   recipient identity, committedEpoch, rosterDigest, issuedAt, signature.
   Signature MUST be confirmed by Security v2 after local install and must
   match the committed roster; merely parsing this object is insufficient.
 
-Strict JSON-object field allowlists are used in the prototype parser, maximum
-8192 UTF-8 bytes. Wire JSON is ONLY a proposal for control transport. The
+Strict JSON-object field allowlists (including the wrapped distribution)
+are used in the prototype parser, maximum 8192 UTF-8 bytes. Wire JSON is ONLY a proposal for control transport. The
 cryptographic signature input is a separate, deterministic, domain-separated
 field encoding, not JSON.stringify, to prevent key ordering ambiguity.
 

@@ -69,6 +69,28 @@ export type SignedEnrolmentApprovalV2 = {
   signature: string;
 };
 
+/**
+ * Security v2 must bind transaction/roster metadata to the v1 encrypted
+ * distribution, not pass an unmodified v1 envelope as proof of enrolment.
+ * The signature transcript must include a SHA-256 hash of EVERY byte of the
+ * frozen WrappedGroupKeyDistribution (canonical encoding) plus outer claims.
+ */
+export type BoundEpochDistributionV2 = {
+  kind: 'epoch-distribution';
+  schema: typeof ENROLMENT_V2_SCHEMA;
+  version: typeof ENROLMENT_V2_VERSION;
+  transactionId: string;
+  convoyId: string;
+  groupId: string;
+  committedEpoch: number;
+  rosterDigest: string;
+  credentialId: string;
+  sender: EnrolmentIdentity;
+  recipient: EnrolmentIdentity;
+  wrappedKey: WrappedGroupKeyDistribution;
+  signature: string;
+};
+
 export type EnrolmentInstallAckV2 = {
   kind: 'install-ack';
   schema: typeof ENROLMENT_V2_SCHEMA;
@@ -126,7 +148,7 @@ export interface ProposedSecurityV2EnrolmentPort {
     recipient: EnrolmentIdentity;
     sessionId: string;
     context: SecurityProtocolContext;
-  }): Promise<WrappedGroupKeyDistribution>;
+  }): Promise<BoundEpochDistributionV2>;
 
   /**
    * Authenticates and installs committed roster/key on a recipient with atomic
@@ -135,7 +157,7 @@ export interface ProposedSecurityV2EnrolmentPort {
   installCommittedEpoch(input: {
     transactionId: string;
     convoyId: string;
-    distribution: WrappedGroupKeyDistribution;
+    distribution: BoundEpochDistributionV2;
     context: SecurityProtocolContext;
   }): Promise<EnrolmentInstallAckV2>;
 
@@ -295,6 +317,56 @@ export function assertSignedApproval(value: unknown): asserts value is SignedEnr
   }
 }
 
+export function assertEpochDistribution(value: unknown): asserts value is BoundEpochDistributionV2 {
+  if (!isRecord(value) || !hasKeys(value, [
+    'kind', 'schema', 'version', 'transactionId', 'convoyId', 'groupId',
+    'committedEpoch', 'rosterDigest', 'credentialId', 'sender', 'recipient',
+    'wrappedKey', 'signature',
+  ]) || value.kind !== 'epoch-distribution' ||
+    value.schema !== ENROLMENT_V2_SCHEMA || value.version !== 2) {
+    throw new TypeError('Malformed proposed epoch distribution');
+  }
+  for (const name of ['transactionId', 'convoyId', 'groupId',
+    'rosterDigest', 'credentialId', 'signature']) {
+    assertReference(value[name], name);
+  }
+  assertEpoch(value.committedEpoch, 'committed epoch');
+  assertIdentity(value.sender);
+  assertIdentity(value.recipient);
+  const wrapped = value.wrappedKey;
+  if (!isRecord(wrapped) || !hasKeys(wrapped, [
+    'distributionVersion', 'groupId', 'epoch', 'senderDeviceId',
+    'senderFingerprint', 'recipientDeviceId', 'recipientFingerprint',
+    'securityVersion', 'protocolVersion', 'sessionId', 'encryptedPayload',
+  ]) || wrapped.distributionVersion !== 1 ||
+    wrapped.groupId !== value.groupId ||
+    wrapped.epoch !== value.committedEpoch ||
+    wrapped.senderDeviceId !== value.sender.deviceId ||
+    wrapped.senderFingerprint !== value.sender.fingerprint ||
+    wrapped.recipientDeviceId !== value.recipient.deviceId ||
+    wrapped.recipientFingerprint !== value.recipient.fingerprint) {
+    throw new TypeError('Distribution binding does not match its wrapped key');
+  }
+  assertEpoch(wrapped.securityVersion, 'security version');
+  assertEpoch(wrapped.protocolVersion, 'protocol version');
+  assertReference(wrapped.sessionId, 'wrapped direct session');
+  const envelope = wrapped.encryptedPayload;
+  if (!isRecord(envelope) || !hasKeys(envelope, [
+    'securityVersion', 'protocolVersion', 'sessionId', 'keyEpoch', 'counter', 'ciphertext',
+  ]) || envelope.securityVersion !== wrapped.securityVersion ||
+    envelope.protocolVersion !== wrapped.protocolVersion ||
+    envelope.sessionId !== wrapped.sessionId) {
+    throw new TypeError('Invalid encrypted key distribution envelope');
+  }
+  assertEpoch(envelope.keyEpoch, 'encrypted session epoch');
+  assertReference(envelope.sessionId, 'encrypted session ID');
+  assertReference(envelope.counter, 'encrypted counter');
+  if (typeof envelope.ciphertext !== 'string' ||
+      !/^[A-Za-z0-9_-]{16,}$/.test(envelope.ciphertext)) {
+    throw new TypeError('Invalid encrypted key distribution ciphertext');
+  }
+}
+
 export function assertInstallAck(value: unknown): asserts value is EnrolmentInstallAckV2 {
   if (!isRecord(value) || !hasKeys(value, [
     'kind', 'schema', 'version', 'transactionId', 'convoyId', 'groupId',
@@ -312,7 +384,7 @@ export function assertInstallAck(value: unknown): asserts value is EnrolmentInst
 }
 
 /** Strict wire parser for PROPOSED control messages; never grants rights. */
-export function decodeProposedEnrolmentControl(raw: Uint8Array): SignedEnrolmentApprovalV2 | EnrolmentInstallAckV2 {
+export function decodeProposedEnrolmentControl(raw: Uint8Array): SignedEnrolmentApprovalV2 | EnrolmentInstallAckV2 | BoundEpochDistributionV2 {
   if (raw.length === 0 || raw.length > ENROLMENT_MAX_WIRE_BYTES) {
     throw new TypeError('Invalid enrolment control length');
   }
@@ -329,14 +401,20 @@ export function decodeProposedEnrolmentControl(raw: Uint8Array): SignedEnrolment
     assertSignedApproval(parsed);
     return parsed;
   }
+  if (parsed.kind === 'epoch-distribution') {
+    assertEpochDistribution(parsed);
+    return parsed;
+  }
   assertInstallAck(parsed);
   return parsed;
 }
 
 /** Deterministic field order for serialised proposals, not a signature check. */
-export function encodeProposedEnrolmentControl(value: SignedEnrolmentApprovalV2 | EnrolmentInstallAckV2): Uint8Array {
+export function encodeProposedEnrolmentControl(value: SignedEnrolmentApprovalV2 | EnrolmentInstallAckV2 | BoundEpochDistributionV2): Uint8Array {
   if (value.kind === 'approval') {
     assertSignedApproval(value);
+  } else if (value.kind === 'epoch-distribution') {
+    assertEpochDistribution(value);
   } else {
     assertInstallAck(value);
   }

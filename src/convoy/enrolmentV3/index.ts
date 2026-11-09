@@ -7,7 +7,7 @@ export {
 export type {
   EnrolmentIdentity, EnrolmentRole, RoleCredentialClaimsV2,
   SignedRoleCredentialV2, EnrolmentProposalV2, SignedEnrolmentApprovalV2,
-  EnrolmentInstallAckV2, ProposedSecurityV2EnrolmentPort,
+  EnrolmentInstallAckV2, BoundEpochDistributionV2, ProposedSecurityV2EnrolmentPort,
 } from './contract';
 export {
   roleCredentialTranscript, approvalTranscript,
