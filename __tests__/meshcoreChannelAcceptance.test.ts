@@ -64,6 +64,7 @@ function nativeHarness(initial: Reply) {
       writes.push(bytes);
       if (bytes[0] === 0x01) emit(makeSelfInfo());
       else if (bytes[0] === 0x16) emit(makeDeviceInfo());
+      else if (bytes[0] === 0x0a) emit([0x0a]);
       else if (bytes[0] === 0x03) replyFrames(reply).forEach(emit);
     }),
   };
@@ -94,6 +95,7 @@ function jsGattHarness(initial: Reply) {
       async (_id: string, _service: string, _rx: string, data: string) => {
         const bytes = Array.from(Buffer.from(data, 'base64'));
         writes.push(bytes);
+        if (bytes[0] === 0x0a) emit([0x0a]);
         if (bytes[0] === 0x03) replyFrames(reply).forEach(emit);
         return {};
       },
