@@ -9,6 +9,7 @@ import {
 
 import {ScreenMountGate} from '../ScreenMountGate';
 import {useActiveOperationalConvoy} from '../activeContext/ActiveOperationalConvoyContext';
+import {useViewedConversation} from '../activeContext/ViewedConversationContext';
 import {CarMessagingStatusBanner} from '../../components/CarMessagingStatusBanner';
 import {ConvoyFormationBanner} from '../../components/ConvoyFormationBanner';
 import {ConvoyFormationGapBanner} from '../../components/ConvoyFormationGapBanner';
@@ -273,6 +274,7 @@ export function AppShell(): React.JSX.Element {
   const [carrierProfile, setCarrierProfile] =
     useState<ActiveConvoyCarrierProfile | null>(null);
   const {activeConvoy} = useActiveOperationalConvoy();
+  const {viewedConversation} = useViewedConversation();
 
   const openConvoy = () => {
     setConvoyView('select');
@@ -344,6 +346,11 @@ export function AppShell(): React.JSX.Element {
               <Text style={styles.slimText}>
                 Radio traffic uses the selected MeshCore carrier channel, not
                 necessarily the active authorised convoy.
+              </Text>
+              <Text style={styles.slimText}>
+                {viewedConversation
+                  ? 'Explicit conversation: ' + viewedConversation.kind
+                  : 'Conversation router not yet connected; legacy Radio view follows the carrier.'}
               </Text>
             </View>
             <SecureDataStatusBanner kind="messages" />
