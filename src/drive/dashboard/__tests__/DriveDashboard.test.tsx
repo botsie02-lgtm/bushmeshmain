@@ -124,6 +124,36 @@ test('critical radio STOP / HELP require a second explicit confirmation', async 
   await act(async () => {tree.unmount();});
 });
 
+test('pending critical confirmation is cleared on convoy authorisation change', async () => {
+  const item = create(model(true));
+  let tree!: TestRenderer.ReactTestRenderer;
+  await act(async () => {tree = TestRenderer.create(item.element);});
+  await act(async () => {press(tree, 'STOP');});
+  expect(JSON.stringify(tree.toJSON())).toContain('Confirm STOP radio');
+
+  await act(async () => {
+    tree.update(<DriveDashboard
+      model={model(false)}
+      packCatalog={[]}
+      onOpenMap={item.onOpenMap}
+      onOpenConvoy={item.onOpenConvoy}
+      onQuickAction={item.onQuickAction}
+    />);
+  });
+  await act(async () => {
+    tree.update(<DriveDashboard
+      model={model(true)}
+      packCatalog={[]}
+      onOpenMap={item.onOpenMap}
+      onOpenConvoy={item.onOpenConvoy}
+      onQuickAction={item.onQuickAction}
+    />);
+  });
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Confirm STOP radio');
+  expect(item.onQuickAction).not.toHaveBeenCalled();
+  await act(async () => {tree.unmount();});
+});
+
 test('map control opens host and inline map only receives explicitly scoped members', async () => {
   const item = create(model());
   let tree!: TestRenderer.ReactTestRenderer;
