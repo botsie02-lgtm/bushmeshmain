@@ -3,6 +3,8 @@ import type {DeviceIdentity} from '../../security/types';
 import {encodeFields, fromBase64Url, toBase64Url, utf8} from '../../security/bytes';
 import {
   RoleCredentialClaimsV2, SignedRoleCredentialV2,
+  EnrolmentProposalV2, SignedEnrolmentApprovalV2,
+  assertEnrolmentProposal, assertSignedApproval,
   assertRoleCredentialClaims, assertSignedRoleCredential,
 } from './contract';
 
@@ -37,16 +39,8 @@ export function roleCredentialTranscript(claims: RoleCredentialClaimsV2): Uint8A
   ]);
 }
 
-export function approvalTranscript(proposal: {
-  schema: string; version: number; operation: string; transactionId: string;
-  requestId: string; convoyId: string; groupId: string;
-  requester: {deviceId: string; fingerprint: string; keyEpoch: number};
-  approver: {deviceId: string; fingerprint: string; keyEpoch: number};
-  expectedEpoch: number; nextEpoch: number;
-  rosterDigestBefore: string; rosterDigestAfter: string;
-  credentialId: string; issuedAt: number; expiresAt: number;
-}): Uint8Array {
-  // The caller must validate the proposal before signing/verifying.
+export function approvalTranscript(proposal: EnrolmentProposalV2): Uint8Array {
+  assertEnrolmentProposal(proposal);
   return encodeFields('bushmesh-security-v2-enrolment-approval-v1', [
     utf8(proposal.schema), utf8(String(proposal.version)), utf8(proposal.operation),
     utf8(proposal.transactionId), utf8(proposal.requestId),
@@ -121,4 +115,64 @@ export async function inspectRoleCredentialSignature(
   }
   return {result: 'valid-signature-only', issuerDeviceId: issuerIdentity.deviceId,
     credentialId: credential.credentialId};
+}
+
+/**
+ * Creates a SIGNED CLAIM, not an executable join approval. Frozen Security v1
+ * does not know the authority anchor or role revocation chain.
+ */
+export async function signProposedApproval(
+  signer: Pick<IdentityManager, 'current' | 'sign'>,
+  proposal: EnrolmentProposalV2,
+  credential: SignedRoleCredentialV2,
+): Promise<SignedEnrolmentApprovalV2> {
+  assertEnrolmentProposal(proposal);
+  assertSignedRoleCredential(credential);
+  const approver = await signer.current();
+  if (approver.deviceId !== proposal.approver.deviceId ||
+      approver.fingerprint !== proposal.approver.fingerprint ||
+      approver.keyEpoch !== proposal.approver.keyEpoch ||
+      proposal.groupId !== credential.groupId ||
+      proposal.convoyId !== credential.convoyId ||
+      proposal.credentialId !== credential.credentialId ||
+      proposal.approver.deviceId !== credential.subject.deviceId ||
+      proposal.approver.fingerprint !== credential.subject.fingerprint ||
+      proposal.approver.keyEpoch !== credential.subject.keyEpoch ||
+      proposal.expectedEpoch !== credential.groupEpoch) {
+    throw new Error('Signing identity and credential do not match the proposed approval');
+  }
+  const signature = await signer.sign(approvalTranscript(proposal));
+  return {kind: 'approval', proposal, credential, signature: toBase64Url(signature)};
+}
+
+/** Cryptographic signature inspection ONLY, never an owner/admin permission. */
+export async function inspectProposedApprovalSignatures(
+  verifier: Pick<IdentityManager, 'verify'>,
+  approval: SignedEnrolmentApprovalV2,
+  credentialIssuer: DeviceIdentity,
+  approvalSigner: DeviceIdentity,
+  atMs: number,
+  expectedGroupEpoch: number,
+): Promise<'signatures-valid-only'> {
+  assertSignedApproval(approval);
+  const {proposal, credential, signature} = approval;
+  if (proposal.expectedEpoch !== expectedGroupEpoch ||
+      !Number.isSafeInteger(atMs) ||
+      proposal.issuedAt > atMs + 5000 || proposal.expiresAt <= atMs ||
+      credential.expiresAt <= atMs ||
+      approvalSigner.deviceId !== proposal.approver.deviceId ||
+      approvalSigner.fingerprint !== proposal.approver.fingerprint ||
+      approvalSigner.keyEpoch !== proposal.approver.keyEpoch) {
+    throw new Error('Proposed approval is stale or signer identity differs');
+  }
+  await inspectRoleCredentialSignature(
+    verifier, credential, credentialIssuer, atMs, proposal.groupId, expectedGroupEpoch,
+  );
+  const valid = await verifier.verify(
+    approvalSigner, approvalTranscript(proposal), fromBase64Url(signature, 64),
+  );
+  if (!valid) {
+    throw new Error('Proposed approval signature invalid');
+  }
+  return 'signatures-valid-only';
 }

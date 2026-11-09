@@ -150,30 +150,42 @@ export class SecureJoinCompatibilityV3 {
     if (!entry || !verified || !leader) {
       return this.blockedView(requestId);
     }
-    const trusted = await this.security.assertTrustedPeer(
+    const trustedRecord = await this.security.assertTrustedPeer(
       request.deviceId, request.fingerprint,
-    ).then(() => true, () => false);
+    ).catch(() => null);
+    const trusted = trustedRecord !== null;
     const journal = await this.journal.load(identity.deviceId);
     let observation = journal.records.find(item => item.requestId === requestId);
     const expiry = request.createdAt + 600000;
     const clock = this.now();
-    if (!observation) {
+    if (!observation && !trustedRecord) {
+      return this.blockedView(requestId);
+    }
+    if (!observation && trustedRecord) {
       observation = newJoinObservation({
         requestId, convoyId: entry.convoyId, groupId: entry.groupId,
-        requester: {deviceId: request.deviceId, fingerprint: request.fingerprint, keyEpoch: 1},
+        requester: {deviceId: request.deviceId, fingerprint: request.fingerprint,
+          keyEpoch: trustedRecord.identity.keyEpoch},
         expectedEpoch: verified.group.currentEpoch,
         createdAt: request.createdAt,
         expiresAt: expiry,
       });
     }
-    // Request ID reuse with modified identity, group or epoch never revives a
-    // stored plan. Identity keyEpoch here is a placeholder for diagnostics;
-    // no Security v2 signature proof is derived from it.
+    // Request ID reuse, trust revocation or key epoch rotation never revives a
+    // stored plan. No identity epoch is invented for diagnostics.
     if (observation.groupId !== entry.groupId ||
         observation.requester.deviceId !== request.deviceId ||
         observation.requester.fingerprint !== request.fingerprint ||
         observation.convoyId !== request.convoyId) {
       return this.blockedView(requestId);
+    }
+    if (trustedRecord && trustedRecord.identity.keyEpoch !== observation.requester.keyEpoch &&
+        !['rejected', 'expired', 'blocked', 'needs-reconciliation'].includes(observation.phase)) {
+      observation = observeJoinEvent(observation, {
+        id: 'identity-rotated:' + requestId,
+        kind: 'invalidate', atMs: Math.max(clock, observation.updatedAt),
+        reason: 'identity-rotation',
+      });
     }
     if (!trusted && !['rejected', 'expired', 'blocked', 'needs-reconciliation'].includes(observation.phase)) {
       observation = observeJoinEvent(observation, {
