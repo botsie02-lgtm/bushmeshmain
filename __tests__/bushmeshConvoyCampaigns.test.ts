@@ -1,5 +1,3 @@
-import {mkdirSync, writeFileSync} from 'fs';
-
 import {encodeBushMeshConvoyWire} from '../src/bushmesh/protocol/public';
 
 import {
@@ -34,18 +32,12 @@ describe('frozen Protocol v1 multi-node convoy regression campaigns', () => {
   };
 
   afterAll(() => {
-    // On successful and failed runs, preserve deterministic, reviewable
-    // delivery/queue/airtime/freshness regression snapshots.
-    const destination = 'artifacts/network-simulator';
-    mkdirSync(destination, {recursive: true});
-    writeFileSync(
-      destination + '/convoy-regressions.json',
-      JSON.stringify({
-        protocolSha: '67327e641b169ec94600a7b07188946058c067b7',
-        reports: regressionReports,
-      }, null, 2) + '\n',
-      'utf8',
-    );
+    // Keep replay diagnostics in the test's in-memory report. Failure traces
+    // already include deterministic seeds; no Node filesystem writes occur.
+    expect(regressionReports.length).toBeGreaterThan(0);
+    expect(regressionReports.every(entry =>
+      (entry as {failures: string[]}).failures.length === 0,
+    )).toBe(true);
   });
 
   it.each([2, 5, 12, 20])('delivers authenticated positions across %i virtual vehicles', async size => {
