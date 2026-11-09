@@ -51,6 +51,7 @@ export function ConnectedFieldReadinessDashboard({
   const {
     mapPackInstallSupported,
     mapPersistenceStatus,
+    coverage,
   } = useOfflineMaps();
   const {latestFix} = useLocationSession();
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -65,6 +66,7 @@ export function ConnectedFieldReadinessDashboard({
     packCatalog: dashboard.packCatalog,
     mapPackInstallSupported,
     mapPersistenceStatus,
+    coverage,
     imageryEvidence,
     speedKmh: latestFix?.speedKmh ?? null,
     nowMs,
