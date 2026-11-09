@@ -173,7 +173,7 @@ export function RadioConnectionProvider({
       createPrivateChannel: input => service.createPrivateChannel(input),
       joinPrivateChannel: input => service.joinPrivateChannel(input),
       clearChannel: index => service.clearChannel(index),
-      revealChannelSecret: index => service.revealChannelSecret(index),
+      revealChannelSecret: (index, name) => service.revealChannelSecret(index, name),
       createConvoy: input => service.createConvoy(input),
       joinConvoy: input => service.joinConvoy(input),
       sendAppStart: () => service.sendAppStart(),
