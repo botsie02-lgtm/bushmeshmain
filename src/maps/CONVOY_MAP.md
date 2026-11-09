@@ -43,18 +43,32 @@ member positions, antimeridian wrapping, an explicit regional pack selector,
 tile error/empty states, and offline-only raster tile rendering **when a tile
 source exists**. The map labels itself "position plot only" otherwise.
 
-The already-working `BushMeshMapPacks` Android module downloads and
-SHA-256-verifies PMTiles/MBTiles archives and persists catalog metadata. **It
-does not read tiles from those archives.** No Android code or package ownership
-was changed here. The optional `nativeOfflineTileSource` expects the future
-Android-owned `NativeModules.BushMeshOfflineTiles.readTileBase64(packId,
-manifestVersion, format, z, x, y)` method returning
-`{mimeType: 'image/png' | 'image/jpeg' | 'image/webp', base64: string} | null`.
-The Android worker must implement PMTiles and MBTiles decoding, supported
-compression, tileset metadata/projection validation, local file isolation,
-memory-bounded reads, and lifecycle handling. Until then, no basemap is
-rendered, including after downloading an archive. This limitation is surfaced
-to the driver, never hidden behind an online or simulated map.
+The native `BushMeshOfflineTiles` module implements
+`readTileBase64(packId, manifestVersion, format, z, x, y)` and returns a
+`{mimeType: 'image/png' | 'image/jpeg' | 'image/webp', base64: string} | null`
+object. It reads real raster imagery directly from the already installed,
+SHA-256-verified app-private archive. It does not download any tiles or accept
+arbitrary file paths, and it rejects unsupported/corrupt/absent tiles.
+
+Supported archives: **MBTiles** with SQLite metadata `format` of PNG/JPEG/WebP,
+TMS Y-coordinate reversal, or **PMTiles v3** with XYZ Hilbert indexing,
+root/leaf varint directories, and internal/tile compression **none** or
+**gzip**. PMTiles Brotli/Zstd, vector/AVIF raster formats and unusual tile sizes
+are **not** supported; a verified archive with unsupported content still yields
+an unavailable-tile state, never invented basemap imagery. Individual image
+blobs and decompression output are limited to 1 MiB; directory output is limited
+to 2 MiB; file handles are opened and closed per request. Two worker threads
+with a bounded queue serve native requests.
+
+A native-only verification receipt is created by `BushMeshMapPacks` after a
+successful SHA-256 verification (download or explicit `verifyPack`). The reader
+resolves only `filesDir/bushmesh-map-packs/<id>/pack.<format>` and checks native
+receipt ID, version, format, size and modified time; the full file SHA-256 is
+checked on first tile access each process and after a file-stat change. Packs
+installed before this feature must be reverified once (the existing
+`OfflineMapProvider` restart flow performs this on Android). Removing a pack
+invalidates the receipt. The receipt is not a substitute for the secure
+catalog's metadata or pack download manifest.
 
 **Security:** native should enforce app-private pack paths and revalidate
 requested manifest/version/format against its own verified metadata, not
@@ -83,3 +97,41 @@ download interruption/storage-full tests still require an Android runner.
 The App Shell worker should embed `ConvoyMap` in Drive, supplying the explicit
 authorised active-convoy member projection. Never let the map derive active
 membership from radio discovery.
+
+
+## Airplane-mode acceptance test (physical Android device)
+
+1. Build and install the feature branch's APK. Confirm `BushMeshOfflineTiles`
+   is registered and the app launches. You will need a trustworthy *raster*
+   regional MBTiles (metadata `format=png|jpg|webp`) or PMTiles v3 (raster
+   type PNG/JPEG/WebP, internal+tile compression none/gzip) with accurate bounds,
+   zoom range, length, SHA-256, source URL, and required attribution in its
+   V1 manifest. Avoid vector-only PMTiles packs.
+2. While online, provision a **trusted** manifest into `OfflineMapProvider`
+   via `registerMapPackManifest` (or a trusted catalog integration) and
+   explicitly choose **Download**. The base branch's pack-management panel
+   lists registered packs but does not itself discover or register new regions:
+   a prepared trusted manifest/test integration is a prerequisite. Wait for
+   SHA-256 verification.
+   Use **Verify** in map-pack management to establish the native receipt.
+3. Open Drive / Map, choose the verified region. With phone GPS on and the
+   camera centered **inside the downloaded coverage**, check that actual
+   offline basemap details (roads/terrain) appear behind the self marker.
+   Status must advance to `OFFLINE BASEMAP READY` or `PARTIAL OFFLINE
+   BASEMAP` only after React Native Image `onLoad` succeeds.
+4. Enable **Airplane mode**, disable Wi-Fi and cellular data, and leave
+   location enabled. Force-close and relaunch BushMesh (the encrypted map
+   catalog is restored and the native archive SHA-256 rechecked). Confirm
+   imagery remains visible; pan/zoom within the downloaded region; switch
+   NORTH/HEADING and FOLLOW/CONVOY. No network should be needed.
+5. Move beyond pack bounds or zoom into a level without tiles; expect
+   unavailable tiles, not online basemap substitution. Stop GPS: last-known
+   fix must be marked stale; convoy members must still be explicitly
+   authorised. Verify a non-member public MeshCore node is **not** plotted.
+6. Corrupt/delete the local archive using a debug-only method, or remove it
+   from pack management; relaunch and verify ready state is revoked and no
+   map imagery is displayed. Exercise cancellation, invalid SHA and low disk
+   space separately with a disposable test pack.
+
+The existing UI does not auto-create map sources: without an actual downloaded
+raster pack and a suitable manifest, an offline basemap cannot be demonstrated.

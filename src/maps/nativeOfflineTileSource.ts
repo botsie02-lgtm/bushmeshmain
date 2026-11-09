@@ -2,12 +2,10 @@ import {NativeModules, Platform} from 'react-native';
 import type {ConvoyMapTileSource} from './ConvoyMap';
 
 /**
- * Optional native archive reader contract.
+ * Android native archive tile reader contract.
  *
- * Existing BushMeshMapPacks downloads/verifies PMTiles or MBTiles archives but
- * does not extract tiles. This adapter deliberately reports unavailable until
- * a native read-only tile bridge is installed by the Android owner. It never
- * falls back to network tiles or treats an archive URI as an image.
+ * BushMeshOfflineTiles reads real raster images only from archives previously
+ * SHA-256 verified by BushMeshMapPacks. No arbitrary path or online fallback.
  */
 type BushMeshOfflineTilesModule = {
   readTileBase64: (
@@ -44,6 +42,7 @@ export const nativeOfflineTileSource: ConvoyMapTileSource = {
     if (
       !tile ||
       !['image/png', 'image/jpeg', 'image/webp'].includes(tile.mimeType) ||
+      tile.base64.length > 1_400_000 ||
       !/^[a-z0-9+/]+={0,2}$/i.test(tile.base64)
     ) {
       return null;

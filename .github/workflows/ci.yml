@@ -71,3 +71,7 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+
+      - name: Native raster reader JVM fixtures
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
