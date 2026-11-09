@@ -23,7 +23,8 @@ native GPS, Security v1, Protocol v1, or map rendering.
   dashboard reports an authorised, verified roster; no public contact counts.
 - Verified-alert priority for STOP/HELP. Legacy raw carrier messages are shown
   separately as recent MeshCore traffic, never as authenticated messages.
-- Map archive inventory and installer readiness, plus an explicit message
+- Map archive inventory, actual covered/required trip-point counts from
+  OfflineMapContext.coverage, and installer readiness, plus an explicit message
   when raster imagery has not really been observed as loaded.
   A registered remote pack is installable only when the device has network
   connectivity; the dashboard never claims a live online download is available
@@ -54,8 +55,9 @@ BLE calls, select carrier channels, or modify Background Radio ownership.
 
 Alternative: drive the pure FieldReadinessDashboard component with
 deriveFieldReadiness(input). The pure input includes a trusted DriveDashboardModel
-from deriveDriveDashboard, installed-pack catalog, map persistence/install
-availability, optional measured speed, nowMs and optional imagery evidence.
+from deriveDriveDashboard, installed-pack catalog, actual trip-point coverage
+counts (optional, never invented), map persistence/install availability,
+optional measured speed, nowMs and optional imagery evidence.
 
 ## Trust, readiness and quick actions
 
