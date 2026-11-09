@@ -4,7 +4,11 @@ import ReactTestRenderer from 'react-test-renderer';
 import {AppShell, MAIN_TABS} from '../src/app/shell/AppShell';
 
 jest.mock('../src/state/BushMeshContext', () => ({
-  useBushMesh: () => ({connectionStatus: 'Disconnected'}),
+  useBushMesh: () => ({
+    connectionStatus: 'Connected',
+    activeChannel: {channelIndex: '0', channelName: 'Public carrier'},
+    contacts: [{name: 'UNTRUSTED PUBLIC DEVICE'}],
+  }),
 }));
 jest.mock('../src/app/activeContext/ViewedConversationContext', () => ({
   useViewedConversation: () => ({viewedConversation: null, setViewedConversation: jest.fn()}),
@@ -71,6 +75,8 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
   expect(tabs[0].props.accessibilityState.selected).toBe(true);
   expect(visibleText(renderer)).toContain('No active convoy');
   expect(visibleText(renderer)).toContain('Choose a convoy');
+  expect(visibleText(renderer)).toContain('Carrier: Public carrier');
+  expect(visibleText(renderer)).not.toContain('UNTRUSTED PUBLIC DEVICE');
   expect(visibleText(renderer)).not.toContain('Convoy map');
 
   await ReactTestRenderer.act(() => {
@@ -90,6 +96,15 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
     renderer.root.findByProps({accessibilityLabel: 'GPS and location'}).props.onPress();
   });
   expect(visibleText(renderer)).toContain('GPS settings');
+
+  await ReactTestRenderer.act(() => {
+    renderer.root.findByProps({accessibilityLabel: 'Back to Device'}).props.onPress();
+  });
+  await ReactTestRenderer.act(() => {
+    renderer.root.findByProps({accessibilityLabel: 'Offline map packs'}).props.onPress();
+  });
+  expect(visibleText(renderer)).toContain('Offline map packs');
+  expect(renderer.root.findAllByProps({accessibilityRole: 'tab'})[4].props.accessibilityState.selected).toBe(true);
 
   await ReactTestRenderer.act(() => {renderer.unmount();});
 });
