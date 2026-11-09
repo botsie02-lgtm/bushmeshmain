@@ -336,7 +336,18 @@ export function deriveFieldReadiness(input: FieldReadinessInput): FieldReadiness
   const maps = mapCapability(input);
   const convoy = convoyCapability(dashboard);
   const capabilities = [radio, gps, maps, convoy];
-  const allChecksReady = capabilities.every(item => item.state === 'connected');
+  const trip = getTripReadiness({
+    radioConnected: radio.state === 'connected',
+    radioTransportReady: radio.state === 'connected',
+    radioIdentityReady: radio.state === 'connected',
+    channelSelected: dashboard.actionAvailability.channelIndex !== null,
+    localPositionReady: gps.state === 'connected',
+    convoyMembersKnown: convoy.remoteCount !== null,
+    offlineMapReady: maps.state === 'connected',
+    navigationRequired: true,
+  });
+  const allChecksReady = capabilities.every(item => item.state === 'connected') &&
+    trip.canStartConvoy && trip.canNavigateOffline;
   const moving = typeof input.speedKmh === 'number' &&
     Number.isFinite(input.speedKmh) && input.speedKmh > 5 &&
     gps.state === 'connected';
