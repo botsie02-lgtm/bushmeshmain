@@ -13,7 +13,8 @@
     "src/bushmesh/runtime/public.ts",
     "src/bushmesh/testing/networkSimulator/**/*.ts",
     "__tests__/bushmeshNetworkSimulator.test.ts",
-    "__tests__/bushmeshConvoyCampaigns.test.ts"
+    "__tests__/bushmeshConvoyCampaigns.test.ts",
+    "__tests__/bushmeshWave4Enrolment.test.ts"
   ],
   "exclude": ["**/node_modules", "**/Pods"]
 }
