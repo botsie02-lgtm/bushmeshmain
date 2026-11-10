@@ -1,0 +1,54 @@
+name: Convoy enrolment UI v1 validation
+
+on:
+  push:
+    branches:
+      - feature/convoy-enrolment-ui-v1
+  workflow_dispatch:
+
+concurrency:
+  group: convoy-enrolment-ui-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  javascript:
+    name: Jest, TypeScript, ESLint
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Jest
+        run: npm test -- --runInBand
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npm run lint
+
+  android:
+    name: Android assembleDebug
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Install dependencies
+        run: npm ci
+      - name: Android compile
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
