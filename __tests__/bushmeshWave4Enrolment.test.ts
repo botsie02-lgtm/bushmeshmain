@@ -13,6 +13,7 @@ import {
   wave4TwentyVehicleSplitCongestion,
   wave4MultiJoinFixedSeedSoak,
   wave4InjectedProviderDenial,
+  wave4DroppedPositionNoStaleSuccess,
   Wave4ScenarioResult,
 } from '../src/bushmesh/testing/networkSimulator';
 
@@ -136,6 +137,12 @@ describe('Wave 4 Security v2 enrolment boundary — deterministic fake decision 
     expect(a.security).toEqual(b.security);
     expect(a.trace).toEqual(b.trace);
     expect(a.failureReport).toBeNull();
+  });
+
+  it('does not misreport a dropped protected position as accepted using the last inbound result', async () => {
+    const result = checked(await wave4DroppedPositionNoStaleSuccess());
+    expect(result.security.metrics.rejectedUnauthorizedPositions).toBe(0);
+    expect(result.security.transport.delivery.failed).toBeGreaterThanOrEqual(1);
   });
 
   it('honours an injected external decision-port refusal without claiming a Security v2 provider', async () => {
