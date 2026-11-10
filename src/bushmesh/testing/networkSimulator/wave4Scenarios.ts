@@ -16,6 +16,7 @@ export type Wave4ScenarioResult = {
   failures: string[];
   security: Wave4SecurityReport;
   trace: ReturnType<Wave4EnrolmentHarness['report']>['events'];
+  carrierTrace: Wave4EnrolmentHarness['fleet']['network']['trace'];
   failureReport: string | null;
 };
 
@@ -25,6 +26,7 @@ function final(name: string, harness: Wave4EnrolmentHarness, failures: string[])
     scenario: name, seed: report.seed, nodeCount: report.nodeCount,
     assurance: report.assurance, passed: failures.length === 0,
     failures, security: report, trace: report.events,
+    carrierTrace: harness.fleet.network.trace.map(event => ({...event})),
     failureReport: failures.length ? harness.failureReport(failures.join('; ')) : null,
   };
 }
@@ -407,4 +409,41 @@ export async function wave4DroppedPositionNoStaleSuccess(seed = 0x440112): Promi
     report.metrics.rejectedUnauthorizedPositions === 0,
     'carrier loss mislabeled as a Security rejection or mutated position state', failures);
   return final('wave4-dropped-position-does-not-reuse-last-inbound', h, failures);
+}
+
+/** A failed fake receipt verification cannot be counted as convergence. */
+export async function wave4RecipientReceiptMustVerify(seed = 0x440113): Promise<Wave4ScenarioResult> {
+  let receiptsVerified = false;
+  const probe: Wave4SecurityDecisionProbe = {
+    assurance: 'external-provider-unverified',
+    authenticateApproval: async () => true,
+    verifyInstalledReceipt: async () => receiptsVerified,
+  };
+  const h = await new Wave4EnrolmentHarness(seed, 5, probe).initialize();
+  const failures: string[] = [];
+  h.request(3, 'rq-receipt-refused');
+  check(await h.approve(approval(3, 'rq-receipt-refused', 'tx-receipt-refused', 1)) &&
+    h.commit('tx-receipt-refused'), 'injected probe preparation failed', failures);
+  check(await h.distribute('tx-receipt-refused', 2) &&
+    await h.distribute('tx-receipt-refused', 3),
+    'recipient install carrier probe did not arrive', failures);
+  check(!await h.acknowledge('tx-receipt-refused', 1) &&
+    !await h.acknowledge('tx-receipt-refused', 2) &&
+    !h.ackConverged(),
+    'invalid fake acknowledgement was counted as verified', failures);
+  const refused = h.report();
+  check(refused.epochDisagreement === 0 &&
+    refused.transactions[0].acknowledgedRecipients.length === 0,
+    'receipt refusal did not preserve pending installation state', failures);
+  receiptsVerified = true;
+  check(await h.acknowledge('tx-receipt-refused', 1) &&
+    await h.acknowledge('tx-receipt-refused', 2) &&
+    await h.acknowledge('tx-receipt-refused', 3),
+    'later provider approval did not converge', failures);
+  const report = h.report();
+  check(report.ackConverged &&
+    report.metrics.rejectedInstallAcks === 2 &&
+    report.metrics.verifiedInstallAcks === 3,
+    'verified receipt counts are incorrect', failures);
+  return final('wave4-invalid-receipts-cannot-fake-convergence', h, failures);
 }
