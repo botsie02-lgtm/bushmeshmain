@@ -14,6 +14,7 @@ on:
       - 'tsconfig.network-simulator-v1.json'
       - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
       - 'docs/NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md'
+      - 'docs/NETWORK_SIMULATOR_WAVE4_SECURITY_V2_SHADOW_TESTS.md'
       - '.github/workflows/network-simulator-v1.yml'
   pull_request:
     paths:
@@ -26,6 +27,7 @@ on:
       - 'tsconfig.network-simulator-v1.json'
       - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
       - 'docs/NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md'
+      - 'docs/NETWORK_SIMULATOR_WAVE4_SECURITY_V2_SHADOW_TESTS.md'
       - '.github/workflows/network-simulator-v1.yml'
 
 jobs:
