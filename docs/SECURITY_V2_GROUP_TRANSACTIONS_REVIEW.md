@@ -180,6 +180,32 @@ Its pointer swap and separated high-water map are **simulations**. It can
 inject failures before/after commit/install and ordinary metadata rollback,
 not prove Android fsync, keychain/Keystore semantics or power cut tolerance.
 
+## Migration notes — never silently upgrade V1 membership
+
+A V1 `GroupRecord`, MeshCore PSK, contact, signed draft role claim, or
+`ConvoyMembershipSnapshot` is **not** an independently anchored V2 genesis
+or transactional-epoch receipt. Migration is a future explicitly authorized
+security ceremony, not an automatic database conversion:
+
+1. Verify the current V1 identity/trust records and independently confirm
+   the designated convoy owner and all intended fingerprints.
+2. Provision a fresh signed V2 owner genesis (or a separately reviewed
+   versioned migration certificate) and protect its pinned digest on each
+   member. V1 `leader` alone does not prove V2 `owner`.
+3. Generate a fresh V2 epoch secret under the native atomic provider.
+   Never copy a V1 group root key or reset a nonce/epoch counter to bootstrap
+   V2. Keep V1 and V2 persistence namespaced and their authority independent.
+4. Re-enrol each existing intended member through authenticated, signed
+   V2 transactions and verified installation; treat offline devices as
+   unreconciled, not automatically authorized.
+5. Define a separately reviewed handover and version pin preventing silent
+   fallback from V2 authorization to V1 contact/PSK/application grants.
+   Until all platform and policy gates pass, remain on existing safe Wave 3
+   behaviour and leave Security v2 disabled.
+
+V2 state currently has **no data-plane group-message adapter** and must not
+be substituted for a V1 `GroupRecord` in any live service.
+
 ## Threat model and fail-closed cases
 
 Adversary controls RF/BLE delivery order and can forge invitations, signed
