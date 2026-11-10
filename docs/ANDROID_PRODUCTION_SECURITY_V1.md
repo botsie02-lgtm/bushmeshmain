@@ -25,7 +25,7 @@ KeyMint v2 introduced Curve25519 in Android 13. AOSP KeyMint specifies TEE suppo
 
 ## Source, boundaries and registration
 
-- android/app/src/main/java/com/bushmeshmain/security/BushMeshSecurityCore.kt — AES-GCM sealed SQLite storage in noBackupFilesDir; durable nonce, replay, consumed handshake IDs; typed group-epoch CAS, integrity failure handling.
+- android/securitycore/src/main/java/com/bushmeshmain/security/BushMeshSecurityCore.kt — AES-GCM sealed SQLite storage in noBackupFilesDir; durable nonce, replay, consumed handshake IDs; typed group-epoch CAS, integrity failure handling.
 - BushMeshCurve25519Keys.kt — Ed25519/X25519 KeyMint hardware-only opaque key operations; per-process probe; a handle is an alias+purpose+algorithm descriptor, NEVER private bytes.
 - BushMeshSecurityModule.kt / BushMeshSecurityPackage.kt — opt-in React Native bridge; no secret or key payload logging.
 - src/security/platform/androidProductionSecurity.ts — Security v1 ports, opt-in crypto provider, metadata and secret adapters, storage-only V2 CAS.
@@ -55,7 +55,7 @@ reserveNonce commits the next counter AND its high-watermark in the same SQLite 
 
 Create keys only after probe succeeds in that process. Generated handles have provider="android-keystore-curve25519-v1", random 18-byte opaque IDs and an encrypted stored algorithm+purpose binding. KeyInfo MUST report secure hardware and generated public keys MUST match the exact RFC 8410 SubjectPublicKeyInfo prefix + 32 raw bytes. Provider sign and derive do not import/export PKCS#8. hasKey returns false for genuinely deleted/missing handles; malformed/foreign/wrong-purpose handles fail closed. deleteKey removes the AndroidKeyStore alias before removing its protected metadata; deleting a missing handle is safe. A crash between KeyStore generation and metadata commit can leave an orphaned private alias; this is NOT an active identity, and a future recovery sweep must be reviewed before deployment. Neither routine deletion nor KeyStore deletion promises recovery-proof erasure from physical flash.
 
-The CryptoProvider v1 randomBytes method is synchronous; the adapter consumes a native SecureRandom-generated, fixed 16 KiB one-time entropy buffer and clears used bytes. It fails closed on exhaustion. This is a limitation for prolonged operation: production enablement requires either lifecycle-controlled replenishment or an approved synchronous native CSPRNG/JSI port; it must not silently use Math.random.
+The fixed 16 KiB one-time entropy pool has been REMOVED. The candidate now obtains every synchronous CryptoProvider.randomBytes draw (bounded 1–1024 bytes) from native java.security.SecureRandom through a native ReactMethod(isBlockingSynchronousMethod=true), validating output length and failing closed if the method is missing/throws. This is not verified on RN 0.85 New Architecture; physical bridge validation or a reviewed JSI/TurboModule is required before activation. No silent Math.random, finite pool, exportable private-key or algorithm downgrade fallback is permitted.
 
 The bridge transports symmetric group/session key material in JS base64 because frozen CryptoProvider/SecureSecretStore v1 contracts require Uint8Array. Hardware-backed *master key wrapping* and AES-GCM at rest do not turn those JS-accessible session/group bytes into hardware non-exportable keys.
 
@@ -65,24 +65,22 @@ AndroidSecurityEpochStorage.commitGroupEpoch accepts transaction ID, group ID, d
 
 **Absolutely no authorization occurs here.** The caller MUST independently verify an authenticated owner/admin chain, trusted identities, canonical AAD, signed roster digest, fresh entropy, pinned recipients and monotonic global authority. No real incremental enrolment is implemented or enabled. Current Security v1 setGroup and setSecret remain separate and are not retroactively made atomic by providing this proposed API.
 
-## Validation and safe Galaxy S22+ test
+## Standalone Galaxy S22+ test (mandatory, do not install over Wave 3)
 
-**Automated tests committed to this branch:** 
-- __tests__/androidProductionSecurity.test.ts: opt-in gating, malformed capabilities, opaque handle format, wrong purposes, local entropy, AEAD errors, identity atomic bridge call, unsigned-64-bit decimal precision, CAS interface and metadata corruption.
-- SecurityCounterMathTest.kt (pure JVM): 64-bit counter boundaries, rollback floor rejection, exhaustion, replay reordering, duplicate suppression, window caps.
-- BushMeshSecurityInstrumentationTest.kt (device/emulator): Keystore AES hardware inspection, encryption-at-rest, ordinary restart, concurrent reservations, replay and handshake persistence, epoch CAS/idempotency, SQLite interrupted transaction, corrupt ciphertext and conditional Ed25519/X25519 sign/agree/handle lifetime tests.
-- Feature CI: npm/Jest, TypeScript/lint, Android debug build, JVM tests, and **instrumentation compilation only**. CI cannot assert physical key hardware.
+All hardware checks must use the **independently installed**
+com.bushmesh.securityprobe test app and com.bushmesh.securityprobe.test
+instrumentation APK. Its private data, app UID and Keystore namespace are
+isolated from the existing Wave 3 com.bushmeshmain installation.
+The standalone app has no radio modules or Android permissions and cannot
+access live convoy, Radio History or offline map packs. The shared core
+is compiled from android/securitycore.
 
-**Safe physical checklist (do not run on real convoy data):**
-
-1. Use a sacrificial/debug app installation on a Galaxy S22+ with developer options and USB debugging; preserve a backup of ordinary user data outside this test. Avoid resetting Android Keystore or uninstalling a production app with data you need.
-2. Run ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest and install the debug APP and test APK, using ./gradlew :app:installDebug :app:installDebugAndroidTest from android/.
-3. Run: adb shell am instrument -w -e class com.bushmeshmain.security.BushMeshSecurityInstrumentationTest com.bushmeshmain.test/androidx.test.runner.AndroidJUnitRunner
-4. Record the Android build/API and the probe's booleans, hardware KeyInfo levels and failure class names. No private key, seed or message bytes are required in reports. A skipped Curve25519 test means unsupported or unverified; do not mark pass.
-5. Manually confirm retained handles after force-stop/relaunch and then an ordinary reboot; repeat after screen lock/unlock. Test key invalidation separately by changing secure lock-screen credentials only on an expendable test installation. Expect a fail-closed error, not automatic identity replacement.
-6. Check out-of-band that live BushMesh BLE scanning, Background Radio, offline maps and GPS still operate unchanged. This feature never transmits or activates an enrolment flow.
-
-If Android instrumentation reports a KeyInfo/JCA failure, record it as unsupported for that firmware/provider; do not disable the hardware check, change to P-256 or persist exportable keys to make it pass.
+The only approved operator instructions, safe adb commands, report export,
+failure classifications, two-phase process/reboot tests and Security v2
+transactional gap review are in **docs/GALAXY_S22_SECURITY_PROBE.md**.
+Do **NOT** run :app:installDebug or com.bushmeshmain instrumentation; old
+instructions for running these tests against the existing app are superseded.
+A successful build is NOT a Galaxy S22+ hardware result.
 
 ## Remaining before any production integration
 
@@ -91,6 +89,6 @@ If Android instrumentation reports a KeyInfo/JCA failure, record it as unsupport
 - Review of hardware-backed rollback resistance or mandatory fresh-key recovery; independent group epoch/nonce high-water and restore/reinstall behavior.
 - Security v2 authenticated authority, atomic old-key retirement, failure recovery and consent/UI activation (NOT this branch).
 - Full static analysis, supply-chain/app signing review and UX test for corrupted/destroyed keys and device-reinstall.
-- Production entropy lifecycle/replenishment design, secure deletion and orphan-alias GC review.
+- Physical RN synchronous CSPRNG bridge validation (or reviewed JSI/TurboModule), secure deletion and orphan-alias GC review.
 
 **Activation gate:** leave all new providers unattached to production; do not merge main or staging, publish production-identity claims, enrol members or assert device-specific support until these gates are satisfied.
