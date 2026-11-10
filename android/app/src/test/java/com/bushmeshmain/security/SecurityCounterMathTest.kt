@@ -19,7 +19,11 @@ class SecurityCounterMathTest {
     assertEquals(BigInteger.ONE, first)
     val second = SecurityCounterMath.reserve(first, first, BigInteger.ZERO)
     assertEquals(BigInteger.valueOf(2), second)
-    val minimum = SecurityCounterMath.reserve(second, second, BigInteger.valueOf(100))
+    assertThrows(IllegalArgumentException::class.java) {
+      SecurityCounterMath.reserve(second, second, BigInteger.valueOf(100))
+    }
+    val minimum = SecurityCounterMath.reserve(BigInteger.valueOf(100),
+      BigInteger.valueOf(100), BigInteger.valueOf(100))
     assertEquals(BigInteger.valueOf(101), minimum)
     assertThrows(IllegalArgumentException::class.java) {
       SecurityCounterMath.reserve(BigInteger.ONE, BigInteger.valueOf(2), BigInteger.ZERO)
@@ -48,11 +52,12 @@ class SecurityCounterMathTest {
 
   @Test fun replayMaskBoundedFor1024BitWindowAndLargeGap() {
     var result = SecurityCounterMath.replay(null, BigInteger.ONE, 1024)
-    for (i in 2..1026) {
+    for (i in 2..1024) {
       result = SecurityCounterMath.replay(result.state, BigInteger.valueOf(i.toLong()), 1024)
       assertTrue(result.accept)
       assertTrue(requireNotNull(result.state).bitmap.bitLength() <= 1024)
     }
+    result = SecurityCounterMath.replay(result.state, BigInteger.valueOf(1026), 1024)
     val duplicate = SecurityCounterMath.replay(result.state, BigInteger.valueOf(1026), 1024)
     assertFalse(duplicate.accept)
     assertTrue(SecurityCounterMath.replay(result.state, BigInteger.valueOf(1025), 1024).accept)
