@@ -7,7 +7,7 @@ import {
   SECURITY_V2_PRODUCTION_ACTIVATION,
 } from '../src/security/v2/contracts';
 import type {
-  GroupSnapshotV2, PrincipalV2, SignedJoinRequestV2,
+  GroupSnapshotV2, PrincipalV2,
 } from '../src/security/v2/contracts';
 import {
   roleCredentialTranscriptV2, roleRevocationTranscript, rosterDigestV2,
