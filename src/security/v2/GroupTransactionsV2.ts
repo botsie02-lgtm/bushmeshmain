@@ -273,7 +273,7 @@ export class SecurityV2GroupTransactions implements SecurityV2GroupTransactionsP
     ensure(!group.roster.some(m=>m.deviceId === join.requester.deviceId),
       'REVOKED', 'Duplicate or previously revoked member cannot be re-added');
     const nextRoster: RosterMemberV2[] = sortedRoster([...group.roster, {
-      ...join.requester, state: 'pending-install', joinedAt: this.clock.now(),
+      ...join.requester, state: 'pending-install', joinedAt: join.issuedAt,
     }]);
     ensure(p.rosterDigestAfter === await rosterDigestV2(this.crypto,
       group.groupId, p.nextEpoch, nextRoster),
@@ -560,7 +560,7 @@ export class SecurityV2GroupTransactions implements SecurityV2GroupTransactionsP
     if (owner && entry.state === 'active') {
       return {authorized: true, epoch: group.epoch, reason: 'verified-local-epoch'};
     }
-    if (entry.state !== 'pending-install' || !group.currentTransactionId) {
+    if (!group.currentTransactionId) {
       return {authorized: false, epoch: group.epoch, reason: 'pending'};
     }
     const receipt = await this.store.getVerifiedReceipt(group.currentTransactionId,
