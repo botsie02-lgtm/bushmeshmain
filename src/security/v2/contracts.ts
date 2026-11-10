@@ -58,6 +58,8 @@ export type GroupSnapshotV2 = {
   genesisDigest: string;
   protocolVersion: number;
   epoch: number;
+  /** Commit identity; genesis has no incremental transaction. */
+  currentTransactionId: string | null;
   /** Digest includes canonical sorted roster, states, group and epoch. */
   rosterDigest: string;
   roster: RosterMemberV2[];
@@ -79,6 +81,7 @@ export type PreparedAdditionV2 = {
   preparedAt: number;
   /** Verified recipient signatures, not radio-send acknowledgements. */
   verifiedReceipts: Record<string, string>;
+  issuedDistributions: Record<string, string[]>;
 };
 export type BoundEpochDistributionV2 = {
   kind: 'bushmesh-v2-epoch-distribution';
@@ -134,6 +137,8 @@ export interface SecurityV2TransactionalStore {
   getTransaction(transactionId: string): Promise<PreparedAdditionV2 | null>;
   getInstalledDistribution(transactionId: string): Promise<string | null>;
   getVerifiedReceipt(transactionId: string, deviceId: string): Promise<string | null>;
+  /** Track signed envelopes before sending; delivery alone is not installation. */
+  recordIssuedDistribution(transactionId: string, recipient: string, digest: string): Promise<void>;
 
   /** Only after independently verified owner/genesis provisioning. */
   initializeOwnedGroup(
