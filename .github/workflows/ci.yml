@@ -32,8 +32,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Wave 4 pre-activation security and ownership guard
+        if: github.ref == 'refs/heads/integration/bushmesh-wave4-staging'
+        run: python3 tools/integration/wave4_security_gate.py
+
       - name: Unit tests
         run: npm test -- --runInBand
+
+      - name: Wave 4 critical regression suites
+        if: github.ref == 'refs/heads/integration/bushmesh-wave4-staging'
+        run: |
+          npx jest --runInBand \
+            __tests__/radioSessionNativeLifecycleAuthority.test.tsx \
+            __tests__/appShellNavigation.test.tsx \
+            __tests__/gpsFieldDiagnostics.test.ts \
+            __tests__/convoyMapRendering.test.tsx \
+            __tests__/wave2AuthenticatedPositionIngress.test.ts \
+            __tests__/wave3SecurityActivationGate.test.ts \
+            __tests__/convoyEnrolmentSecurityV3.test.ts
 
       - name: TypeScript
         run: npx tsc --noEmit
@@ -81,14 +97,14 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Native raster reader JVM fixtures
+      - name: Native JVM fixtures (raster; future security providers must add tests)
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
-      - name: Publish Wave 3 unified physical-test APK
+      - name: Publish Wave 4 baseline debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: bushmesh-wave3-debug-${{ github.sha }}
+          name: bushmesh-wave4-debug-${{ github.sha }}
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -96,7 +112,7 @@ jobs:
       # React Native debug variants omit the JS bundle and need Metro.
       # This separate debug-key-signed RELEASE variant carries offline JS
       # for Galaxy S22+ testing; it is NOT production signed or certified.
-      - name: Assemble self-contained Wave 3 field-test APK
+      - name: Assemble self-contained Wave 4 staging field-test APK
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon
 
@@ -119,10 +135,10 @@ jobs:
               print(f'Validated standalone APK: {apk.stat().st_size} bytes; embedded JS: {len(bundle)} bytes; VIEW PACK present')
           PY
 
-      - name: Publish standalone offline Wave 3 field-test APK
+      - name: Publish standalone offline Wave 4 staging field-test APK
         uses: actions/upload-artifact@v4
         with:
-          name: bushmesh-wave3-standalone-fieldtest-${{ github.sha }}
+          name: bushmesh-wave4-standalone-fieldtest-${{ github.sha }}
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
