@@ -1,6 +1,6 @@
 import {Buffer} from 'buffer';
 import type {
-  EnrolmentProposalV2, SignedEnrolmentApprovalV2, SignedRoleCredentialV2,
+  EnrolmentProposalV2, SignedEnrolmentApprovalV2,
 } from '../../convoy/enrolmentV3/contract';
 import type {IdentityManager} from '../identity';
 import type {PeerTrustManager} from '../trust';
