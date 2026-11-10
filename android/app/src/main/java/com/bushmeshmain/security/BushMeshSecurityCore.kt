@@ -177,6 +177,10 @@ class BushMeshSecurityCore(
   fun get(kind: String, name: String): ByteArray? = synchronized(lock) {
     require(kind == "secret" || kind == "meta")
     checkName(name)
+    if (loadLocked(database, "meta", "identityRetired") != null &&
+        !(kind == "meta" && name.startsWith("privateHandle/"))) {
+      throw IllegalStateException("Security identity has been retired")
+    }
     loadLocked(database, kind, name)
   }
 
@@ -184,19 +188,39 @@ class BushMeshSecurityCore(
     require(kind == "secret" || kind == "meta")
     checkName(name)
     // Identity fields can only be committed as a pair.
-    require(kind != "meta" || (name != "identity" && name != "identityHandles"))
+    require(kind != "meta" || (name != "identity" && name != "identityHandles" &&
+      name != "identityRetired"))
     require(value.size <= 256 * 1024) { "Oversized security storage value" }
-    transaction { putLocked(it, kind, name, value) }
+    transaction { db ->
+      require(loadLocked(db, "meta", "identityRetired") == null) { "Retired identity cannot be reused" }
+      if (kind == "meta" && name.startsWith("group/")) {
+        val groupId = name.removePrefix("group/")
+        db.rawQuery("SELECT epoch FROM epoch_high WHERE group_id=?", arrayOf(groupId)).use {
+          require(!it.moveToFirst()) { "V2 group metadata requires epoch CAS" }
+        }
+      }
+      if (kind == "secret" && name.startsWith("group/")) {
+        require(loadLocked(db, kind, name) == null) { "Existing group epoch key cannot be replaced" }
+      }
+      putLocked(db, kind, name, value)
+    }
   }
 
   fun remove(kind: String, name: String) {
     require(kind == "secret" || kind == "meta")
     checkName(name)
-    transaction { it.delete("entries", "kind=? AND name=?", arrayOf(kind, name)) }
+    transaction {
+      val retired = loadLocked(it, "meta", "identityRetired") != null
+      require(!retired || (kind == "meta" && name.startsWith("privateHandle/"))) {
+        "Retired identity cannot mutate security state"
+      }
+      it.delete("entries", "kind=? AND name=?", arrayOf(kind, name))
+    }
   }
 
   fun listMetadata(prefix: String): List<String> = synchronized(lock) {
     checkName(prefix)
+    require(loadLocked(database, "meta", "identityRetired") == null) { "Identity retired" }
     val names = mutableListOf<String>()
     database.rawQuery("SELECT name FROM entries WHERE kind='meta' ORDER BY name", null).use {
       while (it.moveToNext()) if (it.getString(0).startsWith(prefix)) names.add(it.getString(0))
@@ -214,8 +238,40 @@ class BushMeshSecurityCore(
     require(sign.getString("algorithm") == "Ed25519" && sign.getString("purpose") == "identity-signing")
     require(agree.getString("algorithm") == "X25519" && agree.getString("purpose") == "identity-agreement")
     transaction {
+      require(loadLocked(it, "meta", "identityRetired") == null) { "Identity retired" }
       putLocked(it, "meta", "identity", identityJson.toByteArray(StandardCharsets.UTF_8))
       putLocked(it, "meta", "identityHandles", handlesJson.toByteArray(StandardCharsets.UTF_8))
+    }
+  }
+
+  /** One-way fail-closed retirement tombstone; no automatic new identity. */
+  fun beginRetirement() {
+    transaction { db ->
+      if (loadLocked(db, "meta", "identityRetired") == null) {
+        require(loadLocked(db, "meta", "identityHandles") != null) { "No identity handles to retire" }
+        putLocked(db, "meta", "identityRetired", byteArrayOf(1))
+      }
+    }
+  }
+
+  /** Only used to resume an interrupted retirement after the tombstone commits. */
+  fun retirementHandles(): ByteArray? = synchronized(lock) {
+    loadLocked(database, "meta", "identityHandles")
+  }
+
+  fun isRetired(): Boolean = synchronized(lock) {
+    loadLocked(database, "meta", "identityRetired") != null
+  }
+
+  fun finishRetirement() {
+    transaction { db ->
+      require(loadLocked(db, "meta", "identityRetired") != null) { "Retirement not started" }
+      db.execSQL("DELETE FROM entries WHERE NOT (kind='meta' AND name='identityRetired')")
+      db.execSQL("DELETE FROM nonce")
+      db.execSQL("DELETE FROM replay")
+      db.execSQL("DELETE FROM consumed")
+      db.execSQL("DELETE FROM epoch_high")
+      db.execSQL("DELETE FROM epoch_commit")
     }
   }
 
