@@ -39,7 +39,7 @@ class BushMeshSecurityModule(context: ReactApplicationContext) :
         else if (e is IllegalArgumentException) "INVALID_INPUT"
         else "SECURITY_UNAVAILABLE"
       // Never put key bytes, payloads, aliases or ciphertext into JS errors.
-      promise.reject(code, "BushMesh Android security operation failed", e)
+      promise.reject(code, "BushMesh Android security operation failed")
     }
   }
 
