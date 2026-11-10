@@ -206,3 +206,33 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
 
   await ReactTestRenderer.act(() => {renderer.unmount();});
 });
+
+
+test('Wave 4 secure enrolment host is visible but denies all live membership actions', async () => {
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(async () => {
+    renderer = ReactTestRenderer.create(<AppShell />);
+  });
+  await ReactTestRenderer.act(async () => { pressByLabel(renderer, 'Convoy'); });
+  expect(visibleText(renderer)).toContain('Authenticated joining is disabled');
+  await ReactTestRenderer.act(async () => {
+    pressByLabel(renderer, 'View unavailable secure enrolment');
+  });
+  expect(renderedTabs(renderer)).toHaveLength(5);
+  expect(visibleText(renderer)).toContain('Security');
+  // No injected provider/transport/identity in this host, regardless of carrier connection.
+  const disabled = renderer.root.findAll(node => node.props.accessibilityState?.disabled === true);
+  expect(disabled.length).toBeGreaterThan(0);
+  const dangerous = /^(Create Security v1 group|Prepare invitation|Submit authenticated join request|Approve request)/;
+  expect(renderer.root.findAll(node =>
+    node.props.accessibilityRole === 'button' &&
+    typeof node.props.accessibilityLabel === 'string' &&
+    dangerous.test(node.props.accessibilityLabel) &&
+    node.props.accessibilityState?.disabled !== true,
+  )).toHaveLength(0);
+  await ReactTestRenderer.act(async () => {
+    pressByLabel(renderer, 'Back to convoy selection');
+  });
+  expect(visibleText(renderer)).toContain('MeshCore carrier and legacy tools');
+  await ReactTestRenderer.act(async () => {renderer.unmount();});
+});

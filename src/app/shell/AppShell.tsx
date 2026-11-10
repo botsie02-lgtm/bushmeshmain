@@ -32,6 +32,7 @@ import {SecureDataStatusBanner} from '../../components/SecureDataStatusBanner';
 import {SpeechPttPanel} from '../../components/SpeechPttPanel';
 import {SpeechStatusBanner} from '../../components/SpeechStatusBanner';
 import {ActiveConvoyCarrierProfile} from '../../convoy/carrierCredentials';
+import {ConnectedConvoyEnrolment} from '../../convoy/ui/ConnectedConvoyEnrolment';
 import {ConnectedDriveDashboard} from '../../drive/dashboard/ConnectedDriveDashboard';
 import {ConnectedFieldReadinessDashboard} from '../../drive/fieldReadiness/ConnectedFieldReadinessDashboard';
 import type {ConvoyMapMember} from '../../maps/convoyMapModel';
@@ -46,7 +47,7 @@ import {colors} from '../../theme/colors';
 
 export type MainTab = 'drive' | 'radio' | 'convoy' | 'contacts' | 'device';
 type DriveView = 'home' | 'dashboard' | 'map' | 'legacy';
-type ConvoyView = 'select' | 'tools';
+type ConvoyView = 'select' | 'tools' | 'enrolment';
 type DeviceView = 'hub' | 'gps' | 'maps';
 
 /** Do not pass untrusted MeshCore contacts or legacy vehicle positions to
@@ -112,7 +113,10 @@ function Surface({
   );
 }
 
-function ConvoySelector({openTools}: {openTools: () => void}): React.JSX.Element {
+function ConvoySelector({openTools, openEnrolment}: {
+  openTools: () => void;
+  openEnrolment: () => void;
+}): React.JSX.Element {
   const {
     activeConvoy,
     selectableConvoys,
@@ -179,6 +183,12 @@ function ConvoySelector({openTools}: {openTools: () => void}): React.JSX.Element
             Restart will default to No active convoy.
           </Text>
         ) : null}
+      </Surface>
+      <Surface
+        eyebrow="SECURE CONVOY ENROLMENT · NOT AVAILABLE"
+        title="Authenticated joining is disabled"
+        description="Preview the reviewed enrolment interface. No production Security v1 identity or Security v2 group transaction is connected, and no requests, approvals or group-key changes can be sent.">
+        <Action label="View unavailable secure enrolment" onPress={openEnrolment} secondary />
       </Surface>
       <Surface
         eyebrow="CARRIER SETUP"
@@ -349,7 +359,18 @@ export function AppShell(): React.JSX.Element {
 
         <ScreenMountGate active={activeTab === 'convoy'}>
           {convoyView === 'select' ? (
-            <ConvoySelector openTools={() => setConvoyView('tools')} />
+            <ConvoySelector
+              openTools={() => setConvoyView('tools')}
+              openEnrolment={() => setConvoyView('enrolment')}
+            />
+          ) : convoyView === 'enrolment' ? (
+            <View style={styles.screen}>
+              <View style={styles.subnav}>
+                <Action label="Back to convoy selection" onPress={() => setConvoyView('select')} secondary />
+              </View>
+              {/* Default null service/identity and false capabilities prevent production mutations. */}
+              <ConnectedConvoyEnrolment />
+            </View>
           ) : (
             <View style={styles.screen}>
               <View style={styles.subnav}>
