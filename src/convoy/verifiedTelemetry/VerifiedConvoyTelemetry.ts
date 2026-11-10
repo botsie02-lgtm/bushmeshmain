@@ -305,7 +305,7 @@ export class VerifiedConvoyTelemetry {
    * only that the existing local radio queue accepted the protected datagram.
    */
   publish(location: AndroidTelemetryFix, target: TelemetryCarrierTarget): Promise<PositionPublishResult> {
-    return this.serial(async () => {
+    return this.serial<PositionPublishResult>(async () => {
       const roster = await this.resolve();
       if (!roster || !this.runtime || !this.sequences || !this.airtime) {
         return {status: 'suppressed', reason: 'verified-security-or-runtime-unavailable'};
