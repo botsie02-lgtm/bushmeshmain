@@ -140,8 +140,9 @@ export function deriveEnrolmentUi(input: EnrolmentUiInput): EnrolmentUiView {
     Number.isSafeInteger(input.localIdentity.keyEpoch) &&
     input.localIdentity.keyEpoch > 0
     ? input.localIdentity : null;
-  const ready = input.productionSecurityReady && !!identity;
-  const authorized = identity
+  const ready = input.productionSecurityReady && !!identity &&
+    input.state === 'ready';
+  const authorized = ready && identity
     ? input.selectableConvoys.map(item =>
         checkedMembership(item, null, identity.deviceId),
       ).filter((item): item is AuthorizedConvoyMembership => item !== null)
@@ -275,7 +276,7 @@ export function deriveEnrolmentUi(input: EnrolmentUiInput): EnrolmentUiView {
       : [];
 
   const receivedInvitations: EnrolmentUiReceivedInvitation[] =
-    identity && input.state === 'ready'
+    ready && identity
       ? input.receivedInvitations.map(value => {
           const match = value.invitation.recipientDeviceId === identity.deviceId &&
             value.invitation.recipientFingerprint === identity.fingerprint;
@@ -295,18 +296,22 @@ export function deriveEnrolmentUi(input: EnrolmentUiInput): EnrolmentUiView {
   let headerState: EnrolmentUiView['headerState'] = 'select-convoy';
   let headerTitle = 'No verified convoy selected';
   let headerDescription = 'Only Security v1 authorised convoys appear here.';
-  if (!identity) {
-    headerState = 'no-identity';
-    headerTitle = 'Authenticated identity unavailable';
-    headerDescription = 'Connect a supported production Security identity before managing membership.';
+  if (input.state === 'loading' && input.productionSecurityReady) {
+    headerState = 'loading';
+    headerTitle = 'Verifying convoy membership';
+    headerDescription = 'Protected Security state is being rechecked. No access is assumed.';
+  } else if (input.state === 'error') {
+    headerState = 'unavailable';
+    headerTitle = 'Convoy security verification failed';
+    headerDescription = 'The current identity, membership and protected records could not be verified.';
   } else if (!input.productionSecurityReady) {
     headerState = 'unavailable';
     headerTitle = 'Production security unavailable';
     headerDescription = 'Security v1 test identities and MeshCore contacts are not production membership proof.';
-  } else if (input.state === 'loading') {
-    headerState = 'loading';
-    headerTitle = 'Verifying convoy membership';
-    headerDescription = 'Protected Security state is being rechecked. No access is assumed.';
+  } else if (!identity) {
+    headerState = 'no-identity';
+    headerTitle = 'Authenticated identity unavailable';
+    headerDescription = 'Connect a supported production Security identity before managing membership.';
   } else if (restoredInvalid) {
     headerState = 'revoked-or-rotated';
     headerTitle = 'Convoy access not verified';
