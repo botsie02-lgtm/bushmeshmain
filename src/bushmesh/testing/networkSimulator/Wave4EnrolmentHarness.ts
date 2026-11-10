@@ -349,7 +349,10 @@ export class Wave4EnrolmentHarness {
     if (tx.expectedEpoch !== this.currentEpoch) {
       return this.reject('stale-epoch-cas-conflict', tx.requestNodeId, transactionId);
     }
-    if (!this.fleet.node(1).present) return this.reject('authority-unavailable', tx.requestNodeId, transactionId);
+    if (!this.fleet.node(1).present ||
+        !this.fleet.node(tx.approverNodeId).present) {
+      return this.reject('authority-unavailable-at-commit', tx.requestNodeId, transactionId);
+    }
     if (this.identities.get(tx.requestNodeId)!.fingerprint !== tx.fingerprint) {
       return this.reject('identity-rotated-before-commit', tx.requestNodeId, transactionId);
     }
