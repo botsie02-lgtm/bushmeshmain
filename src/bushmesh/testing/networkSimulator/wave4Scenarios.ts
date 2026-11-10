@@ -312,6 +312,10 @@ export async function wave4TwentyVehicleSplitCongestion(seed = 0x440110): Promis
     await h.fleet.sendMessage(1, 4, {priority: BushMeshPriority.DirectMessage});
     await h.fleet.sendMessage(2, 4, {priority: BushMeshPriority.DirectMessage});
   }
+  // Attempt a protected-direct carrier leg while ordinary queues contend.
+  // A failed carrier leg must never be promoted to verified installation.
+  await h.distribute('tx-split11', 2);
+  check(!h.ackConverged(), 'congested key carrier leg prematurely converged', failures);
   await h.fleet.network.runUntilIdle();
   h.fleet.moveGroup(rear, -750);
   h.fleet.overrideLink(1, 11, {lossRate: 0, maxQueueBytes: 4_096});
@@ -386,4 +390,21 @@ export async function wave4InjectedProviderDenial(seed = 0x440111): Promise<Wave
     h.report().activeMemberIds.join(',') === '1,2',
     'unverified provider result was promoted into an enrolment', failures);
   return final('wave4-injected-decision-port-denial', h, failures);
+}
+
+/** A dropped new packet must not reuse a previous accepted inbound result. */
+export async function wave4DroppedPositionNoStaleSuccess(seed = 0x440112): Promise<Wave4ScenarioResult> {
+  const h = await new Wave4EnrolmentHarness(seed, 4).initialize();
+  const failures: string[] = [];
+  check(await h.position(2, 1), 'baseline position did not arrive', failures);
+  const before = h.fleet.positionView(1, 2).lastSequence;
+  h.fleet.overrideLink(2, 1, {lossRate: 1});
+  check(!await h.position(2, 1),
+    'dropped protected position inherited the previous accepted status', failures);
+  const report = h.report();
+  check(h.fleet.positionView(1, 2).lastSequence === before &&
+    report.transport.delivery.failed >= 1 &&
+    report.metrics.rejectedUnauthorizedPositions === 0,
+    'carrier loss mislabeled as a Security rejection or mutated position state', failures);
+  return final('wave4-dropped-position-does-not-reuse-last-inbound', h, failures);
 }
