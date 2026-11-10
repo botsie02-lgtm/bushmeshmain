@@ -2,6 +2,7 @@ import {Buffer} from 'buffer';
 import {
   AndroidHardwareCryptoProvider, AndroidSecureSecretStore, AndroidSecurityEpochStorage,
   AndroidSecurityMetadataStore, createAndroidProductionSecurity, probeAndroidProductionSecurity,
+  retireAndroidLocalIdentity,
 } from '../src/security/platform/androidProductionSecurity';
 import type {AndroidSecurityNativeBridge} from '../src/security/platform/androidProductionSecurity';
 import {SecurityError} from '../src/security/errors';
@@ -28,6 +29,7 @@ function bridge(overrides: Partial<AndroidSecurityNativeBridge> = {}): AndroidSe
     consumeHandshake: jest.fn(async () => true),
     commitEpoch: jest.fn(async () => true),
     epochHigh: jest.fn(async () => 0),
+    retireIdentity: jest.fn(async () => undefined),
     randomBytes: jest.fn(async (size: number) => Buffer.alloc(size, 5).toString('base64')),
     sha256: jest.fn(async () => Buffer.alloc(32).toString('base64')),
     hkdf: jest.fn(async () => Buffer.alloc(32).toString('base64')),
@@ -163,4 +165,10 @@ it('fails closed rather than parsing corrupted protected metadata', async () => 
     read: jest.fn(async () => Buffer.from('{invalid').toString('base64')),
   }));
   await expect(metadata.getIdentity()).rejects.toMatchObject({code: 'IDENTITY_CORRUPT'});
+});
+
+it('retirement requires explicit invocation of the dedicated native API', async () => {
+  const native = bridge();
+  await retireAndroidLocalIdentity(native);
+  expect(native.retireIdentity).toHaveBeenCalledTimes(1);
 });
