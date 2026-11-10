@@ -2,6 +2,7 @@ package com.bushmeshmain
 
 import android.app.Application
 import com.bushmeshmain.radio.BushMeshRadioServicePackage
+import com.bushmeshmain.security.BushMeshSecurityPackage
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -16,6 +17,8 @@ class MainApplication : Application(), ReactApplication {
       packageList =
         PackageList(this).packages.apply {
           add(BushMeshRadioServicePackage())
+          // Registered for explicit tests/injection only; NOT selected by live Security v1.
+          add(BushMeshSecurityPackage())
         },
     )
   }
