@@ -117,7 +117,7 @@ function fixtures() {
   };
 }
 
-function mount(deps: ConvoyEnrolmentUiDependencies) {
+function mount(deps: ConvoyEnrolmentUiDependencies = {}) {
   let latest!: ConvoyEnrolmentUiActions;
   function Harness() {
     latest = useConvoyEnrolmentUi(deps);
