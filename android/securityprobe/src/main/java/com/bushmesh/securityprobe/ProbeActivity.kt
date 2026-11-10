@@ -64,21 +64,27 @@ class ProbeActivity : Activity() {
     exportButton.isEnabled = false
     message.text = "Running local hardware self-tests; no external connections."
     Thread {
-      val rendered = try {
+      val (rendered, freshReportSaved) = try {
         val report = ProbeReport.inspect(applicationContext)
         ProbeReport.save(applicationContext, report)
-        report.toString(2)
+        Pair(report.toString(2), true)
       } catch (e: Exception) {
-        JSONObject().put("classification", "PROBE_FAILED_CLOSED")
+        val failure = JSONObject().put("schema", "bushmesh-security-probe-capabilities-v1")
+          .put("classification", "PROBE_FAILED_CLOSED")
           .put("failureClass", e.javaClass.simpleName)
-          .put("productionSecurityActivated", false).toString(2)
+          .put("productionSecurityActivated", false)
+          .put("secretsOrKeyBytesIncluded", false)
+        val saved = try {
+          ProbeReport.save(applicationContext, failure)
+          true
+        } catch (_: Exception) { false }
+        Pair(failure.toString(2), saved)
       }
       runOnUiThread {
         message.text = rendered
         runButton.isEnabled = true
-        exportButton.isEnabled = try {
-          ProbeReport.readExportable(applicationContext).isNotEmpty()
-        } catch (_: Exception) { false }
+        // A failed new run cannot export an old, misleading PASS report.
+        exportButton.isEnabled = freshReportSaved
       }
     }.start()
   }
