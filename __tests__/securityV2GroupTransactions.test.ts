@@ -346,6 +346,102 @@ describe('Security v2 isolated group roster and key transactions',()=>{
       .resolves.toBe(true);
   });
 
+
+  test('concurrent competing approvals are CAS-serialized: exactly one fresh epoch commits',async()=>{
+    const s=await setup();
+    const first=await prepare(s,'tx.concurrent-a');
+    const second=await prepare(s,'tx.concurrent-b');
+    await Promise.all([
+      s.ownerManager.prepareAddMember(first),
+      s.ownerManager.prepareAddMember(second),
+    ]);
+    const results=await Promise.allSettled([
+      s.ownerManager.commitPreparedAddition(first.approval.proposal.transactionId),
+      s.ownerManager.commitPreparedAddition(second.approval.proposal.transactionId),
+    ]);
+    expect(results.filter(x=>x.status==='fulfilled')).toHaveLength(1);
+    expect(results.filter(x=>x.status==='rejected')).toHaveLength(1);
+    expect((await s.ownerStore.loadGroup(s.genesis.groupId))?.epoch).toBe(2);
+    expect((await s.ownerStore.loadGroup(s.genesis.groupId))?.roster).toHaveLength(2);
+  });
+
+  test('disconnected member can install a newer owner-signed epoch and requires a new ack',async()=>{
+    const s=await setup();
+    const {commit:firstCommit}=await committed(s);
+    const firstEnvelope=await s.ownerManager.wrapCommittedEpoch({
+      transactionRef:firstCommit.transactionRef,recipient:who(s.bIdentity),
+      sessionId:s.authoritySession.sessionId,context:distributionContext,
+    });
+    const firstAck=await s.joinerManager.installCommittedEpoch({
+      distribution:firstEnvelope,context:distributionContext,
+    });
+    await s.ownerManager.verifyInstalledAck(firstAck,firstCommit.transactionRef);
+
+    const third=createSecurityNode();
+    const {bIdentity: thirdIdentity}=await mutuallyTrust(s.owner,third);
+    await mutuallyTrust(s.joiner,third);
+    const thirdSessions=await sessionsFor(s.owner,third);
+    const ownerForThird=makeManager(s.owner,thirdSessions.aSessions,s.ownerStore);
+    const thirdStore=new InMemorySecurityV2TransactionStore();
+    thirdStore.pinTrustedGenesis({
+      groupId:s.genesis.groupId,genesisDigest:s.genesis.genesisDigest,
+      ownerFingerprint:s.aIdentity.fingerprint,
+    });
+    const thirdMgr=makeManager(third,thirdSessions.bSessions,thirdStore);
+    const current=(await s.ownerStore.loadGroup(s.genesis.groupId))!;
+    const signedJoin=await thirdMgr.signJoinRequest({
+      convoyId:current.convoyId,groupId:current.groupId,requestId:'request.next',
+      expectedEpoch:current.epoch,context:joinContext,
+      expiresAt:third.clock.now()+590_000,
+    });
+    const roster=[...current.roster,{...who(thirdIdentity),
+      state:'pending-install' as const,joinedAt:signedJoin.issuedAt}];
+    const nextDigest=await rosterDigestV2(s.owner.crypto,current.groupId,3,roster);
+    const credential=await ownerCredential(s,current);
+    const proposal:EnrolmentProposalV2={
+      schema:'bushmesh-convoy-enrolment-v2',version:2,operation:'add-member',
+      transactionId:'tx.next',requestId:signedJoin.requestId,
+      convoyId:current.convoyId,groupId:current.groupId,
+      requester:who(thirdIdentity),approver:who(s.aIdentity),
+      expectedEpoch:2,nextEpoch:3,rosterDigestBefore:current.rosterDigest,
+      rosterDigestAfter:nextDigest,credentialId:credential.credentialId,
+      issuedAt:s.owner.clock.now(),expiresAt:s.owner.clock.now()+590_000,
+    };
+    const approval=await signProposedApproval(s.owner.identity,proposal,credential);
+    await ownerForThird.prepareAddMember({
+      join:signedJoin,approval,sessionId:thirdSessions.authoritySession.sessionId,
+      context:joinContext,
+    });
+    await ownerForThird.commitPreparedAddition('tx.next');
+    expect((await s.ownerManager.resolveCurrentMembership(
+      s.genesis.groupId,who(s.bIdentity))).authorized).toBe(false);
+
+    // The previously installed member was disconnected during the rekey.
+    // It installs only when it reconnects through its already-trusted session.
+    const catchup=await s.ownerManager.wrapCommittedEpoch({
+      transactionRef:'tx.next',recipient:who(s.bIdentity),
+      sessionId:s.authoritySession.sessionId,context:distributionContext,
+    });
+    const catchupAck=await s.joinerManager.installCommittedEpoch({
+      distribution:catchup,context:distributionContext,
+    });
+    expect((await s.joinerStore.loadGroup(s.genesis.groupId))?.epoch).toBe(3);
+    await s.ownerManager.verifyInstalledAck(catchupAck,'tx.next');
+    expect((await s.ownerManager.resolveCurrentMembership(
+      s.genesis.groupId,who(s.bIdentity))).authorized).toBe(true);
+
+    // A brand-new member with only a trusted genesis pin skips epochs 1/2.
+    const thirdEnvelope=await ownerForThird.wrapCommittedEpoch({
+      transactionRef:'tx.next',recipient:who(thirdIdentity),
+      sessionId:thirdSessions.authoritySession.sessionId,context:distributionContext,
+    });
+    const thirdAck=await thirdMgr.installCommittedEpoch({
+      distribution:thirdEnvelope,context:distributionContext,
+    });
+    expect((await thirdStore.loadGroup(current.groupId))?.epoch).toBe(3);
+    await ownerForThird.verifyInstalledAck(thirdAck,'tx.next');
+  });
+
   test('signed local epoch invalidation prevents stale group membership after restart',async()=>{
     const s=await setup();await committed(s);
     await s.ownerManager.invalidateCurrentEpoch(s.genesis.groupId);
