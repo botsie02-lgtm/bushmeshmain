@@ -227,7 +227,7 @@ describe('verified convoy telemetry: multi-vehicle authenticated projection', ()
       ...valid,
       decoded: {...valid.decoded, wireBytes: [...valid.decoded.wireBytes]},
     };
-    tampered.decoded.wireBytes[tampered.decoded.wireBytes.length - 1] ^= 1;
+    tampered.decoded.wireBytes[4] ^= 1; // messageId participates in canonical AAD
     expect(await service.ingest(tampered)).toBe(false);
   });
 
@@ -282,13 +282,14 @@ describe('verified convoy telemetry: multi-vehicle authenticated projection', ()
     });
     expect(await service.ingest(protectedAccepted(original, 1))).toBe(true);
     const changed = roster(3);
-    changed.members[1] = {...changed.members[1], state: 'revoked'};
+    changed.members = changed.members.map((m, i) => i === 1 ? {...m, state: 'revoked'} : m);
     changed.revision = 'verified-revision-2';
     source.set(changed);
     expect((await service.project())?.members.map(m => m.deviceId)).toEqual(['device_2']);
     expect(await service.ingest(protectedAccepted(original, 1))).toBe(false);
-    changed.members[1] = {...changed.members[1], state: 'active'};
-    changed.members[1] = {...changed.members[1], fingerprint: 'fingerprint_rotated'};
+    changed.members = changed.members.map((m, i) => i === 1 ? {
+      ...m, state: 'active', fingerprint: 'fingerprint_rotated',
+    } : m);
     changed.currentEpoch = 3;
     changed.revision = 'verified-revision-3';
     source.set(changed);
@@ -305,7 +306,7 @@ describe('verified convoy telemetry: multi-vehicle authenticated projection', ()
     expect(await service.project()).toBeNull();
     expect(await service.ingest(protectedAccepted(roster(2), 1))).toBe(false);
     const bad = roster(2);
-    bad.members[1] = {...bad.members[1], nodeId: bad.localNodeId};
+    bad.members = bad.members.map((m, i) => i === 1 ? {...m, nodeId: bad.localNodeId} : m);
     source.set(bad);
     expect(await service.project()).toBeNull();
     expect(await new VerifiedConvoyTelemetry().publish(androidFix(NOW), target))
