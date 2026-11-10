@@ -45,6 +45,8 @@ jobs:
         if: always()
         with:
           name: bushmesh-convoy-regression-reports
-          path: |\n            artifacts/network-simulator/convoy-regressions.json\n            artifacts/network-simulator/wave4-enrolment-regressions.json
+          path: |
+            artifacts/network-simulator/convoy-regressions.json
+            artifacts/network-simulator/wave4-enrolment-regressions.json
           if-no-files-found: ignore
           retention-days: 30
