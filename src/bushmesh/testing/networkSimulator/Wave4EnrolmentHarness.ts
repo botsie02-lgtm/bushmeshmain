@@ -392,7 +392,7 @@ export class Wave4EnrolmentHarness {
     const messageId = this.nextMessageId++;
     const payload = encodeBushMeshWire({
       type: BushMeshPacketType.Message,
-      priority: BushMeshPriority.Control,
+      priority: BushMeshPriority.DirectMessage,
       messageId,
       ackRequested: false,
       payload: [0x34, from, to, messageId & 0xff],
