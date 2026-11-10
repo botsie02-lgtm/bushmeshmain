@@ -61,10 +61,12 @@ jobs:
               assert data.count(original) == 1, 'Missing exact manifest name: ' + short
               data = data.replace(original, 'android:name="' + qualified + '"')
           # Never launch the diagnostic APK as an independent radio owner.
-          launcher = '''        <intent-filter>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent-filter>'''
+          launcher = (
+              '        <intent-filter>\\n'
+              '            <action android:name="android.intent.action.MAIN" />\\n'
+              '            <category android:name="android.intent.category.LAUNCHER" />\\n'
+              '        </intent-filter>'
+          )
           assert data.count(launcher) == 1, 'Expected one launcher entry'
           data = data.replace(launcher, '')
           for service in ('BushMeshRadioService', 'BushMeshCarMessagingService'):
