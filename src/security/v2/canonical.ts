@@ -42,10 +42,6 @@ export function canonicalValue(value: unknown): string {
   }
   throw new SecurityV2Error('INVALID_INPUT', 'Unsupported canonical signature value');
 }
-function claims<T extends {signature: string}>(value: T): Omit<T, 'signature'> {
-  const {signature: _sig, ...rest} = value;
-  return rest;
-}
 export function principalTranscript(p: PrincipalV2): Uint8Array[] {
   return [utf8(p.deviceId), utf8(p.fingerprint), utf8(String(p.keyEpoch))];
 }
