@@ -232,7 +232,9 @@ describe('secure convoy enrolment view projection', () => {
       roster: roster(),
     }));
     expect(rotated.localRole).toBeNull();
-    expect(rotated.members.length).toBeGreaterThan(0);
+    expect(rotated.headerState).toBe('revoked-or-rotated');
+    expect(rotated.selected).toBeNull();
+    expect(rotated.members).toEqual([]);
     expect(rotated.canInvite).toBe(false);
     expect(rotated.canReviewRequests).toBe(false);
   });
