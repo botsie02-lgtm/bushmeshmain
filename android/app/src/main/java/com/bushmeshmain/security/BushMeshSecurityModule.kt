@@ -108,6 +108,25 @@ class BushMeshSecurityModule(context: ReactApplicationContext) :
   @ReactMethod fun epochHigh(groupId: String, promise: Promise) =
     execute(promise) { core.epochHigh(groupId) }
 
+  /**
+   * Destructive, explicitly invoked only. Tombstone commits BEFORE deleting
+   * the Keystore aliases; a crash leaves the identity unusable and resumable.
+   */
+  @ReactMethod fun retireIdentity(promise: Promise) = execute(promise) {
+    val saved = core.retirementHandles()
+    if (saved == null) {
+      require(core.isRetired()) { "No identity to retire" }
+      core.finishRetirement()
+    } else {
+      val handles = JSONObject(String(saved, Charsets.UTF_8))
+      core.beginRetirement()
+      keys.delete(handles.getJSONObject("signingPrivateKey"))
+      keys.delete(handles.getJSONObject("agreementPrivateKey"))
+      core.finishRetirement()
+    }
+    null
+  }
+
   @ReactMethod fun randomBytes(length: Int, promise: Promise) = execute(promise) {
     require(length in 1..65536)
     val bytes = ByteArray(length).also(rng::nextBytes)
