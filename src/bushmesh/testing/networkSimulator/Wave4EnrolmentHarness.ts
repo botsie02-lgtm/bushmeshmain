@@ -125,6 +125,7 @@ export type Wave4SecurityReport = {
 type LocalIdentity = {fingerprint: string; epoch: number};
 type LocalTransaction = Wave4Transaction & {
   approvedClaim: string;
+  approverNodeId: number;
   startedAtMs: number;
   observedReceipts: Set<number>;
 };
@@ -194,7 +195,12 @@ export class Wave4EnrolmentHarness {
 
   async initialize(): Promise<this> {
     await this.fleet.addFleet(this.count, 9);
-    for (const id of this.fleet.ids()) this.applyLocalSecurityPolicy(id);
+    for (const id of this.fleet.ids()) {
+      this.applyLocalSecurityPolicy(id);
+      for (const from of this.fleet.ids()) {
+        if (from !== id) this.policies.get(id)!.activeSessions.add(`wave4-shadow-${from}-${id}`);
+      }
+    }
     return this;
   }
 
@@ -253,7 +259,9 @@ export class Wave4EnrolmentHarness {
     };
     const existing = this.requests.get(requestId);
     if (existing) {
-      if (JSON.stringify(existing) === JSON.stringify(request)) {
+      if (existing.nodeId === request.nodeId &&
+          existing.fingerprint === request.fingerprint &&
+          existing.identityEpoch === request.identityEpoch) {
         this.event('duplicate-request-observed', nodeId, undefined, requestId);
         return true;
       }
@@ -275,9 +283,13 @@ export class Wave4EnrolmentHarness {
       if (prevTx === input.transactionId &&
           existing.fingerprint === input.requesterFingerprint &&
           existing.expectedEpoch === input.expectedEpoch &&
-          existing.approvedClaim === input.claim) {
+          existing.approvedClaim === input.claim &&
+          existing.approverNodeId === input.approverNodeId) {
         this.securityMetrics.replayedApprovals++;
-        this.event('approval-replay-idempotent', request.nodeId, prevTx);
+        if (existing.status !== 'prepared' || existing.expectedEpoch !== this.currentEpoch) {
+          return this.reject('stale-committed-approval-replay', request.nodeId, prevTx);
+        }
+        this.event('prepared-approval-replay-no-op', request.nodeId, prevTx);
         return true;
       }
       this.securityMetrics.conflictingApprovals++;
@@ -316,7 +328,8 @@ export class Wave4EnrolmentHarness {
       expectedEpoch: input.expectedEpoch, committedEpoch: null,
       rosterRevision: null, status: 'prepared',
       pendingRecipients: [], acknowledgedRecipients: [],
-      approvedClaim: input.claim, startedAtMs: this.now(), observedReceipts: new Set(),
+      approvedClaim: input.claim, approverNodeId: input.approverNodeId,
+      startedAtMs: this.now(), observedReceipts: new Set(),
     });
     this.securityMetrics.preparedTransactions++;
     this.event('approval-prepared-shadow', request.nodeId, input.transactionId);
