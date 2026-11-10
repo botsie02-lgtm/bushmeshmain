@@ -200,9 +200,11 @@ describe('Secure convoy enrolment screen', () => {
   });
 
   test('expired and rejected requests cannot display approval controls', async () => {
-    const v = verified();
-    v.requests[0] = {...v.requests[0],
-      displayState: 'expired', mayApprove: false, mayReject: false};
+    const original = verified();
+    const v = {...original, requests: [{
+      ...original.requests[0],
+      displayState: 'expired' as const, mayApprove: false, mayReject: false,
+    }]};
     const p = props(v);
     let tree!: TestRenderer.ReactTestRenderer;
     await act(async () => {tree = TestRenderer.create(<ConvoyEnrolmentScreen {...p} />);});
@@ -269,7 +271,7 @@ describe('Secure convoy enrolment screen', () => {
     await act(async () => {press(tree, 'Identity');});
     const snapshot = JSON.stringify(tree.toJSON());
     expect(snapshot).toContain('public-owner-fp');
-    expect(snapshot).toContain('Key epoch');
+    expect(snapshot).toContain('Identity key epoch');
     expect(snapshot).not.toContain('privateKeyHandle');
     expect(snapshot).not.toContain('channelSecret');
     expect(snapshot).not.toContain('groupKeyBytes');
