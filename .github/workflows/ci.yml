@@ -53,7 +53,7 @@ jobs:
   android-debug:
     if: startsWith(github.ref, 'refs/heads/integration/')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -90,5 +90,39 @@ jobs:
         with:
           name: bushmesh-wave3-debug-${{ github.sha }}
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      # React Native debug variants omit the JS bundle and need Metro.
+      # This separate debug-key-signed RELEASE variant carries offline JS
+      # for Galaxy S22+ testing; it is NOT production signed or certified.
+      - name: Assemble self-contained Wave 3 field-test APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Verify VIEW PACK is embedded in standalone APK bytecode
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          apk = Path('android/app/build/outputs/apk/release/app-release.apk')
+          assert apk.is_file(), 'Standalone field-test APK missing'
+          with ZipFile(apk) as archive:
+              assert archive.testzip() is None, 'APK ZIP entry corrupted'
+              assert 'assets/index.android.bundle' in archive.namelist(), 'Missing embedded React Native JS bundle'
+              bundle = archive.read('assets/index.android.bundle')
+              assert len(bundle) > 10000, 'Unexpectedly tiny JS bundle'
+              assert b'VIEW PACK' in bundle or 'VIEW PACK'.encode('utf-16-le') in bundle, (
+                  'Map VIEW PACK control not found in bundled Hermes JavaScript'
+              )
+              assert any(name.endswith('.dex') for name in archive.namelist()), 'Missing Android bytecode'
+              print(f'Validated standalone APK: {apk.stat().st_size} bytes; embedded JS: {len(bundle)} bytes; VIEW PACK present')
+          PY
+
+      - name: Publish standalone offline Wave 3 field-test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-wave3-standalone-fieldtest-${{ github.sha }}
+          path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14

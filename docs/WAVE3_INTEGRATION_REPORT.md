@@ -37,3 +37,12 @@ The final release-packaging change adds a GitHub Actions APK artifact **only aft
 - Simulator: the independent reference `test/network-simulator-v1` at `2a1f11f6e65b8871eda33ddc74ebbc3106017e9f` has a divergent history, which was NOT merged. The isolated deterministic simulator carried from the validated baseline continues to run; its identity-mismatch checks do not replace physical RF tests.
 
 **Required physical acceptance:** `docs/WAVE3_UNIFIED_HARDWARE_ACCEPTANCE.md`. An APK with green CI is only **ready for physical Wave 3 testing**, never a demonstrated radio/map pass or production-enrolled convoy.
+
+
+## Final Melbourne map hardening (10 November 2026)
+
+- Source `feature/trusted-australian-map-packs-v1` advanced seven commits `13a0a5b...` → `a71366b82a0519a514f1032a2c7ba6ad9146d4b7`. The two-parent Wave 3 merge is `b7e4ca01d8f7c40d57d3c769dafec83786cb1b65`.
+- Eleven files: real BBBike fetch/extract/build/provenance, independent complete MBTiles PNG/SQLite checks, map bounds-centre logic, VIEW PACK button + camera/rendering tests, docs and feature-scoped real-map workflow. No binaries were added.
+- Real map built in GitHub Actions run `42574447304`: `melbourne-cbd-osm-roads-v1` version `bbbike-20261109`, 96 genuine road tiles, 1,331,200 bytes, SHA256 `2801b85fff3eb42dca50179a6c729a523ae239258112cfe96f2ca7201689fb70`. This artifact stays separate from the APK.
+- The final CI publishes BOTH an ordinary Metro-dependent debug APK and a **standalone** APK built from the Release variant with the project's existing debug signing key. The latter must pass embedded Hermes JS/VIEW PACK bytecode inspection; it is NOT production signed.
+- Automated no-GPS VIEW PACK tests do not assert that physical Galaxy S22+ pixels have loaded; real on-device `Image.onLoad` plus an airplane-mode restart are still outstanding. All authorization and radio-safety gates remain unchanged.

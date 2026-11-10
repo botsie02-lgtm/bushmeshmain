@@ -1,5 +1,22 @@
 # Wave 3 unified Galaxy S22+ physical acceptance — NOT YET EXECUTED
 
+## Verified 10 November 2026 Melbourne map integration update
+
+The final seven commits of `feature/trusted-australian-map-packs-v1` through `a71366b82a0519a514f1032a2c7ba6ad9146d4b7` are integrated as a two-parent staging merge `b7e4ca01d8f7c40d57d3c769dafec83786cb1b65`; no generated PBF, MBTiles or tile pixels were committed or embedded.
+
+The official map worker run at https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/42574447304 created the real BBBike `melbourne-cbd-osm-roads-v1` version `bbbike-20261109`, 96 actual road PNG tiles at zoom 12–15, 1,331,200 bytes, reviewed SHA-256 `2801b85fff3eb42dca50179a6c729a523ae239258112cfe96f2ca7201689fb70`. Download the separate `bushmesh-melbourne-cbd-real-osm-mbtiles` artifact and verify its own manifest/checksum before Android import. It expires 16 November 2026 UTC. See `docs/AUSTRALIAN_RASTER_PACK_PROVISIONING.md`.
+
+### Choose the correct APK for OFFLINE physical testing
+
+The normal `assembleDebug` artifact is for developer testing with the React Native Metro server; by default it does **not** include an app JavaScript bundle. The Wave 3 CI now also builds `assembleRelease` (currently signed by the existing Android **debug keystore**, so this is NOT a production signed release). It verifies `assets/index.android.bundle` inside that APK and checks that the compiled Hermes bytecode contains `VIEW PACK`. Download the artifact named `bushmesh-wave3-standalone-fieldtest-<staging-SHA>`, extract `app-release.apk`, and install over the existing app without clearing its data. Use this standalone field-test variant for airplane-mode tests; it should not require a Metro server.
+
+### VIEW PACK test without a Melbourne GPS fix
+
+From Drive select **Open ConvoyMap**, or the existing Map view. First import and verify the **real** `.mbtiles` using Device → Offline map packs → ADD REVIEWED MAP PACK → IMPORT FILE. In the map choose `melbourne-cbd-osm-roads-v1` and press **VIEW PACK**. The control centres on **(-37.81, 144.98)** from the manifest rather than the phone's current location, at a clamped zoom (13 for this pack). A camera and tile-request Jest regression also checks this exact region with `selfFix=null` and untrusted members excluded. Native `Image.onLoad` must still be observed on the Galaxy S22+ before claiming actual map rendering, and force-close/restart in airplane mode must still pass.
+
+This standalone APK includes **no map archive**: it preserves operator-reviewed document-picker import and local archive digest verification. The field-test build remains Security v3 enrolment-disabled and quick-action previews stay non-transmitting.
+
+
 **Record the exact APK GitHub commit SHA and Android version before testing.** Use a Samsung Galaxy S22+, Heltec A, LilyGo B, the same previously working Australia (Narrow) MeshCore carrier profile and private channel **#4**, with the existing PSK and encrypted Radio History. Do not uninstall, clear data, reset a secret, or replace protected Wave 2 staging. A failure in previously validated radio behavior is a release blocker.
 
 ## A — Synthetic offline MBTiles plumbing (not geographic evidence)
