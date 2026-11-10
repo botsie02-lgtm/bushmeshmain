@@ -68,11 +68,15 @@ for those tests.
 | Sender binding and embedded ID forgery | `0x440109` | 5 | In-memory Security adapter rejects false source/device, ledger refuses mismatched embedded ID |
 | High-congestion leader/rear split and regroup | `0x440110` | 20 | Split blocks synthetic distribution; collision/queue loss recorded; key and position traffic resumes |
 | Injected deny-only external decision seam | `0x440111` | 5 | A fake external-decision denial cannot be promoted into membership |
+| Stale accepted-result defence | `0x440112` | 4 | A dropped position cannot be counted as accepted using a previous inbound result |
+| Failed receipt verification after successful local installs | `0x440113` | 5 | An external negative fake receipt decision prevents ack convergence until verified |
 | Fixed-seed ten-join monotonicity soaks | `0x440201`, `0x440202`, `0x440203` | 20 each | Ten sequential CAS epochs, partial-write injection, receipt convergence, fresh source positions |
 | Exact same-seed transcript replay | `0x4402da` | 20 twice | Security report, event trace and metric samples are bit-for-bit deterministic |
 
-The existing **44 Network Simulator tests** remain part of the same CI job
-and use the original deterministic protocol, position and RF scenarios.
+The existing **44 Network Simulator tests** remain part of the same CI job;
+the Wave 4 suite adds **17 deterministic tests**, for **61 total** (subject to
+CI validation).
+The original cases still use deterministic protocol, position and RF scenarios.
 
 ## Security-failure reports
 
@@ -94,7 +98,9 @@ report records:
 - frozen-runtime datagram attempts, accepted/rejected/lost messages, duplicate
   suppression, queue peaks/drops, synthetic collisions/airtime and per-peer
   position freshness;
-- deterministic virtual-time security events. If invariants fail, a detailed
+- deterministic virtual-time security events and the complete carrier event trace,
+  including queued, collision, rejected, delivered and retransmitted frames.
+  If invariants fail, a detailed
   `failureReport` includes the simulator's source configuration and recent
   carrier trace.
 
