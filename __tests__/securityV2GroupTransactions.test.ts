@@ -285,6 +285,27 @@ describe('Security v2 isolated group roster and key transactions',()=>{
     })).resolves.toMatchObject({committedEpoch:2});
   });
 
+  test('power loss after atomic recipient install recovers signed ack without replaying ciphertext',async()=>{
+    const s=await setup();const {commit}=await committed(s);
+    const envelope=await s.ownerManager.wrapCommittedEpoch({
+      transactionRef:commit.transactionRef,recipient:who(s.bIdentity),
+      sessionId:s.authoritySession.sessionId,context:distributionContext,
+    });
+    s.joinerStore.failOnce('after-install');
+    await expect(s.joinerManager.installCommittedEpoch({
+      distribution:envelope,context:distributionContext,
+    })).rejects.toMatchObject({code:'STORE_UNAVAILABLE'});
+    expect((await s.joinerStore.loadGroup(s.genesis.groupId))?.epoch).toBe(2);
+    const recovered=makeManager(s.joiner,s.bSessions,s.joinerStore);
+    const signedAck=await recovered.recoverInstalledAck({
+      distribution:envelope,context:distributionContext,
+    });
+    await expect(s.ownerManager.verifyInstalledAck(signedAck,commit.transactionRef))
+      .resolves.toBe(true);
+    expect((await s.ownerManager.resolveCurrentMembership(
+      s.genesis.groupId,who(s.bIdentity))).authorized).toBe(true);
+  });
+
   test('protected epoch high-water catches ordinary snapshot rollback and corrupt recovery',async()=>{
     const s=await setup();await committed(s);
     s.ownerStore.unsafeRollbackGroup(s.genesis.groupId,s.genesis);
