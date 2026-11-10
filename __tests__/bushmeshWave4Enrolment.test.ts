@@ -14,6 +14,7 @@ import {
   wave4MultiJoinFixedSeedSoak,
   wave4InjectedProviderDenial,
   wave4DroppedPositionNoStaleSuccess,
+  wave4RecipientReceiptMustVerify,
   Wave4ScenarioResult,
 } from '../src/bushmesh/testing/networkSimulator';
 
@@ -143,6 +144,14 @@ describe('Wave 4 Security v2 enrolment boundary — deterministic fake decision 
     const result = checked(await wave4DroppedPositionNoStaleSuccess());
     expect(result.security.metrics.rejectedUnauthorizedPositions).toBe(0);
     expect(result.security.transport.delivery.failed).toBeGreaterThanOrEqual(1);
+  });
+
+  it('cannot mark mock epoch convergence after a provider refuses installation receipts', async () => {
+    const r = checked(await wave4RecipientReceiptMustVerify());
+    expect(r.security.metrics.rejectedInstallAcks).toBe(2);
+    expect(r.security.metrics.verifiedInstallAcks).toBe(3);
+    expect(r.security.ackConverged).toBe(true);
+    expect(r.carrierTrace.length).toBeGreaterThan(0);
   });
 
   it('honours an injected external decision-port refusal without claiming a Security v2 provider', async () => {
