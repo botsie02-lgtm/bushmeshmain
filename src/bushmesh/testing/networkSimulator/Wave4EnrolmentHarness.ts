@@ -280,6 +280,9 @@ export class Wave4EnrolmentHarness {
     const prevTx = this.approvalsByRequest.get(input.requestId);
     if (prevTx) {
       const existing = this.transactions.get(prevTx)!;
+      if (this.identities.get(request.nodeId)!.fingerprint !== request.fingerprint) {
+        return this.reject('requester-identity-rotated-since-approval', request.nodeId, prevTx);
+      }
       if (prevTx === input.transactionId &&
           existing.fingerprint === input.requesterFingerprint &&
           existing.expectedEpoch === input.expectedEpoch &&
