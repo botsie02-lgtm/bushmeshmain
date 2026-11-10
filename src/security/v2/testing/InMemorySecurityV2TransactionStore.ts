@@ -233,9 +233,10 @@ export class InMemorySecurityV2TransactionStore implements SecurityV2Transaction
         group.epoch <= high || freshKey.length !== 32 ||
         group.state !== 'active' ||
         (old && (old.genesisDigest !== group.genesisDigest || old.epoch >= group.epoch)) ||
-        (old && old.roster.some(before=>before.state === 'revoked' &&
-          !group.roster.some(after=>after.deviceId === before.deviceId &&
-            after.state === 'revoked')))) {
+        (old && (group.authoritySequence < old.authoritySequence ||
+          old.revokedCredentials.some(id => !group.revokedCredentials.includes(id)) ||
+          old.roster.some(before=>!group.roster.some(after=>
+            canonicalValue(before) === canonicalValue(after)))))) {
       throw new SecurityV2Error('STALE_EPOCH',
         'Recipient install is unanchored, older, or would revive a revoked member');
     }
