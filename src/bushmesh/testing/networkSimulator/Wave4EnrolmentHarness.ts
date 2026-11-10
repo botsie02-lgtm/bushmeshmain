@@ -505,17 +505,25 @@ export class Wave4EnrolmentHarness {
   }
 
   async position(from: number, to: number): Promise<boolean> {
-    const beforeRejected = this.fleet.network.metrics.runtimeRejected;
-    await this.fleet.publishPosition(from, [to]);
+    const traceStart = this.fleet.network.trace.length;
+    const messageId = await this.fleet.publishPosition(from, [to]);
     await this.fleet.network.runUntilIdle();
-    const result = this.fleet.node(to).lastInboundResult;
-    if (result?.status === 'rejected' &&
-        this.fleet.network.metrics.runtimeRejected > beforeRejected) {
-      this.securityMetrics.rejectedUnauthorizedPositions++;
-    }
-    this.event(result?.status === 'accepted' ? 'fake-protected-position-accepted' :
-      'fake-protected-position-not-accepted', from, undefined, result?.status);
-    return result?.status === 'accepted';
+    // Attribute delivery to THIS exact message, never the destination's
+    // previous lastInboundResult (which can survive loss/partition).
+    const relevant = this.fleet.network.trace.slice(traceStart).filter(event =>
+      event.from === from && event.to === to && event.messageId === messageId,
+    );
+    const accepted = relevant.some(event => event.kind === 'delivered');
+    const rejected = relevant.some(event => event.kind === 'runtime-rejected' &&
+      event.detail?.startsWith('security-failed:'));
+    if (rejected) this.securityMetrics.rejectedUnauthorizedPositions++;
+    this.event(
+      accepted ? 'fake-protected-position-accepted' :
+        rejected ? 'fake-protected-position-security-rejected' :
+          'fake-protected-position-not-delivered',
+      from, undefined, `messageId=${messageId}`,
+    );
+    return accepted;
   }
 
   restartAuthority(failedRestore: boolean): void {
