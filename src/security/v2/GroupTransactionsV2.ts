@@ -449,11 +449,13 @@ export class SecurityV2GroupTransactions implements SecurityV2GroupTransactionsP
     if (oldGroup) {
       ensure(oldGroup.genesisDigest === group.genesisDigest, 'UNTRUSTED',
         'Group owner root changed');
+      ensure(group.authoritySequence >= oldGroup.authoritySequence &&
+        oldGroup.revokedCredentials.every(id => group.revokedCredentials.includes(id)),
+        'REVOKED', 'Remote role revocation or authority sequence rolled back');
       for (const m of oldGroup.roster) {
-        if (m.state === 'revoked') {
-          ensure(group.roster.some(n => n.deviceId === m.deviceId &&
-            n.state === 'revoked'), 'REVOKED', 'Stale roster revives revoked member');
-        }
+        ensure(group.roster.some(n => n.deviceId === m.deviceId &&
+          canonicalValue(n) === canonicalValue(m)),
+          'REVOKED', 'Add-member distribution modified an existing member');
       }
     }
     ensure(v.committedEpoch > await this.store.getEpochHighWater(v.groupId),
@@ -497,6 +499,39 @@ export class SecurityV2GroupTransactions implements SecurityV2GroupTransactionsP
       wipe(key);
     }
     // Signature proves completion of LOCAL atomic installation, never RF write.
+    return this.signInstalledAck(v, digest);
+  }
+
+  /**
+   * A crash can occur AFTER atomic installation but BEFORE the ack is
+   * signed or delivered. Re-validate the original signed distribution
+   * against durable installed state and re-sign; never replay V1 AEAD.
+   */
+  async recoverInstalledAck(input: {distribution: BoundEpochDistributionV2;
+    context: SecurityProtocolContext}): Promise<InstalledAckV2> {
+    const v = input.distribution;
+    const group = await this.loadVerifiedGroup(v.groupId);
+    const digest = await canonicalDigestV2(this.crypto, DISTRIBUTION_DOMAIN, v);
+    const stored = await this.store.getInstalledDistribution(v.transactionId);
+    ensure(stored === digest && group.currentTransactionId === v.transactionId &&
+      group.epoch === v.committedEpoch && group.rosterDigest === v.rosterDigest &&
+      group.genesisDigest === v.genesisDigest,
+      'NOT_INSTALLED', 'No exact matching durable installed transaction');
+    ensure(v.aadDigest === await this.requireContext(group, input.context),
+      'CONFLICT', 'Recovery AAD differs from signed distribution');
+    const local = await this.identity.current();
+    ensure(samePrincipal(principal(local), v.recipient), 'UNTRUSTED',
+      'Recovery identity no longer matches installing recipient');
+    const signer = await this.pinnedIdentity(v.sender);
+    await this.checkSignature(signer, distributionTranscript(v), v.signature);
+    const key = await this.store.getEpochKey(v.groupId, v.committedEpoch);
+    ensure(key?.length === 32, 'KEY_MISSING', 'Installed epoch key missing');
+    wipe(key);
+    return this.signInstalledAck(v, digest);
+  }
+
+  private async signInstalledAck(v: BoundEpochDistributionV2,
+    digest: string): Promise<InstalledAckV2> {
     const ack: InstalledAckV2 = {
       kind: 'bushmesh-v2-installed-ack', version: 2, transactionId: v.transactionId,
       groupId: v.groupId, committedEpoch: v.committedEpoch,
