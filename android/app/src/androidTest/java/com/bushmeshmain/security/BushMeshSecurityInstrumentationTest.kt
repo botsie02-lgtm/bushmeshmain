@@ -127,6 +127,27 @@ class BushMeshSecurityInstrumentationTest {
     assertThrows(IllegalStateException::class.java) { core.get("meta", "peer/old") }
   }
 
+  @Test fun identityRetirementTombstoneSurvivesInterruptedCleanup() {
+    val identity = JSONObject().put("keyEpoch", 1).toString()
+    val signing = JSONObject().put("algorithm", "Ed25519").put("purpose", "identity-signing")
+    val agreement = JSONObject().put("algorithm", "X25519").put("purpose", "identity-agreement")
+    val handles = JSONObject().put("keyEpoch", 1)
+      .put("signingPrivateKey", signing).put("agreementPrivateKey", agreement).toString()
+    core.setIdentityAtomic(identity, handles)
+    core.beginRetirement()
+    assertThrows(IllegalStateException::class.java) { core.get("meta", "identity") }
+    core.close()
+    core = BushMeshSecurityCore(context, filename, keyAlias)
+    assertTrue(core.isRetired())
+    assertNotNull(core.retirementHandles())
+    core.finishRetirement()
+    assertNull(core.retirementHandles())
+    assertThrows(IllegalArgumentException::class.java) {
+      core.setIdentityAtomic(identity, handles)
+    }
+    assertThrows(IllegalStateException::class.java) { core.get("meta", "identityHandles") }
+  }
+
   @Test fun curveKeysAreHardwareProbedAndNeverExported() {
     val keys = BushMeshCurve25519Keys(core)
     val report = keys.probe()
