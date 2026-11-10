@@ -282,13 +282,13 @@ describe('verified convoy telemetry: multi-vehicle authenticated projection', ()
     });
     expect(await service.ingest(protectedAccepted(original, 1))).toBe(true);
     const changed = roster(3);
-    changed.members = changed.members.map((m, i) => i === 1 ? {...m, state: 'revoked'} : m);
+    changed.members = changed.members.map((m, i) => i === 1 ? {...m, state: 'revoked' as const} : m);
     changed.revision = 'verified-revision-2';
     source.set(changed);
     expect((await service.project())?.members.map(m => m.deviceId)).toEqual(['device_2']);
     expect(await service.ingest(protectedAccepted(original, 1))).toBe(false);
     changed.members = changed.members.map((m, i) => i === 1 ? {
-      ...m, state: 'active', fingerprint: 'fingerprint_rotated',
+      ...m, state: 'active' as const, fingerprint: 'fingerprint_rotated',
     } : m);
     changed.currentEpoch = 3;
     changed.revision = 'verified-revision-3';
