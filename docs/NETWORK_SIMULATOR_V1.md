@@ -11,6 +11,11 @@ per-sender airtime/queue fairness, delayed positions, active epoch/revocation
 injection and fixed-seed 20-vehicle soaks are documented in
 [NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md](NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md).
 These scenarios expressly do not prove real LoRa interference or Security key enrolment.
+
+Wave 4 shadow enrolment transaction and key-epoch convergence regressions
+are in [NETWORK_SIMULATOR_WAVE4_SECURITY_V2_SHADOW_TESTS.md](NETWORK_SIMULATOR_WAVE4_SECURITY_V2_SHADOW_TESTS.md).
+They are fake-provider decision tests only: no real Security v2 enrolment,
+cryptographic approvals or group-key installation is claimed.
 The CI suite emits machine-readable deterministic campaign reports as a GitHub
 Actions artifact in addition to full seed/timeline diagnostics on failure.
 
