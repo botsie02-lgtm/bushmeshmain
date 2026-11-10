@@ -1,0 +1,110 @@
+name: Wave 4 isolated Android Security S22+ candidate build (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_isolated:
+        description: 'I understand these APKs install beside BushMesh under a DIFFERENT app ID; no production security claim'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-security-artifacts:
+    if: inputs.confirm_isolated == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout EXACT security worker commit (not Wave 4 runtime)
+        uses: actions/checkout@v4
+        with:
+          ref: b0558b643ffed8e839267bca16d4ae5cd363536b
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+          cache-dependency-path: candidate/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: candidate/android/gradle/wrapper/gradle-wrapper.properties
+      - name: Transform only disposable candidate build to isolated application ID
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          gradle = Path('candidate/android/app/build.gradle')
+          old = gradle.read_text(encoding='utf-8')
+          needle = 'applicationId "com.bushmeshmain"'
+          assert old.count(needle) == 1, 'Unexpected source Gradle application ID'
+          new = old.replace(needle,
+              'applicationId "com.bushmeshmain.securityfieldtest"\n'
+              '        testApplicationId "com.bushmeshmain.securityfieldtest.test"')
+          gradle.write_text(new, encoding='utf-8')
+
+          manifest = Path('candidate/android/app/src/main/AndroidManifest.xml')
+          data = manifest.read_text(encoding='utf-8')
+          for short, qualified in (
+              ('.MainApplication', 'com.bushmeshmain.MainApplication'),
+              ('.MainActivity', 'com.bushmeshmain.MainActivity'),
+              ('.radio.BushMeshRadioService', 'com.bushmeshmain.radio.BushMeshRadioService'),
+              ('.radio.BushMeshCarMessagingService', 'com.bushmeshmain.radio.BushMeshCarMessagingService'),
+          ):
+              original = 'android:name="' + short + '"'
+              assert data.count(original) == 1, 'Missing exact manifest name: ' + short
+              data = data.replace(original, 'android:name="' + qualified + '"')
+          # Never launch the diagnostic APK as an independent radio owner.
+          launcher = '''        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>'''
+          assert data.count(launcher) == 1, 'Expected one launcher entry'
+          data = data.replace(launcher, '')
+          for service in ('BushMeshRadioService', 'BushMeshCarMessagingService'):
+              original = 'android:name="com.bushmeshmain.radio.' + service + '"'
+              assert data.count(original) == 1
+              data = data.replace(original, original + '\n        android:enabled="false"')
+          manifest.write_text(data, encoding='utf-8')
+          ET.parse(manifest)
+          labels = Path('candidate/android/app/src/main/res/values/strings.xml')
+          strings = labels.read_text(encoding='utf-8')
+          assert '<string name="app_name">bushmeshmain</string>' in strings
+          labels.write_text(strings.replace('>bushmeshmain</string>', '>BushMesh Security Test (isolated)</string>'), encoding='utf-8')
+          print('Isolated app ID: com.bushmeshmain.securityfieldtest (NOT com.bushmeshmain)')
+          PY
+      - name: Install candidate npm dependencies
+        working-directory: candidate
+        run: npm ci
+      - name: Build standalone Android instrumentation candidate (no device execution)
+        working-directory: candidate/android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+      - name: Assert isolated app IDs in Gradle build metadata
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          outputs = Path('candidate/android/app/build/outputs/apk')
+          app = json.loads((outputs / 'debug/output-metadata.json').read_text())
+          test = json.loads((outputs / 'androidTest/debug/output-metadata.json').read_text())
+          assert app['applicationId'] == 'com.bushmeshmain.securityfieldtest', app['applicationId']
+          assert test['applicationId'] == 'com.bushmeshmain.securityfieldtest.test', test['applicationId']
+          print('Verified two isolated application IDs, no production ID APK.')
+          PY
+      - name: Publish isolated worker APP and instrumentation test APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-android-security-isolated-b0558b643-unsigned-production-certification
+          path: |
+            candidate/android/app/build/outputs/apk/debug/app-debug.apk
+            candidate/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          retention-days: 14

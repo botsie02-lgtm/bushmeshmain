@@ -64,3 +64,23 @@ The order of steps 2–5 can change if delivered source has independent harmless
 ## Wave 4 exit criteria
 
 Security formal review approved with signed-off risk model and compatibility tests; actual Android cryptographic provider on each intended Android API/device, restart-durable protected state; reliable authorized group roster/key epoch transactions and signed installation ACK; real identity-bound member position dissemination; all automated gates; user-executed two-phone/two-radio and baseline regression acceptance with redacted evidence. Until then **Wave 4 remains staging only, not authenticated or hardware validated**. See `docs/WAVE4_TWO_PHONE_TWO_RADIO_ACCEPTANCE.md`.
+
+## Stage 1/2 source review ledger — 10 November 2026 update
+
+This is the **updated** state. The earlier table above records the observed source branch heads *when Wave 4 was created*, not later integration status.
+
+| Stage | Source SHA | Preflight on staging | Two-parent merge / post-merge CI |
+|---|---|---|---|
+| 1 — Safe Convoy enrolment UI | `07cdcabb073d2b8100478e355b63cdc9b567c939` | `89fe9525f2713d6703a36cf98cf4f18c6f493a1a`, [successful complete CI](https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/42754727594) | `d62eca08c93ba59d656ea4cf928356cb97823260`, [successful complete CI](https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/42755396222) |
+| 2 — Verified telemetry library | `49f0ac35fffb59a9a9c7598e7533297b4ebe9f9a` | `a3322cc360274652a5051597ff840a9be1509a5f`, [preflight workflow](https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/42756126447) | Traceable merge commit follows only after the preflight is fully green; inspect this staging branch's history and CI runs for the final SHA |
+| 3 — Security v2 group transactions | `8eeb659dfb2156c676cf1b69d407edb644cdcff8` | Review only — [isolated source CI passed](https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/42753389618) | **NOT MERGED**; formal contract blocked pending full production `SecurityV2TransactionalStore` and independent review |
+| 4 — Android production security candidate | `b0558b643ffed8e839267bca16d4ae5cd363536b` | Review only — [isolated source CI passed](https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/42752679340) | **NOT MERGED**; exact Galaxy S22+ hardware Ed25519/X25519 still unverified |
+| Independent simulator | `e843d957e96536de00aa72401c37eefc4cf37500` | [isolated source CI passed](https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/42752161188) | **NOT MERGED**; divergent source history; shadow state, not production crypto |
+
+**Actual Stage 1 mounting:** `ConnectedConvoyEnrolment` is reachable via Convoy → **View unavailable secure enrolment**. Its hook receives default null service/identity and false production/transport flags; it cannot create invitations, approve, join or grant membership. Existing carrier tools remain reachable with their explicit legacy warning; five tabs and app-level radio providers are untouched.
+
+**Actual Stage 2 mounting:** `VerifiedConvoyTelemetry` is a compiled and unit-tested **library, with no live instantiation**. No runtime inbound subscription, outgoing queue, GPS feed, map/Drive member projection, sequence allocator, verified roster or airtime provider is installed. See `docs/WAVE4_VERIFIED_TELEMETRY_ADAPTER_GATES.md`. The staging default `unavailableConvoyDirectory` remains authoritative.
+
+**Security and Android review:** See `docs/WAVE4_SECURITY_V2_ANDROID_COMPATIBILITY.md` for all required transactional-store APIs and unimplemented methods. See `docs/WAVE4_ANDROID_ISOLATED_SECURITY_FIELDTEST.md` and the manual `wave4-isolated-android-security-fieldtest.yml` diagnostic build; it checks out the Android **source branch by SHA**, uses a completely separate Android package and user-data namespace, and never injects the provider into the normal Wave 4 app.
+
+**Physical regression:** `docs/WAVE4_GALAXY_S22_REGRESSION_CHECKLIST.md`. The full genuine-join rig is `docs/WAVE4_TWO_PHONE_TWO_RADIO_ACCEPTANCE.md`. The existing Wave 3 hardware pass is user-reported, not an independently repeated Wave 4 acceptance.
