@@ -336,6 +336,33 @@ describe('Security v2 isolated group roster and key transactions',()=>{
     });
   });
 
+  test('revoked peer cannot reuse an otherwise authenticated pending direct session',async()=>{
+    const s=await setup();
+    const p=await prepare(s);
+    await s.owner.trust.revoke(s.bIdentity.deviceId,'stolen convoy handset');
+    await expect(s.ownerManager.prepareAddMember(p))
+      .rejects.toMatchObject({code:'PEER_REVOKED'});
+    expect((await s.ownerStore.loadGroup(s.genesis.groupId))?.epoch).toBe(1);
+  });
+
+  test('stale credentials and peer revocation after prepare prevent CAS commit',async()=>{
+    const expired=await setup();
+    const x=await prepare(expired);
+    await expired.ownerManager.prepareAddMember(x);
+    expired.owner.clock.advance(590_001);
+    await expect(expired.ownerManager.commitPreparedAddition(x.approval.proposal.transactionId))
+      .rejects.toMatchObject({code:'EXPIRED'});
+    expect((await expired.ownerStore.loadGroup(expired.genesis.groupId))?.epoch).toBe(1);
+
+    const revoked=await setup();
+    const p=await prepare(revoked);
+    await revoked.ownerManager.prepareAddMember(p);
+    await revoked.owner.trust.revoke(revoked.bIdentity.deviceId,'revoked while queued');
+    await expect(revoked.ownerManager.commitPreparedAddition(p.approval.proposal.transactionId))
+      .rejects.toMatchObject({code:'UNTRUSTED'});
+    expect((await revoked.ownerStore.loadGroup(revoked.genesis.groupId))?.epoch).toBe(1);
+  });
+
   test('downgrade and immutable Protocol v1 AAD tampering fail closed',async()=>{
     const s=await setup();const p=await prepare(s);
     await expect(s.ownerManager.prepareAddMember({...p,join:{...p.join,version:1 as 2}}))
