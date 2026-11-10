@@ -15,6 +15,7 @@ const available = {
 };
 
 function bridge(overrides: Partial<AndroidSecurityNativeBridge> = {}): AndroidSecurityNativeBridge {
+  let nativeDraw = 0;
   return {
     probe: jest.fn(async () => JSON.stringify(available)),
     read: jest.fn(async () => null),
@@ -31,6 +32,8 @@ function bridge(overrides: Partial<AndroidSecurityNativeBridge> = {}): AndroidSe
     epochHigh: jest.fn(async () => 0),
     retireIdentity: jest.fn(async () => undefined),
     randomBytes: jest.fn(async (size: number) => Buffer.alloc(size, 5).toString('base64')),
+    randomBytesSync: jest.fn((size: number) =>
+      Buffer.alloc(size, ++nativeDraw).toString('base64')),
     sha256: jest.fn(async () => Buffer.alloc(32).toString('base64')),
     hkdf: jest.fn(async () => Buffer.alloc(32).toString('base64')),
     aead: jest.fn(async () => Buffer.alloc(16).toString('base64')),
@@ -75,8 +78,8 @@ it('uses one-time native entropy, exact raw key lengths, and opaque handles', as
   const native = bridge();
   const services = await createAndroidProductionSecurity(native);
   const {crypto} = services;
-  expect(crypto.randomBytes(16)).toEqual(new Uint8Array(16).fill(5));
-  expect(crypto.randomBytes(16)).toEqual(new Uint8Array(16).fill(5));
+  expect(crypto.randomBytes(16)).toEqual(new Uint8Array(16).fill(3));
+  expect(crypto.randomBytes(16)).toEqual(new Uint8Array(16).fill(4));
   expect(crypto.randomBytes(16)).not.toBeInstanceOf(Promise);
   const signing = await crypto.generateSigningKeyPair('identity-signing');
   const agreement = await crypto.generateAgreementKeyPair('identity-agreement');
@@ -171,4 +174,23 @@ it('retirement requires explicit invocation of the dedicated native API', async 
   const native = bridge();
   await retireAndroidLocalIdentity(native);
   expect(native.retireIdentity).toHaveBeenCalledTimes(1);
+});
+
+it('fails closed if synchronous native CSPRNG is missing instead of exhausting an entropy pool', async () => {
+  const native = bridge({randomBytesSync: undefined});
+  await expect(AndroidHardwareCryptoProvider.create(native))
+    .rejects.toMatchObject({code: 'UNSUPPORTED_VERSION'});
+  expect(native.randomBytes).not.toHaveBeenCalled();
+});
+
+it('draws fresh native CSPRNG bytes for each synchronous request and bounds size', async () => {
+  const native = bridge();
+  const crypto = await AndroidHardwareCryptoProvider.create(native);
+  for (let index = 0; index < 20; index += 1) {
+    const random = crypto.randomBytes(32);
+    expect(random).toHaveLength(32);
+  }
+  expect(native.randomBytesSync).toHaveBeenCalledTimes(22);
+  expect(() => crypto.randomBytes(1025)).toThrow(SecurityError);
+  expect(() => crypto.randomBytes(0)).toThrow(SecurityError);
 });

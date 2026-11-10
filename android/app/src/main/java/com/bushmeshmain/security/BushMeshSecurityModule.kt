@@ -127,6 +127,17 @@ class BushMeshSecurityModule(context: ReactApplicationContext) :
     null
   }
 
+  /**
+   * Synchronous crypto boundary: no finite JS entropy pool and no Math.random.
+   * Blocking only for <=1024 bytes. With RN New Architecture this method may
+   * be unavailable: TypeScript MUST fail closed, not silently fall back.
+   */
+  @ReactMethod(isBlockingSynchronousMethod = true)
+  fun randomBytesSync(length: Int): String {
+    val value = SecurityCSPRNG.next(length)
+    return try { encode(value) } finally { value.fill(0) }
+  }
+
   @ReactMethod fun randomBytes(length: Int, promise: Promise) = execute(promise) {
     require(length in 1..65536)
     val bytes = ByteArray(length).also(rng::nextBytes)

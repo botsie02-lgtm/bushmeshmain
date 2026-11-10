@@ -47,6 +47,8 @@ export interface AndroidSecurityNativeBridge {
   epochHigh(groupId: string): Promise<number>;
   retireIdentity(): Promise<void>;
   randomBytes(length: number): Promise<string>;
+  /** Direct native SecureRandom call; no JS-side finite entropy pool. */
+  randomBytesSync?(length: number): string;
   sha256(value: string): Promise<string>;
   hkdf(input: string, salt: string, info: string, size: number): Promise<string>;
   aead(encrypt: boolean, key: string, nonce: string, body: string, aad: string): Promise<string>;
@@ -273,11 +275,7 @@ export class AndroidSecurityEpochStorage {
 }
 
 export class AndroidHardwareCryptoProvider implements CryptoProvider {
-  private offset = 0;
-  private constructor(
-    private readonly native: AndroidSecurityNativeBridge,
-    private readonly entropy: Uint8Array,
-  ) {}
+  private constructor(private readonly native: AndroidSecurityNativeBridge) {}
 
   static async create(native: AndroidSecurityNativeBridge): Promise<AndroidHardwareCryptoProvider> {
     const report = await probeAndroidProductionSecurity(native);
@@ -286,23 +284,52 @@ export class AndroidHardwareCryptoProvider implements CryptoProvider {
       throw new SecurityError('UNSUPPORTED_VERSION',
         'Exact hardware Ed25519/X25519 not verified; production identity disabled');
     }
-    // Synchronous CryptoProvider.randomBytes uses an independently sourced,
-    // single-use native SecureRandom pool; exhaustion FAILS CLOSED.
-    const seed = bytes(await native.randomBytes(16384));
-    if (seed.length !== 16384) {
-      throw new SecurityError('AUTHENTICATION_FAILED', 'Android entropy pool has wrong length');
+    if (typeof native.randomBytesSync !== 'function') {
+      throw new SecurityError('UNSUPPORTED_VERSION',
+        'Native synchronous CSPRNG not registered; no finite entropy fallback permitted');
     }
-    return new AndroidHardwareCryptoProvider(native, seed);
+    // Smoke-check synchronous bridge availability; this is NOT an entropy
+    // certification or evidence of production readiness.
+    const provider = new AndroidHardwareCryptoProvider(native);
+    const first = provider.randomBytes(32);
+    const second = provider.randomBytes(32);
+    try {
+      if (first.every(byte => byte === 0) || second.every(byte => byte === 0) ||
+          first.every((byte, index) => byte === second[index])) {
+        throw new SecurityError('AUTHENTICATION_FAILED', 'Native synchronous CSPRNG smoke test failed');
+      }
+    } finally {
+      first.fill(0);
+      second.fill(0);
+    }
+    return provider;
   }
 
   randomBytes(length: number): Uint8Array {
-    if (!Number.isSafeInteger(length) || length <= 0 || this.offset + length > this.entropy.length) {
-      throw new SecurityError('INVALID_INPUT', 'Native CSPRNG pool exhausted or length invalid');
+    if (!Number.isSafeInteger(length) || length < 1 || length > 1024) {
+      throw new SecurityError('INVALID_INPUT', 'Native CSPRNG request must be 1 to 1024 bytes');
     }
-    const out = this.entropy.slice(this.offset, this.offset + length);
-    this.entropy.fill(0, this.offset, this.offset + length);
-    this.offset += length;
-    return out;
+    // Legacy bridge availability on RN new architecture must be proved on a
+    // physical app before production use. Unsupported paths fail CLOSED.
+    let value: string;
+    try {
+      const sync = this.native.randomBytesSync;
+      if (typeof sync !== 'function') {
+        throw new Error('Synchronous bridge unavailable');
+      }
+      value = sync(length);
+    } catch {
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Native synchronous CSPRNG unavailable');
+    }
+    if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Invalid native CSPRNG encoding');
+    }
+    const result = bytes(value);
+    if (result.length !== length) {
+      result.fill(0);
+      throw new SecurityError('AUTHENTICATION_FAILED', 'Native CSPRNG output length mismatch');
+    }
+    return result;
   }
 
   async sha256(data: Uint8Array): Promise<Uint8Array> {
