@@ -1,0 +1,62 @@
+name: Security v2 isolated group transactions
+on:
+  push:
+    branches:
+      - feature/security-v2-group-transactions-v1
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract-and-app-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Security v2 negative and recovery tests
+        run: npx jest --runInBand --runTestsByPath __tests__/securityV2GroupTransactions.test.ts
+      - name: All repository Jest tests
+        run: npm test -- --runInBand
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Repository ESLint
+        run: npm run lint
+      - name: Ensure production gate is still closed
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const gate = fs.readFileSync('src/convoy/enrolmentV3/contract.ts','utf8');
+          const app = fs.readFileSync('src/security/v2/contracts.ts','utf8');
+          if (!gate.includes("SECURE_ENROLMENT_V3_ACTIVATION = 'disabled-pending-security-v2-review'")) throw new Error('Existing activation gate changed');
+          if (!app.includes("SECURITY_V2_PRODUCTION_ACTIVATION = 'disabled-pending-formal-review'")) throw new Error('Security v2 unexpectedly enabled');
+          JS
+      - name: Dependency audit advisory report (baseline not altered)
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+  android-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Android debug build (not production activation)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - name: Native Android JVM tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
