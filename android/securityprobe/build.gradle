@@ -1,0 +1,32 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+
+// Deliberately NOT a flavor of :app. No ReactNative, BLE, location,
+// radio service, convoy or map code is packaged in this standalone APK.
+android {
+    namespace "com.bushmesh.securityprobe"
+    compileSdk rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "com.bushmesh.securityprobe"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+        testApplicationId "com.bushmesh.securityprobe.test"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+    buildTypes {
+        debug { }
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+    implementation(project(":securitycore"))
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("junit:junit:4.13.2")
+}
