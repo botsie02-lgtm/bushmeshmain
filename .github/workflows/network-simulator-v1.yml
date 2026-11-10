@@ -10,6 +10,7 @@ on:
       - 'src/bushmesh/protocol/**'
       - '__tests__/bushmeshNetworkSimulator.test.ts'
       - '__tests__/bushmeshConvoyCampaigns.test.ts'
+      - '__tests__/bushmeshWave4Enrolment.test.ts'
       - 'tsconfig.network-simulator-v1.json'
       - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
       - 'docs/NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md'
@@ -21,6 +22,7 @@ on:
       - 'src/bushmesh/protocol/**'
       - '__tests__/bushmeshNetworkSimulator.test.ts'
       - '__tests__/bushmeshConvoyCampaigns.test.ts'
+      - '__tests__/bushmeshWave4Enrolment.test.ts'
       - 'tsconfig.network-simulator-v1.json'
       - 'docs/NETWORK_SIMULATOR_CONVOY_CAMPAIGNS.md'
       - 'docs/NETWORK_SIMULATOR_SHARED_CHANNEL_STRESS.md'
@@ -38,11 +40,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx tsc -p tsconfig.network-simulator-v1.json --noEmit
-      - run: npm test -- --runInBand __tests__/bushmeshNetworkSimulator.test.ts __tests__/bushmeshConvoyCampaigns.test.ts
+      - run: npm test -- --runInBand __tests__/bushmeshNetworkSimulator.test.ts __tests__/bushmeshConvoyCampaigns.test.ts __tests__/bushmeshWave4Enrolment.test.ts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: bushmesh-convoy-regression-reports
-          path: artifacts/network-simulator/convoy-regressions.json
+          path: |\n            artifacts/network-simulator/convoy-regressions.json\n            artifacts/network-simulator/wave4-enrolment-regressions.json
           if-no-files-found: ignore
           retention-days: 30
