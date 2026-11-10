@@ -156,11 +156,14 @@ export function deriveEnrolmentUi(input: EnrolmentUiInput): EnrolmentUiView {
     input.roster.convoyId === selection.convoyId &&
     input.roster.localIdentityRef === selection.localIdentityRef &&
     input.roster.membershipRecordRef === selection.membershipRecordRef;
-  const matchedSelf = identity && rosterScoped && input.roster?.members.find(member =>
-    member.deviceId === identity.deviceId &&
-    member.identityFingerprint === identity.fingerprint &&
-    member.state === 'active'
-  );
+  const matchedSelf: ActiveConvoyMember | null =
+    identity && rosterScoped && input.roster
+      ? input.roster.members.find(member =>
+          member.deviceId === identity.deviceId &&
+          member.identityFingerprint === identity.fingerprint &&
+          member.state === 'active'
+        ) ?? null
+      : null;
   // A roster with a rotated or missing local fingerprint is a contradictory
   // security observation. Hide the whole selection instead of keeping peers.
   const selected = selection &&
