@@ -1,0 +1,59 @@
+name: Android production security v1 (isolated)
+
+on:
+  push:
+    branches:
+      - feature/android-production-security-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-security-v1-feature
+  cancel-in-progress: true
+
+jobs:
+  typescript-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Security adapter Jest tests
+        run: npx jest __tests__/androidProductionSecurity.test.ts --runInBand
+      - name: Project TypeScript validation
+        run: npx tsc --noEmit
+      - name: Project lint
+        run: npm run lint
+
+  android-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Compile Android debug (does not activate security)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+      - name: Run JVM native security and existing tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+      - name: Compile instrumentation-ready device tests (no hardware claims)
+        working-directory: android
+        run: ./gradlew :app:assembleDebugAndroidTest --no-daemon
