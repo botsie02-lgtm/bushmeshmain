@@ -443,8 +443,11 @@ export class SecurityV2GroupTransactions implements SecurityV2GroupTransactionsP
     ensure(v.approval.proposal.transactionId === v.transactionId &&
       v.approval.proposal.nextEpoch === v.committedEpoch &&
       v.approval.proposal.rosterDigestAfter === v.rosterDigest &&
-      v.join.requestId === v.approval.proposal.requestId,
-      'CONFLICT', 'Distribution references a different approval');
+      v.join.requestId === v.approval.proposal.requestId &&
+      samePrincipal(v.join.requester, v.approval.proposal.requester) &&
+      group.roster.some(m => samePrincipal(m, v.join.requester) &&
+        m.state === 'pending-install'),
+      'CONFLICT', 'Distribution references a different requester or approval');
     const local = await this.identity.current();
     ensure(samePrincipal(principal(local), v.recipient), 'UNTRUSTED',
       'Encrypted distribution is not for current local identity');
@@ -453,6 +456,10 @@ export class SecurityV2GroupTransactions implements SecurityV2GroupTransactionsP
     // Never revive an old revoked identity from a remote roster snapshot.
     const oldGroup = await this.store.loadGroup(v.groupId);
     if (oldGroup) {
+      if (oldGroup.epoch === v.approval.proposal.expectedEpoch) {
+        ensure(oldGroup.rosterDigest === v.approval.proposal.rosterDigestBefore,
+          'CONFLICT', 'Recipient before-roster does not match signed approval');
+      }
       ensure(oldGroup.genesisDigest === group.genesisDigest, 'UNTRUSTED',
         'Group owner root changed');
       ensure(group.authoritySequence >= oldGroup.authoritySequence &&
