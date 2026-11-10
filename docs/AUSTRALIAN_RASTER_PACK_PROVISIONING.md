@@ -1,10 +1,198 @@
 # BushMesh: trusted Australian raster map provisioning (field-test v1)
 
+## Verified real Melbourne CBD pack — 9 November 2026
+
+**A real roads-only raster archive has now been generated and validated on GitHub
+Actions.** It is a temporary downloadable Actions artifact, NOT a binary in
+Git and NOT a geographically imaginary test fixture:
+
+- **Download real MBTiles ZIP:** https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/42574447304/artifacts/13654109795
+- **Generation/validation run:** https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/42574447304
+- Artifact name: bushmesh-melbourne-cbd-real-osm-mbtiles.
+- The Actions artifact expires **16 November 2026 UTC** (seven-day retention).
+- MBTiles: melbourne-cbd-roads.mbtiles, **1,331,200 bytes**, **96 actual PNG
+  raster tiles at z12–z15**, tile dimensions 256x256.
+- Declared bounds: **south -37.84, west 144.94, north -37.78, east 145.02**.
+- Exact archive SHA-256:
+  **2801b85fff3eb42dca50179a6c729a523ae239258112cfe96f2ca7201689fb70**.
+- Source: BBBike's Melbourne city OSM PBF, 9 November 2026 fetch, with publisher
+  CHECKSUM.txt MD5 **b4133b19665cd7c74bb38c9f4bad225e**. Full city source
+  SHA-256 **2f710009566d4d9d466fc1f0b36965174581f2aef3c48b65054f1bf8726331b2**.
+- Independently clipped PBF: **13,638,332 bytes**, SHA-256
+  **21196db231f4e0fb1507020e106a6305c909c3c237d0c95ff256a53c134d3f9f**.
+- Production path: complete_ways clip to (west 144.92, south -37.86,
+  east 145.04, north -37.76), then in-repository PNG MBTiles builder.
+- Provenance: the ZIP includes the full source-checksums.txt and
+  .provenance.json (date, upstream/clip SHA-256, Python/Pillow/SQLite versions,
+  generator fingerprint, tile count, road stroke count).
+- Validation: ZIP CRC, SQLite PRAGMA integrity_check, exact manifest
+  size/SHA-256, all 96 images decoded, tile coordinate/zoom/bounds consistency,
+  and genuine road-colour pixels in all 96 tiles.
+- Licence/attribution: **© OpenStreetMap contributors · ODbL 1.0**,
+  https://www.openstreetmap.org/copyright.
+- **Limitation:** simple road strokes over a background, NOT hillshade,
+  elevation, street labels or a complete outdoor/topographic basemap.
+
+Download this ZIP while still available and keep a private copy. Extract it.
+It contains the actual MBTiles, .manifest.json, .sha256, .provenance.json
+and source-checksums.txt. Do NOT import the ZIP or JSON as a map archive:
+IMPORT FILE must select only the **.mbtiles** file.
+
+The app does not automatically trust a ZIP because it came from Actions.
+Use the reviewed-manifest registration + native SHA-256 verification described
+below. This is not a signed cartographic publisher catalog and no phone
+rendering claim is made until an on-device test actually passes.
+
+### Windows PowerShell — verify the downloaded real archive
+
+Unzip the Actions download into a directory, for example
+C:\Users\<YOUR_USER>\Downloads\BushMeshMaps\melbourne-real.
+In a **PowerShell** window:
+
+~~~powershell
+$mapDir = Join-Path $env:USERPROFILE 'Downloads\BushMeshMaps\melbourne-real'
+$archive = Join-Path $mapDir 'melbourne-cbd-roads.mbtiles'
+$manifest = Get-Content (Join-Path $mapDir 'melbourne-cbd-roads.mbtiles.manifest.json') -Raw | ConvertFrom-Json
+$expectedSha = '2801b85fff3eb42dca50179a6c729a523ae239258112cfe96f2ca7201689fb70'
+$actualSha = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualBytes = (Get-Item -LiteralPath $archive).Length
+if ($actualSha -ne $expectedSha -or $actualSha -ne $manifest.sha256 -or
+    $actualBytes -ne $manifest.expectedBytes) {
+  throw 'STOP: Melbourne raster archive differs from the reviewed manifest.'
+}
+Write-Host "Real Melbourne MBTiles SHA-256 verified: $actualSha ($actualBytes bytes)"
+~~~
+
+This validates actual archive bytes against the fingerprint above and the
+generated JSON. It does not replace the Android native verifier. The
+corresponding source-provenance fields are in the ZIP.
+
+### Rebuild from actual raw OSM using Windows + WSL (no statewide download)
+
+**PowerShell**, in your BushMesh checkout (adjust this path if needed):
+
+~~~powershell
+Set-Location (Join-Path $env:USERPROFILE 'GitHub\bushmeshmain')
+git fetch origin feature/trusted-australian-map-packs-v1
+git switch feature/trusted-australian-map-packs-v1
+wsl --install -d Ubuntu
+~~~
+
+If WSL Ubuntu is already installed, skip the install command and open Ubuntu.
+If Windows requests a reboot during WSL installation, complete that first.
+
+**WSL Ubuntu terminal**, from the repository root (replace the example
+Windows user/path if your checkout is elsewhere):
+
+~~~bash
+sudo apt-get update
+sudo apt-get install -y osmium-tool python3 python3-venv python3-pip curl
+cd /mnt/c/Users/<YOUR_WINDOWS_USER>/GitHub/bushmeshmain
+bash tools/maps/build_real_melbourne_bbbike.sh "$HOME/bushmesh-melbourne-cbd"
+~~~
+
+This scripted workflow (1) downloads the **~86 MB city PBF** from
+https://download.bbbike.org/osm/bbbike/Melbourne/Melbourne.osm.pbf
+and its same-directory CHECKSUM.txt, (2) checks the supplier MD5,
+(3) clips the smaller CBD PBF with osmium complete_ways, (4) calculates
+upstream and clipped SHA-256, (5) rasterizes the true road ways, (6) validates
+**every** MBTiles tile, SQLite integrity, bounds/zoom, source/manifest hashes,
+and (7) writes source-checksums.txt and provenance. All output/source files
+stay in the **WSL home directory outside Git**. It will not silently overwrite
+an existing archive.
+
+Inspect all real-archive output and drag the file to Windows Downloads with:
+
+~~~bash
+explorer.exe "$(wslpath -w "$HOME/bushmesh-melbourne-cbd")"
+~~~
+
+In that Explorer window, copy melbourne-cbd-roads.mbtiles and its
+.manifest.json/.sha256 companions to Windows Downloads, then transfer
+the archive to the Galaxy S22+ using USB file transfer.
+
+Because BBBike continuously updates the city PBF, **a future rebuild may
+produce different bytes and SHA-256**. That is expected: review the
+newly calculated manifest/size/hash instead of reusing the 9 November
+fingerprint. For byte-for-byte reproduction of that exact build, preserve
+the upstream PBF snapshot and clipped source outside Git, and consult the
+recorded generator/Python/Pillow/SQLite fingerprints.
+
+### Separate Galaxy S22+ tests (after Wave 3 integration)
+
+**Prerequisite:** install an Android APK that actually includes both the
+existing native BushMeshOfflineTiles reader and this feature branch's
+manifest-registration/Android document-picker integration. Installing an
+earlier Wave 2 APK does not make a new UI/native module magically available.
+Preserve app data/radio trust; do not clear storage.
+
+**Test 1 — synthetic MBTiles fixture (plumbing only):**
+
+1. Use the previously supplied synthetic fixture ZIP, or create an equivalent
+   explicitly synthetic archive with:
+
+       python tools/maps/build_melbourne_mbtiles.py --fixture \
+         --id melbourne-synthetic-pixels-v1 --version fixture-v1 \
+         --minzoom 12 --maxzoom 13 --output melbourne-synthetic.mbtiles
+
+2. Copy the **synthetic .mbtiles** to Galaxy S22+ Downloads; use its **own**
+   .manifest.json and .sha256, not those for real Melbourne roads.
+3. Open BushMesh Map > Verified pack catalog > ADD REVIEWED MAP PACK.
+   Paste full manifest JSON; paste the checksum independently read from its
+   .sha256; acknowledge the synthetic source; REGISTER REVIEWED MANIFEST.
+4. Tap IMPORT FILE and select the synthetic .mbtiles using Android Files.
+   Expect INSTALLED · VERIFIED, then VERIFY. In ConvoyMap choose its pack and
+   press **VIEW PACK**. Confirm the **SYNTHETIC FIXTURE / NO REAL ROADS**
+   images render, not real streets. Test airplane mode and restart.
+5. This **does not** qualify the real road/terrain acceptance gate.
+
+**Test 2 — genuine Melbourne CBD OSM road pack:**
+
+1. Unzip the verified REAL archive artifact above (or your local rebuild) and
+   copy melbourne-cbd-roads.mbtiles to the S22+ Downloads folder.
+2. Open the new reviewed-manifest control, paste the **real** JSON, verify the
+   real source/attribution/region/zoom/byte count, paste the independently
+   checked real SHA-256, tick review, REGISTER REVIEWED MANIFEST.
+3. Tap **IMPORT FILE**, choose the matching .mbtiles (not ZIP/JSON). Wait for
+   the verified native receipt. Expect INSTALLED · VERIFIED, then VERIFY.
+4. In ConvoyMap select the actual Melbourne pack and press **VIEW PACK**.
+   This centres the CBD even when you are not physically there or GPS is
+   unavailable. Confirm road imagery underneath your existing overlays,
+   and the renderer's OFFLINE BASEMAP READY/PARTIAL status **only after
+   actual image onLoad**, never just manifest registration.
+5. With Wi-Fi and cellular **off**, enable airplane mode but keep GPS on.
+   Force-close/reopen BushMesh, choose VIEW PACK again and confirm real
+   imagery is still there. Pan/zoom within z12–15.
+6. Pan outside bounds: missing data stays missing (no online fallback).
+   Test REMOVE (confirmation), re-import, and a corrupted copy of the
+   .mbtiles: an invalid SHA-256 must never become installed/ready.
+7. Test authenticated member filtering independently. An offline map does not
+   authorize any radio contact to appear as a convoy member.
+
+### Source/licensing and provenance cautions
+
+The BBBike city MD5 is a source-download integrity check, **not a
+publisher signature**. The subsequent SHA-256 is computed on actual downloaded
+and clipped bytes; it is not a magic assertion that a future updated BBBike
+extract will have the same fingerprint. Keep all source PBFs and test binaries
+out of Git. If redistributing derived OSM databases, review ODbL obligations.
+
+~~~bash
+# WSL independent file-level and geographic validation:
+"$HOME/bushmesh-melbourne-cbd/.venv/bin/python" \
+  tools/maps/validate_melbourne_mbtiles.py \
+  "$HOME/bushmesh-melbourne-cbd/melbourne-cbd-roads.mbtiles" \
+  --require-real \
+  --source-pbf "$HOME/bushmesh-melbourne-cbd/melbourne-central.osm.pbf"
+~~~
+
+
 ## Scope and provenance — no imaginary map packs
 
 **No Melbourne or Victoria binary map pack, trusted HTTPS artifact host or SHA-256
-digest is hardcoded into BushMesh.** Until you run the builder, there is no real
-road basemap available to register. The app does not bulk-download from a public
+digest is hardcoded into BushMesh.** A verified, explicitly imported raster
+archive is required. The completed real Melbourne test pack is available
+as an external Actions artifact above; it is not bundled or pre-registered. The app does not bulk-download from a public
 raster tile server, and there is no online raster fallback.
 
 Recommended initial region: **Melbourne CBD**, a deliberately selected, small

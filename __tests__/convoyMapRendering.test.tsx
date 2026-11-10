@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {Image} from 'react-native';
+import {Image, Text} from 'react-native';
 
 import {ConvoyMap, ConvoyMapTileSource} from '../src/maps/ConvoyMap';
 import {BushMeshMapPackCatalogEntry} from '../src/maps/mapPackCatalog';
@@ -114,6 +114,35 @@ describe('ConvoyMap component', () => {
       images.forEach(image => image.props.onLoad());
     });
     expect(JSON.stringify(tree!.toJSON())).toContain('OFFLINE BASEMAP READY');
+    await act(async () => tree!.unmount());
+  });
+});
+
+describe('offline map pack viewing without a GPS fix', () => {
+  it('can jump to a verified pack without plotting unverified contacts', async () => {
+    const tileSource: ConvoyMapTileSource = {
+      isAvailable: () => true,
+      readTile: async () => 'file:///app/private/tiles/genuine-test.png',
+    };
+    let tree: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = TestRenderer.create(
+        <ConvoyMap activeConvoyId={null} authorisedMembers={[member]}
+          selfFix={null} packCatalog={[readyPack()]} nowMs={now}
+          tileSource={tileSource} />,
+      );
+    });
+    expect(JSON.stringify(tree!.toJSON())).toContain('TAP VIEW PACK OR START GPS');
+    const pressable = tree!.root.findAll(node =>
+      typeof node.props.onPress === 'function' &&
+      node.findAllByType(Text).some(child => child.props.children === 'VIEW PACK'),
+    )[0];
+    expect(pressable).toBeDefined();
+    await act(async () => {
+      pressable.props.onPress();
+    });
+    expect(tree!.root.findAllByType(Image).length).toBeGreaterThan(0);
+    expect(JSON.stringify(tree!.toJSON())).not.toContain('authorised-lead');
     await act(async () => tree!.unmount());
   });
 });
