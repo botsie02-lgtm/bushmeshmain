@@ -181,6 +181,9 @@ export interface SecurityV2GroupTransactionsPort {
   }): Promise<BoundEpochDistributionV2>;
   installCommittedEpoch(input: {distribution: BoundEpochDistributionV2;
     context: SecurityProtocolContext}): Promise<InstalledAckV2>;
+  /** Re-sign an already atomically installed epoch after crash before ack delivery. */
+  recoverInstalledAck(input: {distribution: BoundEpochDistributionV2;
+    context: SecurityProtocolContext}): Promise<InstalledAckV2>;
   verifyInstalledAck(ack: InstalledAckV2, transactionRef: string): Promise<boolean>;
   resolveCurrentMembership(groupId: string, member: PrincipalV2): Promise<VerifiedMembershipV2>;
 }
