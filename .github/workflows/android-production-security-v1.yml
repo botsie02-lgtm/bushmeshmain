@@ -74,7 +74,9 @@ jobs:
           fi
           "$AAPT" dump badging "$TEST" > /tmp/probe-test-badging.txt
           grep -q "^package: name='com.bushmesh.securityprobe.test'" /tmp/probe-test-badging.txt
-          if unzip -p "$APP" 'classes*.dex' | strings | grep -E 'BushMeshRadioService|MeshCoreNativeBleRuntime'; then
+          # Match actual DEX *class descriptors*, not harmless diagnostic
+          # string literals that name a class whose absence we assert.
+          if unzip -p "$APP" 'classes*.dex' | strings | grep -E 'Lcom/bushmeshmain/radio/'; then
             echo 'Radio code is packaged in security probe' >&2
             exit 1
           fi

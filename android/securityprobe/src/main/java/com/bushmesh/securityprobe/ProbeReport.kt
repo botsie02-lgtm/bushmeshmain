@@ -40,6 +40,11 @@ object ProbeReport {
       core.close()
     }
 
+    // Android API level does NOT imply StrongBox hardware exists.
+    keyProbe.put("strongBoxFeature",
+      Build.VERSION.SDK_INT >= 28 &&
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE))
+
     val providerNames = JSONArray()
     for (provider in Security.getProviders()) {
       providerNames.put(provider.name)
