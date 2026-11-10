@@ -163,6 +163,37 @@ describe('Security v2 isolated group roster and key transactions',()=>{
       .toMatchObject({authorized:true,epoch:2});
   });
 
+  test('recipient install without owner confirmation never becomes a local authorization',async()=>{
+    const s=await setup();
+    const {commit}=await committed(s);
+    const distribution=await s.ownerManager.wrapCommittedEpoch({
+      transactionRef:commit.transactionRef,recipient:who(s.bIdentity),
+      sessionId:s.authoritySession.sessionId,context:distributionContext,
+    });
+    const ack=await s.joinerManager.installCommittedEpoch({
+      distribution,context:distributionContext,
+    });
+    // Recipient has an installed key and has signed its own acknowledgement,
+    // but it does not yet possess the owner's cryptographically verified
+    // acknowledgement ledger: remote membership is NOT established.
+    expect(await s.joinerManager.resolveCurrentMembership(
+      s.genesis.groupId,who(s.bIdentity)))
+      .toMatchObject({authorized:false,reason:'missing-ack'});
+    expect(await s.ownerManager.resolveCurrentMembership(
+      s.genesis.groupId,who(s.bIdentity)))
+      .toMatchObject({authorized:false,reason:'missing-ack'});
+    await expect(s.ownerManager.verifyInstalledAck(ack,commit.transactionRef))
+      .resolves.toBe(true);
+    expect(await s.ownerManager.resolveCurrentMembership(
+      s.genesis.groupId,who(s.bIdentity)))
+      .toMatchObject({authorized:true});
+    // Owner receipt is not propagated back yet: this is a formal convergence
+    // blocker, NOT a reason to treat recipient self-signed ack as authority.
+    expect(await s.joinerManager.resolveCurrentMembership(
+      s.genesis.groupId,who(s.bIdentity)))
+      .toMatchObject({authorized:false,reason:'missing-ack'});
+  });
+
   test('replayed protected distribution cannot reinstall or rewind',async()=>{
     const s=await setup();const {commit}=await committed(s);
     const envelope=await s.ownerManager.wrapCommittedEpoch({
