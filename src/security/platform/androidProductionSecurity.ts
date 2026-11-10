@@ -397,6 +397,18 @@ export class AndroidHardwareCryptoProvider implements CryptoProvider {
   }
 }
 
+/**
+ * Irreversible local identity retirement. Caller must obtain explicit user
+ * confirmation and ensure the convoy is no longer operational. A durable
+ * tombstone prevents silently generating a new identity after partial cleanup.
+ * No physical-flash secure-erase guarantee is implied.
+ */
+export async function retireAndroidLocalIdentity(
+  bridge: AndroidSecurityNativeBridge = getAndroidSecurityNativeBridge(),
+): Promise<void> {
+  await bridge.retireIdentity();
+}
+
 /** Explicit opt-in factory only; the application never calls it automatically. */
 export async function createAndroidProductionSecurity(
   bridge: AndroidSecurityNativeBridge = getAndroidSecurityNativeBridge(),
