@@ -107,7 +107,11 @@ Lifecycle:
    pinned recipient/current owner, authorized requester and approval, complete
    signed roster, V1 direct-session AEAD and strictly increasing epoch fence;
    then atomically installs the key, roster, and replay journal. Only **after**
-   success does it sign an `InstalledAckV2`.
+   success does it sign an `InstalledAckV2`. If the process dies after commit
+   but before signing/sending the acknowledgement, `recoverInstalledAck()`
+   verifies the same signed distribution digest, existing protected epoch key,
+   current owner pin, local identity and original protocol AAD, and signs a
+   replacement acknowledgement **without replaying** the consumed V1 AEAD.
 7. `verifyInstalledAck()` checks the exact previously issued envelope,
    signer fingerprint, Ed25519 signature, current epoch and roster digest,
    then records verified acknowledgement durably. A radio write, delivery
