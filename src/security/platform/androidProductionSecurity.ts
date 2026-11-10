@@ -45,6 +45,7 @@ export interface AndroidSecurityNativeBridge {
     record: string, keyRef: string, base64Secret: string,
   ): Promise<boolean>;
   epochHigh(groupId: string): Promise<number>;
+  retireIdentity(): Promise<void>;
   randomBytes(length: number): Promise<string>;
   sha256(value: string): Promise<string>;
   hkdf(input: string, salt: string, info: string, size: number): Promise<string>;
