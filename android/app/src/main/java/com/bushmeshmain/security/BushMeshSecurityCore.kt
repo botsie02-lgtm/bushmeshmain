@@ -69,12 +69,7 @@ class BushMeshSecurityCore(
     require(Regex("[a-zA-Z0-9_.:/-]{1,240}").matches(name)) { "Invalid security storage identifier" }
   }
 
-  private fun counter(value: String): BigInteger {
-    require(Regex("(0|[1-9][0-9]{0,19})").matches(value)) { "Invalid unsigned nonce/replay counter" }
-    val n = BigInteger(value)
-    require(n >= BigInteger.ZERO && n <= maxCounter) { "Counter outside unsigned 64-bit range" }
-    return n
-  }
+  private fun counter(value: String): BigInteger = SecurityCounterMath.u64(value)
 
   private fun ks(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
@@ -237,11 +232,14 @@ class BushMeshSecurityCore(
     val floor = counter(minimum)
     return transaction { db ->
       var persisted = BigInteger.ZERO
+      var high = BigInteger.ZERO
       db.rawQuery("SELECT counter, high FROM nonce WHERE scope=?", arrayOf(scope)).use {
-        if (it.moveToFirst()) persisted = counter(it.getString(0)).max(counter(it.getString(1)))
+        if (it.moveToFirst()) {
+          persisted = counter(it.getString(0))
+          high = counter(it.getString(1))
+        }
       }
-      val next = persisted.max(floor).add(BigInteger.ONE)
-      require(next <= maxCounter) { "Nonce exhausted" }
+      val next = SecurityCounterMath.reserve(persisted, high, floor)
       db.execSQL(
         "INSERT OR REPLACE INTO nonce(scope,counter,high) VALUES (?,?,?)",
         arrayOf(scope, next.toString(), next.toString()),
@@ -272,35 +270,23 @@ class BushMeshSecurityCore(
     val incoming = counter(value)
     if (incoming == BigInteger.ZERO) return false
     return transaction { db ->
-      var highest = BigInteger.ZERO
-      var bits = BigInteger.ZERO
+      var state: SecurityCounterMath.Replay? = null
       db.rawQuery("SELECT highest,bits,size FROM replay WHERE scope=?", arrayOf(scope)).use {
         if (it.moveToFirst()) {
-          highest = counter(it.getString(0))
-          bits = BigInteger(it.getString(1), 16)
-          require(it.getInt(2) == window) { "Replay window size changed for existing scope" }
+          state = SecurityCounterMath.Replay(
+            counter(it.getString(0)), BigInteger(it.getString(1), 16), it.getInt(2),
+          )
         }
       }
-      val accepted: Boolean
-      if (incoming > highest) {
-        val jump = incoming.subtract(highest)
-        bits = if (jump >= BigInteger.valueOf(window.toLong())) BigInteger.ONE
-          else bits.shiftLeft(jump.toInt()).or(BigInteger.ONE)
-        highest = incoming
-        accepted = true
-      } else {
-        val distance = highest.subtract(incoming)
-        accepted = distance < BigInteger.valueOf(window.toLong()) && !bits.testBit(distance.toInt())
-        if (accepted) bits = bits.setBit(distance.toInt())
-      }
-      if (accepted) {
-        bits = bits.and(BigInteger.ONE.shiftLeft(window).subtract(BigInteger.ONE))
+      val decision = SecurityCounterMath.replay(state, incoming, window)
+      if (decision.accept) {
+        val updated = requireNotNull(decision.state)
         db.execSQL(
           "INSERT OR REPLACE INTO replay(scope,highest,bits,size) VALUES(?,?,?,?)",
-          arrayOf(scope, highest.toString(), bits.toString(16), window),
+          arrayOf(scope, updated.highest.toString(), updated.bitmap.toString(16), window),
         )
       }
-      accepted
+      decision.accept
     }
   }
 
