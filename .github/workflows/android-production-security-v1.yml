@@ -16,7 +16,7 @@ concurrency:
 jobs:
   typescript-security:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,11 +24,11 @@ jobs:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
-      - name: Security adapter Jest tests
-        run: npx jest __tests__/androidProductionSecurity.test.ts --runInBand
-      - name: Project TypeScript validation
+      - name: Complete Jest suite
+        run: npm test -- --runInBand
+      - name: TypeScript
         run: npx tsc --noEmit
-      - name: Project lint
+      - name: Lint
         run: npm run lint
 
   android-security:
@@ -46,14 +46,58 @@ jobs:
           java-version: '17'
           cache: gradle
       - run: npm ci
-      - name: Compile Android debug (does not activate security)
+      - name: Compile original app ONLY, no install or activation
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon
-      - name: Run JVM native security and existing tests
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+      - name: Shared SecurityCore JVM tests
         working-directory: android
-        run: ./gradlew :app:testDebugUnitTest --no-daemon
-      - name: Compile instrumentation-ready device tests (no hardware claims)
+        run: ./gradlew :securitycore:testDebugUnitTest --no-daemon
+      - name: Build standalone zero-permission security probe and instrumentation APKs
         working-directory: android
-        run: ./gradlew :app:assembleDebugAndroidTest --no-daemon
+        run: ./gradlew :securityprobe:assembleDebug :securityprobe:assembleDebugAndroidTest --no-daemon
+      - name: Verify standalone APK package IDs, zero permissions and no radio
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=android/securityprobe/build/outputs/apk/debug/securityprobe-debug.apk
+          TEST=android/securityprobe/build/outputs/apk/androidTest/debug/securityprobe-debug-androidTest.apk
+          test -s "$APP"
+          test -s "$TEST"
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          "$AAPT" dump badging "$APP" > /tmp/probe-badging.txt
+          grep -q "^package: name='com.bushmesh.securityprobe'" /tmp/probe-badging.txt
+          if grep -E '^uses-permission' /tmp/probe-badging.txt; then
+            echo 'Probe APK has forbidden permissions' >&2
+            exit 1
+          fi
+          "$AAPT" dump badging "$TEST" > /tmp/probe-test-badging.txt
+          grep -q "^package: name='com.bushmesh.securityprobe.test'" /tmp/probe-test-badging.txt
+          if unzip -p "$APP" 'classes*.dex' | strings | grep -E 'BushMeshRadioService|MeshCoreNativeBleRuntime'; then
+            echo 'Radio code is packaged in security probe' >&2
+            exit 1
+          fi
+          sha256sum "$APP" "$TEST" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Publish independent installation APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-securityprobe-install-${{ github.sha }}
+          path: android/securityprobe/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 21
+      - name: Publish independent instrumentation APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-securityprobe-instrumentation-${{ github.sha }}
+          path: android/securityprobe/build/outputs/apk/androidTest/debug/*.apk
+          if-no-files-found: error
+          retention-days: 21
+      - name: Publish SHA-256 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-securityprobe-checksums-${{ github.sha }}
+          path: SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 21
