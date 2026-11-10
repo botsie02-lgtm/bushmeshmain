@@ -36,7 +36,7 @@ Reviewed Android:
 | `invalidateEpoch` | **Missing** | `v2AtomicInvalidateEpoch` | Expected-epoch CAS, irrevocable local invalidation/tombstone, old-key retirement |
 | `revokeCredential` | **Missing** | `v2AtomicRevokeCredential` | Monotonic authority sequence CAS, revocation log, invalidate outstanding prepared approvals |
 
-**Additional needed native coordination:** `v2DescribeCapabilities` with schema version and fail-closed feature state, protected external epoch anchor / key-recovery policy, consistency probes for key aliases vs sealed records, native error codes, lock/process ownership, migration namespace rules and transaction fault injection. Proposed bridge method signatures are in `src/security/v2/platform/androidConvergence.ts`; they are **not callable native methods**. An Android provider implementing only an equivalent `commitEpoch` API must remain incompatible.
+**Additional needed native coordination:** Proposed `v2ProvisionApprovedOwnerAnchor(groupId,genesisDigest,ownerFingerprint,ceremonyProof)` must verify a separately authenticated, user-approved root ceremony and pin it once; it must reject self-signed genesis alone or arbitrary caller-supplied metadata.  `v2DescribeCapabilities` with schema version and fail-closed feature state, protected external epoch anchor / key-recovery policy, consistency probes for key aliases vs sealed records, native error codes, lock/process ownership, migration namespace rules and transaction fault injection. Proposed bridge method signatures are in `src/security/v2/platform/androidConvergence.ts`; they are **not callable native methods**. An Android provider implementing only an equivalent `commitEpoch` API must remain incompatible.
 
 ## Substantial semantic mismatches
 

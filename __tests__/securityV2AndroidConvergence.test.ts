@@ -40,7 +40,7 @@ describe('Android production-security to Security v2 contract convergence', () =
     expect(new Set(ANDROID_V2_NATIVE_METHODS).size)
       .toBe(ANDROID_V2_NATIVE_METHODS.length);
     expect(ANDROID_V2_NATIVE_METHODS).toHaveLength(
-      Object.keys(ANDROID_V2_STORAGE_METHOD_MATRIX).length + 1,
+      Object.keys(ANDROID_V2_STORAGE_METHOD_MATRIX).length + 2,
     );
   });
 
@@ -65,6 +65,7 @@ describe('Android production-security to Security v2 contract convergence', () =
     expect(review.missingNativeMethods).toContain('v2AtomicInstallEpoch');
     expect(review.missingNativeMethods).toContain('v2AtomicVerifiedReceipt');
     expect(review.missingNativeMethods).toContain('v2ReadOwnerAnchor');
+    expect(review.missingNativeMethods).toContain('v2ProvisionApprovedOwnerAnchor');
     expect(() => rejectUnreviewedAndroidV2Store(native, legacyCapability))
       .toThrow('Android V1 epoch CAS is not an authenticated Security V2 transactional store');
     expect(native.probe).not.toHaveBeenCalled();

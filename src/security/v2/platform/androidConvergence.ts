@@ -117,6 +117,15 @@ export const ANDROID_V2_STORAGE_METHOD_MATRIX = {
  */
 export interface ProposedAndroidSecurityV2NativeBridge {
   v2DescribeCapabilities(): Promise<string>;
+  /**
+   * Requires a separately authenticated, user-confirmed platform ceremony.
+   * A self-signed network genesis or caller-provided fingerprint alone is
+   * NOT an approved anchor. Native must validate ceremonyProof and pin once.
+   */
+  v2ProvisionApprovedOwnerAnchor(
+    groupId: string, genesisDigest: string, ownerFingerprint: string,
+    ceremonyProof: string,
+  ): Promise<string>;
   v2ReadOwnerAnchor(groupId: string): Promise<string | null>;
   v2ReadGroup(groupId: string): Promise<string | null>;
   v2ReadEpochFence(groupId: string): Promise<string>;
@@ -153,6 +162,7 @@ export interface ProposedAndroidSecurityV2NativeBridge {
 
 export const ANDROID_V2_NATIVE_METHODS = [
   'v2DescribeCapabilities',
+  'v2ProvisionApprovedOwnerAnchor',
   ...Object.values(ANDROID_V2_STORAGE_METHOD_MATRIX).map(x => x.nativeV2Method),
 ] as readonly string[];
 
