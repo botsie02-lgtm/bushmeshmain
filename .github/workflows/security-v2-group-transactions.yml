@@ -4,6 +4,9 @@ on:
     branches:
       - feature/security-v2-group-transactions-v1
   workflow_dispatch:
+concurrency:
+  group: bushmesh-security-v2-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
