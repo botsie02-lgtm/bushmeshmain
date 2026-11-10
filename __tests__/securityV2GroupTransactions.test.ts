@@ -10,7 +10,7 @@ import type {
   GroupSnapshotV2, PrincipalV2, SignedJoinRequestV2,
 } from '../src/security/v2/contracts';
 import {
-  canonicalDigestV2, roleRevocationTranscript, rosterDigestV2,
+  roleCredentialTranscriptV2, roleRevocationTranscript, rosterDigestV2,
 } from '../src/security/v2/canonical';
 import {
   InMemorySecurityV2TransactionStore,
@@ -194,7 +194,7 @@ describe('Security v2 isolated group roster and key transactions',()=>{
     const s=await setup();const p=await prepare(s);
     const fakeCredential={...p.approval.credential,
       signature:toBase64Url(await s.joiner.identity.sign(
-        (await import('../src/security/v2/canonical')).roleCredentialTranscriptV2(
+        roleCredentialTranscriptV2(
           p.approval.credential),
       ))};
     const forgery:SignedEnrolmentApprovalV2={...p.approval,credential:fakeCredential};
