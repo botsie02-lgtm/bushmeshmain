@@ -265,6 +265,18 @@ describe('Security v2 isolated group roster and key transactions',()=>{
     expect(retry.committedEpoch).toBe(2);
   });
 
+  test('corrupted prepared journal cannot be promoted to authorised membership',async()=>{
+    const s=await setup();
+    const p=await prepare(s);
+    await s.ownerManager.prepareAddMember(p);
+    s.ownerStore.unsafeCorruptJournal(p.approval.proposal.transactionId);
+    await expect(s.ownerManager.commitPreparedAddition(p.approval.proposal.transactionId))
+      .rejects.toMatchObject({code:'CORRUPT_STATE'});
+    expect((await s.ownerStore.loadGroup(s.genesis.groupId))?.epoch).toBe(1);
+    expect((await s.ownerManager.resolveCurrentMembership(
+      s.genesis.groupId,who(s.bIdentity))).authorized).toBe(false);
+  });
+
   test('before-install failure preserves old state and requires a new protected envelope retry',async()=>{
     const s=await setup();const {commit}=await committed(s);
     const envelope=await s.ownerManager.wrapCommittedEpoch({
