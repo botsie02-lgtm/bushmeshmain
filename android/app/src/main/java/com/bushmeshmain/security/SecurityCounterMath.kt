@@ -13,8 +13,10 @@ internal object SecurityCounterMath {
 
   /** Never issue the final 64-bit counter twice, even after a crash. */
   fun reserve(counter: BigInteger, high: BigInteger, floor: BigInteger): BigInteger {
-    require(counter >= high) { "Nonce counter is below its durable high-watermark" }
-    val next = counter.max(high).max(floor).add(BigInteger.ONE)
+    require(counter >= high && counter >= floor) {
+      "Nonce counter is below the required durable high-watermark"
+    }
+    val next = counter.add(BigInteger.ONE)
     require(next <= MAX) { "Nonce exhausted" }
     return next
   }
