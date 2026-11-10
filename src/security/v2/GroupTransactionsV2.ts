@@ -340,9 +340,15 @@ export class SecurityV2GroupTransactions implements SecurityV2GroupTransactionsP
     const local = await this.identity.current();
     ensure(samePrincipal(principal(local), p.approver),
       'FORGED_AUTHORITY', 'Approver identity rotated before commit');
-    ensure(tx.nextRosterDigest === await rosterDigestV2(this.crypto,
-      group.groupId, tx.nextEpoch, tx.nextRoster),
-      'CORRUPT_STATE', 'Prepared roster digest has changed');
+    const expectedRoster = sortedRoster([...group.roster, {
+      ...tx.join.requester, state: 'pending-install', joinedAt: tx.join.issuedAt,
+    }]);
+    ensure(tx.nextEpoch === p.nextEpoch && tx.requestId === p.requestId &&
+      tx.nextRosterDigest === p.rosterDigestAfter &&
+      canonicalValue(tx.nextRoster) === canonicalValue(expectedRoster) &&
+      tx.nextRosterDigest === await rosterDigestV2(this.crypto,
+        group.groupId, tx.nextEpoch, tx.nextRoster),
+      'CORRUPT_STATE', 'Prepared journal or signed roster changed after approval');
     const next: GroupSnapshotV2 = {
       ...group, epoch: tx.nextEpoch, currentTransactionId: transactionRef,
       roster: tx.nextRoster, rosterDigest: tx.nextRosterDigest,
