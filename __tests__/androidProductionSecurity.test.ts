@@ -83,7 +83,7 @@ it('uses one-time native entropy, exact raw key lengths, and opaque handles', as
   expect(signing.privateKeyHandle).not.toHaveProperty('privateKey');
   expect((await crypto.sign(signing.privateKeyHandle, new Uint8Array([1])))).toHaveLength(64);
   expect((await crypto.deriveSharedSecret(agreement.privateKeyHandle, new Uint8Array(32)))).toHaveLength(32);
-  expect(crypto.hasPrivateKey(signing.privateKeyHandle)).resolves.toBe(true);
+  await expect(crypto.hasPrivateKey(signing.privateKeyHandle)).resolves.toBe(true);
   await crypto.deletePrivateKey(agreement.privateKeyHandle);
   expect(native.deleteKey).toHaveBeenCalled();
 });
