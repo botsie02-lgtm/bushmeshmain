@@ -152,21 +152,26 @@ export function deriveEnrolmentUi(input: EnrolmentUiInput): EnrolmentUiView {
         identity.deviceId,
       )
     : null;
-  const selected = selection &&
-    input.selectedConvoy?.membershipRecordRef === selection.membershipRecordRef
-    ? selection : null;
-  const restoredInvalid = !!input.selectedConvoy && !selected &&
-    input.state !== 'loading';
-  const rosterReady = selected && !!input.roster &&
-    input.roster.convoyId === selected.convoyId &&
-    input.roster.localIdentityRef === selected.localIdentityRef &&
-    input.roster.membershipRecordRef === selected.membershipRecordRef;
-  const members = rosterReady && input.roster ? input.roster.members : [];
-  const self = identity && members.find(member =>
+  const rosterScoped = !!selection && !!input.roster &&
+    input.roster.convoyId === selection.convoyId &&
+    input.roster.localIdentityRef === selection.localIdentityRef &&
+    input.roster.membershipRecordRef === selection.membershipRecordRef;
+  const matchedSelf = identity && rosterScoped && input.roster?.members.find(member =>
     member.deviceId === identity.deviceId &&
     member.identityFingerprint === identity.fingerprint &&
     member.state === 'active'
   );
+  // A roster with a rotated or missing local fingerprint is a contradictory
+  // security observation. Hide the whole selection instead of keeping peers.
+  const selected = selection &&
+    input.selectedConvoy?.membershipRecordRef === selection.membershipRecordRef &&
+    (input.roster === null || (rosterScoped && !!matchedSelf))
+    ? selection : null;
+  const restoredInvalid = !!input.selectedConvoy && !selected &&
+    input.state !== 'loading';
+  const rosterReady = !!selected && rosterScoped && !!matchedSelf;
+  const members = rosterReady && input.roster ? input.roster.members : [];
+  const self = rosterReady ? matchedSelf : null;
   const localRole: ConvoyRole | null = self?.role ?? null;
   const admin = !!ready && !!selected && !!self &&
     self.securityGroupRole === 'leader' &&
