@@ -1,0 +1,53 @@
+name: Verified convoy telemetry v1 validation
+on:
+  push:
+    branches:
+      - feature/verified-convoy-telemetry-v1
+  workflow_dispatch:
+
+concurrency:
+  group: verified-convoy-telemetry-v1
+  cancel-in-progress: true
+
+jobs:
+  javascript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Verified telemetry focused Jest scenarios
+        run: npm test -- --runInBand __tests__/verifiedConvoyTelemetry.test.ts
+      - name: Full Jest regression
+        run: npm test -- --runInBand
+      - name: TypeScript static analysis
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npm run lint
+
+  android-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Extend CI-only Gradle download timeout
+        run: sed -i 's/networkTimeout=10000/networkTimeout=120000/' android/gradle/wrapper/gradle-wrapper.properties
+      - name: Android debug compile
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
