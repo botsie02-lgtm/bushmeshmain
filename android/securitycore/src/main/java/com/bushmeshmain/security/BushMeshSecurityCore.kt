@@ -40,29 +40,114 @@ class BushMeshSecurityCore(
     private val maxEpoch = 2147483647
   }
 
-  private val database: SQLiteDatabase by lazy {
+  /**
+   * Android's SQLiteDatabase.execSQL rejects result-producing PRAGMAs on
+   * real devices. For API >= 28 the platform OpenParams configures every
+   * connection on open; API 24-27 uses a single, non-WAL connection and
+   * executes PRAGMA assignments through rawQuery (which accepts results).
+   *
+   * The settings are read back and checked BEFORE any schema changes.
+   * Missing or downgraded durability/secure-delete is fatal.
+   */
+  data class SQLiteDurability(
+    val synchronous: Int,
+    val secureDelete: Int,
+    val journalMode: String,
+  )
+
+  private val databaseHolder = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+    openConfiguredDatabase()
+  }
+
+  private val database: SQLiteDatabase
+    get() = databaseHolder.value
+
+  private fun scalarPragma(db: SQLiteDatabase, name: String): String {
+    require(name in setOf("synchronous", "secure_delete", "journal_mode"))
+    db.rawQuery("PRAGMA $name", null).use {
+      check(it.moveToFirst() && !it.isNull(0)) { "SQLite PRAGMA $name returned no value" }
+      return it.getString(0)
+    }
+  }
+
+  /** PRAGMA assignments can return a value; Android execSQL MUST NOT be used. */
+  private fun applyPragma(db: SQLiteDatabase, sql: String) {
+    check(sql in setOf(
+      "PRAGMA journal_mode=DELETE",
+      "PRAGMA synchronous=FULL",
+      "PRAGMA secure_delete=ON",
+    )) { "Unexpected SQLite PRAGMA assignment" }
+    db.rawQuery(sql, null).use { cursor ->
+      // Moving the cursor forces the SQLite statement to run on Android.
+      cursor.moveToFirst()
+    }
+  }
+
+  private fun inspectDurability(db: SQLiteDatabase): SQLiteDurability {
+    val synchronous = scalarPragma(db, "synchronous").toInt()
+    val secureDelete = scalarPragma(db, "secure_delete").toInt()
+    val journalMode = scalarPragma(db, "journal_mode").lowercase(java.util.Locale.ROOT)
+    check(synchronous == 2) { "SQLite synchronous is not FULL" }
+    check(secureDelete == 1) { "SQLite secure_delete is not ON" }
+    check(journalMode == "delete") { "SQLite journal mode is not DELETE" }
+    return SQLiteDurability(synchronous, secureDelete, journalMode)
+  }
+
+  /** Exposes effective settings for safe capability diagnostics, not secrets. */
+  fun sqliteDurability(): SQLiteDurability = synchronized(lock) {
+    inspectDurability(database)
+  }
+
+  private fun openConfiguredDatabase(): SQLiteDatabase {
     val file = File(context.noBackupFilesDir, filename)
-    val db = SQLiteDatabase.openOrCreateDatabase(file, null)
-    db.execSQL("PRAGMA synchronous=FULL")
-    db.execSQL("PRAGMA secure_delete=ON")
-    if (db.version != 0 && db.version != 1) {
-      db.close()
-      throw IllegalStateException("Unsupported BushMesh security storage schema")
+    val db = if (Build.VERSION.SDK_INT >= 28) {
+      val params = SQLiteDatabase.OpenParams.Builder()
+        .setOpenFlags(SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.CREATE_IF_NECESSARY)
+        .setJournalMode("DELETE")
+        .setSynchronousMode("FULL")
+        .build()
+      SQLiteDatabase.openDatabase(file, params)
+    } else {
+      SQLiteDatabase.openOrCreateDatabase(file, null)
     }
-    db.beginTransaction()
     try {
-      db.execSQL("CREATE TABLE IF NOT EXISTS entries (kind TEXT NOT NULL, name TEXT NOT NULL, sealed BLOB NOT NULL, PRIMARY KEY(kind, name))")
-      db.execSQL("CREATE TABLE IF NOT EXISTS nonce (scope TEXT PRIMARY KEY, counter TEXT NOT NULL, high TEXT NOT NULL)")
-      db.execSQL("CREATE TABLE IF NOT EXISTS replay (scope TEXT PRIMARY KEY, highest TEXT NOT NULL, bits TEXT NOT NULL, size INTEGER NOT NULL)")
-      db.execSQL("CREATE TABLE IF NOT EXISTS consumed (id TEXT PRIMARY KEY, expires INTEGER NOT NULL)")
-      db.execSQL("CREATE TABLE IF NOT EXISTS epoch_high (group_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL)")
-      db.execSQL("CREATE TABLE IF NOT EXISTS epoch_commit (tx_id TEXT PRIMARY KEY, group_id TEXT NOT NULL, digest TEXT NOT NULL, epoch INTEGER NOT NULL)")
-      if (db.version == 0) db.version = 1
-      db.setTransactionSuccessful()
-    } finally {
-      db.endTransaction()
+      if (Build.VERSION.SDK_INT < 28) {
+        // Rollback journal forces a single connection so secure_delete is not
+        // silently configured on only one of several pooled WAL connections.
+        db.disableWriteAheadLogging()
+        applyPragma(db, "PRAGMA journal_mode=DELETE")
+        applyPragma(db, "PRAGMA synchronous=FULL")
+      }
+      applyPragma(db, "PRAGMA secure_delete=ON")
+      inspectDurability(db)
+      val version = db.version
+      check(version == 0 || version == 1) {
+        "Unsupported BushMesh security storage schema"
+      }
+      db.beginTransaction()
+      try {
+        db.execSQL("CREATE TABLE IF NOT EXISTS entries (kind TEXT NOT NULL, name TEXT NOT NULL, sealed BLOB NOT NULL, PRIMARY KEY(kind, name))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS nonce (scope TEXT PRIMARY KEY, counter TEXT NOT NULL, high TEXT NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS replay (scope TEXT PRIMARY KEY, highest TEXT NOT NULL, bits TEXT NOT NULL, size INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS consumed (id TEXT PRIMARY KEY, expires INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS epoch_high (group_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS epoch_commit (tx_id TEXT PRIMARY KEY, group_id TEXT NOT NULL, digest TEXT NOT NULL, epoch INTEGER NOT NULL)")
+        if (version == 0) db.version = 1
+        db.setTransactionSuccessful()
+      } finally {
+        db.endTransaction()
+      }
+      // Verify again after schema transaction, never silently downgrade.
+      inspectDurability(db)
+      return db
+    } catch (failure: Throwable) {
+      try {
+        db.close()
+      } catch (cleanupFailure: Throwable) {
+        failure.addSuppressed(cleanupFailure)
+      }
+      throw failure
     }
-    db
   }
 
   private fun checkName(name: String) {
@@ -403,7 +488,16 @@ class BushMeshSecurityCore(
     }
   }
 
-  fun close() = synchronized(lock) { if (database.isOpen) database.close() }
+  /**
+   * Does not evaluate lazy database initialization. In particular, cleanup
+   * after failed first-open must not create a new DB or mask the original error.
+   */
+  fun close() = synchronized(lock) {
+    if (databaseHolder.isInitialized()) {
+      val opened = databaseHolder.value
+      if (opened.isOpen) opened.close()
+    }
+  }
 
   fun base64(value: ByteArray): String = Base64.encodeToString(value, Base64.NO_WRAP)
   fun unbase64(value: String): ByteArray = Base64.decode(value, Base64.NO_WRAP)
