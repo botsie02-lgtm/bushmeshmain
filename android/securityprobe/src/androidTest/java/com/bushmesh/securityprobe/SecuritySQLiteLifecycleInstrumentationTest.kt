@@ -2,6 +2,7 @@ package com.bushmesh.securityprobe
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteException
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.bushmeshmain.security.BushMeshSecurityCore
@@ -106,6 +107,27 @@ class SecuritySQLiteLifecycleInstrumentationTest {
     }
     assertFalse("A rejected schema must not create the wrapping key",
       KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(alias))
+  }
+
+  @Test fun sqliteOpenFailureIsNotReplacedByAnExceptionFromClose() {
+    // A directory at the database path forces the platform to fail opening
+    // SQLite before the lazy delegate can finish initializing.
+    assertTrue(path().mkdir())
+    val instance = fresh()
+    val error = assertThrows(SQLiteException::class.java) {
+      instance.get("meta", "peer/unavailable")
+    }
+    assertNotNull(error)
+    // The first failure's class/message must survive and close() must not
+    // attempt a second lazy open, corrupt the fixture, or mask the cause.
+    instance.close()
+    instance.close()
+    assertTrue(path().isDirectory)
+    val report = ProbeReport.inspect(context, name, alias)
+    assertEquals("PROBE_FAILED_CLOSED", report.getString("classification"))
+    val caps = report.getJSONObject("capabilities")
+    assertTrue(caps.getString("failureClass").contains("SQLite"))
+    assertFalse(caps.has("cleanupFailureClass"))
   }
 
   @Test fun successfulReopenPreservesMetadataAndFullDurability() {
