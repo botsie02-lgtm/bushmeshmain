@@ -3,6 +3,20 @@
 **Status: NOT physically tested.** Feature branch only. This is an independent
 native app, NOT a flavor of the installed Wave 3 application.
 
+## Galaxy S22+ SQLiteException regression (12 November 2026)
+
+The physical phone's first probe failed with SQLITE_OK / SQLiteException
+because Android disallowed result-capable PRAGMA writes through execSQL and
+close() accidentally initialized the lazy connection. The corrected provider
+now applies, reads back, and requires FULL synchronous, secure_delete=ON and
+DELETE journaling. Use the newer, more focused rerun procedure:
+
+**docs/GALAXY_S22_SQLITE_PRAGMA_REGRESSION.md**
+
+That document includes exact PowerShell commands, updated independently
+signed test packages, a focused lifecycle regression suite, and a clear
+"unsupported" rather than false hardware-success classification.
+
 ## Absolute isolation
 
 | Package | Use | Guard |
