@@ -93,19 +93,39 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     throw IllegalStateException("Cannot inspect private-key hardware security level", last)
   }
 
-  private fun securityLevel(keyInfo: KeyInfo): String =
-    if (Build.VERSION.SDK_INT >= 31) when (keyInfo.securityLevel) {
-      KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> "tee"
-      KeyProperties.SECURITY_LEVEL_STRONGBOX -> "strongbox"
-      else -> throw IllegalStateException("Curve25519 key is not hardware backed")
-    } else if (keyInfo.isInsideSecureHardware) {
-      "hardware-unclassified"
-    } else {
-      throw IllegalStateException("Curve25519 key is not hardware backed")
-    }
+  private fun exactSecurityLevel(keyInfo: KeyInfo): CurveKeySecurityPolicy.Level {
+    check(Build.VERSION.SDK_INT >= 31) { "Exact security-level inspection unavailable" }
+    return CurveKeySecurityPolicy.fromAndroidSecurityLevel(keyInfo.securityLevel)
+  }
 
-  private fun checkHardware(privateKey: PrivateKey): String =
-    securityLevel(info(privateKey))
+  /** Never log, return or persist encoded private key bytes. Zero any
+   * unexpectedly returned private-key encoding before leaving this scope. */
+  private fun observeExportability(privateKey: PrivateKey): CurveKeySecurityPolicy.Exportability {
+    var encoded: ByteArray? = null
+    try {
+      encoded = privateKey.encoded
+      return if (encoded == null) CurveKeySecurityPolicy.Exportability.NON_EXPORTABLE
+        else CurveKeySecurityPolicy.Exportability.EXPORTABLE
+    } finally {
+      encoded?.fill(0)
+    }
+  }
+
+  private fun checkHardware(privateKey: PrivateKey): String {
+    val level = exactSecurityLevel(info(privateKey))
+    check(CurveKeySecurityPolicy.isExplicitHardware(level)) {
+      "Only explicit TEE or StrongBox security levels are accepted"
+    }
+    val exportability = observeExportability(privateKey)
+    check(CurveKeySecurityPolicy.canUse(level, exportability)) {
+      "Non-exportable, hardware-backed private key required"
+    }
+    return when (level) {
+      CurveKeySecurityPolicy.Level.TRUSTED_ENVIRONMENT -> "tee"
+      CurveKeySecurityPolicy.Level.STRONGBOX -> "strongbox"
+      else -> error("Unverified hardware level is never eligible")
+    }
+  }
 
   private fun generate(
     algorithm: String,
@@ -138,16 +158,71 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     } else generator.generateKeyPair()
     if (diagnostic != null) {
       val attempts = JSONArray()
-      val info = try {
+      // KeyInfo and encoded accessibility are independently inspected after
+      // generation. On level rejection, still inspect exportability safely.
+      val keyInfo = try {
         diagnostic.run("keyInfoRetrieval") { info(pair.private, attempts) }
+      } catch (_: Exception) {
+        null
       } finally {
-        // A failure in KeyInfo is precisely where the individual provider
-        // attempts are most valuable. Retain them even on exception.
         diagnostic.detail("keyInfoAttempts", attempts)
       }
-      diagnostic.run("hardwareSecurityLevel") {
-        diagnostic.detail("hardwareLevel", securityLevel(info))
-        check(pair.private.encoded == null) { "Private key unexpectedly exportable" }
+      var level: CurveKeySecurityPolicy.Level? = null
+      if (keyInfo != null) {
+        level = try {
+          diagnostic.run("securityLevelInspection") {
+            val observed = exactSecurityLevel(keyInfo)
+            diagnostic.detail("securityLevelEnum", observed.name)
+            diagnostic.detail("securityLevelAccess", "PASS")
+            observed
+          }
+        } catch (e: Exception) {
+          diagnostic.detail("securityLevelAccess", "THREW")
+          diagnostic.detail("securityLevelAccessExceptionClass",
+            CurveProbeDiagnostics.safeClass(e))
+          null
+        }
+      }
+      var hardwareVerified = false
+      if (level != null) {
+        val observed = level
+        diagnostic.detail("hardwareVerdict", CurveKeySecurityPolicy.verdict(observed))
+        try {
+          diagnostic.run("hardwareSecurityLevel") {
+            check(CurveKeySecurityPolicy.isExplicitHardware(observed)) {
+              "Only explicit TEE or StrongBox security levels are allowed"
+            }
+          }
+          hardwareVerified = true
+        } catch (_: Exception) {
+          // Preserve first failure; continue independent exportability test.
+        }
+      }
+      var nonExportable = false
+      try {
+        diagnostic.run("privateKeyNonExportability") {
+          val observation = try {
+            val result = observeExportability(pair.private)
+            diagnostic.detail("privateKeyEncodedAccess", "PASS")
+            result
+          } catch (e: Exception) {
+            diagnostic.detail("privateKeyEncodedAccess", "THREW")
+            diagnostic.detail("privateKeyEncodedAccessExceptionClass",
+              CurveProbeDiagnostics.safeClass(e))
+            diagnostic.detail("privateKeyExportability", "INDETERMINATE")
+            throw e
+          }
+          diagnostic.detail("privateKeyExportability", observation.name)
+          check(observation == CurveKeySecurityPolicy.Exportability.NON_EXPORTABLE) {
+            "Private key unexpectedly exposed encoded material"
+          }
+        }
+        nonExportable = true
+      } catch (_: Exception) {
+        // Never export or log actual key bytes, including from failures.
+      }
+      check(hardwareVerified && nonExportable) {
+        "Curve25519 security prerequisites were not verified"
       }
       diagnostic.run("rfc8410PublicEncoding") {
         val raw = rawPublic(pair.public.encoded, algorithm)
@@ -225,7 +300,7 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     result.put("ed25519", false)
     result.put("x25519", false)
     result.put("enabled", false)
-    result.put("diagnosticsSchema", 1)
+    result.put("diagnosticsSchema", 2)
     val storage = try { store.storageSecurityLevel() } catch (e: Exception) {
       result.put("storageFailure", CurveProbeDiagnostics.sanitizedError("storageHardware", e))
       "unavailable"
