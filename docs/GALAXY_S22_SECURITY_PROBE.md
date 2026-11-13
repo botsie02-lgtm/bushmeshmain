@@ -1,7 +1,12 @@
 # Galaxy S22+ — independently installed BushMesh security capability probe
 
-**Status: NOT physically tested.** Feature branch only. This is an independent
-native app, NOT a flavor of the installed Wave 3 application.
+**Status (13 November 2026):** Physical Samsung Galaxy S22+ SM-S906E,
+Android 16/API 36 (2025-10-01 patch) has confirmed AES-GCM at TEE,
+SQLite FULL=2/secure_delete=1/DELETE, and StrongBox feature present. Ed25519
+and X25519 were each reported unsupported by the earlier capability probe,
+with IllegalStateException before a detailed stage was known. A new
+stage-specific retest remains pending. This is an independent native app,
+NOT a flavor of the installed Wave 3 application.
 
 ## Galaxy S22+ SQLiteException regression (12 November 2026)
 
@@ -16,6 +21,13 @@ DELETE journaling. Use the newer, more focused rerun procedure:
 That document includes exact PowerShell commands, updated independently
 signed test packages, a focused lifecycle regression suite, and a clear
 "unsupported" rather than false hardware-success classification.
+
+## Next hardware diagnostic — Ed25519/X25519 precise failure stages
+
+See **docs/GALAXY_S22_CURVE25519_STAGE_DIAGNOSTICS.md** for the newest
+instrumentation APKs, per-stage KeyInfo/KeyFactory failure codes and safe
+PowerShell retest. Do not interpret Ed25519 or X25519 as supported until
+every stage actually passes on the physical Galaxy S22+.
 
 ## Absolute isolation
 

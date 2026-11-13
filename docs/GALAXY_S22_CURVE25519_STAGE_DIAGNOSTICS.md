@@ -169,7 +169,7 @@ Run the UI and export the new sanitized report:
 Tap **Run isolated capability test**. Then **Export report JSON** using
 Android's system document picker. As a debug-only alternative:
 
-    $report = (adb exec-out run-as com.bushmesh.securityprobe cat files/capability-report.json) -join "\`n"
+    $report = (adb exec-out run-as com.bushmesh.securityprobe cat files/capability-report.json) -join [Environment]::NewLine
     $report | Set-Content -Encoding UTF8 .\s22-curve-staged-capabilities.json
     $json = Get-Content -Raw .\s22-curve-staged-capabilities.json | ConvertFrom-Json
     $json.capabilities.ed25519Diagnostics | ConvertTo-Json -Depth 10

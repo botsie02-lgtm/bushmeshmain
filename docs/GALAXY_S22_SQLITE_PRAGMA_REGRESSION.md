@@ -1,6 +1,10 @@
 # Galaxy S22+ SQLite FULL/secure_delete regression — isolated probe rerun
 
-**Status:** Feature-branch fix; physical Galaxy S22+ rerun PENDING. The earlier
+**Status (13 November 2026):** The physical Galaxy S22+ rerun CONFIRMED
+SQLite synchronous=2 (FULL), secure_delete=1, journal_mode=delete and
+verifiedFullDurability=true, with hardware AES TEE. The next unresolved
+device test is exact Ed25519/X25519 stage diagnosis; see
+docs/GALAXY_S22_CURVE25519_STAGE_DIAGNOSTICS.md. The earlier
 physical result was PROBE_FAILED_CLOSED / SQLiteException, specifically
 "Queries can be performed using SQLiteDatabase query or rawQuery methods only"
 from BushMeshSecurityCore.database during ProbeReport.inspect/close. This is
