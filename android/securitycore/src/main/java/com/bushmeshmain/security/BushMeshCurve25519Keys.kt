@@ -16,6 +16,9 @@ import java.security.spec.ECGenParameterSpec
 import java.security.spec.X509EncodedKeySpec
 import javax.crypto.KeyAgreement
 import java.security.PrivateKey
+import java.security.Security
+import java.security.NoSuchAlgorithmException
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -50,23 +53,34 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     require(Regex("[A-Za-z0-9_-]{24}").matches(id)) { "Invalid opaque private-key ID" }
   }
 
-  private fun info(privateKey: PrivateKey): KeyInfo {
-    // AndroidKeyStore may label Curve25519 as EC, Ed25519 or XDH.
+  private fun info(privateKey: PrivateKey, attempts: JSONArray? = null): KeyInfo {
+    // AOSP and vendor Keystore versions differ in the KeyFactory aliases
+    // accepted for KeyInfo. Record each attempt independently. No private
+    // key bytes, KeyStore aliases or exception messages enter the report.
     var last: Exception? = null
     for (alg in listOf(privateKey.algorithm, "EC", "Ed25519", "XDH").distinct()) {
       try {
         val factory = KeyFactory.getInstance(alg, "AndroidKeyStore")
-        return factory.getKeySpec(privateKey, KeyInfo::class.java) as KeyInfo
+        val result = factory.getKeySpec(privateKey, KeyInfo::class.java) as KeyInfo
+        attempts?.put(JSONObject()
+          .put("algorithm", CurveProbeDiagnostics.safeProvider(alg))
+          .put("status", "PASS")
+          .put("provider", CurveProbeDiagnostics.safeProvider(factory.provider.name)))
+        return result
       } catch (e: Exception) {
         last = e
+        attempts?.put(JSONObject()
+          .put("algorithm", CurveProbeDiagnostics.safeProvider(alg))
+          .put("status", "FAIL")
+          .put("exceptionClass", CurveProbeDiagnostics.safeClass(e))
+          .put("errorCode", "KEY_FACTORY_OR_KEYSPEC_REJECTED"))
       }
     }
     throw IllegalStateException("Cannot inspect private-key hardware security level", last)
   }
 
-  private fun checkHardware(privateKey: PrivateKey): String {
-    val keyInfo = info(privateKey)
-    return if (Build.VERSION.SDK_INT >= 31) when (keyInfo.securityLevel) {
+  private fun securityLevel(keyInfo: KeyInfo): String =
+    if (Build.VERSION.SDK_INT >= 31) when (keyInfo.securityLevel) {
       KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> "tee"
       KeyProperties.SECURITY_LEVEL_STRONGBOX -> "strongbox"
       else -> throw IllegalStateException("Curve25519 key is not hardware backed")
@@ -75,23 +89,64 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     } else {
       throw IllegalStateException("Curve25519 key is not hardware backed")
     }
-  }
 
-  private fun generate(algorithm: String, keyAlias: String): KeyPair {
+  private fun checkHardware(privateKey: PrivateKey): String =
+    securityLevel(info(privateKey))
+
+  private fun generate(
+    algorithm: String,
+    keyAlias: String,
+    diagnostic: CurveProbeDiagnostics? = null,
+  ): KeyPair {
     require(Build.VERSION.SDK_INT >= 33) { "Curve25519 KeyMint v2 needs Android 13 or newer" }
     val signing = algorithm == "Ed25519"
     require(signing || algorithm == "X25519")
-    // AndroidKeyStore provider uses XDH, with the x25519 named curve.
-    val generator = KeyPairGenerator.getInstance(if (signing) "Ed25519" else "XDH", "AndroidKeyStore")
-    val spec = KeyGenParameterSpec.Builder(
+    val jca = if (signing) "Ed25519" else "XDH"
+    diagnostic?.run("serviceRegistration") {
+      val registration = Security.getProvider("AndroidKeyStore")
+        ?.getService("KeyPairGenerator", jca)
+      if (registration == null) throw NoSuchAlgorithmException("SERVICE_NOT_REGISTERED")
+    }
+    // The requested provider is EXPLICIT, so no software-provider fallback.
+    val generator = if (diagnostic != null) diagnostic.run("providerSelection") {
+      KeyPairGenerator.getInstance(jca, "AndroidKeyStore").also {
+        diagnostic.provider("keyPairGeneratorProvider", it.provider.name)
+      }
+    } else KeyPairGenerator.getInstance(jca, "AndroidKeyStore")
+    val spec = if (diagnostic != null) diagnostic.run("parameterSpec") {
+      buildSpec(keyAlias, signing)
+    } else buildSpec(keyAlias, signing)
+    if (diagnostic != null) diagnostic.run("curvePurposeCompatibility") {
+      generator.initialize(spec)
+    } else generator.initialize(spec)
+    val pair = if (diagnostic != null) diagnostic.run("keyGeneration") {
+      generator.generateKeyPair()
+    } else generator.generateKeyPair()
+    if (diagnostic != null) {
+      val attempts = JSONArray()
+      val info = diagnostic.run("keyInfoRetrieval") { info(pair.private, attempts) }
+      diagnostic.detail("keyInfoAttempts", attempts)
+      diagnostic.run("hardwareSecurityLevel") {
+        diagnostic.detail("hardwareLevel", securityLevel(info))
+        check(pair.private.encoded == null) { "Private key unexpectedly exportable" }
+      }
+      diagnostic.run("rfc8410PublicEncoding") {
+        val raw = rawPublic(pair.public.encoded, algorithm)
+        diagnostic.detail("rawPublicLength", raw.size)
+      }
+    } else {
+      checkHardware(pair.private)
+      rawPublic(pair.public.encoded, algorithm)
+    }
+    return pair
+  }
+
+  private fun buildSpec(keyAlias: String, signing: Boolean): KeyGenParameterSpec {
+    val builder = KeyGenParameterSpec.Builder(
       keyAlias, if (signing) KeyProperties.PURPOSE_SIGN else KeyProperties.PURPOSE_AGREE_KEY,
     ).setAlgorithmParameterSpec(ECGenParameterSpec(if (signing) "ed25519" else "x25519"))
-    if (signing) spec.setDigests(KeyProperties.DIGEST_NONE)
-    generator.initialize(spec.build())
-    val pair = generator.generateKeyPair()
-    checkHardware(pair.private)
-    rawPublic(pair.public.encoded, algorithm)
-    return pair
+    if (signing) builder.setDigests(KeyProperties.DIGEST_NONE)
+    return builder.build()
   }
 
   private fun rawPublic(encoded: ByteArray, algorithm: String): ByteArray {
@@ -126,56 +181,112 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
   }
 
   /**
-   * A successful probe is a local operation test, not remote attestation,
-   * proof of rollback resistance, or a Galaxy S22+ hardware acceptance result.
+   * Each algorithm reports a distinct first failing stage and bounded,
+   * hard-coded error code. No exception message, stack trace, alias, public
+   * key, signature, shared secret or other material is included.
+   *
+   * This performs exactly the same KeyGenParameterSpec, KeyInfo, security
+   * level and RFC 8410 checks as normal key creation. No fallback.
    */
   @Synchronized fun probe(): JSONObject {
     passedSelfTest = false
     val result = JSONObject()
     result.put("apiLevel", Build.VERSION.SDK_INT)
-    result.put("strongBoxFeature", Build.VERSION.SDK_INT >= 28)
+    result.put("strongBoxFeature", false) // Actual device feature comes from ProbeReport.
     result.put("ed25519", false)
     result.put("x25519", false)
     result.put("enabled", false)
-    result.put("storageLevel", try { store.storageSecurityLevel() } catch (_: Exception) { "unavailable" })
-    if (Build.VERSION.SDK_INT < 33 || result.getString("storageLevel") == "unavailable") return result
-    val first = alias(id())
-    val second = alias(id())
-    val third = alias(id())
-    try {
-      val signing = generate("Ed25519", first)
-      val message = byteArrayOf(0x42, 0x4d, 0x01)
-      val signed = signWith(signing.private, message)
-      val verifier = Signature.getInstance("Ed25519")
-      verifier.initVerify(publicKey(rawPublic(signing.public.encoded, "Ed25519"), "Ed25519"))
-      verifier.update(message)
-      require(verifier.verify(signed)) { "Keystore Ed25519 test signature failed" }
-      result.put("ed25519", true)
-      result.put("ed25519Level", checkHardware(signing.private))
-    } catch (e: Exception) {
-      result.put("ed25519Failure", e.javaClass.simpleName)
-    } finally {
-      keystore().deleteEntry(first)
+    result.put("diagnosticsSchema", 1)
+    val storage = try { store.storageSecurityLevel() } catch (e: Exception) {
+      result.put("storageFailure", CurveProbeDiagnostics.sanitizedError("storageHardware", e))
+      "unavailable"
     }
-    try {
-      val a = generate("X25519", second)
-      val b = generate("X25519", third)
-      val left = agreeWith(a.private, publicKey(rawPublic(b.public.encoded, "X25519"), "X25519"))
-      val right = agreeWith(b.private, publicKey(rawPublic(a.public.encoded, "X25519"), "X25519"))
-      require(MessageDigest.isEqual(left, right)) { "X25519 test agreement mismatch" }
-      left.fill(0)
-      right.fill(0)
-      result.put("x25519", true)
-      result.put("x25519Level", checkHardware(a.private))
-    } catch (e: Exception) {
-      result.put("x25519Failure", e.javaClass.simpleName)
-    } finally {
-      keystore().deleteEntry(second)
-      keystore().deleteEntry(third)
+    result.put("storageLevel", storage)
+
+    val ed = diagnose("Ed25519", storage != "unavailable")
+    val x = diagnose("X25519", storage != "unavailable")
+    result.put("ed25519Diagnostics", ed)
+    result.put("x25519Diagnostics", x)
+    val edSuccess = ed.optBoolean("passed", false)
+    val xSuccess = x.optBoolean("passed", false)
+    result.put("ed25519", edSuccess)
+    result.put("x25519", xSuccess)
+    if (edSuccess) result.put("ed25519Level", ed.getString("hardwareLevel"))
+    if (xSuccess) result.put("x25519Level", x.getString("hardwareLevel"))
+    if (!edSuccess) {
+      result.put("ed25519Failure", ed.optString("exceptionClass", "NotRun"))
+      result.put("ed25519FailureStage", ed.optString("firstFailingStage", "notRun"))
+      result.put("ed25519ErrorCode", ed.optString("errorCode", "UNVERIFIED"))
     }
-    passedSelfTest = result.getBoolean("ed25519") && result.getBoolean("x25519")
+    if (!xSuccess) {
+      result.put("x25519Failure", x.optString("exceptionClass", "NotRun"))
+      result.put("x25519FailureStage", x.optString("firstFailingStage", "notRun"))
+      result.put("x25519ErrorCode", x.optString("errorCode", "UNVERIFIED"))
+    }
+    passedSelfTest = edSuccess && xSuccess && storage != "unavailable"
     result.put("enabled", passedSelfTest)
     return result
+  }
+
+  private fun diagnose(algorithm: String, storageVerified: Boolean): JSONObject {
+    val trace = CurveProbeDiagnostics(algorithm)
+    val first = alias(id())
+    val second = if (algorithm == "X25519") alias(id()) else null
+    var passed = false
+    try {
+      if (Build.VERSION.SDK_INT < 33) {
+        trace.unavailable("UNSUPPORTED_ANDROID_API")
+      } else if (!storageVerified) {
+        trace.unavailable("HARDWARE_STORAGE_UNAVAILABLE")
+      } else if (algorithm == "Ed25519") {
+        trace.notApplicable("x25519Agreement")
+        val signing = generate("Ed25519", first, trace)
+        trace.run("ed25519SignVerify") {
+          val message = byteArrayOf(0x42, 0x4d, 0x01)
+          val signature = signWith(signing.private, message)
+          try {
+            val verifier = Signature.getInstance("Ed25519")
+            trace.provider("signatureProvider", verifier.provider.name)
+            verifier.initVerify(publicKey(rawPublic(signing.public.encoded, "Ed25519"), "Ed25519"))
+            verifier.update(message)
+            check(verifier.verify(signature)) { "Signature self-test failed" }
+          } finally {
+            signature.fill(0)
+          }
+        }
+        passed = true
+      } else {
+        trace.notApplicable("ed25519SignVerify")
+        val a = generate("X25519", first, trace)
+        trace.run("x25519Agreement") {
+          val b = generate("X25519", requireNotNull(second))
+          val left = agreeWith(a.private,
+            publicKey(rawPublic(b.public.encoded, "X25519"), "X25519"))
+          try {
+            val right = agreeWith(b.private,
+              publicKey(rawPublic(a.public.encoded, "X25519"), "X25519"))
+            try {
+              check(MessageDigest.isEqual(left, right)) { "Agreement mismatch" }
+            } finally { right.fill(0) }
+          } finally { left.fill(0) }
+        }
+        passed = true
+      }
+    } catch (_: Exception) {
+      // The failing stage already contains the sanitized exception details;
+      // never include raw vendor exception messages in an exported report.
+    } finally {
+      try {
+        trace.run("keyCleanup") {
+          val ks = keystore()
+          // Delete BOTH throwaway aliases even when the earlier stage fails.
+          for (candidate in listOfNotNull(first, second)) ks.deleteEntry(candidate)
+        }
+      } catch (_: Exception) {
+        passed = false // A cleanup failure can NEVER result in a PASS.
+      }
+    }
+    return trace.finish(passed)
   }
 
   private fun requireProbe() {
