@@ -45,6 +45,103 @@ class SecurityProbeHardwareInstrumentationTest {
     ProbeReport.save(context(), report)
   }
 
+  @Test fun bothAlgorithmsExposeOrderedSanitizedFirstFailingStage() {
+    val report = ProbeReport.inspect(context())
+    val capabilities = report.getJSONObject("capabilities")
+    assertFalse(report.getBoolean("productionSecurityActivated"))
+    assertEquals(1, capabilities.getInt("diagnosticsSchema"))
+    val stages = listOf(
+      "serviceRegistration", "providerSelection", "parameterSpec",
+      "curvePurposeCompatibility", "keyGeneration", "keyInfoRetrieval",
+      "hardwareSecurityLevel", "rfc8410PublicEncoding",
+      "ed25519SignVerify", "x25519Agreement", "keyCleanup",
+    )
+    for ((key, enabled) in listOf(
+      Pair("ed25519Diagnostics", "ed25519"),
+      Pair("x25519Diagnostics", "x25519"),
+    )) {
+      val algorithm = capabilities.getJSONObject(key)
+      val trace = algorithm.getJSONObject("stages")
+      assertEquals(stages.size, trace.length())
+      for (stage in stages) {
+        val status = trace.getJSONObject(stage).getString("status")
+        assertTrue("Unknown stage status for $key/$stage: $status",
+          status in setOf("PASS", "FAIL", "NOT_RUN", "NOT_APPLICABLE"))
+      }
+      assertEquals(capabilities.getBoolean(enabled), algorithm.getBoolean("passed"))
+      if (algorithm.getBoolean("passed")) {
+        assertEquals("PASS", trace.getJSONObject("keyCleanup").getString("status"))
+        assertEquals("tee", algorithm.optString("hardwareLevel", "tee").takeIf {
+          it == "tee" || it == "strongbox" || it == "hardware-unclassified"
+        } ?: "INVALID")
+        assertTrue("Raw Security v1 public key must be 32 bytes",
+          algorithm.getJSONObject("details").getInt("rawPublicLength") == 32)
+      } else {
+        val first = algorithm.getString("firstFailingStage")
+        assertTrue("Missing ordered failure classification: $first",
+          first == "precondition" || first in stages)
+        val code = algorithm.getString("errorCode")
+        assertTrue(code.matches(Regex("[A-Z0-9_]{4,64}")))
+        val exception = algorithm.getString("exceptionClass")
+        assertTrue(exception.matches(Regex("[A-Za-z][A-Za-z0-9_]{0,63}")))
+        if (first != "precondition") {
+          assertEquals("FAIL", trace.getJSONObject(first).getString("status"))
+          assertEquals(code, trace.getJSONObject(first).getString("errorCode"))
+        }
+        if (first == "keyInfoRetrieval") {
+          val attempts = algorithm.getJSONObject("details").getJSONArray("keyInfoAttempts")
+          assertTrue("Missing shared KeyInfo/KeyFactory failure detail", attempts.length() > 0)
+          for (i in 0 until attempts.length()) {
+            val item = attempts.getJSONObject(i)
+            assertTrue(item.getString("phase") in setOf("factorySelection", "keySpecExtraction"))
+            assertTrue(item.getString("errorCode") in
+              setOf("KEY_FACTORY_NOT_REGISTERED", "KEYINFO_KEYSPEC_REJECTED"))
+          }
+        }
+      }
+    }
+    val json = report.toString()
+    assertFalse("Raw app Keystore aliases must not be exported",
+      json.contains("bushmesh_curve_v1_"))
+    assertFalse("JCA exceptions must not reveal stacks",
+      json.contains("StackTraceElement"))
+    assertFalse("Serialized report must contain no private key material",
+      json.contains("BEGIN PRIVATE KEY"))
+    Log.i(tag, "CURVE25519_STAGED_DIAGNOSTICS_PASS firstEd=" +
+      capabilities.getJSONObject("ed25519Diagnostics").getString("firstFailingStage") +
+      " firstX=" + capabilities.getJSONObject("x25519Diagnostics").getString("firstFailingStage"))
+  }
+
+  @Test fun stagedProbeDoesNotLeaveTemporaryKeyAliases() {
+    val fileSuffix = System.nanoTime()
+    val core = BushMeshSecurityCore(context(),
+      "securityprobe_staged_$fileSuffix.db",
+      "securityprobe_staged_aes_$fileSuffix")
+    val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    fun countTemporaryAliases(): Set<String> {
+      val names = mutableSetOf<String>()
+      val aliases = keyStore.aliases()
+      while (aliases.hasMoreElements()) {
+        val candidate = aliases.nextElement()
+        if (candidate.startsWith("bushmesh_curve_v1_")) names.add(candidate)
+      }
+      return names
+    }
+    val before = countTemporaryAliases()
+    try {
+      val report = BushMeshCurve25519Keys(core).probe()
+      for (name in listOf("ed25519Diagnostics", "x25519Diagnostics")) {
+        val trace = report.getJSONObject(name).getJSONObject("stages")
+        assertEquals("Every tested alias must be cleaned up", "PASS",
+          trace.getJSONObject("keyCleanup").getString("status"))
+      }
+      assertEquals("A probe must not leave new private aliases", before, countTemporaryAliases())
+    } finally {
+      core.close()
+      keyStore.deleteEntry("securityprobe_staged_aes_$fileSuffix")
+    }
+  }
+
   @Test fun nonExportableSigningAndAgreementWithDeletedAndForgedHandles() {
     val core = BushMeshSecurityCore(context(),
       "securityprobe_contract_" + System.nanoTime() + ".db",
