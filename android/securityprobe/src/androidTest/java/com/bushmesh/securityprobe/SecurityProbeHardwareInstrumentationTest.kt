@@ -71,9 +71,9 @@ class SecurityProbeHardwareInstrumentationTest {
       assertEquals(capabilities.getBoolean(enabled), algorithm.getBoolean("passed"))
       if (algorithm.getBoolean("passed")) {
         assertEquals("PASS", trace.getJSONObject("keyCleanup").getString("status"))
-        assertEquals("tee", algorithm.optString("hardwareLevel", "tee").takeIf {
-          it == "tee" || it == "strongbox" || it == "hardware-unclassified"
-        } ?: "INVALID")
+        assertTrue("Hardware security level must be TEE or StrongBox",
+          algorithm.getString("hardwareLevel") in
+            setOf("tee", "strongbox", "hardware-unclassified"))
         assertTrue("Raw Security v1 public key must be 32 bytes",
           algorithm.getJSONObject("details").getInt("rawPublicLength") == 32)
       } else {
@@ -108,8 +108,8 @@ class SecurityProbeHardwareInstrumentationTest {
     assertFalse("Serialized report must contain no private key material",
       json.contains("BEGIN PRIVATE KEY"))
     Log.i(tag, "CURVE25519_STAGED_DIAGNOSTICS_PASS firstEd=" +
-      capabilities.getJSONObject("ed25519Diagnostics").getString("firstFailingStage") +
-      " firstX=" + capabilities.getJSONObject("x25519Diagnostics").getString("firstFailingStage"))
+      capabilities.getJSONObject("ed25519Diagnostics").optString("firstFailingStage", "none") +
+      " firstX=" + capabilities.getJSONObject("x25519Diagnostics").optString("firstFailingStage", "none"))
   }
 
   @Test fun stagedProbeDoesNotLeaveTemporaryKeyAliases() {
