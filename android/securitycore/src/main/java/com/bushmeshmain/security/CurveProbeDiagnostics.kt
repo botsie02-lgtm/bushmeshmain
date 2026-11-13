@@ -1,7 +1,6 @@
 package com.bushmeshmain.security
 
 import org.json.JSONObject
-import java.util.Locale
 
 /**
  * Only allowlisted stage identifiers, static error codes and sanitized
@@ -59,6 +58,8 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
   private var firstFailingStage: String? = null
   private var exceptionClass: String? = null
   private var errorCode: String? = null
+  private var safeMessage: String? = null
+  private var causeExceptionClass: String? = null
 
   init {
     check(algorithm == "Ed25519" || algorithm == "X25519")
@@ -79,10 +80,7 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
 
   private fun fail(stage: String, failure: Exception) {
     val code = codes.getValue(stage)
-    stages.put(stage, JSONObject().put("status", "FAIL")
-      .put("exceptionClass", safeClass(failure))
-      .put("errorCode", code)
-      .put("safeMessage", when (stage) {
+    val description = when (stage) {
         "serviceRegistration" -> "Exact KeyPairGenerator service not registered in AndroidKeyStore"
         "providerSelection" -> "Explicit AndroidKeyStore provider could not be selected"
         "parameterSpec" -> "Exact Keystore parameter specification could not be constructed"
@@ -94,11 +92,21 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
         "ed25519SignVerify" -> "Ed25519 signing or verification failed"
         "x25519Agreement" -> "AndroidKeyStore X25519 agreement failed"
         else -> "Temporary Keystore aliases could not be removed"
-      }))
+      }
+    val record = JSONObject().put("status", "FAIL")
+      .put("exceptionClass", safeClass(failure))
+      .put("errorCode", code)
+      .put("safeMessage", description)
+    if (failure.cause != null) {
+      record.put("causeExceptionClass", safeClass(requireNotNull(failure.cause)))
+    }
+    stages.put(stage, record)
     if (firstFailingStage == null) {
       firstFailingStage = stage
       exceptionClass = safeClass(failure)
       errorCode = code
+      safeMessage = description
+      causeExceptionClass = failure.cause?.let(::safeClass)
     }
   }
 
@@ -123,6 +131,9 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
       firstFailingStage = "precondition"
       errorCode = code
       exceptionClass = "NotRun"
+      safeMessage = if (code == "UNSUPPORTED_ANDROID_API")
+        "Hardware Curve25519 requires a verified Android 13+ provider"
+      else "Protected hardware-backed storage precondition was unavailable"
     }
   }
 
@@ -133,6 +144,8 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
     .put("firstFailingStage", firstFailingStage ?: JSONObject.NULL)
     .put("exceptionClass", exceptionClass ?: JSONObject.NULL)
     .put("errorCode", errorCode ?: JSONObject.NULL)
+    .put("safeMessage", safeMessage ?: JSONObject.NULL)
+    .put("causeExceptionClass", causeExceptionClass ?: JSONObject.NULL)
     .put("stages", stages)
     .put("details", details)
     .also { result ->
