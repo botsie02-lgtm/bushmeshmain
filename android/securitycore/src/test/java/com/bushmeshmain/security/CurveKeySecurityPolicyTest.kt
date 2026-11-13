@@ -3,6 +3,7 @@ package com.bushmeshmain.security
 import android.security.keystore.KeyProperties
 import org.junit.Assert.*
 import org.junit.Test
+import java.security.PrivateKey
 
 class CurveKeySecurityPolicyTest {
   private val policy = CurveKeySecurityPolicy
@@ -48,4 +49,34 @@ class CurveKeySecurityPolicyTest {
     assertFalse(policy.canUse(CurveKeySecurityPolicy.Level.UNKNOWN_SECURE,
       CurveKeySecurityPolicy.Exportability.NON_EXPORTABLE))
   }
+  private fun fakePrivateKey(encodedBytes: () -> ByteArray?): PrivateKey = object : PrivateKey {
+    override fun getAlgorithm(): String = "Ed25519"
+    override fun getFormat(): String? = "PKCS#8"
+    override fun getEncoded(): ByteArray? = encodedBytes()
+  }
+
+  @Test fun unexpectedExportableKeyBytesAreImmediatelyWipedAndRejected() {
+    val bytes = ByteArray(48) { 71 }
+    val observed = policy.observeExportability(fakePrivateKey { bytes })
+    assertEquals(CurveKeySecurityPolicy.Exportability.EXPORTABLE, observed)
+    assertTrue("Encoded private material was not wiped", bytes.all { it == 0.toByte() })
+    for (level in CurveKeySecurityPolicy.Level.values()) {
+      assertFalse(policy.canUse(level, observed))
+    }
+  }
+
+  @Test fun nullEncodingIsNonExportableButNotHardwareEvidence() {
+    val observed = policy.observeExportability(fakePrivateKey { null })
+    assertEquals(CurveKeySecurityPolicy.Exportability.NON_EXPORTABLE, observed)
+    assertFalse(policy.canUse(CurveKeySecurityPolicy.Level.SOFTWARE, observed))
+    assertFalse(policy.canUse(CurveKeySecurityPolicy.Level.UNKNOWN, observed))
+  }
+
+  @Test fun throwingEncodedGetterFailsClosedRatherThanClaimingNonExportability() {
+    val key = fakePrivateKey { throw IllegalStateException("opaque test failure") }
+    assertThrows(IllegalStateException::class.java) { policy.observeExportability(key) }
+    assertFalse(policy.canUse(CurveKeySecurityPolicy.Level.STRONGBOX,
+      CurveKeySecurityPolicy.Exportability.INDETERMINATE))
+  }
+
 }

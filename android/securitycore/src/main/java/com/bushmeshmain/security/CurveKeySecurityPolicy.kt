@@ -1,6 +1,7 @@
 package com.bushmeshmain.security
 
 import android.security.keystore.KeyProperties
+import java.security.PrivateKey
 
 /** Fail-closed KeyInfo.securityLevel interpretation. UNKNOWN_SECURE is NOT
  * accepted as an explicit TEE/StrongBox placement without security review.
@@ -28,6 +29,21 @@ internal object CurveKeySecurityPolicy {
     Level.SOFTWARE -> "SOFTWARE_PROTECTED"
     Level.UNKNOWN, Level.UNKNOWN_SECURE -> "INDETERMINATE"
     Level.UNRECOGNISED -> "UNRECOGNISED"
+  }
+
+  /**
+   * Only observes whether key bytes are exportable. Does not return bytes,
+   * and zeros any unexpectedly returned PKCS#8 before control leaves here.
+   * A thrown getter remains an exception and is never assumed safe.
+   */
+  fun observeExportability(privateKey: PrivateKey): Exportability {
+    var data: ByteArray? = null
+    try {
+      data = privateKey.encoded
+      return if (data == null) Exportability.NON_EXPORTABLE else Exportability.EXPORTABLE
+    } finally {
+      data?.fill(0)
+    }
   }
 
   fun canUse(level: Level, exportability: Exportability): Boolean =

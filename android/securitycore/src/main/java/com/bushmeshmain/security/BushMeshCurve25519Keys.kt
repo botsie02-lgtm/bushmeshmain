@@ -98,18 +98,9 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     return CurveKeySecurityPolicy.fromAndroidSecurityLevel(keyInfo.securityLevel)
   }
 
-  /** Never log, return or persist encoded private key bytes. Zero any
-   * unexpectedly returned private-key encoding before leaving this scope. */
-  private fun observeExportability(privateKey: PrivateKey): CurveKeySecurityPolicy.Exportability {
-    var encoded: ByteArray? = null
-    try {
-      encoded = privateKey.encoded
-      return if (encoded == null) CurveKeySecurityPolicy.Exportability.NON_EXPORTABLE
-        else CurveKeySecurityPolicy.Exportability.EXPORTABLE
-    } finally {
-      encoded?.fill(0)
-    }
-  }
+  /** Shared, tested implementation wipes any unexpected encoded key bytes. */
+  private fun observeExportability(privateKey: PrivateKey): CurveKeySecurityPolicy.Exportability =
+    CurveKeySecurityPolicy.observeExportability(privateKey)
 
   private fun checkHardware(privateKey: PrivateKey): String {
     val level = exactSecurityLevel(info(privateKey))

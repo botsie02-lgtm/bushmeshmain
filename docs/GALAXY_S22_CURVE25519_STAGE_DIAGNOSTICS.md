@@ -1,3 +1,115 @@
+## Android 16 hardware gate: separate security-level and non-exportability retest
+
+**Physical starting point (Galaxy S22+ SM-S906E, API 36):** Both Ed25519
+and X25519 passed serviceRegistration, providerSelection, parameterSpec,
+curvePurposeCompatibility, keyGeneration and keyInfoRetrieval. Both failed
+hardwareSecurityLevel with TEE_STRONGBOX_VERIFICATION_FAILED, then passed
+keyCleanup. Ed25519 KeyInfo was read using AndroidKeyStore EC KeyFactory;
+X25519 KeyInfo was read using AndroidKeyStore XDH KeyFactory. The exact
+security level and whether encoded private material is accessible are still
+**unknown pending the new physical test**.
+
+The updated probe sets diagnosticsSchema to 2. It separately records:
+
+- `securityLevelInspection`: PASS or FAIL for reading
+  `KeyInfo.securityLevel`, independent of the hardware verdict. In
+  `details.securityLevelAccess`, PASS means the getter returned a value;
+  THREW means it raised an exception and the sanitized
+  `securityLevelAccessExceptionClass` identifies its class. An exception
+  leaves `securityLevelEnum` absent; it is never guessed.
+- `securityLevelEnum` (in details): one of SOFTWARE (Android constant 0),
+  TRUSTED_ENVIRONMENT (1), STRONGBOX (2), UNKNOWN_SECURE (-1), UNKNOWN (-2),
+  or UNRECOGNISED (all other values). No numerical implementation details,
+  aliases or exception text need to be exported. The classification allows
+  the operator to distinguish software, explicit secure hardware, and
+  indeterminate values.
+- `hardwareSecurityLevel`: PASS **only** for TRUSTED_ENVIRONMENT or
+  STRONGBOX. `details.hardwareVerdict` is HARDWARE_VERIFIED,
+  SOFTWARE_PROTECTED, INDETERMINATE or UNRECOGNISED. UNKNOWN_SECURE
+  is deliberately **not** treated as TEE/StrongBox acceptance without
+  explicit review, even though Android documents it as at least TEE-equivalent.
+- `privateKeyNonExportability`: an **independent** test after key
+  generation, even if KeyInfo inspection or TEE verification fails.
+  `details.privateKeyEncodedAccess` is PASS/THREW;
+  `details.privateKeyExportability` is NON_EXPORTABLE/EXPORTABLE/
+  INDETERMINATE. Any unexpectedly returned private-key encoding is wiped
+  immediately in memory and is never logged, persisted or exported.
+  A null `privateKey.encoded` alone is NOT evidence of secure hardware.
+
+If the level read fails, the first failing stage becomes
+securityLevelInspection; if it succeeds with SOFTWARE/UNKNOWN/UNKNOWN_SECURE
+or UNRECOGNISED, hardwareSecurityLevel fails. Either case leaves
+rfc8410PublicEncoding, Ed25519 signing and X25519 agreement `NOT_RUN`.
+Safe deletion of all temporary test keys still runs. Incomplete test stages
+are never marked PASS.
+
+The shared native security policy applies the **same strict** level and
+exportability gate when creating or resolving persistent handles, not merely
+during a diagnostic probe. JVM regressions cover every documented KeyInfo
+level and an unrecognised level, invalid combinations of software and
+non-exportability, a getter that throws, and immediate zeroization of
+unexpectedly returned encoded bytes.
+
+Official platform constants and strict hardware guidance:
+https://developer.android.com/reference/android/security/keystore/KeyProperties
+https://developer.android.com/reference/android/security/keystore/KeyInfo
+https://developer.android.com/privacy-and-security/keystore
+
+### PowerShell retest on the S22+ (isolated package only)
+
+Download the three matching artifacts from the **latest successful**
+feature-branch workflow:
+https://github.com/botsie02-lgtm/bushmeshmain/actions/workflows/android-production-security-v1.yml
+
+Extract `securityprobe-debug.apk`,
+`securityprobe-debug-androidTest.apk`, and `SHA256SUMS.txt` into one folder,
+verify that each hash matches the same workflow run, then run:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+adb devices -l
+adb shell getprop ro.product.model
+adb shell getprop ro.build.version.sdk
+adb shell pm path com.bushmeshmain
+Get-FileHash .\securityprobe-debug.apk -Algorithm SHA256
+Get-FileHash .\securityprobe-debug-androidTest.apk -Algorithm SHA256
+
+adb install -r -t .\securityprobe-debug.apk
+adb install -r -t .\securityprobe-debug-androidTest.apk
+
+adb shell am instrument -w -e class "com.bushmesh.securityprobe.SecurityProbeHardwareInstrumentationTest#bothAlgorithmsExposeOrderedSanitizedFirstFailingStage" com.bushmesh.securityprobe.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class "com.bushmesh.securityprobe.SecurityProbeHardwareInstrumentationTest#stagedProbeDoesNotLeaveTemporaryKeyAliases" com.bushmesh.securityprobe.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w com.bushmesh.securityprobe.test/androidx.test.runner.AndroidJUnitRunner
+
+adb shell am start -n com.bushmesh.securityprobe/.ProbeActivity
+```
+
+In the app, press **Run isolated capability test** then **Export report JSON**.
+Optionally use the debug-only read in PowerShell:
+
+```powershell
+$json = adb exec-out run-as com.bushmesh.securityprobe cat files/capability-report.json | ConvertFrom-Json
+$json.capabilities.ed25519Diagnostics | Select-Object firstFailingStage,errorCode,details,stages | ConvertTo-Json -Depth 12
+$json.capabilities.x25519Diagnostics | Select-Object firstFailingStage,errorCode,details,stages | ConvertTo-Json -Depth 12
+adb shell pm path com.bushmeshmain
+```
+
+The two focused instrumentation tests should each report `OK (1 test)`.
+That verifies the diagnostic contract, **not** Curve25519 hardware support.
+Save the JSON and full instrumentation output. A key remains unsupported
+until level is exactly TRUSTED_ENVIRONMENT or STRONGBOX, encoding is
+NON_EXPORTABLE, and all subsequent exact-format and crypto checks PASS.
+A StrongBox *feature* bit does not prove a Curve25519 key was placed there.
+
+If installation fails because the debug signing certificate changed,
+preserve any earlier probe-only report and reinstall **only**
+`com.bushmesh.securityprobe.test` and `com.bushmesh.securityprobe`.
+Never uninstall, clear, replace or instrument `com.bushmeshmain`; never
+reset its Android Keystore, Radio History, settings or Melbourne map packs.
+Security v1/v2 production activation stays disabled and no merge is allowed.
+
+---
+
 # Galaxy S22+ — Ed25519/X25519 staged AndroidKeyStore diagnostic retest
 
 **Only** on feature/android-production-security-v1. The existing
