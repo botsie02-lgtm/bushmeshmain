@@ -124,8 +124,13 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     } else generator.generateKeyPair()
     if (diagnostic != null) {
       val attempts = JSONArray()
-      val info = diagnostic.run("keyInfoRetrieval") { info(pair.private, attempts) }
-      diagnostic.detail("keyInfoAttempts", attempts)
+      val info = try {
+        diagnostic.run("keyInfoRetrieval") { info(pair.private, attempts) }
+      } finally {
+        // A failure in KeyInfo is precisely where the individual provider
+        // attempts are most valuable. Retain them even on exception.
+        diagnostic.detail("keyInfoAttempts", attempts)
+      }
       diagnostic.run("hardwareSecurityLevel") {
         diagnostic.detail("hardwareLevel", securityLevel(info))
         check(pair.private.encoded == null) { "Private key unexpectedly exportable" }
@@ -171,8 +176,13 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     return signer.sign().also { require(it.size == 64) { "Invalid Ed25519 signature length" } }
   }
 
-  private fun agreeWith(key: PrivateKey, publicKey: java.security.PublicKey): ByteArray {
+  private fun agreeWith(
+    key: PrivateKey,
+    publicKey: java.security.PublicKey,
+    diagnostic: CurveProbeDiagnostics? = null,
+  ): ByteArray {
     val agreement = KeyAgreement.getInstance("XDH", "AndroidKeyStore")
+    diagnostic?.provider("keyAgreementProvider", agreement.provider.name)
     agreement.init(key)
     agreement.doPhase(publicKey, true)
     val secret = agreement.generateSecret()
@@ -261,7 +271,7 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
         trace.run("x25519Agreement") {
           val b = generate("X25519", requireNotNull(second))
           val left = agreeWith(a.private,
-            publicKey(rawPublic(b.public.encoded, "X25519"), "X25519"))
+            publicKey(rawPublic(b.public.encoded, "X25519"), "X25519"), trace)
           try {
             val right = agreeWith(b.private,
               publicKey(rawPublic(a.public.encoded, "X25519"), "X25519"))
