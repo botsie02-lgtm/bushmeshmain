@@ -59,11 +59,23 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     // key bytes, KeyStore aliases or exception messages enter the report.
     var last: Exception? = null
     for (alg in listOf(privateKey.algorithm, "EC", "Ed25519", "XDH").distinct()) {
+      val factory = try {
+        KeyFactory.getInstance(alg, "AndroidKeyStore")
+      } catch (e: Exception) {
+        last = e
+        attempts?.put(JSONObject()
+          .put("algorithm", CurveProbeDiagnostics.safeProvider(alg))
+          .put("phase", "factorySelection")
+          .put("status", "FAIL")
+          .put("exceptionClass", CurveProbeDiagnostics.safeClass(e))
+          .put("errorCode", "KEY_FACTORY_NOT_REGISTERED"))
+        continue
+      }
       try {
-        val factory = KeyFactory.getInstance(alg, "AndroidKeyStore")
         val result = factory.getKeySpec(privateKey, KeyInfo::class.java) as KeyInfo
         attempts?.put(JSONObject()
           .put("algorithm", CurveProbeDiagnostics.safeProvider(alg))
+          .put("phase", "keySpecExtraction")
           .put("status", "PASS")
           .put("provider", CurveProbeDiagnostics.safeProvider(factory.provider.name)))
         return result
@@ -71,9 +83,11 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
         last = e
         attempts?.put(JSONObject()
           .put("algorithm", CurveProbeDiagnostics.safeProvider(alg))
+          .put("phase", "keySpecExtraction")
           .put("status", "FAIL")
+          .put("provider", CurveProbeDiagnostics.safeProvider(factory.provider.name))
           .put("exceptionClass", CurveProbeDiagnostics.safeClass(e))
-          .put("errorCode", "KEY_FACTORY_OR_KEYSPEC_REJECTED"))
+          .put("errorCode", "KEYINFO_KEYSPEC_REJECTED"))
       }
     }
     throw IllegalStateException("Cannot inspect private-key hardware security level", last)
@@ -169,9 +183,14 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
     return KeyFactory.getInstance(if (algorithm == "Ed25519") "Ed25519" else "XDH").generatePublic(spec)
   }
 
-  private fun signWith(key: PrivateKey, message: ByteArray): ByteArray {
+  private fun signWith(
+    key: PrivateKey,
+    message: ByteArray,
+    diagnostic: CurveProbeDiagnostics? = null,
+  ): ByteArray {
     val signer = Signature.getInstance("Ed25519")
     signer.initSign(key)
+    diagnostic?.provider("signatureProvider", signer.provider.name)
     signer.update(message)
     return signer.sign().also { require(it.size == 64) { "Invalid Ed25519 signature length" } }
   }
@@ -253,7 +272,7 @@ class BushMeshCurve25519Keys(private val store: BushMeshSecurityCore) {
         val signing = generate("Ed25519", first, trace)
         trace.run("ed25519SignVerify") {
           val message = byteArrayOf(0x42, 0x4d, 0x01)
-          val signature = signWith(signing.private, message)
+          val signature = signWith(signing.private, message, trace)
           try {
             val verifier = Signature.getInstance("Ed25519")
             trace.provider("signatureProvider", verifier.provider.name)
