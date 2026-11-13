@@ -49,11 +49,12 @@ class SecurityProbeHardwareInstrumentationTest {
     val report = ProbeReport.inspect(context())
     val capabilities = report.getJSONObject("capabilities")
     assertFalse(report.getBoolean("productionSecurityActivated"))
-    assertEquals(1, capabilities.getInt("diagnosticsSchema"))
+    assertEquals(2, capabilities.getInt("diagnosticsSchema"))
     val stages = listOf(
       "serviceRegistration", "providerSelection", "parameterSpec",
       "curvePurposeCompatibility", "keyGeneration", "keyInfoRetrieval",
-      "hardwareSecurityLevel", "rfc8410PublicEncoding",
+      "securityLevelInspection", "hardwareSecurityLevel",
+      "privateKeyNonExportability", "rfc8410PublicEncoding",
       "ed25519SignVerify", "x25519Agreement", "keyCleanup",
     )
     for ((key, enabled) in listOf(
@@ -69,11 +70,48 @@ class SecurityProbeHardwareInstrumentationTest {
           status in setOf("PASS", "FAIL", "NOT_RUN", "NOT_APPLICABLE"))
       }
       assertEquals(capabilities.getBoolean(enabled), algorithm.getBoolean("passed"))
+      val details = algorithm.getJSONObject("details")
+      if (trace.getJSONObject("keyGeneration").getString("status") == "PASS") {
+        // Even when hardware placement is rejected, test exportability
+        // independently; do not turn an unperformed operation into PASS.
+        assertTrue("Exportability observation required after key generation",
+          trace.getJSONObject("privateKeyNonExportability").getString("status") in setOf("PASS", "FAIL"))
+        assertTrue(details.optString("privateKeyExportability") in
+          setOf("NON_EXPORTABLE", "EXPORTABLE", "INDETERMINATE"))
+        assertTrue(details.optString("privateKeyEncodedAccess") in setOf("PASS", "THREW"))
+      } else {
+        assertEquals("NOT_RUN", trace.getJSONObject("privateKeyNonExportability").getString("status"))
+      }
+      if (trace.getJSONObject("keyInfoRetrieval").getString("status") == "PASS") {
+        val access = details.optString("securityLevelAccess")
+        assertTrue("KeyInfo.securityLevel access must be classified", access in setOf("PASS", "THREW"))
+        if (access == "PASS") {
+          val exact = details.optString("securityLevelEnum")
+          assertTrue(exact in setOf("SOFTWARE", "TRUSTED_ENVIRONMENT", "STRONGBOX",
+            "UNKNOWN_SECURE", "UNKNOWN", "UNRECOGNISED"))
+          val expectedHardware = exact == "TRUSTED_ENVIRONMENT" || exact == "STRONGBOX"
+          assertEquals(
+            if (expectedHardware) "PASS" else "FAIL",
+            trace.getJSONObject("hardwareSecurityLevel").getString("status"))
+          assertEquals(
+            if (expectedHardware) "HARDWARE_VERIFIED" else if (exact == "SOFTWARE") "SOFTWARE_PROTECTED"
+              else if (exact == "UNRECOGNISED") "UNRECOGNISED" else "INDETERMINATE",
+            details.getString("hardwareVerdict"))
+        } else {
+          assertEquals("FAIL", trace.getJSONObject("securityLevelInspection").getString("status"))
+          assertTrue(details.has("securityLevelAccessExceptionClass"))
+          assertFalse(details.has("securityLevelEnum"))
+          assertEquals("NOT_RUN", trace.getJSONObject("hardwareSecurityLevel").getString("status"))
+        }
+      }
+      if (trace.getJSONObject("rfc8410PublicEncoding").getString("status") == "NOT_RUN") {
+        val operation = if (enabled == "ed25519") "ed25519SignVerify" else "x25519Agreement"
+        assertEquals("NOT_RUN", trace.getJSONObject(operation).getString("status"))
+      }
       if (algorithm.getBoolean("passed")) {
         assertEquals("PASS", trace.getJSONObject("keyCleanup").getString("status"))
         assertTrue("Hardware security level must be TEE or StrongBox",
-          algorithm.getString("hardwareLevel") in
-            setOf("tee", "strongbox", "hardware-unclassified"))
+          algorithm.getString("hardwareLevel") in setOf("tee", "strongbox"))
         assertTrue("Raw Security v1 public key must be 32 bytes",
           algorithm.getJSONObject("details").getInt("rawPublicLength") == 32)
       } else {
