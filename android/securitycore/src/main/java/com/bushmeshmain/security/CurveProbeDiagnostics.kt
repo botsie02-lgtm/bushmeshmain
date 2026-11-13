@@ -16,7 +16,9 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
       "curvePurposeCompatibility",
       "keyGeneration",
       "keyInfoRetrieval",
+      "securityLevelInspection",
       "hardwareSecurityLevel",
+      "privateKeyNonExportability",
       "rfc8410PublicEncoding",
       "ed25519SignVerify",
       "x25519Agreement",
@@ -30,7 +32,9 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
       "curvePurposeCompatibility" to "CURVE_OR_PURPOSE_REJECTED",
       "keyGeneration" to "HARDWARE_KEY_GENERATION_FAILED",
       "keyInfoRetrieval" to "KEYINFO_INSPECTION_FAILED",
+      "securityLevelInspection" to "SECURITY_LEVEL_READ_FAILED",
       "hardwareSecurityLevel" to "TEE_STRONGBOX_VERIFICATION_FAILED",
+      "privateKeyNonExportability" to "PRIVATE_KEY_EXPORTABILITY_FAILED",
       "rfc8410PublicEncoding" to "RFC8410_ENCODING_INCOMPATIBLE",
       "ed25519SignVerify" to "SIGN_OR_VERIFY_FAILED",
       "x25519Agreement" to "HARDWARE_AGREEMENT_FAILED",
@@ -87,7 +91,9 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
         "curvePurposeCompatibility" -> "Named curve, digest or key purpose was rejected"
         "keyGeneration" -> "AndroidKeyStore hardware key generation failed"
         "keyInfoRetrieval" -> "AndroidKeyStore KeyFactory could not expose KeyInfo"
-        "hardwareSecurityLevel" -> "TEE/StrongBox level or non-exportability not verified"
+        "securityLevelInspection" -> "Reading KeyInfo.securityLevel raised an exception"
+        "hardwareSecurityLevel" -> "KeyInfo did not explicitly report TEE or StrongBox"
+        "privateKeyNonExportability" -> "Private-key exportability was not safely verified"
         "rfc8410PublicEncoding" -> "Exact 32-byte RFC 8410 public key was not returned"
         "ed25519SignVerify" -> "Ed25519 signing or verification failed"
         "x25519Agreement" -> "AndroidKeyStore X25519 agreement failed"
@@ -116,7 +122,12 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
   }
 
   fun detail(name: String, value: Any) {
-    check(name in setOf("keyInfoAttempts", "hardwareLevel", "rawPublicLength"))
+    check(name in setOf(
+      "keyInfoAttempts", "hardwareLevel", "rawPublicLength",
+      "securityLevelEnum", "securityLevelAccess", "securityLevelAccessExceptionClass",
+      "hardwareVerdict", "privateKeyExportability", "privateKeyEncodedAccess",
+      "privateKeyEncodedAccessExceptionClass",
+    ))
     details.put(name, value)
   }
 
@@ -149,6 +160,12 @@ internal class CurveProbeDiagnostics(private val algorithm: String) {
     .put("stages", stages)
     .put("details", details)
     .also { result ->
-      if (details.has("hardwareLevel")) result.put("hardwareLevel", details.getString("hardwareLevel"))
+      if (details.optString("securityLevelEnum") == "TRUSTED_ENVIRONMENT" &&
+          stages.getJSONObject("hardwareSecurityLevel").getString("status") == "PASS") {
+        result.put("hardwareLevel", "tee")
+      } else if (details.optString("securityLevelEnum") == "STRONGBOX" &&
+                 stages.getJSONObject("hardwareSecurityLevel").getString("status") == "PASS") {
+        result.put("hardwareLevel", "strongbox")
+      }
     }
 }
