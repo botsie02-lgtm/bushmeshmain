@@ -47,6 +47,11 @@ internal interface V2IndependentEpochWitness {
   /** External witness may enter a pending state; uncertain results fail closed. */
   fun prepare(groupId: String, previous: Long, next: Long, transactionDigest: String)
   fun complete(groupId: String, next: Long, transactionDigest: String)
+  /**
+   * Independent witness MUST refuse cancellation if any stronger committed
+   * epoch is observed. Only usable with proof SQLite did NOT commit.
+   */
+  fun cancelUncommitted(groupId: String, previous: Long, next: Long, digest: String)
 }
 
 /** Test-only deterministic fault hook; never registered in an app runtime. */
@@ -202,7 +207,8 @@ internal class BushMeshSecurityV2TransactionStore(
       put("roster_digest",digest)
       put("authority_seq",value.getLong("authoritySequence"))
       put("state",value.getString("state"))
-      put("current_tx",value.optString("currentTransactionId").ifEmpty { null as String? })
+      if (value.isNull("currentTransactionId")) putNull("current_tx")
+      else put("current_tx",value.getString("currentTransactionId"))
       put("data",sealed("snapshot",groupId,value.toString()))
     },SQLiteDatabase.CONFLICT_REPLACE)
   }
@@ -300,14 +306,21 @@ internal class BushMeshSecurityV2TransactionStore(
 
   fun readInstalledDistribution(txId: String): String? = synchronized(lock) {
     SecurityV2NativeRules.id(txId)
-    database.rawQuery("SELECT digest FROM installed WHERE tx_id=?",arrayOf(txId)).use {
-      if (it.moveToFirst()) it.getString(0) else null
+    database.rawQuery("SELECT group_id,digest FROM installed WHERE tx_id=?",arrayOf(txId)).use {
+      if (it.moveToFirst()) {
+        assertCurrent(database,it.getString(0))
+        it.getString(1)
+      } else null
     }
   }
 
   fun readVerifiedReceipt(txId: String, recipient: String): String? = synchronized(lock) {
     SecurityV2NativeRules.id(txId)
     SecurityV2NativeRules.id(recipient)
+    val journal = journal(database,txId) ?: return@synchronized null
+    val groupId = journal.getJSONObject("approval").getJSONObject("proposal")
+      .getString("groupId")
+    assertCurrent(database,groupId)
     database.rawQuery("SELECT digest FROM receipts WHERE tx_id=? AND recipient=?",
       arrayOf(txId,recipient)).use {
       if (it.moveToFirst()) it.getString(0) else null
@@ -636,6 +649,59 @@ internal class BushMeshSecurityV2TransactionStore(
       witness.assertCurrent(groupId,high)
       "reconciled-local-commit"
     }
+
+  /**
+   * A crash before SQLite commit may leave an external "pending" witness.
+   * A reviewed witness can release it only after independently confirming
+   * there is still no completed higher epoch; never reset a committed fence.
+   */
+  fun recoverAbortedEpoch(groupId: String, txId: String, digest: String): String =
+    synchronized(lock) {
+      SecurityV2NativeRules.groupId(groupId)
+      SecurityV2NativeRules.id(txId)
+      SecurityV2NativeRules.digest(digest)
+      val db = database
+      val current = snapshot(db,groupId)
+        ?: throw IllegalStateException("NOT_COMMITTED: missing previous group")
+      val tx = journal(db,txId)
+        ?: throw IllegalStateException("CORRUPT_STATE: missing prepared journal")
+      val previous = tx.getLong("expectedEpoch")
+      val next = tx.getLong("nextEpoch")
+      require(current.getLong("epoch") == previous &&
+        high(db,groupId) == previous && tx.getString("status") == "prepared" &&
+        tx.getString("nextRosterDigest") == digest &&
+        tx.getJSONObject("approval").getJSONObject("proposal").getString("groupId") == groupId) {
+        "CORRUPT_STATE: abort recovery inconsistent with immutable journal"
+      }
+      witness.cancelUncommitted(groupId,previous,next,digest)
+      witness.assertCurrent(groupId,previous)
+      "reconciled-uncommitted"
+    }
+
+  /** Recipient has an install receipt, not an owner-side prepared journal. */
+  fun recoverInstalledEpochWitness(groupId: String, txId: String,
+    distributionDigest: String): String = synchronized(lock) {
+    SecurityV2NativeRules.groupId(groupId)
+    SecurityV2NativeRules.id(txId)
+    SecurityV2NativeRules.digest(distributionDigest)
+    val db = database
+    val installed = db.rawQuery("SELECT group_id,epoch,digest FROM installed WHERE tx_id=?",
+      arrayOf(txId)).use {
+      if (it.moveToFirst()) Triple(it.getString(0),it.getLong(1),it.getString(2)) else null
+    } ?: throw IllegalStateException("NOT_INSTALLED: no durable recipient record")
+    val current = snapshot(db,groupId)
+      ?: throw IllegalStateException("CORRUPT_STATE: missing installed roster")
+    require(installed.first == groupId && installed.second == current.getLong("epoch") &&
+      installed.third == distributionDigest &&
+      high(db,groupId) == installed.second &&
+      current.getString("currentTransactionId") == txId &&
+      getKey(db,groupId,installed.second) != null) {
+      "CORRUPT_STATE: recipient recovery is missing epoch key/receipt"
+    }
+    witness.complete(groupId,installed.second,distributionDigest)
+    witness.assertCurrent(groupId,installed.second)
+    "reconciled-recipient-install"
+  }
 
   fun close() = synchronized(lock) { if (database.isOpen) database.close() }
 }
