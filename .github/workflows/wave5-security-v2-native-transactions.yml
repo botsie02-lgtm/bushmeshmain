@@ -1,0 +1,63 @@
+name: Wave 5 Security V2 native transactions (isolated)
+on:
+  push:
+    branches:
+      - feature/wave5-security-v2-native-transactions-v1
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wave5-security-v2-native-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  javascript-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Full Jest suite
+        run: npm test -- --runInBand
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npm run lint
+      - name: Keep both security activation gates disabled
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const v2 = fs.readFileSync('src/security/v2/contracts.ts','utf8');
+          const v3 = fs.readFileSync('src/convoy/enrolmentV3/contract.ts','utf8');
+          if (!v2.includes("SECURITY_V2_PRODUCTION_ACTIVATION = 'disabled-pending-formal-review'")) throw new Error('V2 enabled');
+          if (!v3.includes("SECURE_ENROLMENT_V3_ACTIVATION = 'disabled-pending-security-v2-review'")) throw new Error('V3 enabled');
+          JS
+  native-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Compile Android app with isolated V2 native code
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+      - name: Run native pure JVM security policy tests and existing Android JVM tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+      - name: Compile instrumented SQLite tests (requires device for execution)
+        working-directory: android
+        run: ./gradlew :app:assembleDebugAndroidTest --no-daemon
