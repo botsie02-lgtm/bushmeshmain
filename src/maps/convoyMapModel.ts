@@ -57,6 +57,8 @@ export type ConvoyMapCamera = {
 
 export type ConvoyMapTile = {
   key: string;
+  /** Stable React identity for an unwrapped tile instance during small pans. */
+  renderKey: string;
   packId: string;
   z: number;
   x: number;
@@ -157,6 +159,37 @@ export function normalizedHeading(value: number | null | undefined): number | nu
     return null;
   }
   return ((value % 360) + 360) % 360;
+}
+
+/**
+ * Ignore subpixel GPS jitter and minor heading variation while following.
+ * No inertial/animated positioning is claimed: large changes remain immediate.
+ */
+export function stabilizeConvoyMapCamera(
+  previous: ConvoyMapCamera | null,
+  next: ConvoyMapCamera,
+  zoom: number,
+  minPixelChange = 3,
+): ConvoyMapCamera {
+  if (!previous || previous.mode !== next.mode ||
+      !previous.center || !next.center) return next;
+  const a = worldPixel(previous.center, zoom);
+  const b = worldPixel(next.center, zoom);
+  const worldWidth = CONVOY_MAP_TILE_PIXELS * 2 ** zoom;
+  const longitudeDistance = Math.abs(a.x - b.x);
+  const dx = Math.min(longitudeDistance, worldWidth - longitudeDistance);
+  const dy = a.y - b.y;
+  const stableCenter = Math.hypot(dx, dy) < minPixelChange
+    ? previous.center : next.center;
+  const rotationDelta = Math.abs(
+    ((next.rotationDegrees - previous.rotationDegrees + 540) % 360) - 180,
+  );
+  return {
+    ...next,
+    center: stableCenter,
+    rotationDegrees: rotationDelta < 2
+      ? previous.rotationDegrees : next.rotationDegrees,
+  };
 }
 
 export function resolveConvoyMapCamera(
@@ -296,6 +329,29 @@ export function fitConvoyZoom(
 }
 
 /** Bounded viewport tile plan; no download, network access or archive parsing. */
+/** Reject tiles that do not intersect the declared, verified region. */
+export function tileIntersectsMapPack(
+  tile: {z: number; x: number; y: number},
+  manifest: BushMeshMapPackManifestV1,
+): boolean {
+  const {z, x, y} = tile;
+  if (!Number.isInteger(z) || z < 0 || z > 24 ||
+      !Number.isInteger(x) || !Number.isInteger(y)) return false;
+  const count = 2 ** z;
+  if (x < 0 || x >= count || y < 0 || y >= count) return false;
+  const tileWest = x / count * 360 - 180;
+  const tileEast = (x + 1) / count * 360 - 180;
+  const latitudeAt = (row: number) =>
+    Math.atan(Math.sinh(Math.PI * (1 - 2 * row / count))) * 180 / Math.PI;
+  const tileNorth = latitudeAt(y);
+  const tileSouth = latitudeAt(y + 1);
+  const bounds = manifest.bounds;
+  if (tileNorth < bounds.south || tileSouth > bounds.north) return false;
+  return bounds.west <= bounds.east
+    ? tileEast >= bounds.west && tileWest <= bounds.east
+    : (tileWest <= bounds.east || tileEast >= bounds.west);
+}
+
 export function planConvoyMapTiles(
   pack: BushMeshMapPackCatalogEntry,
   center: MapCoordinate,
@@ -333,7 +389,9 @@ export function planConvoyMapTiles(
   for (let unwrappedX = minX; unwrappedX <= maxX; unwrappedX += 1) {
     for (let y = minY; y <= maxY; y += 1) {
       const x = ((unwrappedX % count) + count) % count;
+      if (!tileIntersectsMapPack({z, x, y}, pack.manifest)) continue;
       tiles.push({
+        renderKey: String(unwrappedX) + '/' + String(y),
         key: `${pack.manifest.id}@${pack.manifest.version}/${z}/${x}/${y}`,
         packId: pack.manifest.id,
         z,
