@@ -4,6 +4,9 @@ on:
     branches:
       - feature/wave5-offline-navigation-v1
   workflow_dispatch:
+concurrency:
+  group: wave5-offline-navigation-v1
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
