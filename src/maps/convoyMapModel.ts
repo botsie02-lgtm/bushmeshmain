@@ -33,6 +33,7 @@ export type ConvoyMapPoint = {
   kind: 'self' | 'member';
   coordinate: MapCoordinate;
   headingDegrees: number | null;
+  accuracyMeters: number | null;
   freshness: 'self' | ConvoyFreshness;
   lastKnown: boolean;
   ageSeconds: number;
@@ -71,7 +72,7 @@ export type ConvoyMapViewport = {width: number; height: number};
 
 export type ConvoyMapOverlay = {
   id: string;
-  kind: 'route' | 'hazard' | 'checkpoint' | 'regroup';
+  kind: 'route' | 'trail' | 'hazard' | 'checkpoint' | 'regroup';
   label: string;
   points: MapCoordinate[];
 };
@@ -114,6 +115,9 @@ export function buildConvoyMapScene(
       kind: 'self',
       coordinate: {latitude: selfFix.latitude, longitude: selfFix.longitude},
       headingDegrees: normalizedHeading(selfFix.headingDegrees),
+      accuracyMeters: Number.isFinite(selfFix.accuracyMeters) &&
+        selfFix.accuracyMeters != null && selfFix.accuracyMeters >= 0
+          ? selfFix.accuracyMeters : null,
       freshness: 'self',
       lastKnown: freshness === 'stale' || freshness === 'lost',
       ageSeconds: Math.max(0, Math.floor((nowMs - selfFix.receivedAtMs) / 1000)),
@@ -142,6 +146,9 @@ export function buildConvoyMapScene(
         longitude: member.position.longitude,
       },
       headingDegrees: normalizedHeading(member.position.headingDegrees),
+      accuracyMeters: Number.isFinite(member.position.accuracyMeters) &&
+        member.position.accuracyMeters != null && member.position.accuracyMeters >= 0
+          ? member.position.accuracyMeters : null,
       freshness,
       lastKnown: freshness === 'stale' || freshness === 'lost',
       ageSeconds: Math.max(
@@ -152,6 +159,19 @@ export function buildConvoyMapScene(
   }
 
   return {points, missingMembers, self, memberCount: seen.size};
+}
+
+/** Approximate horizontal GPS error circle in Web Mercator screen pixels. */
+export function mapAccuracyRadiusPixels(
+  latitude: number, zoom: number, accuracyMeters: number | null,
+): number | null {
+  if (!Number.isFinite(latitude) || !Number.isFinite(zoom) ||
+      accuracyMeters === null || !Number.isFinite(accuracyMeters) ||
+      accuracyMeters < 0) return null;
+  const metersPerPixel =
+    156543.03392804097 * Math.max(0.01, Math.cos(latitude * Math.PI / 180)) /
+    2 ** zoom;
+  return Math.min(90, Math.max(3, accuracyMeters / metersPerPixel));
 }
 
 export function normalizedHeading(value: number | null | undefined): number | null {
