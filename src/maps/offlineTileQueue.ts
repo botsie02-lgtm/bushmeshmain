@@ -9,6 +9,7 @@ export type OfflineTileRequest = {
 export type OfflineTileView = {uris: Record<string, string>; missingKeys: string[]};
 export const OFFLINE_TILE_MAX_ACTIVE = 4;
 export const OFFLINE_TILE_MAX_CACHED = 20;
+export const OFFLINE_TILE_MAX_URI_LENGTH = 1_400_100;
 
 export function tileRequestsNearestCentre<T extends OfflineTileRequest>(
   requests: readonly T[], width: number, height: number,
@@ -89,7 +90,8 @@ export class BoundedOfflineTileQueue<T extends OfflineTileRequest> {
       Promise.resolve().then(() => this.read(request)).then(
         uri => {
           if (this.disposed || epoch !== this.epoch) return;
-          if (uri && this.accepts(uri) && this.desiredKeys.has(request.key)) {
+          if (uri && uri.length <= OFFLINE_TILE_MAX_URI_LENGTH &&
+              this.accepts(uri) && this.desiredKeys.has(request.key)) {
             this.cached.set(request.key, uri);
           } else if (this.desiredKeys.has(request.key)) {
             this.missing.add(request.key);

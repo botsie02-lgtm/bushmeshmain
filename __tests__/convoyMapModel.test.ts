@@ -233,3 +233,17 @@ describe('Wave 5 map GPS uncertainty indicator', () => {
     expect(mapAccuracyRadiusPixels(-37.8, 13, 100_000)).toBe(90);
   });
 });
+
+it('refuses future-dated fixes as current self or authorised remote positions', () => {
+  const atMs = 100_000;
+  const future = {
+    latitude: -37.8, longitude: 145, headingDegrees: 40,
+    receivedAtMs: atMs + 100_000,
+  };
+  const scene = buildConvoyMapScene(future, [
+    {id: 'future-member', label: 'Future', position: future},
+  ], atMs);
+  expect(scene.self).toBeNull();
+  expect(scene.points).toHaveLength(0);
+  expect(scene.missingMembers).toEqual([{id: 'future-member', label: 'Future'}]);
+});

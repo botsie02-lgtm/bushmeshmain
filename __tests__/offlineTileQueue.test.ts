@@ -101,3 +101,16 @@ it('retries missing raster tiles only on explicit operator request', async () =>
   expect(views[views.length - 1].uris).toHaveProperty('pack/1');
   queue.dispose();
 });
+
+it('rejects unbounded data URI allocations even from injected local readers', async () => {
+  const images: Array<Record<string,string>> = [];
+  const queue = new BoundedOfflineTileQueue(
+    async () => 'data:image/png;base64,' + 'A'.repeat(1_500_000),
+    result => images.push(result.uris),
+    () => true,
+  );
+  queue.update('verified-local', [tile(2)]);
+  await flush();
+  expect(images[images.length - 1]).toEqual({});
+  queue.dispose();
+});

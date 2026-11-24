@@ -89,11 +89,13 @@ export function isValidMapCoordinate(value: MapCoordinate | null | undefined): v
   );
 }
 
-function validFix(fix: ConvoyMapFix | null): fix is ConvoyMapFix {
+function validFix(fix: ConvoyMapFix | null, nowMs: number): fix is ConvoyMapFix {
   return (
     isValidMapCoordinate(fix) &&
     Number.isFinite(fix.receivedAtMs) &&
-    fix.receivedAtMs >= 0
+    fix.receivedAtMs >= 0 &&
+    // A future-dated fix must not masquerade as a fresh GPS heading/marker.
+    fix.receivedAtMs <= nowMs + 30_000
   );
 }
 
@@ -107,7 +109,7 @@ export function buildConvoyMapScene(
   const seen = new Set<string>();
 
   let self: ConvoyMapPoint | null = null;
-  if (validFix(selfFix)) {
+  if (validFix(selfFix, nowMs)) {
     const freshness = getConvoyFreshness(selfFix.receivedAtMs, nowMs);
     self = {
       id: 'self',
@@ -131,7 +133,7 @@ export function buildConvoyMapScene(
     }
     seen.add(member.id);
     const label = member.label.trim() || member.id;
-    if (!validFix(member.position)) {
+    if (!validFix(member.position, nowMs)) {
       missingMembers.push({id: member.id, label});
       continue;
     }
