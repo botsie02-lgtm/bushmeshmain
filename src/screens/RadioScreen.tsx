@@ -23,6 +23,7 @@ import {
 } from '../state/BushMeshContext';
 import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
+import {carrierMessageSummary, deriveRadioPresentation, scopedCarrierHistory} from './radioPresentation';
 
 function isPrivateChannel(channel: BushMeshChannel): boolean {
   return (
@@ -78,15 +79,26 @@ export function RadioScreen({
     activeChannelIndex,
     activeChannel,
     channelMessages,
+    messagePersistenceStatus,
+    messagePersistenceError,
     canSendChannelMessage,
     sendChannelMessage,
     addLocalChannelMessage,
     setActiveChannelIndex,
   } = useBushMesh();
   const {snapshot: radioSession} = useRadioSession();
-  const [messageText, setMessageText] = useState('');
-  const [sendStatus, setSendStatus] = useState<string | null>(null);
+  // Preserve drafts per carrier so switching channels cannot send old text on a new one.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [submitStatus, setSubmitStatus] = useState<Record<string, string>>({});
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const draftKey = activeChannel?.channelIndex ?? '';
+  const messageText = drafts[draftKey] ?? '';
+  const sendStatus = submitStatus[draftKey] ?? null;
+  const setMessageText = (text: string) =>
+    setDrafts(current => ({...current, [draftKey]: text}));
+  const setChannelStatus = (key: string, text: string) =>
+    setSubmitStatus(current => ({...current, [key]: text}));
   const [nativeTxMetrics, setNativeTxMetrics] = useState(() =>
     nativeOutboundDiagnostics.snapshot(),
   );
@@ -116,14 +128,17 @@ export function RadioScreen({
     [channels],
   );
   const activeHistory = useMemo(
-    () =>
-      activeChannel
-        ? channelMessages.filter(
-            message => message.channelIndex === activeChannel.channelIndex,
-          )
-        : channelMessages,
+    () => scopedCarrierHistory(activeChannel?.channelIndex ?? null, channelMessages),
     [activeChannel, channelMessages],
   );
+  const counts = useMemo(() => carrierMessageSummary(activeHistory), [activeHistory]);
+  const presentation = deriveRadioPresentation({
+    connected: connectionStatus === 'Connected',
+    canSendChannelMessage,
+    channelIndex: activeChannel?.channelIndex ?? null,
+    channelName: activeChannel?.channelName ?? null,
+    protocolTransportReady: radioSession.transportReady,
+  });
 
   const cleanMessage = messageText.trim();
   const messageBytes = Buffer.byteLength(cleanMessage, 'utf8');
@@ -139,6 +154,7 @@ export function RadioScreen({
     }
   }, [messageBytes, modem]);
   const canSend =
+    presentation.maySubmitCarrierText &&
     activeChannel !== null &&
     canSendChannelMessage &&
     cleanMessage.length > 0 &&
@@ -152,12 +168,13 @@ export function RadioScreen({
 
     const channelIndex = Number(activeChannel.channelIndex);
     if (!Number.isInteger(channelIndex)) {
-      setSendStatus('Active channel index is invalid.');
+      setChannelStatus(activeChannel.channelIndex, 'Active channel index is invalid.');
       return;
     }
 
     setIsSending(true);
-    setSendStatus(`Submitting to ${activeChannel.channelName}…`);
+    const submittedIndex = activeChannel.channelIndex;
+    setChannelStatus(submittedIndex, `Submitting to ${activeChannel.channelName}…`);
 
     try {
       await sendChannelMessage(channelIndex, cleanMessage);
@@ -168,8 +185,9 @@ export function RadioScreen({
         direction: 'sent',
         status: 'accepted',
       });
-      setMessageText('');
-      setSendStatus(
+      setDrafts(current => ({...current, [submittedIndex]: ''}));
+      setChannelStatus(
+        submittedIndex,
         'RADIO ACCEPTED — MeshCore PACKET_OK (0x00). Peer delivery is not confirmed.',
       );
     } catch (error) {
@@ -182,7 +200,7 @@ export function RadioScreen({
         status: 'failed',
         submissionFailure,
       });
-      setSendStatus(formatChannelSubmissionFailure(submissionFailure));
+      setChannelStatus(submittedIndex, formatChannelSubmissionFailure(submissionFailure));
     } finally {
       setIsSending(false);
     }
@@ -196,21 +214,18 @@ export function RadioScreen({
             <Text style={styles.eyebrow}>RADIO</Text>
             <Text style={styles.title}>Convoy comms</Text>
           </View>
-          <View
-            style={[
-              styles.linkPill,
-              connectionStatus === 'Connected'
-                ? styles.linkReady
-                : styles.linkOffline,
-            ]}>
-            <Text style={styles.linkText}>
-              {connectionStatus === 'Connected' ? 'NODE ONLINE' : 'OFFLINE'}
-            </Text>
+          <View style={[
+            styles.linkPill,
+            presentation.maySubmitCarrierText ? styles.linkReady : styles.linkOffline,
+          ]}>
+            <Text style={styles.linkText}>{presentation.badge}</Text>
           </View>
         </View>
+        <Text style={styles.summaryTitle}>{presentation.title}</Text>
+        <Text style={styles.body}>{presentation.explanation}</Text>
         <Text style={styles.body}>
-          Bushmesh separates radio acceptance from delivery. A message is only
-          labelled peer-confirmed after MeshCore reports the matching ACK.
+          Channel traffic is not an authenticated convoy conversation.
+          Radio acceptance is not peer delivery.
         </Text>
         {connectedDeviceName ? (
           <Text style={styles.nodeText}>Companion: {connectedDeviceName}</Text>
