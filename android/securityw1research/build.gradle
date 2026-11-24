@@ -1,0 +1,17 @@
+apply plugin: "com.android.library"
+apply plugin: "org.jetbrains.kotlin.android"
+
+// Intentionally disconnected, NO deps on H1, :app, :securityprobe or RN.
+// There are no crypto private keys, Android Keystore aliases, native vault DB,
+// services, UI, radio, permissions or production integration in this module.
+android {
+    namespace "com.bushmesh.w1research"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        minSdkVersion rootProject.ext.minSdkVersion
+    }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+}

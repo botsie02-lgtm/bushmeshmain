@@ -5,4 +5,5 @@ rootProject.name = 'bushmeshmain'
 include ':app'
 include ':securitycore'
 include ':securityprobe'
+include ':securityw1research'
 includeBuild('../node_modules/@react-native/gradle-plugin')
