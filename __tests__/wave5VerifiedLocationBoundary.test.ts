@@ -38,7 +38,7 @@ describe('Wave 5 verified security and field-test isolation gates', () => {
         return () => {subscription.listener = undefined;};
       },
     }, {
-      ingest: async result => {seen.push(result); return true;},
+      ingest: async (result: BushMeshInboundResult) => {seen.push(result); return true;},
     } as unknown as VerifiedConvoyTelemetry);
     const unprotected = {
       status: 'accepted', kind: 'protocol', protected: false,
