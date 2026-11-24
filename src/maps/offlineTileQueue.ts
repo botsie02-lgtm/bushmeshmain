@@ -108,6 +108,16 @@ export class BoundedOfflineTileQueue<T extends OfflineTileRequest> {
     }
   }
 
+  /** Explicit user retry; no automatic repeated work for absent archive tiles. */
+  retryVisible(): void {
+    if (this.disposed) return;
+    this.cached.clear();
+    this.missing.clear();
+    this.signature = '';
+    this.emit();
+    this.pump();
+  }
+
   dispose(): void {
     this.disposed = true; this.epoch++;
     this.desired = []; this.desiredKeys.clear();

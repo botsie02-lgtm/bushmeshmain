@@ -13,6 +13,7 @@ import {BushMeshMapPackCatalogEntry} from './mapPackCatalog';
 import {
   CONVOY_MAP_TILE_PIXELS,
   ConvoyMapCameraMode,
+  ConvoyMapTile,
   ConvoyMapFix,
   ConvoyMapMember,
   ConvoyMapOrientation,
@@ -29,9 +30,11 @@ import {
   resolveConvoyMapCamera,
   screenPixel,
   selectRenderableMapPack,
+  stabilizeConvoyMapCamera,
 } from './convoyMapModel';
 import {MapCoordinate} from './offlineMapPacks';
 import {nativeOfflineTileSource} from './nativeOfflineTileSource';
+import {BoundedOfflineTileQueue, tileRequestsNearestCentre} from './offlineTileQueue';
 import {colors} from '../theme/colors';
 
 export type ConvoyMapTileSource = {
@@ -114,16 +117,10 @@ export function ConvoyMap({
   const [manualCenter, setManualCenter] = useState<MapCoordinate | null>(null);
   const [uris, setUris] = useState<Record<string, string>>({});
   const [tileState, setTileState] = useState<Record<string, TileLoadState>>({});
-  const requestedTilesRef = useRef(new Set<string>());
-  const sourceRef = useRef(tileSource);
-  const activeArtifactRef = useRef<string | null>(null);
-  const mountedRef = useRef(true);
+  const tileQueueRef = useRef<BoundedOfflineTileQueue<ConvoyMapTile> | null>(null);
+  const activeScopeRef = useRef<string | null>(null);
+  const stableCameraRef = useRef<ReturnType<typeof resolveConvoyMapCamera> | null>(null);
   const lastFixRef = useRef<ConvoyMapFix | null>(null);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
 
   useEffect(() => {
     if (nowMs !== undefined) {
@@ -152,10 +149,15 @@ export function ConvoyMap({
     () => selectRenderableMapPack(packCatalog, requestedPackId),
     [packCatalog, requestedPackId],
   );
-  const camera = useMemo(
+  const requestedCamera = useMemo(
     () => resolveConvoyMapCamera(scene, cameraMode, orientation, manualCenter),
     [scene, cameraMode, orientation, manualCenter],
   );
+  const camera = useMemo(() => {
+    const next = stabilizeConvoyMapCamera(stableCameraRef.current, requestedCamera, zoom);
+    stableCameraRef.current = next;
+    return next;
+  }, [requestedCamera, zoom]);
   const center = camera.center;
   const displayZoom = useMemo(() => {
     if (!pack) {
@@ -189,59 +191,60 @@ export function ConvoyMap({
     [tiles],
   );
 
-  useEffect(() => {
-    const artifactKey = pack?.artifact
-      ? `${pack.manifest.id}/${pack.manifest.version}/${pack.artifact.localUri}/${pack.artifact.verifiedAtMs}`
-      : null;
-    if (activeArtifactRef.current !== artifactKey) {
-      activeArtifactRef.current = artifactKey;
-      requestedTilesRef.current.clear();
-      setUris({});
-      setTileState({});
-    }
-    if (sourceRef.current !== tileSource) {
-      sourceRef.current = tileSource;
-      requestedTilesRef.current.clear();
-      setUris({});
-      setTileState({});
-    }
-    if (!pack || !tileSource.isAvailable() || tiles.length === 0) {
-      return;
-    }
-
-    const unique = new Map(tiles.map(tile => [tile.key, tile]));
-    // Keep a bounded cache across GPS updates and pans. Do not re-read the
-    // same tile every ten seconds as freshness changes.
-    if (requestedTilesRef.current.size > 256) {
-      requestedTilesRef.current.clear();
-      setUris({});
-      setTileState({});
-    }
-    unique.forEach(tile => {
-      if (requestedTilesRef.current.has(tile.key)) {
-        return;
-      }
-      requestedTilesRef.current.add(tile.key);
-      // An injected implementation can only return offline local image URIs.
-      tileSource.readTile({pack, z: tile.z, x: tile.x, y: tile.y})
-        .then(uri => {
-          if (!mountedRef.current) {
-            return;
-          }
-          if (!uri || !isOfflineTileUri(uri)) {
-            setTileState(current => ({...current, [tile.key]: 'missing'}));
-            return;
-          }
-          setUris(current => ({...current, [tile.key]: uri}));
-          setTileState(current => ({...current, [tile.key]: 'loading'}));
-        })
-        .catch(() => {
-          if (mountedRef.current) {
-            setTileState(current => ({...current, [tile.key]: 'error'}));
-          }
-        });
+  const orderedTiles = useMemo(() => {
+    const ordered = tileRequestsNearestCentre(tiles, viewport.width, viewport.height);
+    const seen = new Set<string>();
+    return ordered.filter(tile => {
+      if (seen.has(tile.key)) return false;
+      seen.add(tile.key);
+      return true;
     });
-  }, [pack, tileSource, tiles]);
+  }, [tiles, viewport.width, viewport.height]);
+
+  // Archive fingerprint is scoped to the existing native verification receipt.
+  // No content URI or remotely supplied path is used to request a tile.
+  const artifactKey = pack?.artifact
+    ? [
+        pack.manifest.id, pack.manifest.version, pack.artifact.sha256,
+        String(pack.artifact.bytes), String(pack.artifact.verifiedAtMs),
+        pack.artifact.localUri,
+      ].join('/')
+    : null;
+
+  useEffect(() => {
+    const queue = new BoundedOfflineTileQueue<ConvoyMapTile>(
+      tile => pack
+        ? tileSource.readTile({pack, z: tile.z, x: tile.x, y: tile.y})
+        : Promise.resolve(null),
+      view => {
+        setUris(view.uris);
+        setTileState(previous => {
+          const next: Record<string, TileLoadState> = {};
+          for (const key of Object.keys(view.uris)) {
+            next[key] = previous[key] === 'loaded' ? 'loaded' : 'loading';
+          }
+          for (const key of view.missingKeys) next[key] = 'missing';
+          return next;
+        });
+      },
+      isOfflineTileUri,
+    );
+    tileQueueRef.current = queue;
+    return () => {
+      queue.dispose();
+      if (tileQueueRef.current === queue) tileQueueRef.current = null;
+    };
+  }, [pack, tileSource]);
+
+  useEffect(() => {
+    const scope = artifactKey && tileSource.isAvailable() ? artifactKey : null;
+    if (activeScopeRef.current !== scope) {
+      activeScopeRef.current = scope;
+      setUris({});
+      setTileState({});
+    }
+    tileQueueRef.current?.update(scope, orderedTiles);
+  }, [artifactKey, orderedTiles, tileSource]);
 
   const loadedTiles = tileKeys.filter(key => tileState[key] === 'loaded').length;
   const missingTiles = tileKeys.filter(
@@ -255,7 +258,9 @@ export function ConvoyMap({
       : !center
         ? 'TAP VIEW PACK OR START GPS'
         : tiles.length === 0
-        ? 'VIEW TOO LARGE FOR TILE BUDGET'
+        ? center && pack && !coordinateInManifest(center, pack.manifest)
+          ? 'OUTSIDE VERIFIED PACK COVERAGE'
+          : 'NO LOCAL TILES IN VIEW'
         : loadedTiles === tileKeys.length && tileKeys.length > 0
           ? 'OFFLINE BASEMAP READY'
           : loadedTiles > 0
@@ -372,7 +377,10 @@ export function ConvoyMap({
       </View>
 
       <View style={styles.controls}>
-        <MapButton label="FOLLOW" selected={cameraMode === 'follow-self'} onPress={() => setCameraMode('follow-self')} />
+        <MapButton label="FOLLOW" selected={cameraMode === 'follow-self'} onPress={() => {
+          setManualCenter(null);
+          setCameraMode('follow-self');
+        }} />
         <MapButton label="CONVOY" selected={cameraMode === 'frame-convoy'} onPress={() => setCameraMode('frame-convoy')} />
         {pack ? (
           <MapButton label="VIEW PACK" onPress={() => {
@@ -391,6 +399,9 @@ export function ConvoyMap({
           if (center) { setManualCenter(center); setCameraMode('free'); }
           setZoom(Math.min(pack?.manifest.maxZoom ?? 20, displayZoom + 1));
         }} />
+        {missingTiles > 0 ? (
+          <MapButton label="RETRY TILES" onPress={() => tileQueueRef.current?.retryVisible()} />
+        ) : null}
       </View>
 
       <View style={[styles.canvas, {height}]} onLayout={onLayout} {...panResponder.panHandlers}>
@@ -399,7 +410,7 @@ export function ConvoyMap({
             transform: [{rotate: `${camera.rotationDegrees}deg`}]}]}>
             {tiles.map(tile => uris[tile.key] ? (
               <Image
-                key={tile.key + ':' + tile.left + ':' + tile.top}
+                key={tile.renderKey}
                 source={{uri: uris[tile.key]}}
                 resizeMode="stretch"
                 onLoad={() => setTileState(current => current[tile.key] === 'loaded'
