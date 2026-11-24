@@ -14,6 +14,7 @@ export const MESHCORE_INBOX_PENDING_LIMIT = 128;
 export class MeshCoreInboundInbox {
   private pending: MeshCoreInboundEnvelope[] = [];
   private consumer: Consumer | null = null;
+  private readonly observers = new Set<(envelope: MeshCoreInboundEnvelope) => void>();
   private busy = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -30,9 +31,23 @@ export class MeshCoreInboundInbox {
       meshCoreInboundDiagnostics.record('persistence-error', {reason: 'capacity'});
       throw new Error('MeshCore application inbox is full; radio queue drain must pause.');
     }
-    this.pending.push({message: {...message}, receivedAtMs: Date.now()});
+    const envelope: MeshCoreInboundEnvelope = {
+      message: {...message}, receivedAtMs: Date.now(),
+    };
+    this.pending.push(envelope);
+    // Optional read-only observers never replace the single durable-history
+    // consumer, never acknowledge its queue, and cannot block its delivery.
+    this.observers.forEach(observer => {
+      try {observer({message: {...envelope.message}, receivedAtMs: envelope.receivedAtMs});}
+      catch { /* A field-test observer is never an inbox persistence authority. */ }
+    });
     meshCoreInboundDiagnostics.record('inbox-accepted', {channelIndex});
     this.flush();
+  }
+
+  subscribeObserved(listener: (envelope: MeshCoreInboundEnvelope) => void): () => void {
+    this.observers.add(listener);
+    return () => {this.observers.delete(listener);};
   }
 
   setConsumer(consumer: Consumer | null): () => void {
