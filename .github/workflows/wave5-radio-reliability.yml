@@ -1,0 +1,43 @@
+name: Wave 5 radio reliability validation
+
+on:
+  push:
+    branches:
+      - feature/wave5-radio-reliability-v1
+  workflow_dispatch:
+
+concurrency:
+  group: wave5-radio-reliability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Install JS dependencies
+        run: npm ci
+      - name: Jest
+        run: npm test -- --runInBand
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npm run lint
+      - name: Android debug compilation
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+      - name: Android JVM tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
