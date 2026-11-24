@@ -262,6 +262,10 @@ export function GpsFieldDiagnosticsPanel(): React.JSX.Element {
           ? String(native.callbackCount) : 'Not available on this Android build'} />
         <Reading name="Native measured intervals" value={native
           ? String(native.intervalCount) : 'Not available'} />
+        <Reading name="Native measured callback rate"
+          value={native?.meanIntervalMs == null || native.meanIntervalMs <= 0
+            ? 'Insufficient native callbacks'
+            : (1000 / native.meanIntervalMs).toFixed(2) + ' Hz (measured)'} />
         <View style={styles.reading}>
           <Text style={styles.label}>Native mean / p95 interval</Text>
           <Text style={styles.value}>{native?.meanIntervalMs == null

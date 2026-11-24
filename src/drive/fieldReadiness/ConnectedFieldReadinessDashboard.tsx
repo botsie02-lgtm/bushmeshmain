@@ -1,4 +1,5 @@
 import React, {useEffect, useState} from 'react';
+import {DriveGpsStatusBanner} from '../dashboard/DriveGpsStatusBanner';
 import {useOfflineMaps} from '../../state/OfflineMapContext';
 import {useLocationSession} from '../../state/LocationSessionContext';
 import {
@@ -75,6 +76,7 @@ export function ConnectedFieldReadinessDashboard({
   return (
     <FieldReadinessDashboard
       model={model}
+      gpsStatusBanner={<DriveGpsStatusBanner radioStatus={dashboard.model.radioStatus} />}
       onOpenMap={onOpenMap}
       onManageMapPacks={onManageMapPacks}
       onOpenConvoy={onOpenConvoy}

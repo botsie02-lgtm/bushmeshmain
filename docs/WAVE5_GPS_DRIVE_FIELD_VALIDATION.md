@@ -14,9 +14,10 @@ enqueue positions, alter convoy-map authentication, or modify BLE/security/radio
 ownership. The existing LocationScreen Start/Stop GPS commands remain the sole
 acquisition lifecycle owner. The native Foreground Service lifecycle is intact.
 
-The Drive dashboard adds `DriveGpsStatusBanner` through the optional
-`DriveDashboard.gpsStatusBanner` slot, wired only in
-`ConnectedDriveDashboard`. No AppShell or main navigation change.
+The Drive dashboard adds `DriveGpsStatusBanner` through an optional
+`gpsStatusBanner` slot on **both** FieldReadinessDashboard (the default
+Drive home) and DriveDashboard (detailed mode), wired from their existing
+connected wrappers. No AppShell or main navigation change.
 
 ## Real Android delivery measurements
 

@@ -61,7 +61,7 @@ describe('Wave 5 Drive GPS quality display', () => {
     expect(stale).toMatchObject({
       state: 'stale', headingLabel: '—', speedLabel: '—',
     });
-    const future = view({fix: fix(NOW + 30_000)});
+    const future = view({fix: fix(NOW + 5_000)});
     expect(future).toMatchObject({
       state: 'future-dated', headingLabel: '—', speedLabel: '—',
     });

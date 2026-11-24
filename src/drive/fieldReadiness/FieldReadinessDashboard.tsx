@@ -17,6 +17,7 @@ import type {
 
 export type FieldReadinessDashboardProps = {
   model: FieldReadinessModel;
+  gpsStatusBanner?: React.ReactNode;
   /** Must open the real ConvoyMap route; this component never simulates maps. */
   onOpenMap: () => void;
   /** Must open real Device / offline map-pack management. */
@@ -115,6 +116,7 @@ const PREVIEW_ACTIONS = [
  */
 export function FieldReadinessDashboard({
   model,
+  gpsStatusBanner,
   onOpenMap,
   onManageMapPacks,
   onOpenConvoy,
@@ -165,6 +167,8 @@ export function FieldReadinessDashboard({
           Review before departure. Check controls only when safely stopped.
         </Text>
       </View>
+
+      {gpsStatusBanner}
 
       <View style={styles.grid}>
         {model.capabilities.map(capability => (

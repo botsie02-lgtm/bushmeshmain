@@ -44,7 +44,7 @@ export class DriveMotionStabilizer {
 
   observe(fix: BushMeshLocationFix | null, nowMs: number): void {
     if (!fix || validateLocationFix(fix) !== null ||
-        fix.timestampMs > nowMs + 10_000 || nowMs - fix.timestampMs > 45_000) {
+        fix.timestampMs > nowMs + 2_000 || nowMs - fix.timestampMs > 45_000) {
       this.clear();
       return;
     }
@@ -113,7 +113,7 @@ export function driveGpsDisplay(input: {
   const simulator = providerLabel === 'Simulated route';
   const ageMs = fix ? nowMs - fix.timestampMs : null;
   const ageLabel = ageMs === null || !Number.isFinite(ageMs)
-    ? 'NO FIX' : ageMs < -10_000
+    ? 'NO FIX' : ageMs < -2_000
       ? 'FUTURE TIMESTAMP'
       : Math.max(0, Math.round(ageMs / 1000)) + ' s ago';
   let state: DriveGpsDisplayState = 'ready';
