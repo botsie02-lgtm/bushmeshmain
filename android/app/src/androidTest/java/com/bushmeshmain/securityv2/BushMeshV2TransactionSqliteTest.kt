@@ -1,10 +1,16 @@
 package com.bushmeshmain.securityv2
 
-import android.database.sqlite.SQLiteDatabase
-import android.test.AndroidTestCase
+import android.content.Context
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 
 /**
  * ANDROID INSTRUMENTATION ONLY (not executed in hosted CI).
@@ -12,8 +18,9 @@ import org.json.JSONObject
  * real SQLite crash boundaries. This cannot qualify hardware anti-rollback,
  * Keystore residency, trusted owner approval or a production secure store.
  */
-@Suppress("DEPRECATION")
-class BushMeshV2TransactionSqliteTest : AndroidTestCase() {
+@RunWith(AndroidJUnit4::class)
+class BushMeshV2TransactionSqliteTest {
+  private lateinit var context: Context
   private val groupId = "bmg1_native-test"
   private val d0 = "A".repeat(43)
   private val d1 = "B".repeat(43)
@@ -89,8 +96,8 @@ class BushMeshV2TransactionSqliteTest : AndroidTestCase() {
   private lateinit var witness: Witness
   private lateinit var store: BushMeshSecurityV2TransactionStore
 
-  override fun setUp() {
-    super.setUp()
+  @Before fun setUp() {
+    context = InstrumentationRegistry.getInstrumentation().targetContext
     filename = "security_v2_native_test_" + System.nanoTime().toString() + ".db"
     witness = Witness()
     store = BushMeshSecurityV2TransactionStore(
@@ -98,12 +105,11 @@ class BushMeshV2TransactionSqliteTest : AndroidTestCase() {
     )
   }
 
-  override fun tearDown() {
+  @After fun tearDown() {
     store.close()
     val f = File(context.noBackupFilesDir,filename)
     listOf(f,File(f.path+"-journal"),File(f.path+"-wal"),File(f.path+"-shm"))
       .forEach { it.delete() }
-    super.tearDown()
   }
 
   private fun pin(): JSONObject =
@@ -151,7 +157,7 @@ class BushMeshV2TransactionSqliteTest : AndroidTestCase() {
     store.atomicCreateOwnerGroup(snapshot(1L,d0),pin(),ByteArray(32){1})
   }
 
-  fun testSelfSignedUnapprovedPinNeverCreatesGroup() {
+  @Test fun testSelfSignedUnapprovedPinNeverCreatesGroup() {
     try {
       store.provisionApprovedOwnerAnchor(groupId,"fp_owner",d0,"network-self-signature")
       fail("self-signed anchor was accepted")
@@ -163,7 +169,7 @@ class BushMeshV2TransactionSqliteTest : AndroidTestCase() {
     assertNull(store.readGroup(groupId))
   }
 
-  fun testDurablePrepareCommitReceiptAndRestart() {
+  @Test fun testDurablePrepareCommitReceiptAndRestart() {
     initialized()
     store.atomicPrepareAddition(1L,d0,journal())
     assertEquals(1L,JSONObject(store.readGroup(groupId)).getLong("epoch"))
@@ -191,7 +197,7 @@ class BushMeshV2TransactionSqliteTest : AndroidTestCase() {
       fail("stale role authority sequence") } catch (_: IllegalArgumentException) {}
   }
 
-  fun testInterruptedCommitBeforeAndAfterDurableSqlite() {
+  @Test fun testInterruptedCommitBeforeAndAfterDurableSqlite() {
     initialized()
     store.atomicPrepareAddition(1L,d0,journal())
     store.close()
@@ -218,7 +224,7 @@ class BushMeshV2TransactionSqliteTest : AndroidTestCase() {
     assertEquals(2L,store.readEpochFence(groupId))
   }
 
-  fun testFreshRecipientInstallAndNoStaleEpochOrOwnerSwap() {
+  @Test fun testFreshRecipientInstallAndNoStaleEpochOrOwnerSwap() {
     store.provisionApprovedOwnerAnchor(groupId,"fp_owner",d0,"out-of-band-test-only")
     val committed=snapshot(2L,d1,"tx1")
     assertEquals("installed",store.atomicInstallEpoch("tx1",issued,committed,ByteArray(32){7}))
@@ -235,7 +241,7 @@ class BushMeshV2TransactionSqliteTest : AndroidTestCase() {
     } catch (_: IllegalArgumentException) {}
   }
 
-  fun testIndependentWitnessRefusesOldWholeDatabaseAfterRestore() {
+  @Test fun testIndependentWitnessRefusesOldWholeDatabaseAfterRestore() {
     initialized()
     // Simulates separately retained higher epoch witness while SQLite is old.
     witness.high[groupId]=2L
