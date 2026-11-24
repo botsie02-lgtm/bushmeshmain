@@ -309,12 +309,8 @@ export class Wave5EpochDecisionAdapter extends SecurityDecisionTestAdapter {
 
 /** Explicit negative evidence via real datagram runtime + fake Security seam. */
 export async function wave5SecurityIngressNegatives(seed = 0x510223): Promise<Wave5FieldResult> {
-  const fleet = new ConvoyMobilityHarness(seed, {
-    radioRangeMetres: 160, link: {lossRate: 0, duplicationRate: 0, baseDelayMs: 1},
-  });
-  // Fleet nodes default to fake Security; use a standalone pair to inject
-  // the epoch decision test adapter without changing canonical runtime code.
-  await fleet.addFleet(3, 20);
+  // Two actual frozen-runtime nodes with injected fake Security decisions.
+  // Never misattribute an unrelated empty convoy ledger to this test.
   const sim = new DeterministicBushMeshNetworkSimulator(seed);
   const sender = new Wave5EpochDecisionAdapter();
   const receiver = new Wave5EpochDecisionAdapter();
@@ -378,23 +374,21 @@ export async function wave5SecurityIngressNegatives(seed = 0x510223): Promise<Wa
   requireCondition(sim.metrics.runtimeRejected >= 4 &&
     sim.metrics.runtimeDuplicates >= 1,
     'runtime replay/epoch/revocation negative decisions missing', failures);
-  // Preserve the real security test's metrics rather than report the unused
-  // mobility fleet as proof of these fake security decisions.
   const extra: Wave5FieldResult['extra'] = {
-    acceptedIngress, rejectedIngress, runtimeRejected: sim.metrics.runtimeRejected,
+    acceptedIngress, rejectedIngress,
+    authorizedTrackerMembers: tracker.snapshot(9, sim.clock.now()).members.length,
+    runtimeRejected: sim.metrics.runtimeRejected,
     runtimeDuplicates: sim.metrics.runtimeDuplicates,
     securityAssurance: 'fake-adapter-only',
+    observedStatuses: statuses.join(','),
   };
-  const baseline = finish('wave5-fake-security-ingress-negatives', fleet, failures, extra);
-  return {...baseline, trace: sim.trace.map(e => ({...e})),
+  return {
+    scenario: 'wave5-fake-security-ingress-negatives',
+    seed: sim.seed, nodeCount: 2, failures,
+    report: null, trace: sim.trace.map(e => ({...e})),
     metrics: JSON.parse(JSON.stringify(sim.metrics)),
-    report: {...fleet.report(), delivery: {
-      ...fleet.report().delivery, attempted: sim.metrics.attemptedDatagrams,
-      accepted: sim.metrics.deliveredDatagrams,
-      failed: sim.metrics.failedDatagrams,
-      runtimeRejected: sim.metrics.runtimeRejected,
-      duplicatesSuppressed: sim.metrics.runtimeDuplicates,
-    }}};
+    extra,
+  };
 }
 
 /** Plain/channel-only carrier traffic cannot become verified convoy positions. */
