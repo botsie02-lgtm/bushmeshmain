@@ -81,8 +81,9 @@ describe('Wave 5 field reliability — deterministic test-only fault campaigns',
   it('keeps the fake provider negatives strict: replay, stale epoch, forged sender, revoked identity and embedded ID', async () => {
     const r = check(await wave5SecurityIngressNegatives());
     expect(r.extra.securityAssurance).toBe('fake-adapter-only');
-    expect(r.metrics.runtimeRejected).toBeGreaterThanOrEqual(4);
-    expect(r.metrics.runtimeDuplicates).toBeGreaterThan(0);
+    expect(r.metrics.runtimeRejected).toBeGreaterThanOrEqual(5);
+    // Reused fake counter is denied by injected Security policy first.
+    expect(r.metrics.runtimeDuplicates).toBe(0);
     expect(r.extra.acceptedIngress).toBe(3);
   });
 
