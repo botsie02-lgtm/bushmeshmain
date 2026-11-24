@@ -430,14 +430,13 @@ class MeshCoreNativeBackgroundWorker(
     lastError = message
     if (command.outboxId != null) {
       failOutboxAttempt(command.outboxId, message, nowMs)
-    } else {
-      // Bootstrap commands retry after the next tick without mutating outbox.
-      if (command.expectedPacketType == 0x05) {
-        identityRef = null
-      } else if (command.expectedPacketType == 0x0d) {
-        firmwareVersion = null
-      }
     }
+    // A delayed PACKET_OK/SELF_INFO after timeout is ambiguous. Restart the
+    // GATT/protocol epoch before another command can reuse that response.
+    // Outbox persistence still bounds the retry count and never claims RF delivery.
+    resetProtocolForReconnect()
+    runtime.forceReconnect(message)
+    phase = "waiting-for-radio"
   }
 
   private fun persistActiveEntries() {
