@@ -63,7 +63,7 @@ export function LocationScreen(): React.JSX.Element {
           Android GPS records local fixes and trails offline. Automatic legacy
           location transmission and recovery replies are disabled pending security
           approval. Optional channel sharing requires separate explicit consent
-          in Drive > Map. Simulation is diagnostic only.
+          in Drive &gt; Map. Simulation is diagnostic only.
         </Text>
       </View>
 
