@@ -234,7 +234,8 @@ class MeshCoreNativeBleRuntime private constructor(
 
     override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
       synchronized(this@MeshCoreNativeBleRuntime) {
-        if (gatt !== bluetoothGatt || characteristic.uuid != RX_UUID) {
+        if (gatt !== bluetoothGatt || characteristic.uuid != RX_UUID || !writeInFlight) {
+          // Stale/duplicate Android callback: never count it as a new write.
           return@synchronized
         }
 
