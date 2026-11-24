@@ -233,7 +233,7 @@ export function RadioScreen({
       </View>
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Active group</Text>
+        <Text style={styles.sectionTitle}>Carrier channel</Text>
         <Text style={styles.sectionMeta}>{visibleChannels.length} available</Text>
       </View>
 
@@ -248,7 +248,7 @@ export function RadioScreen({
               </Text>
             </View>
             <View style={styles.activeBadge}>
-              <Text style={styles.activeBadgeText}>ACTIVE</Text>
+              <Text style={styles.activeBadgeText}>SELECTED CARRIER</Text>
             </View>
           </View>
           <Text style={styles.securityText}>
@@ -264,7 +264,7 @@ export function RadioScreen({
         </View>
       ) : (
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No convoy channel selected</Text>
+          <Text style={styles.emptyTitle}>No carrier channel selected</Text>
           <Text style={styles.emptyText}>
             Connect a MeshCore companion node and let Bushmesh load its configured
             channels.
@@ -282,6 +282,9 @@ export function RadioScreen({
             return (
               <TouchableOpacity
                 key={channel.channelIndex}
+                accessibilityRole="button"
+                accessibilityLabel={'Choose carrier ' + channel.channelName}
+                accessibilityState={{selected: active}}
                 style={[styles.channelChip, active && styles.channelChipActive]}
                 onPress={() => setActiveChannelIndex(channel.channelIndex)}>
                 <Text
@@ -299,8 +302,13 @@ export function RadioScreen({
       ) : null}
 
       <View style={styles.composeCard}>
-        <Text style={styles.sectionTitle}>Message</Text>
+        <Text style={styles.sectionTitle}>Message this channel</Text>
+        <Text style={styles.smallHint}>
+          Text is submitted to the selected MeshCore carrier, not to a
+          verified BushMesh convoy. Drafts are retained separately by channel.
+        </Text>
         <TextInput
+          accessibilityLabel="Carrier message draft"
           style={styles.input}
           value={messageText}
           onChangeText={setMessageText}
@@ -310,14 +318,14 @@ export function RadioScreen({
           placeholderTextColor={colors.textMuted}
           multiline
           maxLength={133}
-          editable={activeChannel !== null}
+          editable={activeChannel !== null && !isSending}
         />
         <View style={styles.composeMeta}>
           <Text style={styles.characterCount}>
             {cleanMessage.length}/133 · {messageBytes} UTF-8 bytes
           </Text>
           <Text style={styles.transportState}>
-            {canSendChannelMessage ? 'MESHCORE READY' : 'RADIO NOT READY'}
+            {presentation.maySubmitCarrierText ? 'CARRIER SUBMISSION READY' : 'CARRIER NOT READY'}
           </Text>
         </View>
 
@@ -341,18 +349,34 @@ export function RadioScreen({
         </Text>
 
         <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Submit channel text to radio"
+          accessibilityState={{disabled: !canSend}}
           style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
           disabled={!canSend}
           onPress={() => {
             handleSend().catch(() => undefined);
           }}>
           <Text style={styles.sendButtonText}>
-            {isSending ? 'SUBMITTING…' : 'SEND OVER LORA'}
+            {isSending ? 'SUBMITTING…' : 'SUBMIT TO RADIO'}
           </Text>
         </TouchableOpacity>
         {sendStatus ? <Text style={styles.sendStatus}>{sendStatus}</Text> : null}
       </View>
 
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={showDiagnostics
+          ? 'Hide radio technical diagnostics' : 'Show radio technical diagnostics'}
+        accessibilityState={{expanded: showDiagnostics}}
+        style={styles.diagnosticsToggle}
+        onPress={() => setShowDiagnostics(current => !current)}>
+        <Text style={styles.diagnosticsToggleText}>
+          {showDiagnostics ? 'Hide technical diagnostics' : 'Show technical diagnostics'}
+        </Text>
+      </TouchableOpacity>
+      {showDiagnostics ? (
+      <>
       <View style={styles.inboundDiagnostics}>
         <Text style={styles.inboundTitle}>NATIVE OUTBOUND · MESHCORE COMMANDS</Text>
         <Text style={styles.inboundMeta}>
@@ -396,15 +420,35 @@ export function RadioScreen({
         ) : null}
       </View>
 
+      </>
+      ) : null}
+
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Radio history</Text>
+        <Text style={styles.sectionTitle}>Channel history</Text>
         <Text style={styles.sectionMeta}>{activeHistory.length} messages</Text>
       </View>
 
+      <View style={styles.historySummary}>
+        <Text style={styles.historySummaryText}>
+          {counts.received} received · {counts.pending} pending ·
+          {' '}{counts.accepted} radio-accepted · {counts.confirmed} peer-confirmed ·
+          {' '}{counts.failed} failed
+        </Text>
+      </View>
+      {messagePersistenceStatus === 'restoring' ? (
+        <Text style={styles.warningText}>Restoring saved carrier messages…</Text>
+      ) : null}
+      {messagePersistenceStatus === 'error' ? (
+        <Text style={styles.warningText}>
+          Saved history could not be restored. {messagePersistenceError ?? 'Inspect Device diagnostics.'}
+        </Text>
+      ) : null}
       {activeHistory.length === 0 ? (
-        <View style={styles.emptyCard}>
+        <View style={styles.emptyCard>
           <Text style={styles.emptyText}>
-            No stored messages for this channel yet.
+            {activeChannel
+              ? 'No stored messages on this carrier yet. Incoming text appears when heard; sending requires a connected companion.'
+              : 'Choose a carrier channel to see its own messages. Other channels remain separate.'}
           </Text>
         </View>
       ) : (
@@ -422,6 +466,9 @@ export function RadioScreen({
                 {deliveryLabel(message)}
               </Text>
             </View>
+            <Text style={styles.messageOrigin}>
+              {message.direction === 'received' ? 'CARRIER INCOMING' : 'LOCAL OUTGOING'}
+            </Text>
             <Text style={styles.messageText}>{message.text}</Text>
             {message.submissionFailure ? (
               <Text style={styles.submissionFailure}>
