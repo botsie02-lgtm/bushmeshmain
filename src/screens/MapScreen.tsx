@@ -228,7 +228,7 @@ export function MapScreen({
       ) : null}
       {activePlan && routeProgress ? (
         <Text style={styles.mapTrailHint}>
-          LOCAL ENGINE ROUTE · {routeStatus.toUpperCase()} ·{' '}
+          ATTACHED ENGINE ROUTE · {routeStatus.toUpperCase()} ·{' '}
           {formatDistance(routeProgress.remainingDistanceMeters)} remaining
           {' · '}engine {activePlan.engineId}
           {' · '}raster map tiles do not supply road routing

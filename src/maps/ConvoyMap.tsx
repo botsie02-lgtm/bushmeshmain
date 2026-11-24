@@ -436,7 +436,10 @@ export function ConvoyMap({
           styles.fieldAnchor, {left: px.left, top: px.top},
         ]}>
           <View style={styles.fieldDot} />
-          <View style={styles.fieldLabel}>
+          <View style={[
+            styles.fieldLabel,
+            {transform: [{rotate: String(-camera.rotationDegrees) + 'deg'}]},
+          ]}>
             <Text numberOfLines={1} style={styles.fieldText}>
               {field.simulated ? 'SIMULATED RADIO' : 'UNVERIFIED RADIO'} · {field.label}
             </Text>
