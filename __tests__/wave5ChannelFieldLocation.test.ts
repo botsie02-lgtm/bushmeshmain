@@ -129,7 +129,7 @@ describe('Wave 5 two virtual radios and opt-in field-only sharing', () => {
   }
 
   it('shares actual Android fixes across two virtual channels, never verified identities', async () => {
-    const {sender, receiver} = await pair();
+    const {sender, receiver, changeGpsB} = await pair();
     expect(CHANNEL_FIELD_PRIVACY_WARNING).toContain('every participant');
     expect(sender.snapshot().sharingIndicator).toBe('UNVERIFIED CHANNEL POSITION SHARING');
     expect((await sender.shareLatestFix()).kind).toBe('submitted-to-meshcore');
@@ -145,6 +145,7 @@ describe('Wave 5 two virtual radios and opt-in field-only sharing', () => {
     // Different path and types: cannot masquerade as ConvoyMap.authorisedMembers.
     expect((remote[0] as unknown as {position?: unknown}).position).toBeUndefined();
     now += 60_001;
+    changeGpsB(fix(now, -37.82));
     expect((await receiver.shareLatestFix()).kind).toBe('submitted-to-meshcore');
     expect(sender.snapshot().remoteMarkers).toHaveLength(1);
   });
@@ -288,12 +289,12 @@ describe('Wave 5 two virtual radios and opt-in field-only sharing', () => {
 
   it('stopping an in-flight send prevents post-stop state restoration', async () => {
     const {sender, a} = await pair();
-    let complete: (() => void) | null = null;
-    a.onSend = () => new Promise<void>(resolve => {complete = resolve;});
+    const pendingCommand: {complete?: () => void} = {};
+    a.onSend = () => new Promise<void>(resolve => {pendingCommand.complete = resolve;});
     const pending = sender.shareLatestFix();
     await Promise.resolve();
     sender.stop();
-    complete?.();
+    pendingCommand.complete?.();
     expect((await pending).kind).toBe('suppressed');
     expect(sender.snapshot().sharingEnabled).toBe(false);
     expect(sender.snapshot().lastSubmission).toBe('not-sent');
