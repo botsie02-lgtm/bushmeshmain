@@ -127,7 +127,7 @@ export function driveGpsDisplay(input: {
   } else if (validateLocationFix(fix) !== null) {
     state = 'invalid';
     warning = 'GPS fix failed validation; do not navigate from this position.';
-  } else if (ageMs !== null && ageMs < -10_000) {
+  } else if (ageMs !== null && ageMs < -2_000) {
     state = 'future-dated';
     warning = 'GPS time is ahead of the phone clock. Position is untrusted.';
   } else if (ageMs !== null && ageMs > Math.min(45_000, prefs.staleAfterSeconds * 1000)) {

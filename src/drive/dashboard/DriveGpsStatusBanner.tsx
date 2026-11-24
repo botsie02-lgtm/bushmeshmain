@@ -20,7 +20,6 @@ export function DriveGpsStatusBanner({radioStatus}: {
   const [readiness, setReadiness] = useState<GpsReadinessSnapshot | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
   const [prefs, setPrefs] = useState(gpsPreferences.snapshot());
-  const [, refreshRender] = useState(0);
   const stabilizer = useRef(new DriveMotionStabilizer()).current;
   const sourceRef = useRef<string | null>(null);
 
@@ -53,21 +52,20 @@ export function DriveGpsStatusBanner({radioStatus}: {
     return () => {mounted = false; request += 1; clearInterval(timer); app.remove();};
   }, []);
 
-  useEffect(() => {
-    if (providerLabel !== sourceRef.current ||
-        (status !== 'tracking' && status !== 'tracking-no-link')) {
-      stabilizer.clear();
-      sourceRef.current = providerLabel;
-    }
-    if (providerLabel === 'Android GPS' &&
-        (status === 'tracking' || status === 'tracking-no-link')) {
-      stabilizer.observe(latestFix, Date.now());
-    }
-    refreshRender(value => value + 1);
-  }, [latestFix, providerLabel, status, stabilizer]);
+  // Private, bounded display cache only. The existing LocationSessionProvider
+  // triggers rerenders for accepted fixes; never set React state in response to
+  // an unstable caller-provided fix object (which can render-loop).
+  // No native listener, GPS command or global store is changed here.
+  if (providerLabel !== sourceRef.current ||
+      (status !== 'tracking' && status !== 'tracking-no-link')) {
+    stabilizer.clear();
+    sourceRef.current = providerLabel;
+  }
+  if (providerLabel === 'Android GPS' &&
+      (status === 'tracking' || status === 'tracking-no-link')) {
+    stabilizer.observe(latestFix, nowMs);
+  }
 
-  // Render revision ensures the in-memory smoothing updates after every accepted fix.
-  // No service command or side effect is part of this projection.
   const display = driveGpsDisplay({
     fix: latestFix,
     status,
