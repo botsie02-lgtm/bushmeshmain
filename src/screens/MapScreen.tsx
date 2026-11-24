@@ -25,11 +25,14 @@ import {
 } from '../convoy/operationalMarkers';
 import {ConvoyMap, ConvoyMapTileSource} from '../maps/ConvoyMap';
 import {ConvoyMapMember, ConvoyMapOverlay} from '../maps/convoyMapModel';
+import {projectOfflinePolyline, projectOfflineTrack} from '../maps/offlineTrackProjection';
+import {projectFieldChannelPositions} from '../maps/fieldChannelPositionAdapter';
 import {MapPackCatalogPanel} from '../components/MapPackCatalogPanel';
 import {useConvoy} from '../state/ConvoyContext';
 import {useDrive} from '../state/DriveContext';
 import {useLocationSession} from '../state/LocationSessionContext';
 import {useOfflineMaps} from '../state/OfflineMapContext';
+import {useRouteSession} from '../state/RouteSessionContext';
 import {colors} from '../theme/colors';
 
 function markerLabel(type: string): string {
@@ -115,6 +118,7 @@ export function MapScreen({
     clearMapState,
   } = useOfflineMaps();
   const [nowMs, setNowMs] = useState(Date.now());
+  const {activePlan, progress: routeProgress, status: routeStatus} = useRouteSession();
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 5_000);
@@ -129,6 +133,30 @@ export function MapScreen({
     () => trackPoints.slice(-5).reverse(),
     [trackPoints],
   );
+  const trail = useMemo(() => projectOfflineTrack(trackPoints), [trackPoints]);
+  const fieldChannelPositions = useMemo(
+    () => projectFieldChannelPositions(vehicles, nowMs),
+    [vehicles, nowMs],
+  );
+  const projectedRoute = useMemo(
+    () => activePlan ? projectOfflinePolyline(activePlan.geometry) : [],
+    [activePlan],
+  );
+  const visibleOverlays = useMemo<ConvoyMapOverlay[]>(() => [
+    ...overlays,
+    ...(projectedRoute.length >= 2 && activePlan ? [{
+      id: 'offline-route:' + activePlan.id,
+      kind: 'route' as const,
+      label: 'Local route engine',
+      points: projectedRoute,
+    }] : []),
+    ...(trail.vertices.length >= 2 ? [{
+      id: 'local-recorded-trail',
+      kind: 'trail' as const,
+      label: 'Recorded GPS trail',
+      points: trail.vertices,
+    }] : []),
+  ], [overlays, projectedRoute, activePlan, trail]);
   const movingTarget = useMemo(
     () => getMovingTargetGuidance(localPosition, navigationTargetVehicle, nowMs),
     [localPosition, navigationTargetVehicle, nowMs],
@@ -187,9 +215,25 @@ export function MapScreen({
               : null
         }
         packCatalog={packCatalog}
-        overlays={overlays}
+        overlays={visibleOverlays}
+        fieldChannelPositions={fieldChannelPositions}
         tileSource={tileSource}
       />
+      {trail.displayCount > 0 ? (
+        <Text style={styles.mapTrailHint}>
+          RECORDED GPS TRAIL · {trail.displayCount}/{trail.originalCount} visual points
+          {' · '}{formatDistance(trackDistanceMeters)} total (recorded)
+          {' · '}GPX exports retain all recorded points
+        </Text>
+      ) : null}
+      {activePlan && routeProgress ? (
+        <Text style={styles.mapTrailHint}>
+          LOCAL ENGINE ROUTE · {routeStatus.toUpperCase()} ·{' '}
+          {formatDistance(routeProgress.remainingDistanceMeters)} remaining
+          {' · '}engine {activePlan.engineId}
+          {' · '}raster map tiles do not supply road routing
+        </Text>
+      ) : null}
       <MapPackCatalogPanel />
 
       {hasNavigationTarget ? (
@@ -468,8 +512,9 @@ export function MapScreen({
           </View>
 
           <Text style={styles.trailHint}>
-            The renderer contract contains the full retained breadcrumb polyline.
-            Recent points are shown below for diagnostics only.
+            The map shows a bounded preview of your persisted GPS breadcrumb
+            trail. GPX export preserves the full retained sample sequence;
+            the displayed polyline is not used to recalculate distance.
           </Text>
           {recentTrackPoints.map(point => (
             <View
@@ -563,6 +608,10 @@ export function MapScreen({
 }
 
 const styles = StyleSheet.create({
+  mapTrailHint: {
+    color: colors.textSecondary, fontSize: 10, lineHeight: 16,
+    marginBottom: 8, paddingHorizontal: 10,
+  },
   screen: {flex: 1, backgroundColor: colors.background},
   content: {padding: 16, paddingBottom: 36},
   heroCard: {
