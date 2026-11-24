@@ -342,6 +342,10 @@ export function AppShell(): React.JSX.Element {
                   <MapScreen
                     activeConvoyId={activeConvoy?.convoyId ?? null}
                     authorisedMembers={NO_AUTHORISED_MAP_MEMBER_POSITIONS}
+                    onManageMapPacks={() => {
+                      setDeviceView('maps');
+                      setActiveTab('device');
+                    }}
                   />
                 </>
               ) : (
