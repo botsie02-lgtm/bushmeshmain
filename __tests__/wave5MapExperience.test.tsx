@@ -4,8 +4,8 @@ import {StyleSheet} from 'react-native';
 import {MapScreen} from '../src/screens/MapScreen';
 import {ConvoyMap} from '../src/maps/ConvoyMap';
 
-const navigateToVehicle = jest.fn();
-const clearMapState = jest.fn();
+const mockNavigateToVehicle = jest.fn();
+const mockClearMapState = jest.fn();
 const onManageMapPacks = jest.fn();
 
 jest.mock('../src/maps/ConvoyMap', () => ({
@@ -24,7 +24,7 @@ jest.mock('../src/state/ConvoyContext', () => ({
     buddyTails: [], localPosition: null,
     navigationTargetVehicleId: null, navigationTargetVehicle: null,
     navigationFieldTarget: null,
-    setNavigationTarget: navigateToVehicle,
+    setNavigationTarget: mockNavigateToVehicle,
     setNavigationFieldTarget: jest.fn(),
     clearNavigationTarget: jest.fn(),
   }),
@@ -47,7 +47,7 @@ jest.mock('../src/state/OfflineMapContext', () => ({
     },
     requiredTripPoints: [],
     loadDemoHighCountryPack: jest.fn(),
-    clearMapState: clearMapState,
+    clearMapState: mockClearMapState,
   }),
 }));
 
@@ -91,13 +91,13 @@ test('unverified carrier position list is deliberate opt-in and cannot populate 
   expect(renderer.root.findByType(ConvoyMap).props.authorisedMembers).toEqual([]);
   await act(async () => {press(renderer, 'Hide unverified radio positions');});
   expect(JSON.stringify(renderer.toJSON())).not.toContain('UNVERIFIED CHANNEL VEHICLE');
-  expect(navigateToVehicle).not.toHaveBeenCalled();
+  expect(mockNavigateToVehicle).not.toHaveBeenCalled();
   await act(async () => {renderer.unmount();});
 });
 
 test('real map-pack management is a 56dp route action; destructive clear needs confirmation', async () => {
   onManageMapPacks.mockClear();
-  clearMapState.mockClear();
+  mockClearMapState.mockClear();
   let renderer!: TestRenderer.ReactTestRenderer;
   await act(async () => {
     renderer = TestRenderer.create(<MapScreen
@@ -118,8 +118,8 @@ test('real map-pack management is a 56dp route action; destructive clear needs c
   )[0];
   expect(review).toBeDefined();
   await act(async () => {review.props.onPress();});
-  expect(clearMapState).not.toHaveBeenCalled();
+  expect(mockClearMapState).not.toHaveBeenCalled();
   await act(async () => {press(renderer, 'Cancel clear map data');});
-  expect(clearMapState).not.toHaveBeenCalled();
+  expect(mockClearMapState).not.toHaveBeenCalled();
   await act(async () => {renderer.unmount();});
 });
