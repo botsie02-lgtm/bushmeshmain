@@ -37,6 +37,7 @@ import {MapCoordinate} from './offlineMapPacks';
 import {nativeOfflineTileSource} from './nativeOfflineTileSource';
 import type {FieldChannelPosition} from './fieldChannelPositionAdapter';
 import {BoundedOfflineTileQueue, tileRequestsNearestCentre} from './offlineTileQueue';
+import {projectOfflinePolyline} from './offlineTrackProjection';
 import {colors} from '../theme/colors';
 
 export type ConvoyMapTileSource = {
@@ -99,9 +100,9 @@ function MapButton({label, onPress, selected = false}: {
 /**
  * A functional, offline-only geographic viewport. No network tile fallback.
  *
- * A verified archive and a tile reader are separate prerequisites: the first
- * is already in BushMesh; the native PMTiles/MBTiles tile reader is not yet.
- * Until a reader is available the UI explicitly says "position plot only".
+ * A verified archive and the existing Android PMTiles/MBTiles reader are
+ * distinct prerequisites; neither is replaced by this view. Without both,
+ * the renderer fails closed and shows positions rather than fake imagery.
  */
 export function ConvoyMap({
   activeConvoyId,
@@ -287,16 +288,42 @@ export function ConvoyMap({
     setCameraMode('free');
   }, [center, displayZoom, camera.rotationDegrees]);
 
+  // Maintain gesture continuity while React renders a new camera position.
+  // Delta-based panning avoids adding cumulative displacement repeatedly.
+  const livePanRef = useRef(panTo);
+  livePanRef.current = panTo;
+  const lastGestureRef = useRef({dx: 0, dy: 0, atMs: 0});
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_event, gesture) =>
       Math.abs(gesture.dx) > 8 || Math.abs(gesture.dy) > 8,
-    onPanResponderRelease: (_event, gesture) => {
-      if (Math.abs(gesture.dx) > 8 || Math.abs(gesture.dy) > 8) {
-        panTo(-gesture.dx, -gesture.dy);
+    onPanResponderGrant: () => {
+      lastGestureRef.current = {dx: 0, dy: 0, atMs: 0};
+    },
+    onPanResponderMove: (_event, gesture) => {
+      const last = lastGestureRef.current;
+      const atMs = Date.now();
+      if (atMs - last.atMs < 32) return; // Bounded interaction updates (~30 Hz).
+      const dx = gesture.dx - last.dx;
+      const dy = gesture.dy - last.dy;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        livePanRef.current(-dx, -dy);
+        lastGestureRef.current = {dx: gesture.dx, dy: gesture.dy, atMs};
       }
     },
+    onPanResponderRelease: (_event, gesture) => {
+      const last = lastGestureRef.current;
+      const dx = gesture.dx - last.dx;
+      const dy = gesture.dy - last.dy;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        livePanRef.current(-dx, -dy);
+      }
+      lastGestureRef.current = {dx: 0, dy: 0, atMs: 0};
+    },
+    onPanResponderTerminate: () => {
+      lastGestureRef.current = {dx: 0, dy: 0, atMs: 0};
+    },
     onPanResponderTerminationRequest: () => true,
-  }), [panTo]);
+  }), []);
 
   const onLayout = (event: LayoutChangeEvent) => {
     const width = Math.round(event.nativeEvent.layout.width);
@@ -355,7 +382,7 @@ export function ConvoyMap({
   const overlayPoints: React.JSX.Element[] = [];
   if (center) {
     overlays.forEach(overlay => {
-      const points = overlay.points.filter(isValidMapCoordinate);
+      const points = projectOfflinePolyline(overlay.points, 128);
       if ((overlay.kind === 'route' || overlay.kind === 'trail') &&
           points.length >= 2) {
         for (let i = 1; i < points.length; i += 1) {
@@ -431,7 +458,8 @@ export function ConvoyMap({
 
       <View style={styles.controls}>
         <MapButton label="FOLLOW" selected={cameraMode === 'follow-self'} onPress={() => {
-          setManualCenter(null);
+          // Preserve a manually chosen pack centre when live GPS is absent.
+          if (scene.self && !scene.self.lastKnown) setManualCenter(null);
           setCameraMode('follow-self');
         }} />
         <MapButton label="CONVOY" selected={cameraMode === 'frame-convoy'} onPress={() => setCameraMode('frame-convoy')} />
@@ -445,11 +473,15 @@ export function ConvoyMap({
         <MapButton label={orientation === 'north-up' ? 'NORTH ↑' : 'HEADING ↑'}
           onPress={() => setOrientation(value => value === 'north-up' ? 'heading-up' : 'north-up')} />
         <MapButton label="−" onPress={() => {
-          if (center) { setManualCenter(center); setCameraMode('free'); }
+          if (cameraMode === 'frame-convoy' && center) {
+            setManualCenter(center); setCameraMode('free');
+          }
           setZoom(Math.max(pack?.manifest.minZoom ?? 0, displayZoom - 1));
         }} />
         <MapButton label="+" onPress={() => {
-          if (center) { setManualCenter(center); setCameraMode('free'); }
+          if (cameraMode === 'frame-convoy' && center) {
+            setManualCenter(center); setCameraMode('free');
+          }
           setZoom(Math.min(pack?.manifest.maxZoom ?? 20, displayZoom + 1));
         }} />
         {missingTiles > 0 ? (
@@ -562,7 +594,9 @@ const styles = StyleSheet.create({
   title: {color: colors.textPrimary, fontSize: 17, fontWeight: '900'},
   mapStatus: {color: colors.warning, fontSize: 9, fontWeight: '900', letterSpacing: 0.4},
   controls: {flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginVertical: 10},
-  button: {borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSoft, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 8},
+  button: {borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.surfaceSoft, paddingHorizontal: 10,
+    paddingVertical: 9, minHeight: 36, justifyContent: 'center', borderRadius: 9},
   selectedButton: {backgroundColor: colors.accent, borderColor: colors.accent},
   buttonText: {color: colors.textSecondary, fontSize: 9, fontWeight: '900'},
   selectedText: {color: colors.background},
