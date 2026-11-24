@@ -146,11 +146,17 @@ test('field status cards expose five-tab navigation with accessible touch sizes'
     );
   });
   // Accessible labels identify the destination and actual readiness.
-  const cards = renderer.root.findAll(node =>
+  const forwarded = renderer.root.findAll(node =>
     node.props.accessibilityRole === 'button' &&
     typeof node.props.onPress === 'function' &&
     typeof node.props.accessibilityLabel === 'string' &&
     node.props.accessibilityLabel.startsWith('Open '),
+  );
+  // TouchableOpacity forwards accessibility props to its host node. Count
+  // distinct destinations, not both React Native wrapper instances.
+  const cards = forwarded.filter((node, index) =>
+    forwarded.findIndex(other =>
+      other.props.accessibilityLabel === node.props.accessibilityLabel) === index,
   );
   expect(cards).toHaveLength(4);
   expect(StyleSheet.flatten(cards[0].props.style).minHeight).toBeGreaterThanOrEqual(94);
