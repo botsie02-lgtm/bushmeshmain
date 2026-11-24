@@ -112,12 +112,7 @@ test('real map-pack management is a 56dp route action; destructive clear needs c
   expect(onManageMapPacks).toHaveBeenCalledTimes(1);
 
   await act(async () => {press(renderer, 'Show advanced map diagnostics');});
-  const review = renderer.root.findAll(node =>
-    typeof node.props.onPress === 'function' &&
-    JSON.stringify(node.props.children).includes('Review clear map state'),
-  )[0];
-  expect(review).toBeDefined();
-  await act(async () => {review.props.onPress();});
+  await act(async () => {press(renderer, 'Review clear map state');});
   expect(mockClearMapState).not.toHaveBeenCalled();
   await act(async () => {press(renderer, 'Cancel clear map data');});
   expect(mockClearMapState).not.toHaveBeenCalled();
