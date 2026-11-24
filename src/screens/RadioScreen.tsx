@@ -444,7 +444,7 @@ export function RadioScreen({
         </Text>
       ) : null}
       {activeHistory.length === 0 ? (
-        <View style={styles.emptyCard>
+        <View style={styles.emptyCard}>
           <Text style={styles.emptyText}>
             {activeChannel
               ? 'No stored messages on this carrier yet. Incoming text appears when heard; sending requires a connected companion.'
