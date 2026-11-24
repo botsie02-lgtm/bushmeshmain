@@ -134,7 +134,9 @@ class BushMeshV2TransactionSqliteTest : AndroidTestCase() {
     val proposal = JSONObject().put("transactionId","tx1")
       .put("requestId","req1").put("groupId",groupId)
       .put("rosterDigestBefore",d0).put("rosterDigestAfter",d1)
-    val approval = JSONObject().put("proposal",proposal)
+    val credential = JSONObject().put("credentialId","credential.test")
+      .put("authoritySequence",1L)
+    val approval = JSONObject().put("proposal",proposal).put("credential",credential)
     val join = JSONObject().put("requester",
       JSONObject().put("deviceId","bm1_joiner").put("fingerprint","fp_joiner"))
     return JSONObject().put("transactionId","tx1").put("requestId","req1")
