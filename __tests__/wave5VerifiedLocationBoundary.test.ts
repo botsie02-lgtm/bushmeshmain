@@ -30,12 +30,12 @@ describe('Wave 5 verified security and field-test isolation gates', () => {
   });
 
   it('does not accept channel-only text into canonical protected group ingress', async () => {
-    let listener: ((result: BushMeshInboundResult) => void) | null = null;
+    const subscription: {listener?: (result: BushMeshInboundResult) => void} = {};
     const seen: BushMeshInboundResult[] = [];
     const stop = attachVerifiedTelemetryIngress({
-      subscribeInboundResults(fn) {
-        listener = fn;
-        return () => {listener = null;};
+      subscribeInboundResults(fn: (result: BushMeshInboundResult) => void) {
+        subscription.listener = fn;
+        return () => {subscription.listener = undefined;};
       },
     }, {
       ingest: async result => {seen.push(result); return true;},
@@ -45,17 +45,17 @@ describe('Wave 5 verified security and field-test isolation gates', () => {
       securityMode: 'plain', typed: {kind: 'convoy'},
       securityAssociation: {kind: 'none'},
     } as unknown as BushMeshInboundResult;
-    listener?.(unprotected);
+    subscription.listener?.(unprotected);
     const wrong = {
       ...unprotected, protected: true, securityMode: 'protected-group',
       securityAssociation: {kind: 'group', groupId: 'bmg1_fake'},
       typed: {kind: 'location'},
     } as BushMeshInboundResult;
-    listener?.(wrong);
+    subscription.listener?.(wrong);
     await Promise.resolve();
     expect(seen).toHaveLength(0);
     stop();
-    expect(listener).toBeNull();
+    expect(subscription.listener).toBeUndefined();
   });
 
   it('verified map projection is empty without independently revalidated authorization', async () => {
