@@ -594,6 +594,8 @@ export function MapScreen({
           <Text style={styles.primaryButtonText}>Load demo trip pack</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Review clear map state"
           style={[styles.button, styles.secondaryButton]}
           onPress={() => setConfirmClearMapState(true)}>
           <Text style={styles.secondaryButtonText}>Review clear map state</Text>
