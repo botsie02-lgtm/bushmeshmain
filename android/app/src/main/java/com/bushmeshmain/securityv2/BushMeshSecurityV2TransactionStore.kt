@@ -482,10 +482,14 @@ internal class BushMeshSecurityV2TransactionStore(
       val groupId = prepared.getJSONObject("approval").getJSONObject("proposal").getString("groupId")
       val current = assertCurrent(db,groupId)
         ?: throw IllegalStateException("NOT_COMMITTED: missing committed group")
+      val authorityClaims = prepared.getJSONObject("approval").getJSONObject("credential")
       require(prepared.getString("status") == "committed" &&
+        current.getString("state") == "active" &&
         current.getString("currentTransactionId") == txId &&
+        current.getLong("authoritySequence") == authorityClaims.getLong("authoritySequence") &&
+        !revocations(current).contains(authorityClaims.getString("credentialId")) &&
         members(current).any { it.deviceId == recipient && it.state != "revoked" }) {
-        "STALE_EPOCH: issuance must match current protected roster"
+        "STALE_EPOCH: issuance must match current role and protected roster"
       }
       db.insertWithOnConflict("issued",null,ContentValues().apply {
         put("tx_id",txId);put("recipient",recipient);put("digest",digest)
@@ -505,8 +509,14 @@ internal class BushMeshSecurityV2TransactionStore(
         if (it.moveToFirst()) Triple(it.getString(0),it.getLong(1),it.getString(2)) else null
       }
       if (existing != null) {
+        val installedSnapshot = assertCurrent(db,groupId)
         require(existing.first == groupId && existing.second == next.getLong("epoch") &&
-          existing.third == digest) { "REPLAY: conflicting recipient install" }
+          existing.third == digest && installedSnapshot != null &&
+          installedSnapshot.getLong("epoch") == existing.second &&
+          installedSnapshot.getString("currentTransactionId") == txId &&
+          installedSnapshot.getString("rosterDigest") == next.getString("rosterDigest")) {
+          "REPLAY: conflicting or rolled-back recipient install"
+        }
         return@transaction "already-installed-identical"
       }
       val pin = anchor(db,groupId)
@@ -567,10 +577,14 @@ internal class BushMeshSecurityV2TransactionStore(
       val groupId = prepared.getJSONObject("approval").getJSONObject("proposal").getString("groupId")
       val group = assertCurrent(db,groupId)
         ?: throw IllegalStateException("NOT_COMMITTED: missing group")
+      val authorityClaims = prepared.getJSONObject("approval").getJSONObject("credential")
       require(prepared.getString("status") == "committed" &&
+        group.getString("state") == "active" &&
         group.getString("currentTransactionId") == txId &&
+        group.getLong("authoritySequence") == authorityClaims.getLong("authoritySequence") &&
+        !revocations(group).contains(authorityClaims.getString("credentialId")) &&
         members(group).any { it.deviceId == recipient && it.state != "revoked" }) {
-        "STALE_EPOCH: signed ack cannot refer to superseded member"
+        "STALE_EPOCH: signed ack cannot refer to revoked role or member"
       }
       authority.assertVerifiedAck(prepared,recipient,signedAckDigest)
       val count = db.rawQuery("SELECT COUNT(*) FROM issued WHERE tx_id=? AND recipient=?",
@@ -691,13 +705,16 @@ internal class BushMeshSecurityV2TransactionStore(
     } ?: throw IllegalStateException("NOT_INSTALLED: no durable recipient record")
     val current = snapshot(db,groupId)
       ?: throw IllegalStateException("CORRUPT_STATE: missing installed roster")
-    require(installed.first == groupId && installed.second == current.getLong("epoch") &&
-      installed.third == distributionDigest &&
-      high(db,groupId) == installed.second &&
-      current.getString("currentTransactionId") == txId &&
-      getKey(db,groupId,installed.second) != null) {
-      "CORRUPT_STATE: recipient recovery is missing epoch key/receipt"
-    }
+    val installedKey = getKey(db,groupId,installed.second)
+    try {
+      require(installed.first == groupId && installed.second == current.getLong("epoch") &&
+        installed.third == distributionDigest &&
+        high(db,groupId) == installed.second &&
+        current.getString("currentTransactionId") == txId &&
+        installedKey != null) {
+        "CORRUPT_STATE: recipient recovery is missing epoch key/receipt"
+      }
+    } finally { installedKey?.fill(0) }
     witness.complete(groupId,installed.second,distributionDigest)
     witness.assertCurrent(groupId,installed.second)
     "reconciled-recipient-install"
