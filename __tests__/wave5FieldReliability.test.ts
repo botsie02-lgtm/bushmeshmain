@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import {mkdirSync, writeFileSync} from 'fs';
 import {
   wave5FleetFaultMatrix,
