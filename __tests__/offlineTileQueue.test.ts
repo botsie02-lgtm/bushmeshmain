@@ -79,3 +79,25 @@ describe('bounded offline raster tile queue', () => {
     queue.dispose();
   });
 });
+
+it('retries missing raster tiles only on explicit operator request', async () => {
+  let reads = 0;
+  const views: Array<{uris: Record<string,string>; missingKeys: string[]}> = [];
+  const queue = new BoundedOfflineTileQueue(
+    async () => { reads++; return reads === 1 ? null : 'data:image/png;base64,AAAA'; },
+    view => views.push(view),
+    uri => uri.startsWith('data:image/png;base64,'),
+  );
+  queue.update('stable-pack', [tile(1)]);
+  await flush();
+  expect(reads).toBe(1);
+  expect(views[views.length - 1].missingKeys).toEqual(['pack/1']);
+  queue.update('stable-pack', [tile(1)]);
+  await flush();
+  expect(reads).toBe(1);
+  queue.retryVisible();
+  await flush();
+  expect(reads).toBe(2);
+  expect(views[views.length - 1].uris).toHaveProperty('pack/1');
+  queue.dispose();
+});

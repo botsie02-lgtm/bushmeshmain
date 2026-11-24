@@ -8,6 +8,7 @@ import {
   screenPixel,
   selectRenderableMapPack,
   mapPackBoundsCenter,
+  mapAccuracyRadiusPixels,
   stabilizeConvoyMapCamera,
   tileIntersectsMapPack,
 } from '../src/maps/convoyMapModel';
@@ -219,5 +220,16 @@ describe('Wave 5 map camera and verified coverage', () => {
     const tiles = planConvoyMapTiles(p, {latitude: 0, longitude: 0}, 0,
       {width: 400, height: 300});
     expect(new Set(tiles.map(tile => tile.renderKey)).size).toBe(tiles.length);
+  });
+});
+
+describe('Wave 5 map GPS uncertainty indicator', () => {
+  it('keeps accuracy circles bounded and ignores unavailable quality data', () => {
+    expect(mapAccuracyRadiusPixels(-37.8, 13, null)).toBeNull();
+    expect(mapAccuracyRadiusPixels(-37.8, 13, -1)).toBeNull();
+    const good = mapAccuracyRadiusPixels(-37.8, 13, 25);
+    expect(good).not.toBeNull();
+    expect(good!).toBeGreaterThanOrEqual(3);
+    expect(mapAccuracyRadiusPixels(-37.8, 13, 100_000)).toBe(90);
   });
 });

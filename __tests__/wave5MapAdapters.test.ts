@@ -1,4 +1,4 @@
-import {projectOfflineTrack} from '../src/maps/offlineTrackProjection';
+import {projectOfflinePolyline, projectOfflineTrack} from '../src/maps/offlineTrackProjection';
 import {projectFieldChannelPositions} from '../src/maps/fieldChannelPositionAdapter';
 
 describe('Wave 5 read-only trail projection', () => {
@@ -54,4 +54,15 @@ describe('Wave 5 field channel diagnostic isolation', () => {
     ], 101_000);
     expect(projected.map(p => p.id)).toEqual(['unverified-a']);
   });
+});
+
+it('never changes the original route geometry while limiting display segments', () => {
+  const route = Array.from({length: 2000}, (_, index) => ({
+    latitude: -37.8, longitude: 144.9 + index / 100000,
+  }));
+  const displayed = projectOfflinePolyline(route);
+  expect(displayed).toHaveLength(128);
+  expect(displayed[0]).toEqual(route[0]);
+  expect(displayed[127]).toEqual(route[1999]);
+  expect(route).toHaveLength(2000);
 });
