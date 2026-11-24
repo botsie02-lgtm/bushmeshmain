@@ -50,3 +50,23 @@ export function projectOfflineTrack(
     endedAtMs: count ? accepted[count - 1].recordedAtMs : null,
   };
 }
+
+/** Render-only simplification of externally supplied, already available geometry.
+ * Does not create an offline routing graph or make route progress claims.
+ */
+export function projectOfflinePolyline(
+  points: readonly MapCoordinate[],
+  maxVisible = MAX_VISIBLE_TRACK_POINTS,
+): MapCoordinate[] {
+  if (!Number.isInteger(maxVisible) || maxVisible < 2 || maxVisible > 512) {
+    throw new Error('Map polyline budget must be between 2 and 512.');
+  }
+  const valid = points.filter(point => Number.isFinite(point.latitude) &&
+    point.latitude >= -90 && point.latitude <= 90 &&
+    Number.isFinite(point.longitude) && point.longitude >= -180 &&
+    point.longitude <= 180);
+  if (valid.length <= maxVisible) return valid.map(point => ({...point}));
+  return Array.from({length: maxVisible}, (_, index) => ({
+    ...valid[Math.round(index * (valid.length - 1) / (maxVisible - 1))],
+  }));
+}
