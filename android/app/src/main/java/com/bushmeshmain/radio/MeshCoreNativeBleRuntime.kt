@@ -458,8 +458,14 @@ class MeshCoreNativeBleRuntime private constructor(
         @Suppress("DEPRECATION")
         device.connectGatt(appContext, false, callback)
       }
-      if (bluetoothGatt != null) scheduleHandshakeTimeout(bluetoothGatt!!)
-      bluetoothGatt != null
+      val openedGatt = bluetoothGatt
+      if (openedGatt == null) {
+        failAndReconnect("Android returned no GATT session for MeshCore BLE.")
+        false
+      } else {
+        scheduleHandshakeTimeout(openedGatt)
+        true
+      }
     } catch (error: Exception) {
       state = "reconnecting"
       lastError = "Could not start MeshCore BLE connection: ${error.message}"
