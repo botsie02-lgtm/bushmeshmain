@@ -318,7 +318,7 @@ describe('MeshCore durable inbox retains its original consumer alongside field l
       timestamp: Math.floor(START / 1000), pathLength: 0,
       textType: 0, snr: 5,
     });
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
     expect(observed).toEqual(['ordinary message']);
     expect(persisted).toEqual(['ordinary message']);
     expect(inbox.pendingCount()).toBe(0);
