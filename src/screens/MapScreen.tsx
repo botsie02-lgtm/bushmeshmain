@@ -412,8 +412,7 @@ export function MapScreen({
             </View>
           );
         })
-      )}
-
+      )
       ) : null}
 
       <View style={styles.sectionHeader}>
