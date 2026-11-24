@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import {colors} from '../../theme/colors';
 import type {EnrolmentUiView} from './enrolmentViewModel';
+import {EnrolmentMilestones, RoleGuide} from './EnrolmentMilestones';
 
 export type ConvoyEnrolmentScreenProps = {
   view: EnrolmentUiView;
@@ -109,6 +110,8 @@ export function ConvoyEnrolmentScreen({
   const [expiryDays, setExpiryDays] = useState('1');
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null);
   const [showBlockers, setShowBlockers] = useState(false);
+  const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
+  const [showRoleGuide, setShowRoleGuide] = useState(false);
   const [inspectedFingerprint, setInspectedFingerprint] = useState<string | null>(null);
 
   const selectionId = view.selected?.convoyId ?? null;
@@ -118,6 +121,7 @@ export function ConvoyEnrolmentScreen({
   useEffect(() => {
     setConfirmation(null);
     setInspectedFingerprint(null);
+    setExpandedRequestId(null);
   }, [selectionId, epochRef, localFingerprint, view.headerState]);
 
   function validRecipient(): boolean {
@@ -423,6 +427,16 @@ export function ConvoyEnrolmentScreen({
               <Entry label="Claimed public fingerprint" value={item.fingerprint} />
               <Entry label="Request timestamp" value={date(item.createdAt)} />
               <Text style={styles.body}>{item.diagnostic}</Text>
+              <Action
+                label={(expandedRequestId === item.id
+                  ? 'Hide join progress ' : 'Explain join progress ') + item.id}
+                onPress={() => setExpandedRequestId(current =>
+                  current === item.id ? null : item.id,
+                )}
+              />
+              {expandedRequestId === item.id ? (
+                <EnrolmentMilestones request={item} />
+              ) : null}
               <Text style={styles.warning}>
                 No membership granted without a completed Security transaction and
                 independent Security v1 directory verification.
@@ -445,6 +459,9 @@ export function ConvoyEnrolmentScreen({
       {section === 'members' ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Security-verified member roster</Text>
+          <Action label={showRoleGuide ? 'Hide role guide' : 'How convoy roles work'}
+            onPress={() => setShowRoleGuide(current => !current)} />
+          {showRoleGuide ? <RoleGuide /> : null}
           {view.verifiedMemberCount === null ? (
             <Card>
               <Text style={styles.warning}>
