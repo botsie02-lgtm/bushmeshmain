@@ -63,6 +63,8 @@ class MeshCoreNativeBleRuntime private constructor(
     private const val MAX_BUFFERED_FRAMES = 128
     private const val MAX_QUEUED_WRITES = 64
     private const val MAX_RECONNECT_DELAY_MS = 30_000L
+    private const val HANDSHAKE_TIMEOUT_MS = 20_000L
+    private const val GATT_WRITE_TIMEOUT_MS = 10_000L
 
     @Volatile private var instance: MeshCoreNativeBleRuntime? = null
 
@@ -90,6 +92,8 @@ class MeshCoreNativeBleRuntime private constructor(
   private var gattWriteConfirmedCount = 0L
   private var gattWriteFailedCount = 0L
   private var reconnectRunnable: Runnable? = null
+  private var handshakeTimeout: Runnable? = null
+  private var writeTimeout: Runnable? = null
 
   @Volatile private var state: String = "disconnected"
   @Volatile private var mtu: Int = 23
@@ -203,6 +207,7 @@ class MeshCoreNativeBleRuntime private constructor(
         return
       }
 
+      clearHandshakeTimeout()
       state = "ready"
       lastError = null
       processNextWrite()
@@ -233,6 +238,7 @@ class MeshCoreNativeBleRuntime private constructor(
           return@synchronized
         }
 
+        clearWriteTimeout()
         writeInFlight = false
         if (status != BluetoothGatt.GATT_SUCCESS) {
           gattWriteFailedCount += 1
@@ -264,20 +270,26 @@ class MeshCoreNativeBleRuntime private constructor(
       return false
     }
 
+    val reuse = MeshCoreBleConnectionPolicy.mayReuseGatt(
+      desiredAddress, normalizedAddress, state, bluetoothGatt != null,
+    )
     desiredAddress = normalizedAddress
     desiredLabel = deviceLabel?.trim()?.takeIf { it.isNotEmpty() }
-    reconnectAttempt = 0
+    if (reuse) return true
+
+    // A device switch invalidates the previous session's pending writes and
+    // buffered replies. Do not let an old GATT's callbacks claim the new target.
     cancelReconnect()
-
-    if (
-      bluetoothGatt != null &&
-      state != "disconnected" &&
-      state != "error" &&
-      state != "reconnecting"
-    ) {
-      return true
-    }
-
+    clearHandshakeTimeout()
+    clearWriteTimeout()
+    reconnectAttempt = 0
+    writeQueue.clear()
+    frameBuffer.clear()
+    writeInFlight = false
+    rxCharacteristic = null
+    txCharacteristic = null
+    connectedAtMs = 0L
+    closeGattWithoutClearingTarget()
     return connectNow()
   }
 
@@ -306,6 +318,8 @@ class MeshCoreNativeBleRuntime private constructor(
     desiredLabel = deviceLabel?.trim()?.takeIf { it.isNotEmpty() }
     reconnectAttempt = 0
     cancelReconnect()
+    clearHandshakeTimeout()
+    clearWriteTimeout()
     rxCharacteristic = null
     txCharacteristic = null
     writeQueue.clear()
@@ -313,6 +327,7 @@ class MeshCoreNativeBleRuntime private constructor(
     connectedAtMs = 0L
     frameBuffer.clear()
     closeGattWithoutClearingTarget()
+    clearHandshakeTimeout()
     state = "connecting"
     lastError = null
     return connectNow()
@@ -321,6 +336,8 @@ class MeshCoreNativeBleRuntime private constructor(
   @Synchronized
   fun disconnect(clearTarget: Boolean = true) {
     cancelReconnect()
+    clearHandshakeTimeout()
+    clearWriteTimeout()
     if (clearTarget) {
       desiredAddress = null
       desiredLabel = null
@@ -440,6 +457,7 @@ class MeshCoreNativeBleRuntime private constructor(
         @Suppress("DEPRECATION")
         device.connectGatt(appContext, false, callback)
       }
+      if (bluetoothGatt != null) scheduleHandshakeTimeout(bluetoothGatt!!)
       bluetoothGatt != null
     } catch (error: Exception) {
       state = "reconnecting"
@@ -485,6 +503,7 @@ class MeshCoreNativeBleRuntime private constructor(
         return
       }
       writeInFlight = true
+      scheduleWriteTimeout(gatt)
     } catch (error: SecurityException) {
       failAndReconnect(
         "Bluetooth permission was revoked during MeshCore BLE write: ${error.message}",
@@ -517,6 +536,8 @@ class MeshCoreNativeBleRuntime private constructor(
   @Synchronized
   private fun failAndReconnect(message: String) {
     lastError = message
+    clearHandshakeTimeout()
+    clearWriteTimeout()
     state = "reconnecting"
     connectedAtMs = 0L
     rxCharacteristic = null
@@ -525,6 +546,49 @@ class MeshCoreNativeBleRuntime private constructor(
     writeQueue.clear()
     closeGattWithoutClearingTarget()
     scheduleReconnect()
+  }
+
+  @Synchronized
+  private fun scheduleHandshakeTimeout(gatt: BluetoothGatt) {
+    clearHandshakeTimeout()
+    val runnable = Runnable {
+      synchronized(this) {
+        handshakeTimeout = null
+        if (gatt === bluetoothGatt && MeshCoreBleConnectionPolicy.needsConnectionTimeout(state)) {
+          failAndReconnect("MeshCore BLE connection setup timed out.")
+        }
+      }
+    }
+    handshakeTimeout = runnable
+    handler.postDelayed(runnable, HANDSHAKE_TIMEOUT_MS)
+  }
+
+  @Synchronized
+  private fun clearHandshakeTimeout() {
+    handshakeTimeout?.let(handler::removeCallbacks)
+    handshakeTimeout = null
+  }
+
+  @Synchronized
+  private fun scheduleWriteTimeout(gatt: BluetoothGatt) {
+    clearWriteTimeout()
+    val runnable = Runnable {
+      synchronized(this) {
+        writeTimeout = null
+        if (gatt === bluetoothGatt && writeInFlight) {
+          gattWriteFailedCount += 1
+          failAndReconnect("MeshCore BLE write callback timed out; radio acceptance is unknown.")
+        }
+      }
+    }
+    writeTimeout = runnable
+    handler.postDelayed(runnable, GATT_WRITE_TIMEOUT_MS)
+  }
+
+  @Synchronized
+  private fun clearWriteTimeout() {
+    writeTimeout?.let(handler::removeCallbacks)
+    writeTimeout = null
   }
 
   @Synchronized
