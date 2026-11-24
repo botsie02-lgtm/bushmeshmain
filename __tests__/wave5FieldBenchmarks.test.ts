@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import {mkdirSync, writeFileSync} from 'fs';
 import {performance} from 'perf_hooks';
 import {ConvoyMobilityHarness} from '../src/bushmesh/testing/networkSimulator/ConvoyMobilityHarness';
