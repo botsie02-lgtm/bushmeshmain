@@ -488,7 +488,7 @@ export function AppShell(): React.JSX.Element {
                 <MapPackCatalogPanel />
               </ScrollView>
             ) : (
-              <DeviceHubScreen />
+              <DeviceHubScreen onOpenMapPacks={() => setDeviceView('maps')} />
             )}
           </View>
         </ScreenMountGate>
