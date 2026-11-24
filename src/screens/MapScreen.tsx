@@ -233,9 +233,7 @@ export function MapScreen({
                 : fixedTarget?.arrived
                   ? styles.navigationCardArrived
                   : styles.navigationCardFixed
-              : movingTarget?.safeToFollow
-                ? styles.navigationCardLive
-                : styles.navigationCardHold,
+              : styles.navigationCardHold,
           ]}>
           <View style={styles.navigationTopRow}>
             <View style={styles.navigationCopy}>
@@ -246,9 +244,7 @@ export function MapScreen({
                     : fixedTarget?.arrived
                       ? 'ARRIVED'
                       : 'FIXED FIELD DESTINATION'
-                  : movingTarget?.safeToFollow
-                    ? 'MOVING DESTINATION'
-                    : 'LAST KNOWN · HOLD'}
+                  : 'UNVERIFIED RADIO TARGET · DIRECT BEARING ONLY'}
               </Text>
               <Text style={styles.navigationName}>
                 {navigationFieldTarget?.label ??
@@ -320,13 +316,11 @@ export function MapScreen({
               </View>
               <Text
                 style={
-                  movingTarget.safeToFollow
-                    ? styles.navigationStatusLive
-                    : styles.navigationStatusHold
+                  styles.navigationStatusHold
                 }>
                 {movingTarget.safeToFollow
-                  ? `${movingTarget.freshness.toUpperCase()} · fix age ${formatAge(movingTarget.ageSeconds)}`
-                  : `HOLD · ${movingTarget.freshness.toUpperCase()} last-known position · ${formatAge(movingTarget.ageSeconds)} old`}
+                  ? `UNVERIFIED · radio-heard fix ${formatAge(movingTarget.ageSeconds)} old. Identity and membership are not confirmed.`
+                  : `UNVERIFIED · HOLD · ${movingTarget.freshness.toUpperCase()} last-known position · ${formatAge(movingTarget.ageSeconds)} old`}
               </Text>
             </>
           ) : (
@@ -336,8 +330,9 @@ export function MapScreen({
           )}
 
           <Text style={styles.navigationHint}>
-            Direct bearing only. Bushmesh does not claim road or trail routing
-            until the offline routing engine is installed.
+            Direct bearing only. Radio-heard vehicle and marker targets in
+            this legacy view are not Security-verified convoy destinations.
+            BushMesh does not claim road or trail routing.
           </Text>
         </View>
       ) : null}
