@@ -1,0 +1,65 @@
+name: BushMesh Wave 5 field reliability (simulated)
+
+on:
+  push:
+    branches:
+      - test/wave5-field-reliability-v1
+    paths:
+      - 'src/bushmesh/testing/networkSimulator/**'
+      - '__tests__/wave5FieldReliability.test.ts'
+      - '__tests__/wave5FieldBenchmarks.test.ts'
+      - '__tests__/bushmeshNetworkSimulator.test.ts'
+      - '__tests__/bushmeshConvoyCampaigns.test.ts'
+      - 'tsconfig.network-simulator-v1.json'
+      - 'docs/WAVE5_FIELD_RELIABILITY_TEST_PLAN.md'
+      - '.github/workflows/wave5-field-reliability.yml'
+  workflow_dispatch:
+
+jobs:
+  field-reliability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Scoped simulator and field test TypeScript
+        run: npx tsc -p tsconfig.network-simulator-v1.json --noEmit
+      - name: Repository-wide TypeScript integration compatibility
+        run: npx tsc --noEmit
+      - name: Deterministic regression, actual radio lifecycle & map/GPS tests, Node benchmarks
+        run: |
+          npm test -- --runInBand \
+            __tests__/bushmeshNetworkSimulator.test.ts \
+            __tests__/bushmeshConvoyCampaigns.test.ts \
+            __tests__/wave5FieldReliability.test.ts \
+            __tests__/wave5FieldBenchmarks.test.ts \
+            __tests__/appRadioNativeStopLifecycle.test.ts \
+            __tests__/radioSessionNativeLifecycleAuthority.test.tsx \
+            __tests__/meshcoreChannelAcceptance.test.ts \
+            __tests__/meshcoreChannelData.test.ts \
+            __tests__/outbox.test.ts \
+            __tests__/transmissionController.test.ts \
+            __tests__/convoyMapModel.test.ts \
+            __tests__/deviceGpsReadiness.test.ts \
+            __tests__/offlineMapPacks.test.ts \
+            __tests__/wave2AuthenticatedPositionIngress.test.ts \
+            __tests__/wave4TelemetryStagingGate.test.ts \
+            __tests__/groupSecurity.test.ts \
+            __tests__/replayGuard.test.ts
+      - name: Publish reproducible simulator traces and host benchmark measurements
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bushmesh-wave5-field-reliability-${{ github.sha }}
+          path: |
+            artifacts/wave5-field-reliability/deterministic-regressions.json
+            artifacts/wave5-field-reliability/node-benchmarks.json
+          if-no-files-found: warn
+          retention-days: 30
