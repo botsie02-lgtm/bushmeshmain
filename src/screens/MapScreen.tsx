@@ -26,7 +26,8 @@ import {
 import {ConvoyMap, ConvoyMapTileSource} from '../maps/ConvoyMap';
 import {ConvoyMapMember, ConvoyMapOverlay} from '../maps/convoyMapModel';
 import {projectOfflinePolyline, projectOfflineTrack} from '../maps/offlineTrackProjection';
-import {projectFieldChannelPositions} from '../maps/fieldChannelPositionAdapter';
+import {projectFieldChannelPositions, type FieldChannelPosition} from '../maps/fieldChannelPositionAdapter';
+import {ConnectedChannelFieldLocation} from '../convoy/fieldLocation/ConnectedChannelFieldLocation';
 import {MapPackCatalogPanel} from '../components/MapPackCatalogPanel';
 import {useConvoy} from '../state/ConvoyContext';
 import {useDrive} from '../state/DriveContext';
@@ -84,6 +85,8 @@ export type MapScreenProps = {
   tileSource?: ConvoyMapTileSource;
   /** Navigate to Device > Offline map packs; never starts installation here. */
   onManageMapPacks?: () => void;
+  /** Explicit staging screen mount; never starts sharing. */
+  showChannelFieldTest?: boolean;
 };
 
 export function MapScreen({
@@ -92,6 +95,7 @@ export function MapScreen({
   overlays = [],
   tileSource,
   onManageMapPacks,
+  showChannelFieldTest = false,
 }: MapScreenProps = {}): React.JSX.Element {
   const {
     vehicles,
@@ -140,9 +144,10 @@ export function MapScreen({
     [trackPoints],
   );
   const trail = useMemo(() => projectOfflineTrack(trackPoints), [trackPoints]);
+  const [explicitChannelMarkers, setExplicitChannelMarkers] = useState<FieldChannelPosition[]>([]);
   const fieldChannelPositions = useMemo(
-    () => projectFieldChannelPositions(vehicles, nowMs),
-    [vehicles, nowMs],
+    () => [...explicitChannelMarkers, ...projectFieldChannelPositions(vehicles, nowMs)],
+    [explicitChannelMarkers, vehicles, nowMs],
   );
   const projectedRoute = useMemo(
     () => activePlan ? projectOfflinePolyline(activePlan.geometry) : [],
@@ -229,6 +234,7 @@ export function MapScreen({
         fieldChannelPositions={fieldChannelPositions}
         tileSource={tileSource}
       />
+      {showChannelFieldTest ? <ConnectedChannelFieldLocation onPositions={setExplicitChannelMarkers} /> : null}
       {trail.displayCount > 0 ? (
         <Text style={styles.mapTrailHint}>
           RECORDED GPS TRAIL · {trail.displayCount}/{trail.originalCount} visual points
