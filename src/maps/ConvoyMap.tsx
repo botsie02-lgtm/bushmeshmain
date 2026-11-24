@@ -26,6 +26,7 @@ import {
   isOfflineTileUri,
   isValidMapCoordinate,
   mapPackBoundsCenter,
+  mapAccuracyRadiusPixels,
   planConvoyMapTiles,
   resolveConvoyMapCamera,
   screenPixel,
@@ -34,6 +35,7 @@ import {
 } from './convoyMapModel';
 import {MapCoordinate} from './offlineMapPacks';
 import {nativeOfflineTileSource} from './nativeOfflineTileSource';
+import type {FieldChannelPosition} from './fieldChannelPositionAdapter';
 import {BoundedOfflineTileQueue, tileRequestsNearestCentre} from './offlineTileQueue';
 import {colors} from '../theme/colors';
 
@@ -57,6 +59,8 @@ export type ConvoyMapProps = {
   packCatalog: readonly BushMeshMapPackCatalogEntry[];
   tileSource?: ConvoyMapTileSource;
   overlays?: readonly ConvoyMapOverlay[];
+  /** Diagnostic only. These are not authenticated convoy members. */
+  fieldChannelPositions?: readonly FieldChannelPosition[];
   height?: number;
   nowMs?: number;
 };
@@ -64,6 +68,7 @@ export type ConvoyMapProps = {
 type TileLoadState = 'loading' | 'loaded' | 'missing' | 'error';
 
 const EMPTY_OVERLAYS: readonly ConvoyMapOverlay[] = [];
+const EMPTY_FIELD_POSITIONS: readonly FieldChannelPosition[] = [];
 
 function statusLabel(ageSeconds: number): string {
   if (ageSeconds < 60) {
@@ -105,6 +110,7 @@ export function ConvoyMap({
   packCatalog,
   tileSource = nativeOfflineTileSource,
   overlays = EMPTY_OVERLAYS,
+  fieldChannelPositions = EMPTY_FIELD_POSITIONS,
   height = 350,
   nowMs,
 }: ConvoyMapProps): React.JSX.Element {
@@ -113,6 +119,7 @@ export function ConvoyMap({
   const [cameraMode, setCameraMode] = useState<ConvoyMapCameraMode>('follow-self');
   const [orientation, setOrientation] = useState<ConvoyMapOrientation>('north-up');
   const [requestedPackId, setRequestedPackId] = useState<string | null>(null);
+  const [showFieldPositions, setShowFieldPositions] = useState(false);
   const [zoom, setZoom] = useState(13);
   const [manualCenter, setManualCenter] = useState<MapCoordinate | null>(null);
   const [uris, setUris] = useState<Record<string, string>>({});
@@ -310,8 +317,19 @@ export function ConvoyMap({
     const isSelf = point.kind === 'self';
     const stale = point.lastKnown;
     const heading = point.headingDegrees ?? 0;
+    const accuracyRadius = mapAccuracyRadiusPixels(
+      point.coordinate.latitude, displayZoom, point.accuracyMeters,
+    );
     return (
       <View key={point.id} style={[styles.markerAnchor, {left: xy.left, top: xy.top}]}>
+        {accuracyRadius !== null ? (
+          <View pointerEvents="none" style={[
+            styles.accuracyRing,
+            {width: accuracyRadius * 2, height: accuracyRadius * 2,
+              left: -accuracyRadius, top: -accuracyRadius,
+              borderRadius: accuracyRadius},
+          ]} />
+        ) : null}
         <View style={[
           styles.marker,
           isSelf ? styles.selfMarker : styles.memberMarker,
@@ -338,7 +356,8 @@ export function ConvoyMap({
   if (center) {
     overlays.forEach(overlay => {
       const points = overlay.points.filter(isValidMapCoordinate);
-      if (overlay.kind === 'route' && points.length >= 2) {
+      if ((overlay.kind === 'route' || overlay.kind === 'trail') &&
+          points.length >= 2) {
         for (let i = 1; i < points.length; i += 1) {
           const a = screenPixel(points[i - 1], center, displayZoom, viewport);
           const b = screenPixel(points[i], center, displayZoom, viewport);
@@ -349,12 +368,14 @@ export function ConvoyMap({
           lineElements.push(
             <View key={`${overlay.id}:${i}`} style={[
               styles.routeLine,
+              overlay.kind === 'trail' && styles.trailLine,
               {left: a.left, top: a.top, width: length,
                 transform: [{rotate: `${Math.atan2(b.top - a.top, b.left - a.left) * 180 / Math.PI}deg`}]},
             ]} />,
           );
         }
-      } else if (overlay.kind !== 'route' && points[0]) {
+      } else if (overlay.kind !== 'route' &&
+        overlay.kind !== 'trail' && points[0]) {
         const xy = screenPixel(points[0], center, displayZoom, viewport);
         overlayPoints.push(
           <View key={overlay.id} style={[styles.overlayAnchor, {left: xy.left, top: xy.top}]}>
@@ -366,6 +387,38 @@ export function ConvoyMap({
           </View>,
         );
       }
+    });
+  }
+
+  // Deliberately separate, opt-in field-test radio position layer.
+  // This never enters the authorised convoy scene, camera framing or
+  // membership/route data model.
+  const fieldNodes: React.JSX.Element[] = [];
+  if (showFieldPositions && center) {
+    fieldChannelPositions.slice(0, 24).forEach(field => {
+      if (field.trust !== 'unverified-channel' ||
+          !isValidMapCoordinate(field.coordinate) ||
+          !Number.isFinite(field.receivedAtMs) ||
+          field.receivedAtMs > (nowMs ?? clockMs) + 30_000) return;
+      const px = screenPixel(field.coordinate, center, displayZoom, viewport);
+      if (px.left < -75 || px.left > viewport.width + 75 ||
+          px.top < -75 || px.top > viewport.height + 75) return;
+      const age = Math.max(0, Math.floor(((nowMs ?? clockMs) - field.receivedAtMs) / 1000));
+      fieldNodes.push(
+        <View key={'field:' + field.id} style={[
+          styles.fieldAnchor, {left: px.left, top: px.top},
+        ]}>
+          <View style={styles.fieldDot} />
+          <View style={styles.fieldLabel}>
+            <Text numberOfLines={1} style={styles.fieldText}>
+              {field.simulated ? 'SIMULATED RADIO' : 'UNVERIFIED RADIO'} · {field.label}
+            </Text>
+            <Text style={styles.fieldAge}>
+              {statusLabel(age)} · NOT A CONVOY MEMBER
+            </Text>
+          </View>
+        </View>,
+      );
     });
   }
 
@@ -402,6 +455,13 @@ export function ConvoyMap({
         {missingTiles > 0 ? (
           <MapButton label="RETRY TILES" onPress={() => tileQueueRef.current?.retryVisible()} />
         ) : null}
+        {fieldChannelPositions.length > 0 ? (
+          <MapButton
+            label={showFieldPositions ? 'RADIO DIAG ON' : 'RADIO DIAG OFF'}
+            selected={showFieldPositions}
+            onPress={() => setShowFieldPositions(value => !value)}
+          />
+        ) : null}
       </View>
 
       <View style={[styles.canvas, {height}]} onLayout={onLayout} {...panResponder.panHandlers}>
@@ -422,6 +482,7 @@ export function ConvoyMap({
             {lineElements}
             {overlayPoints}
             {scene.points.map(renderPoint)}
+            {fieldNodes}
           </View>
         ) : (
           <View style={styles.centerEmpty}>
@@ -436,11 +497,11 @@ export function ConvoyMap({
         </View>
       </View>
 
-      {loadedTiles > 0 && pack?.manifest.attribution ? (
+      {pack?.manifest.attribution ? (
         <Text style={styles.attribution}>{pack.manifest.attribution}</Text>
       ) : null}
       {pack && center && !coordinateInManifest(center, pack.manifest) ? (
-        <Text style={styles.warning}>Outside the selected pack's declared coverage. Offline tiles may be missing here.</Text>
+        <Text style={styles.warning}>Outside verified pack bounds. No remote imagery will be fetched. Select another verified region or VIEW PACK.</Text>
       ) : null}
       {!pack ? (
         <Text style={styles.warning}>Download and verify a real map pack before driving offline. Demo coverage is not a basemap.</Text>
@@ -465,6 +526,18 @@ export function ConvoyMap({
         </View>
       ) : null}
 
+      {showFieldPositions ? (
+        <Text style={styles.warning}>
+          RADIO DIAGNOSTIC OVERLAY · These positions are unverified field-test
+          observations, not authorised convoy membership or safe guidance.
+        </Text>
+      ) : null}
+      {scene.self?.accuracyMeters != null ? (
+        <Text style={scene.self.accuracyMeters > 100 ? styles.warning : styles.summaryText}>
+          GPS horizontal accuracy approximately ±{Math.round(scene.self.accuracyMeters)} m
+          {scene.self.lastKnown ? ' · LAST KNOWN, NOT LIVE' : ''}
+        </Text>
+      ) : null}
       <View style={styles.summaryRow}>
         <Text style={styles.summaryText}>
           {activeConvoyId === null ? 'NO ACTIVE CONVOY · OWN POSITION ONLY' :
@@ -513,6 +586,18 @@ const styles = StyleSheet.create({
   bottomLegend: {position: 'absolute', bottom: 5, right: 6, backgroundColor: colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 4},
   legendText: {color: colors.textSecondary, fontSize: 9},
   routeLine: {height: 3, backgroundColor: colors.accent, position: 'absolute'},
+  trailLine: {height: 2, backgroundColor: '#64D6C0'},
+  accuracyRing: {position: 'absolute', borderWidth: 1, borderColor: '#70CBFF',
+    backgroundColor: 'rgba(112,203,255,0.10)'},
+  fieldAnchor: {position: 'absolute', width: 0, height: 0},
+  fieldDot: {position: 'absolute', width: 14, height: 14,
+    borderWidth: 2, borderColor: colors.warning, borderRadius: 3,
+    left: -7, top: -7, transform: [{rotate: '45deg'}]},
+  fieldLabel: {position: 'absolute', top: 10, left: -75, width: 150,
+    padding: 4, backgroundColor: colors.surfaceSoft, borderWidth: 1,
+    borderStyle: 'dashed', borderColor: colors.warning, borderRadius: 6},
+  fieldText: {color: colors.warning, fontWeight: '900', fontSize: 8},
+  fieldAge: {color: colors.textSecondary, fontSize: 7, marginTop: 2},
   overlayAnchor: {position: 'absolute', width: 0, height: 0},
   overlayPill: {position: 'absolute', top: -10, left: -45, width: 90, backgroundColor: colors.warning, borderRadius: 7, padding: 3},
   overlayText: {color: colors.background, fontSize: 8, fontWeight: '900', textAlign: 'center'},
