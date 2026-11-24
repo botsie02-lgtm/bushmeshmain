@@ -8,6 +8,9 @@ import {
   screenPixel,
   selectRenderableMapPack,
   mapPackBoundsCenter,
+  mapAccuracyRadiusPixels,
+  stabilizeConvoyMapCamera,
+  tileIntersectsMapPack,
 } from '../src/maps/convoyMapModel';
 import {BushMeshMapPackCatalogEntry} from '../src/maps/mapPackCatalog';
 
@@ -132,7 +135,9 @@ describe('verified offline tile planning', () => {
     const right = screenPixel({latitude: 0, longitude: -179.9}, center, 5, {width: 300, height: 300});
     expect(right.left).toBeGreaterThan(150);
     expect(right.left).toBeLessThan(200);
-    const tiles = planConvoyMapTiles(pack(), center, 5, {width: 300, height: 300});
+    const aroundDateLine = pack();
+    aroundDateLine.manifest.bounds = {south: -5, west: 170, north: 5, east: -170};
+    const tiles = planConvoyMapTiles(aroundDateLine, center, 5, {width: 300, height: 300});
     expect(tiles.some(tile => tile.x === 0)).toBe(true);
   });
 
@@ -174,4 +179,71 @@ describe('map pack field-test camera shortcut', () => {
       ...manifest, bounds: {south: -2, west: 170, north: 2, east: -170},
     })).toEqual({latitude: 0, longitude: -180});
   });
+});
+
+describe('Wave 5 map camera and verified coverage', () => {
+  it('suppresses only tiny following jitter and keeps meaningful turns/moves', () => {
+    const prior = {
+      mode: 'follow-self' as const,
+      center: {latitude: -37.81, longitude: 144.98},
+      rotationDegrees: -33,
+    };
+    const jitter = stabilizeConvoyMapCamera(prior, {
+      ...prior, center: {latitude: -37.8100001, longitude: 144.9800001},
+      rotationDegrees: -34,
+    }, 14);
+    expect(jitter.center).toBe(prior.center);
+    expect(jitter.rotationDegrees).toBe(-33);
+    const moved = stabilizeConvoyMapCamera(prior, {
+      ...prior, center: {latitude: -37.82, longitude: 144.99},
+      rotationDegrees: -45,
+    }, 14);
+    expect(moved.center).toEqual({latitude: -37.82, longitude: 144.99});
+    expect(moved.rotationDegrees).toBe(-45);
+  });
+
+  it('never asks the archive for raster tiles outside its declared coverage', () => {
+    const melbourne = pack();
+    melbourne.manifest.bounds = {south: -37.84, west: 144.94, north: -37.78, east: 145.02};
+    const inside = planConvoyMapTiles(melbourne,
+      {latitude: -37.81, longitude: 144.98}, 13, {width: 320, height: 300});
+    const outside = planConvoyMapTiles(melbourne,
+      {latitude: -33.86, longitude: 151.2}, 13, {width: 320, height: 300});
+    expect(inside.length).toBeGreaterThan(0);
+    expect(outside).toHaveLength(0);
+    expect(inside.every(tile => tileIntersectsMapPack(tile, melbourne.manifest))).toBe(true);
+  });
+
+  it('retains unique render identities at wrapped world boundaries', () => {
+    const p = pack();
+    p.manifest.bounds = {south: -85, west: -180, north: 85, east: 180};
+    const tiles = planConvoyMapTiles(p, {latitude: 0, longitude: 0}, 0,
+      {width: 400, height: 300});
+    expect(new Set(tiles.map(tile => tile.renderKey)).size).toBe(tiles.length);
+  });
+});
+
+describe('Wave 5 map GPS uncertainty indicator', () => {
+  it('keeps accuracy circles bounded and ignores unavailable quality data', () => {
+    expect(mapAccuracyRadiusPixels(-37.8, 13, null)).toBeNull();
+    expect(mapAccuracyRadiusPixels(-37.8, 13, -1)).toBeNull();
+    const good = mapAccuracyRadiusPixels(-37.8, 13, 25);
+    expect(good).not.toBeNull();
+    expect(good!).toBeGreaterThanOrEqual(3);
+    expect(mapAccuracyRadiusPixels(-37.8, 13, 100_000)).toBe(90);
+  });
+});
+
+it('refuses future-dated fixes as current self or authorised remote positions', () => {
+  const atMs = 100_000;
+  const future = {
+    latitude: -37.8, longitude: 145, headingDegrees: 40,
+    receivedAtMs: atMs + 100_000,
+  };
+  const scene = buildConvoyMapScene(future, [
+    {id: 'future-member', label: 'Future', position: future},
+  ], atMs);
+  expect(scene.self).toBeNull();
+  expect(scene.points).toHaveLength(0);
+  expect(scene.missingMembers).toEqual([{id: 'future-member', label: 'Future'}]);
 });

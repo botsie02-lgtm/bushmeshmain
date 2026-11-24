@@ -146,3 +146,53 @@ Use the reviewed manifest + Android document picker to install it. No
 installed archive is bundled with BushMesh, and this is a roads-only
 basemap, not a terrain-hillshade/topographic map. VIEW PACK recentres the
 map without changing location-session ownership or convoy authorisation.
+
+
+## Wave 5 renderer and diagnostics contracts
+
+Wave 5 builds only on the verified native MBTiles/PMTiles import/reader and
+the existing MapScreen/LocationSession/RouteSession context. It does NOT
+rewrite radio packet handling, GPS acquisition, identity, membership or the
+Melbourne OSM archive and its SHA-256 verification receipt.
+
+- BoundedOfflineTileQueue limits app-side concurrent tile reads to four and
+  retains at most 20 base64 image URIs for the current viewport, nearest
+  map-centre tiles first. It rejects stale responses after a pack generation
+  changes, releases offscreen URI references, and does not retry absent tiles
+  until a user presses RETRY TILES. Native separately limits read queue, tile
+  image bytes and verifies the installed archive receipt/digest.
+- Individual tile Image components retain stable unwrapped render keys while
+  panning to reduce full image re-mounts. No new network fallback, map SDK or
+  background downloader is introduced. Bitmap cache size is still controlled
+  by React Native and Android; 20 JS URIs is not a total native heap guarantee.
+- Declared map-pack coverage is applied to each tile read. Out-of-bounds
+  coordinates are culled; the warning labels this as outside the VERIFIED pack.
+  No geographic coverage beyond the actual manifest is inferred.
+- FOLLOW keeps a live self GPS camera while zooming, VIEW PACK opens the
+  selected pack without GPS, and free pan uses bounded delta-based live dragging.
+  Sub-3px position jitter and sub-2-degree heading changes are suppressed in
+  the map viewport only; raw LocationSession fixes are unmodified. North-up
+  remains an explicit fallback for stale headings.
+- The map displays approximate GPS horizontal accuracy rings when a fix
+  includes valid accuracy. Stale/last-known positions remain clearly labelled;
+  neither accuracy nor current-location truth is invented.
+- MapScreen projects the existing *persisted* GPS TrackRecorder points as
+  a maximum 128-vertex read-only polyline, without changing recording,
+  distance accumulation, restoration, clearing, or the existing complete
+  GPX export. Trail styling is distinct from an actual route-engine line.
+- A separate fieldChannelPositions map input is a diagnostic projection of
+  radio-heard legacy ConvoyContext vehicles, NOT authorisedMembers. Its
+  maximum 24 positions require the user to toggle RADIO DIAG ON, are labelled
+  UNVERIFIED RADIO (or SIMULATED RADIO), and are excluded from authorised
+  member counts, map follow/framing, route planning and security state.
+  The adapter contract is src/maps/fieldChannelPositionAdapter.ts. Never
+  repurpose this diagnostic array as proof of convoy security enrolment.
+- Route geometry is shown only if the independently attached RouteSession
+  engine has supplied an active valid route plan. The map reduces its drawn
+  geometry to a maximum 128 vertices and displays the engine's recorded
+  remaining distance. No road graph is included in raster MBTiles/PMTiles:
+  no routing engine, offline road guidance, manoeuvres or new topology
+  is invented here. Existing direct-bearing navigation remains distinct.
+
+See docs/WAVE5_OFFLINE_NAVIGATION_FIELD_TEST.md for field checks and
+acceptance scope. The existing Melbourne OSM map pack stays unchanged.

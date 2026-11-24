@@ -214,3 +214,53 @@ it('loads verified Melbourne pack tiles using VIEW PACK without GPS or convoy au
   expect(JSON.stringify(tree.toJSON())).not.toContain('authorised-lead');
   await act(async () => tree.unmount());
 });
+
+describe('Wave 5 field positions are never convoy-member authority', () => {
+  it('hides radio observations by default and labels them when explicitly enabled', async () => {
+    const fieldPosition = {
+      id: 'radio-only', label: 'FieldTest', coordinate: {
+        latitude: self.latitude, longitude: self.longitude,
+      },
+      receivedAtMs: now - 3000, accuracyMeters: 25, simulated: false,
+      trust: 'unverified-channel' as const,
+    };
+    let tree!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = TestRenderer.create(
+        <ConvoyMap activeConvoyId={null} authorisedMembers={[member]}
+          selfFix={self} packCatalog={[]} fieldChannelPositions={[fieldPosition]}
+          nowMs={now} />,
+      );
+    });
+    expect(JSON.stringify(tree.toJSON())).not.toContain('UNVERIFIED RADIO');
+    expect(JSON.stringify(tree.toJSON())).not.toContain('authorised-lead');
+    const press = tree.root.findAll(node =>
+      typeof node.props.onPress === 'function' &&
+      node.findAllByType(Text).some(child => child.props.children === 'RADIO DIAG OFF'),
+    )[0];
+    expect(press).toBeDefined();
+    await act(async () => press.props.onPress());
+    const text = JSON.stringify(tree.toJSON());
+    expect(text).toContain('UNVERIFIED RADIO');
+    expect(text).toContain('NOT A CONVOY MEMBER');
+    expect(text).toContain('NO ACTIVE CONVOY');
+    expect(text).not.toContain('authorised-lead');
+    await act(async () => tree.unmount());
+  });
+
+  it('draws recorded trail separately from a local routing plan', async () => {
+    let tree!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = TestRenderer.create(
+        <ConvoyMap activeConvoyId={null} authorisedMembers={[]}
+          selfFix={self} packCatalog={[]} nowMs={now}
+          overlays={[{
+            id: 'recorded-only', kind: 'trail', label: 'Saved trail',
+            points: [self, {...self, longitude: self.longitude + 0.0003}],
+          }]} />,
+      );
+    });
+    expect(JSON.stringify(tree.toJSON())).toContain('#64D6C0');
+    await act(async () => tree.unmount());
+  });
+});
