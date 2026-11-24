@@ -12,7 +12,7 @@ import {
   GpsPreferencesV1,
   gpsAcquisitionHint,
 } from './gpsPreferenceCodec';
-import {GpsReadinessSnapshot} from './gpsReadiness';
+import {GpsNativeDelivery, GpsReadinessSnapshot} from './gpsReadiness';
 
 export type GpsObservedSource = 'android-gps' | 'simulation' | 'other' | 'none';
 export type HeadingQuality =
@@ -375,6 +375,7 @@ export function gpsFieldExportSummary(input: {
   preferences: GpsPreferencesV1;
   nowMs: number;
   includePreciseCoordinates?: boolean;
+  nativeDelivery?: GpsNativeDelivery | null;
 }): Record<string, unknown> {
   const {report, preferences, nowMs} = input;
   const fix = report.diagnostics?.fix;
@@ -390,6 +391,24 @@ export function gpsFieldExportSummary(input: {
     requestedMinUpdateMs: report.requestHintMs,
     requestedMinDistanceMeters: report.requestHintMeters,
     measuredObservedIntervals: report.statistics,
+    nativeCallbackMeasurements: input.nativeDelivery ? {
+      callbackCount: input.nativeDelivery.callbackCount,
+      intervalCount: input.nativeDelivery.intervalCount,
+      meanIntervalMs: input.nativeDelivery.meanIntervalMs,
+      medianIntervalMs: input.nativeDelivery.medianIntervalMs,
+      p95IntervalMs: input.nativeDelivery.p95IntervalMs,
+      maxIntervalMs: input.nativeDelivery.maxIntervalMs,
+      latestFixAgeMs: input.nativeDelivery.latestFixAgeMs,
+      callbackSilenceMs: input.nativeDelivery.callbackSilenceMs,
+      rejectedClockSamples: input.nativeDelivery.rejectedClockSamples,
+      requestedMinTimeMs: input.nativeDelivery.requestedMinTimeMs,
+      requestedMinDistanceMeters: input.nativeDelivery.requestedMinDistanceMeters,
+      accuracyMeters: input.nativeDelivery.accuracyMeters,
+      speedKmh: input.nativeDelivery.speedKmh,
+      speedAccuracyKmh: input.nativeDelivery.speedAccuracyKmh,
+      bearingDegrees: input.nativeDelivery.bearingDegrees,
+      bearingAccuracyDegrees: input.nativeDelivery.bearingAccuracyDegrees,
+    } : null,
     readiness: {
       availability: report.diagnostics?.availability ?? 'unknown',
       foregroundStartReady: report.diagnostics?.foregroundStartReady ?? false,
@@ -415,7 +434,8 @@ export function gpsFieldExportSummary(input: {
     warnings: report.notes,
     limits: {
       intervalsMeasuredAt: 'Mounted React Native UI only',
-      nativeFixCallbackTimestamps: false,
+      nativeFixCallbackTimestamps: input.nativeDelivery !== null &&
+        input.nativeDelivery !== undefined,
       radioPositionSchedulerChanged: false,
       batteryCurrentMeasured: false,
       processRestartTrackingVerified: false,

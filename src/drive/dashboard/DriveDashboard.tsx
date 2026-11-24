@@ -13,6 +13,8 @@ import type {DriveDashboardModel} from './driveDashboardModel';
 
 export type DriveDashboardProps = {
   model: DriveDashboardModel;
+  /** Optional connected, read-only GPS and radio readiness banner. */
+  gpsStatusBanner?: React.ReactNode;
   packCatalog: readonly BushMeshMapPackCatalogEntry[];
   onOpenMap: () => void;
   onOpenConvoy: () => void;
@@ -83,7 +85,7 @@ function Section({title, children}: {
 export function DriveDashboard({
   model, packCatalog, onOpenMap, onOpenConvoy, onOpenRadio, onOpenDevice,
   onQuickAction, onDismissVerifiedAlert, busyAction = null, actionResult = null,
-  showInlineMap = false, nowMs,
+  showInlineMap = false, nowMs, gpsStatusBanner,
 }: DriveDashboardProps): React.JSX.Element {
   const [confirmAction, setConfirmAction] = useState<{
     code: BushMeshQuickActionCode;
@@ -148,6 +150,8 @@ export function DriveDashboard({
           onPress={onOpenMap}
         />
       </View>
+
+      {gpsStatusBanner}
 
       <Section title="Safety alerts">
         <View style={styles.panel}>

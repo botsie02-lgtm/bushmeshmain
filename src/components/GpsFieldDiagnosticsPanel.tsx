@@ -144,6 +144,7 @@ export function GpsFieldDiagnosticsPanel(): React.JSX.Element {
       const summary = gpsFieldExportSummary({
         report, preferences, nowMs: Date.now(),
         includePreciseCoordinates: includeCoordinates,
+        nativeDelivery: readiness?.nativeDelivery ?? null,
       });
       const filename = 'bushmesh-gps-field-' +
         new Date().toISOString().replace(/[:.]/g, '-') + '.json';
@@ -160,6 +161,7 @@ export function GpsFieldDiagnosticsPanel(): React.JSX.Element {
   };
 
   const diag = report.diagnostics;
+  const native = readiness?.nativeDelivery ?? null;
   const s = report.statistics;
   const ongoing = session.status === 'tracking' ||
     session.status === 'tracking-no-link';
@@ -246,6 +248,64 @@ export function GpsFieldDiagnosticsPanel(): React.JSX.Element {
           timing or promises that Android met the requested rate. Background
           suspension, unmounts and missed renders are not counted reliably.
           Changing profiles takes effect on the next explicit GPS start.
+        </Text>
+      </View>
+
+      <View style={styles.subsection}>
+        <Text style={styles.subheading}>Android GPS callbacks · measured natively</Text>
+        <Text style={styles.body}>
+          These intervals come from LocationManager callbacks using Android
+          elapsedRealtime. They are separate from requested GPS hints and UI
+          observation gaps. Values reset on each explicit GPS start.
+        </Text>
+        <Reading name="Native callbacks" value={native
+          ? String(native.callbackCount) : 'Not available on this Android build'} />
+        <Reading name="Native measured intervals" value={native
+          ? String(native.intervalCount) : 'Not available'} />
+        <Reading name="Native measured callback rate"
+          value={native?.meanIntervalMs == null || native.meanIntervalMs <= 0
+            ? 'Insufficient native callbacks'
+            : (1000 / native.meanIntervalMs).toFixed(2) + ' Hz (measured)'} />
+        <View style={styles.reading}>
+          <Text style={styles.label}>Native mean / p95 interval</Text>
+          <Text style={styles.value}>{native?.meanIntervalMs == null
+            ? 'Not observed' : (native.meanIntervalMs / 1000).toFixed(1) + ' s / ' +
+              (native.p95IntervalMs == null
+                ? '—' : (native.p95IntervalMs / 1000).toFixed(1) + ' s')}</Text>
+        </View>
+        <View style={styles.reading}>
+          <Text style={styles.label}>Native longest callback gap</Text>
+          <Duration ms={native?.maxIntervalMs ?? null} />
+        </View>
+        <View style={styles.reading}>
+          <Text style={styles.label}>Native callback silence</Text>
+          <Duration ms={native?.callbackSilenceMs ?? null} />
+        </View>
+        <View style={styles.reading}>
+          <Text style={styles.label}>Monotonic GPS fix age</Text>
+          <Duration ms={native?.latestFixAgeMs ?? null} />
+        </View>
+        <Reading name="Native clock anomalies"
+          value={native ? String(native.rejectedClockSamples) : 'Not observed'} />
+        <Reading name="Actually requested this GPS session"
+          value={native?.requestedMinTimeMs == null
+            ? 'No native session request recorded'
+            : (native.requestedMinTimeMs / 1000).toFixed(1) + ' s / ' +
+              (native.requestedMinDistanceMeters ?? 0) + ' m'} />
+        <Reading name="Native speed / uncertainty"
+          value={native?.speedKmh == null ? 'Not reported'
+            : native.speedKmh.toFixed(1) + ' km/h' +
+              (native.speedAccuracyKmh == null ? ' · ±unknown'
+                : ' · ±' + native.speedAccuracyKmh.toFixed(1) + ' km/h')} />
+        <Reading name="Native course / uncertainty"
+          value={native?.bearingDegrees == null ? 'Not reported'
+            : native.bearingDegrees.toFixed(0) + '°' +
+              (native.bearingAccuracyDegrees == null ? ' · ±unknown'
+                : ' · ±' + native.bearingAccuracyDegrees.toFixed(0) + '°')} />
+        <Text style={styles.note}>
+          The Android monotonic age and callback frequency are unavailable
+          after native process death, or when the native provider is stopped
+          and no new fix has arrived. They do not certify screen-locked tracking.
         </Text>
       </View>
 

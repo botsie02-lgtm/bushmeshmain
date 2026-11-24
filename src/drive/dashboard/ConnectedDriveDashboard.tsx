@@ -1,6 +1,7 @@
 import React from 'react';
 import {BushMeshQuickActionCode} from '../../bushmesh/legacyProtocol';
 import {DriveDashboard} from './DriveDashboard';
+import {DriveGpsStatusBanner} from './DriveGpsStatusBanner';
 import type {DriveDashboardProps} from './DriveDashboard';
 import {
   useDriveDashboardController,
@@ -33,6 +34,7 @@ export function ConnectedDriveDashboard(
   return (
     <DriveDashboard
       model={controller.model}
+      gpsStatusBanner={<DriveGpsStatusBanner radioStatus={controller.model.radioStatus} />}
       packCatalog={controller.packCatalog}
       onOpenMap={props.onOpenMap}
       onOpenConvoy={props.onOpenConvoy}
