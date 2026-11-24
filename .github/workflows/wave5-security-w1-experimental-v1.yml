@@ -1,0 +1,105 @@
+name: Wave 5 W1 research gate (no private keys)
+
+on:
+  push:
+    branches:
+      - feature/wave5-security-w1-experimental-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wave5-security-w1-experimental-v1
+  cancel-in-progress: true
+
+jobs:
+  typescript-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Complete existing Jest suite (no W1 JS registration)
+        run: npm test -- --runInBand
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npm run lint
+
+  native-w1-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Build original app without installing it or enabling W1
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+      - name: Run existing H1 native regression suite unchanged
+        working-directory: android
+        run: ./gradlew :securitycore:testDebugUnitTest --no-daemon
+      - name: Compile and test isolated W1 refusal/policy research module
+        working-directory: android
+        run: ./gradlew :securityw1research:testDebugUnitTest :securityw1research:assembleDebug --no-daemon
+      - name: Compile unchanged standalone zero-radio probe and instrumented tests
+        working-directory: android
+        run: ./gradlew :securityprobe:assembleDebug :securityprobe:assembleDebugAndroidTest --no-daemon
+      - name: Verify W1 is NOT in production or probe dependency graph
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :app:dependencies --configuration debugRuntimeClasspath > /tmp/w1-app-runtime.txt
+          ./gradlew :securityprobe:dependencies --configuration debugRuntimeClasspath > /tmp/w1-probe-runtime.txt
+          if grep -F 'project :securityw1research' /tmp/w1-app-runtime.txt /tmp/w1-probe-runtime.txt; then
+            echo 'ERROR: W1 research module included in operational app or probe' >&2
+            exit 1
+          fi
+          test ! -d securityw1research/build/outputs/apk
+          if grep -R -E 'implementation\(project\(":securityw1research"\)\)' app/build.gradle securityprobe/build.gradle; then
+            echo 'ERROR: W1 dependency unexpectedly added' >&2
+            exit 1
+          fi
+          echo 'PASS: no W1 library in app/probe; no W1 APK produced'
+      - name: Confirm legacy probe remains independently installable and zero-permission
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROBE=android/securityprobe/build/outputs/apk/debug/securityprobe-debug.apk
+          TEST=android/securityprobe/build/outputs/apk/androidTest/debug/securityprobe-debug-androidTest.apk
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          test -s "$PROBE" && test -s "$TEST"
+          "$AAPT" dump badging "$PROBE" > /tmp/w1-probe-badging.txt
+          grep -q "^package: name='com.bushmesh.securityprobe'" /tmp/w1-probe-badging.txt
+          if grep -E '^uses-permission' /tmp/w1-probe-badging.txt; then exit 1; fi
+          "$AAPT" dump badging "$TEST" > /tmp/w1-test-badging.txt
+          grep -q "^package: name='com.bushmesh.securityprobe.test'" /tmp/w1-test-badging.txt
+          if unzip -p "$PROBE" 'classes*.dex' | strings |
+            grep -E 'Lcom/bushmesh/w1research/|Lcom/bushmeshmain/radio/'; then
+            echo 'ERROR: W1 or radio code shipped in legacy probe' >&2
+            exit 1
+          fi
+          echo 'PASS: existing H1 probe namespace/isolation intact; this is NOT a W1 APK'
+      - name: Upload safe W1 unit-test evidence only, not an APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: w1-research-refusal-junit-${{ github.sha }}
+          path: android/securityw1research/build/test-results/testDebugUnitTest/*.xml
+          if-no-files-found: error
+          retention-days: 21
