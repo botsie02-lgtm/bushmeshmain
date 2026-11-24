@@ -14,6 +14,8 @@ const START = 1_800_000_000_000;
 const MODEM = {spreadingFactor: 9, bandwidthKhz: 125, codingRate: 5 as const};
 
 class TestChannelRadio implements ChannelFieldRadioPort {
+  private static nextId = 1;
+  private readonly id = TestChannelRadio.nextId++;
   connected = true;
   privateChannel = true;
   modem: typeof MODEM | null = MODEM;
@@ -30,7 +32,7 @@ class TestChannelRadio implements ChannelFieldRadioPort {
   isConnected(): boolean {return this.connected;}
   isPrivateChannel(_index: number): boolean {return this.privateChannel;}
   currentModem() {return this.modem;}
-  randomBytes(): Promise<Uint8Array> {return Promise.resolve(Uint8Array.from(Array(12).fill(7)));}
+  randomBytes(): Promise<Uint8Array> {return Promise.resolve(Uint8Array.from(Array(12).fill(this.id % 255)));}
   subscribeMessages(listener: Parameters<ChannelFieldRadioPort['subscribeMessages']>[0]): () => void {
     this.incoming.add(listener);
     return () => {this.incoming.delete(listener);};
@@ -148,35 +150,35 @@ describe('Wave 5 two virtual radios and opt-in field-only sharing', () => {
   });
 
   it('blocks duplicates, stale and delayed samples, future stamps and wrong channel', async () => {
-    const {a, sender, receiver} = await pair();
+    const {a, b, sender, receiver} = await pair();
     await sender.shareLatestFix();
     const original = a.sent[0];
     const before = receiver.snapshot().remoteMarkers[0].receivedAtMs;
     a.onSend = null;
-    a.receive(original, now, 4);
+    b.receive(original, now, 4);
     expect(receiver.snapshot().remoteMarkers[0].receivedAtMs).toBe(before);
     const payload = decodeUnverifiedChannelPosition(original)!;
-    a.receive(encodeUnverifiedChannelPosition({...payload, sequence: 2}), now, 7);
+    b.receive(encodeUnverifiedChannelPosition({...payload, sequence: 2}), now, 7);
     expect(receiver.snapshot().remoteMarkers).toHaveLength(1);
-    a.receive(encodeUnverifiedChannelPosition({...payload, sequence: 2, issuedAtMs: now - 91_000}), now);
-    a.receive(encodeUnverifiedChannelPosition({...payload, sequence: 2, issuedAtMs: now + 6_000}), now);
-    a.receive(encodeUnverifiedChannelPosition({...payload, sequence: 2}), now, 4,
+    b.receive(encodeUnverifiedChannelPosition({...payload, sequence: 2, issuedAtMs: now - 91_000}), now);
+    b.receive(encodeUnverifiedChannelPosition({...payload, sequence: 2, issuedAtMs: now + 6_000}), now);
+    b.receive(encodeUnverifiedChannelPosition({...payload, sequence: 2}), now, 4,
       Math.floor(now / 1000) + 200);
     expect(receiver.snapshot().remoteMarkers[0].receivedAtMs).toBe(before);
     now += 91_000;
-    a.receive(original, now);
+    b.receive(original, now);
     expect(receiver.snapshot().remoteMarkers).toHaveLength(0);
   });
 
   it('sender labels are spoofable and never promoted to a verified transport source', async () => {
-    const {sender, receiver, a} = await pair();
+    const {sender, receiver, a, b} = await pair();
     await sender.shareLatestFix();
     const existing = decodeUnverifiedChannelPosition(a.sent[0])!;
     const spoofed = encodeUnverifiedChannelPosition({
       ...existing, sequence: 2, issuedAtMs: now + 1,
       claimedLabel: 'NotRealOwner', latitude: -37.83,
     });
-    a.receive(spoofed, now);
+    b.receive(spoofed, now);
     const marker = receiver.snapshot().remoteMarkers[0];
     expect(marker.claimedLabel).toBe('NotRealOwner');
     expect(marker.transportSourceDeviceId).toBeNull();
