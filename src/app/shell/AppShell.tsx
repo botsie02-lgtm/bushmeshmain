@@ -164,7 +164,7 @@ function ConvoySelector({openTools, openEnrolment, openFieldSection}: {
         eyebrow="AUTHORISED MEMBERSHIPS"
         title={status === 'checking' ? 'Checking…' : String(selectableConvoys.length) + ' available'}
         description={!localIdentityRef
-          ? 'No local radio identity is available yet. Connect or restore your device under Device.'
+          ? 'No authenticated Security identity is available. A MeshCore companion alone does not grant membership.'
           : selectableConvoys.length === 0
             ? 'No verified memberships are available. Carrier setup alone does not enrol or authorise a member.'
             : 'Selecting a convoy revalidates membership before activation.'}>
@@ -406,7 +406,10 @@ export function AppShell(): React.JSX.Element {
                 <Action label="Back to convoy selection" onPress={() => setConvoyView('select')} secondary />
               </View>
               {/* Default null service/identity and false capabilities prevent production mutations. */}
-              <ConnectedConvoyEnrolment />
+              <ConnectedConvoyEnrolment
+                onOpenDrive={() => {setDriveView('home'); setActiveTab('drive');}}
+                onOpenMap={() => {setDriveView('map'); setActiveTab('drive');}}
+              />
             </View>
           ) : (
             <View style={styles.screen}>
