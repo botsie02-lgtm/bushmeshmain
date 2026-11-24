@@ -22,7 +22,7 @@ object W1RecoveryRefusal {
   /** No outcome permits key use, even if a test fixture reports an AES TEE. */
   enum class Outcome {
     EMPTY, QUARANTINE_INCOMPLETE, QUARANTINE_FAILED_CLEANUP,
-    RETIRED_PERMANENT, MISSING_OR_INVALIDATED_WRAPPER,
+    RETIRED_PERMANENT, WRAPPER_MISSING, WRAPPER_INVALIDATED,
     STALE_EPOCH, CONFLICTING_OPERATION, SNAPSHOT_ROLLBACK_UNRESOLVED,
     RESEARCH_BLOCKED
   }
@@ -41,7 +41,8 @@ object W1RecoveryRefusal {
       return Outcome.QUARANTINE_FAILED_CLEANUP
     }
     if (saved.state == State.ABSENT) return Outcome.EMPTY
-    if (!wrapperPresent || wrapperInvalidated) return Outcome.MISSING_OR_INVALIDATED_WRAPPER
+    if (!wrapperPresent) return Outcome.WRAPPER_MISSING
+    if (wrapperInvalidated) return Outcome.WRAPPER_INVALIDATED
     if (saved.identityEpoch < 1 || saved.identityEpoch != expectedEpoch) return Outcome.STALE_EPOCH
     if (saved.operationId != expectedOperationId) return Outcome.CONFLICTING_OPERATION
     if (saved.state in setOf(State.PREPARING, State.SEALED_PENDING,
@@ -55,8 +56,8 @@ object W1RecoveryRefusal {
   fun requireUsable(outcome: Outcome): Nothing =
     W1ResearchGate.refuse(when (outcome) {
       Outcome.RETIRED_PERMANENT -> W1ResearchGate.RefusalCode.RETIREMENT_IS_FINAL
-      Outcome.MISSING_OR_INVALIDATED_WRAPPER ->
-        W1ResearchGate.RefusalCode.WRAPPING_KEY_MISSING
+      Outcome.WRAPPER_MISSING -> W1ResearchGate.RefusalCode.WRAPPING_KEY_MISSING
+      Outcome.WRAPPER_INVALIDATED -> W1ResearchGate.RefusalCode.WRAPPING_KEY_INVALIDATED
       Outcome.STALE_EPOCH -> W1ResearchGate.RefusalCode.STALE_EPOCH
       Outcome.CONFLICTING_OPERATION -> W1ResearchGate.RefusalCode.OPERATION_CONFLICT
       Outcome.QUARANTINE_FAILED_CLEANUP -> W1ResearchGate.RefusalCode.CLEANUP_FAILED
