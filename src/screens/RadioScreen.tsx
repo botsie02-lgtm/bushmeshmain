@@ -23,6 +23,7 @@ import {
 } from '../state/BushMeshContext';
 import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
+import {carrierMessageSummary, deriveRadioPresentation, scopedCarrierHistory} from './radioPresentation';
 
 function isPrivateChannel(channel: BushMeshChannel): boolean {
   return (
@@ -78,15 +79,26 @@ export function RadioScreen({
     activeChannelIndex,
     activeChannel,
     channelMessages,
+    messagePersistenceStatus,
+    messagePersistenceError,
     canSendChannelMessage,
     sendChannelMessage,
     addLocalChannelMessage,
     setActiveChannelIndex,
   } = useBushMesh();
   const {snapshot: radioSession} = useRadioSession();
-  const [messageText, setMessageText] = useState('');
-  const [sendStatus, setSendStatus] = useState<string | null>(null);
+  // Preserve drafts per carrier so switching channels cannot send old text on a new one.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [submitStatus, setSubmitStatus] = useState<Record<string, string>>({});
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const draftKey = activeChannel?.channelIndex ?? '';
+  const messageText = drafts[draftKey] ?? '';
+  const sendStatus = submitStatus[draftKey] ?? null;
+  const setMessageText = (text: string) =>
+    setDrafts(current => ({...current, [draftKey]: text}));
+  const setChannelStatus = (key: string, text: string) =>
+    setSubmitStatus(current => ({...current, [key]: text}));
   const [nativeTxMetrics, setNativeTxMetrics] = useState(() =>
     nativeOutboundDiagnostics.snapshot(),
   );
@@ -116,14 +128,17 @@ export function RadioScreen({
     [channels],
   );
   const activeHistory = useMemo(
-    () =>
-      activeChannel
-        ? channelMessages.filter(
-            message => message.channelIndex === activeChannel.channelIndex,
-          )
-        : channelMessages,
+    () => scopedCarrierHistory(activeChannel?.channelIndex ?? null, channelMessages),
     [activeChannel, channelMessages],
   );
+  const counts = useMemo(() => carrierMessageSummary(activeHistory), [activeHistory]);
+  const presentation = deriveRadioPresentation({
+    connected: connectionStatus === 'Connected',
+    canSendChannelMessage,
+    channelIndex: activeChannel?.channelIndex ?? null,
+    channelName: activeChannel?.channelName ?? null,
+    protocolTransportReady: radioSession.transportReady,
+  });
 
   const cleanMessage = messageText.trim();
   const messageBytes = Buffer.byteLength(cleanMessage, 'utf8');
@@ -139,6 +154,7 @@ export function RadioScreen({
     }
   }, [messageBytes, modem]);
   const canSend =
+    presentation.maySubmitCarrierText &&
     activeChannel !== null &&
     canSendChannelMessage &&
     cleanMessage.length > 0 &&
@@ -152,12 +168,13 @@ export function RadioScreen({
 
     const channelIndex = Number(activeChannel.channelIndex);
     if (!Number.isInteger(channelIndex)) {
-      setSendStatus('Active channel index is invalid.');
+      setChannelStatus(activeChannel.channelIndex, 'Active channel index is invalid.');
       return;
     }
 
     setIsSending(true);
-    setSendStatus(`Submitting to ${activeChannel.channelName}…`);
+    const submittedIndex = activeChannel.channelIndex;
+    setChannelStatus(submittedIndex, `Submitting to ${activeChannel.channelName}…`);
 
     try {
       await sendChannelMessage(channelIndex, cleanMessage);
@@ -168,8 +185,9 @@ export function RadioScreen({
         direction: 'sent',
         status: 'accepted',
       });
-      setMessageText('');
-      setSendStatus(
+      setDrafts(current => ({...current, [submittedIndex]: ''}));
+      setChannelStatus(
+        submittedIndex,
         'RADIO ACCEPTED — MeshCore PACKET_OK (0x00). Peer delivery is not confirmed.',
       );
     } catch (error) {
@@ -182,7 +200,7 @@ export function RadioScreen({
         status: 'failed',
         submissionFailure,
       });
-      setSendStatus(formatChannelSubmissionFailure(submissionFailure));
+      setChannelStatus(submittedIndex, formatChannelSubmissionFailure(submissionFailure));
     } finally {
       setIsSending(false);
     }
@@ -196,21 +214,18 @@ export function RadioScreen({
             <Text style={styles.eyebrow}>RADIO</Text>
             <Text style={styles.title}>Convoy comms</Text>
           </View>
-          <View
-            style={[
-              styles.linkPill,
-              connectionStatus === 'Connected'
-                ? styles.linkReady
-                : styles.linkOffline,
-            ]}>
-            <Text style={styles.linkText}>
-              {connectionStatus === 'Connected' ? 'NODE ONLINE' : 'OFFLINE'}
-            </Text>
+          <View style={[
+            styles.linkPill,
+            presentation.maySubmitCarrierText ? styles.linkReady : styles.linkOffline,
+          ]}>
+            <Text style={styles.linkText}>{presentation.badge}</Text>
           </View>
         </View>
+        <Text style={styles.summaryTitle}>{presentation.title}</Text>
+        <Text style={styles.body}>{presentation.explanation}</Text>
         <Text style={styles.body}>
-          Bushmesh separates radio acceptance from delivery. A message is only
-          labelled peer-confirmed after MeshCore reports the matching ACK.
+          Channel traffic is not an authenticated convoy conversation.
+          Radio acceptance is not peer delivery.
         </Text>
         {connectedDeviceName ? (
           <Text style={styles.nodeText}>Companion: {connectedDeviceName}</Text>
@@ -218,7 +233,7 @@ export function RadioScreen({
       </View>
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Active group</Text>
+        <Text style={styles.sectionTitle}>Carrier channel</Text>
         <Text style={styles.sectionMeta}>{visibleChannels.length} available</Text>
       </View>
 
@@ -233,7 +248,7 @@ export function RadioScreen({
               </Text>
             </View>
             <View style={styles.activeBadge}>
-              <Text style={styles.activeBadgeText}>ACTIVE</Text>
+              <Text style={styles.activeBadgeText}>SELECTED CARRIER</Text>
             </View>
           </View>
           <Text style={styles.securityText}>
@@ -249,7 +264,7 @@ export function RadioScreen({
         </View>
       ) : (
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No convoy channel selected</Text>
+          <Text style={styles.emptyTitle}>No carrier channel selected</Text>
           <Text style={styles.emptyText}>
             Connect a MeshCore companion node and let Bushmesh load its configured
             channels.
@@ -267,6 +282,9 @@ export function RadioScreen({
             return (
               <TouchableOpacity
                 key={channel.channelIndex}
+                accessibilityRole="button"
+                accessibilityLabel={'Choose carrier ' + channel.channelName}
+                accessibilityState={{selected: active}}
                 style={[styles.channelChip, active && styles.channelChipActive]}
                 onPress={() => setActiveChannelIndex(channel.channelIndex)}>
                 <Text
@@ -284,8 +302,13 @@ export function RadioScreen({
       ) : null}
 
       <View style={styles.composeCard}>
-        <Text style={styles.sectionTitle}>Message</Text>
+        <Text style={styles.sectionTitle}>Message this channel</Text>
+        <Text style={styles.smallHint}>
+          Text is submitted to the selected MeshCore carrier, not to a
+          verified BushMesh convoy. Drafts are retained separately by channel.
+        </Text>
         <TextInput
+          accessibilityLabel="Carrier message draft"
           style={styles.input}
           value={messageText}
           onChangeText={setMessageText}
@@ -295,14 +318,14 @@ export function RadioScreen({
           placeholderTextColor={colors.textMuted}
           multiline
           maxLength={133}
-          editable={activeChannel !== null}
+          editable={activeChannel !== null && !isSending}
         />
         <View style={styles.composeMeta}>
           <Text style={styles.characterCount}>
             {cleanMessage.length}/133 · {messageBytes} UTF-8 bytes
           </Text>
           <Text style={styles.transportState}>
-            {canSendChannelMessage ? 'MESHCORE READY' : 'RADIO NOT READY'}
+            {presentation.maySubmitCarrierText ? 'CARRIER SUBMISSION READY' : 'CARRIER NOT READY'}
           </Text>
         </View>
 
@@ -326,18 +349,34 @@ export function RadioScreen({
         </Text>
 
         <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Submit channel text to radio"
+          accessibilityState={{disabled: !canSend}}
           style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
           disabled={!canSend}
           onPress={() => {
             handleSend().catch(() => undefined);
           }}>
           <Text style={styles.sendButtonText}>
-            {isSending ? 'SUBMITTING…' : 'SEND OVER LORA'}
+            {isSending ? 'SUBMITTING…' : 'SUBMIT TO RADIO'}
           </Text>
         </TouchableOpacity>
         {sendStatus ? <Text style={styles.sendStatus}>{sendStatus}</Text> : null}
       </View>
 
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={showDiagnostics
+          ? 'Hide radio technical diagnostics' : 'Show radio technical diagnostics'}
+        accessibilityState={{expanded: showDiagnostics}}
+        style={styles.diagnosticsToggle}
+        onPress={() => setShowDiagnostics(current => !current)}>
+        <Text style={styles.diagnosticsToggleText}>
+          {showDiagnostics ? 'Hide technical diagnostics' : 'Show technical diagnostics'}
+        </Text>
+      </TouchableOpacity>
+      {showDiagnostics ? (
+      <>
       <View style={styles.inboundDiagnostics}>
         <Text style={styles.inboundTitle}>NATIVE OUTBOUND · MESHCORE COMMANDS</Text>
         <Text style={styles.inboundMeta}>
@@ -381,15 +420,35 @@ export function RadioScreen({
         ) : null}
       </View>
 
+      </>
+      ) : null}
+
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Radio history</Text>
+        <Text style={styles.sectionTitle}>Channel history</Text>
         <Text style={styles.sectionMeta}>{activeHistory.length} messages</Text>
       </View>
 
+      <View style={styles.historySummary}>
+        <Text style={styles.historySummaryText}>
+          {counts.received} received · {counts.pending} pending ·
+          {' '}{counts.accepted} radio-accepted · {counts.confirmed} peer-confirmed ·
+          {' '}{counts.failed} failed
+        </Text>
+      </View>
+      {messagePersistenceStatus === 'restoring' ? (
+        <Text style={styles.warningText}>Restoring saved carrier messages…</Text>
+      ) : null}
+      {messagePersistenceStatus === 'error' ? (
+        <Text style={styles.warningText}>
+          Saved history could not be restored. {messagePersistenceError ?? 'Inspect Device diagnostics.'}
+        </Text>
+      ) : null}
       {activeHistory.length === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyText}>
-            No stored messages for this channel yet.
+            {activeChannel
+              ? 'No stored messages on this carrier yet. Incoming text appears when heard; sending requires a connected companion.'
+              : 'Choose a carrier channel to see its own messages. Other channels remain separate.'}
           </Text>
         </View>
       ) : (
@@ -407,6 +466,9 @@ export function RadioScreen({
                 {deliveryLabel(message)}
               </Text>
             </View>
+            <Text style={styles.messageOrigin}>
+              {message.direction === 'received' ? 'CARRIER INCOMING' : 'LOCAL OUTGOING'}
+            </Text>
             <Text style={styles.messageText}>{message.text}</Text>
             {message.submissionFailure ? (
               <Text style={styles.submissionFailure}>
@@ -443,12 +505,14 @@ const styles = StyleSheet.create({
   heroCopy: {flex: 1},
   eyebrow: {color: colors.accent, fontSize: 11, fontWeight: '900', letterSpacing: 1.2},
   title: {color: colors.textPrimary, fontSize: 27, fontWeight: '900', marginTop: 4},
+  summaryTitle: {color: colors.textPrimary, fontSize: 16, fontWeight: '900', marginTop: 10},
+  smallHint: {color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8},
   body: {color: colors.textSecondary, fontSize: 13, lineHeight: 20, marginTop: 10},
-  nodeText: {color: colors.textMuted, fontSize: 11, marginTop: 9},
+  nodeText: {color: colors.textSecondary, fontSize: 12, marginTop: 9},
   linkPill: {borderWidth: 1, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 6},
   linkReady: {borderColor: colors.success},
   linkOffline: {borderColor: colors.border},
-  linkText: {color: colors.textPrimary, fontSize: 9, fontWeight: '900'},
+  linkText: {color: colors.textPrimary, fontSize: 11, fontWeight: '900'},
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -479,15 +543,17 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 10,
     paddingHorizontal: 11,
-    paddingVertical: 8,
+    paddingVertical: 12,
+    minHeight: 56,
+    justifyContent: 'center',
   },
-  carrierDetailsText: {color: colors.accent, fontSize: 10, fontWeight: '900'},
+  carrierDetailsText: {color: colors.accent, fontSize: 13, fontWeight: '900'},
   emptyCard: {backgroundColor: colors.surface, borderRadius: 16, padding: 14, marginBottom: 14},
   emptyTitle: {color: colors.textPrimary, fontSize: 14, fontWeight: '900'},
   emptyText: {color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 3},
   channelStrip: {gap: 8, paddingBottom: 16},
   channelChip: {
-    minWidth: 115,
+    minWidth: 115, minHeight: 56,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
@@ -537,7 +603,7 @@ const styles = StyleSheet.create({
   airtimeMeta: {color: colors.textSecondary, fontSize: 9, fontWeight: '800'},
   airtimeNote: {color: colors.textMuted, fontSize: 9, lineHeight: 14, marginTop: 7},
   sendButton: {
-    minHeight: 50,
+    minHeight: 58,
     marginTop: 12,
     backgroundColor: colors.accent,
     borderRadius: 14,
@@ -545,8 +611,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sendButtonDisabled: {opacity: 0.35},
-  sendButtonText: {color: colors.background, fontSize: 13, fontWeight: '900'},
-  sendStatus: {color: colors.textSecondary, fontSize: 11, lineHeight: 17, marginTop: 9},
+  sendButtonText: {color: colors.background, fontSize: 15, fontWeight: '900'},
+  sendStatus: {color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 9},
+  warningText: {color: colors.warning, fontSize: 13, lineHeight: 20, marginBottom: 12},
+  historySummary: {backgroundColor: colors.surfaceSoft, padding: 12,
+    borderRadius: 12, marginBottom: 12},
+  historySummaryText: {color: colors.textPrimary, fontSize: 12, lineHeight: 19},
+  messageOrigin: {color: colors.textSecondary, fontSize: 11, fontWeight: '800',
+    marginTop: 8},
+  diagnosticsToggle: {minHeight: 56, padding: 12, marginBottom: 14,
+    borderRadius: 12, borderWidth: 1, borderColor: colors.border,
+    justifyContent: 'center', alignItems: 'center'},
+  diagnosticsToggleText: {color: colors.accent, fontSize: 14, fontWeight: '800'},
   inboundDiagnostics: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -568,9 +644,9 @@ const styles = StyleSheet.create({
     marginBottom: 9,
   },
   messageTopRow: {flexDirection: 'row', alignItems: 'center', gap: 9},
-  messageChannel: {flex: 1, color: colors.textMuted, fontSize: 10, fontWeight: '800'},
-  deliveryState: {fontSize: 9, fontWeight: '900'},
-  messageText: {color: colors.textPrimary, fontSize: 15, lineHeight: 21, marginTop: 7},
-  messageTime: {color: colors.textMuted, fontSize: 9, marginTop: 8},
+  messageChannel: {flex: 1, color: colors.textSecondary, fontSize: 12, fontWeight: '800'},
+  deliveryState: {fontSize: 11, fontWeight: '900'},
+  messageText: {color: colors.textPrimary, fontSize: 17, lineHeight: 24, marginTop: 7},
+  messageTime: {color: colors.textSecondary, fontSize: 12, marginTop: 8},
   submissionFailure: {color: colors.warning, fontSize: 10, lineHeight: 15, marginTop: 7},
 });

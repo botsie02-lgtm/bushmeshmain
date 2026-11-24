@@ -82,6 +82,8 @@ export type MapScreenProps = {
   authorisedMembers?: readonly ConvoyMapMember[];
   overlays?: readonly ConvoyMapOverlay[];
   tileSource?: ConvoyMapTileSource;
+  /** Navigate to Device > Offline map packs; never starts installation here. */
+  onManageMapPacks?: () => void;
 };
 
 export function MapScreen({
@@ -89,6 +91,7 @@ export function MapScreen({
   authorisedMembers = [],
   overlays = [],
   tileSource,
+  onManageMapPacks,
 }: MapScreenProps = {}): React.JSX.Element {
   const {
     vehicles,
@@ -119,6 +122,9 @@ export function MapScreen({
   } = useOfflineMaps();
   const [nowMs, setNowMs] = useState(Date.now());
   const {activePlan, progress: routeProgress, status: routeStatus} = useRouteSession();
+  const [showRadioPositions, setShowRadioPositions] = useState(false);
+  const [showMapDiagnostics, setShowMapDiagnostics] = useState(false);
+  const [confirmClearMapState, setConfirmClearMapState] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 5_000);
@@ -184,17 +190,21 @@ export function MapScreen({
           <View
             style={[
               styles.coveragePill,
-              coverage.complete ? styles.coverageReady : styles.coverageMissing,
+              coverage.complete && requiredTripPoints.length > 0
+                ? styles.coverageReady : styles.coverageMissing,
             ]}>
             <Text style={styles.coveragePillText}>
-              {coverage.complete ? 'TRIP COVERED' : 'PACKS NEEDED'}
+              {requiredTripPoints.length === 0
+                ? 'TRIP NOT CHECKED'
+                : coverage.complete ? 'TRIP COVERED' : 'COVERAGE INCOMPLETE'}
             </Text>
           </View>
         </View>
         <Text style={styles.body}>
           Offline map tiles appear only when a verified local pack and a compatible
-          tile reader are available. This map plots only explicitly authorised
-          active-convoy members; other radio-heard positions remain diagnostics.
+          tile reader are available. Only current, explicitly authorised
+          convoy member positions may appear as member markers. Radio-heard
+          positions are separate, unverified diagnostics.
         </Text>
       </View>
 
@@ -234,7 +244,29 @@ export function MapScreen({
           {' · '}raster map tiles do not supply road routing
         </Text>
       ) : null}
-      <MapPackCatalogPanel />
+      <View style={styles.sourceNotice}>
+        <Text style={styles.sourceNoticeTitle}>VERIFIED CONVOY MARKERS</Text>
+        <Text style={styles.sourceNoticeText}>
+          {activeConvoyId === null
+            ? 'No verified operational convoy selected. Member markers are withheld.'
+            : authorisedMembers.length === 0
+              ? 'No verified member-position feed supplied. Public carrier contacts stay excluded.'
+              : authorisedMembers.length + ' authorised member records supplied for the selected convoy.'}
+        </Text>
+        <Text style={styles.sourceNoticeText}>
+          Raster tiles are independently loaded by the offline archive reader.
+          Archive verification alone is not image-loading proof.
+        </Text>
+        {onManageMapPacks ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Manage offline map packs in Device"
+            style={styles.mapManagerButton}
+            onPress={onManageMapPacks}>
+            <Text style={styles.mapManagerText}>MANAGE OFFLINE MAP PACKS</Text>
+          </TouchableOpacity>
+        ) : <MapPackCatalogPanel />}
+      </View>
 
       {hasNavigationTarget ? (
         <View
@@ -246,9 +278,7 @@ export function MapScreen({
                 : fixedTarget?.arrived
                   ? styles.navigationCardArrived
                   : styles.navigationCardFixed
-              : movingTarget?.safeToFollow
-                ? styles.navigationCardLive
-                : styles.navigationCardHold,
+              : styles.navigationCardHold,
           ]}>
           <View style={styles.navigationTopRow}>
             <View style={styles.navigationCopy}>
@@ -259,9 +289,7 @@ export function MapScreen({
                     : fixedTarget?.arrived
                       ? 'ARRIVED'
                       : 'FIXED FIELD DESTINATION'
-                  : movingTarget?.safeToFollow
-                    ? 'MOVING DESTINATION'
-                    : 'LAST KNOWN · HOLD'}
+                  : 'UNVERIFIED RADIO TARGET · DIRECT BEARING ONLY'}
               </Text>
               <Text style={styles.navigationName}>
                 {navigationFieldTarget?.label ??
@@ -333,13 +361,11 @@ export function MapScreen({
               </View>
               <Text
                 style={
-                  movingTarget.safeToFollow
-                    ? styles.navigationStatusLive
-                    : styles.navigationStatusHold
+                  styles.navigationStatusHold
                 }>
                 {movingTarget.safeToFollow
-                  ? `${movingTarget.freshness.toUpperCase()} · fix age ${formatAge(movingTarget.ageSeconds)}`
-                  : `HOLD · ${movingTarget.freshness.toUpperCase()} last-known position · ${formatAge(movingTarget.ageSeconds)} old`}
+                  ? `UNVERIFIED · radio-heard fix ${formatAge(movingTarget.ageSeconds)} old. Identity and membership are not confirmed.`
+                  : `UNVERIFIED · HOLD · ${movingTarget.freshness.toUpperCase()} last-known position · ${formatAge(movingTarget.ageSeconds)} old`}
               </Text>
             </>
           ) : (
@@ -349,18 +375,36 @@ export function MapScreen({
           )}
 
           <Text style={styles.navigationHint}>
-            Direct bearing only. Bushmesh does not claim road or trail routing
-            until the offline routing engine is installed.
+            Direct bearing only. Radio-heard vehicle and marker targets in
+            this legacy view are not Security-verified convoy destinations.
+            BushMesh does not claim road or trail routing.
           </Text>
         </View>
       ) : null}
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Radio-heard positions (not automatically plotted)</Text>
+        <Text style={styles.sectionTitle}>Unverified radio-heard positions</Text>
         <Text style={styles.sectionMeta}>{vehicles.length} heard</Text>
       </View>
 
-      {vehicles.length === 0 ? (
+      <Text style={styles.sourceNoticeText}>
+        This is a legacy channel-only position list. It is never a Security v1
+        roster, and these positions are never plotted as verified members.
+      </Text>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={showRadioPositions
+          ? 'Hide unverified radio positions' : 'Show unverified radio positions'}
+        accessibilityState={{expanded: showRadioPositions}}
+        style={styles.mapManagerButton}
+        onPress={() => setShowRadioPositions(current => !current)}>
+        <Text style={styles.mapManagerText}>
+          {showRadioPositions
+            ? 'HIDE UNVERIFIED POSITION LIST' : 'SHOW UNVERIFIED POSITION LIST'}
+        </Text>
+      </TouchableOpacity>
+      {showRadioPositions ? (
+      vehicles.length === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyText}>
             No remote Bushmesh position packets have been accepted yet.
@@ -388,13 +432,8 @@ export function MapScreen({
                 </Text>
               </View>
               <View style={styles.positionActions}>
-                <Text
-                  style={
-                    freshness === 'live' || freshness === 'recent'
-                      ? styles.readyText
-                      : styles.warningText
-                  }>
-                  {freshness.toUpperCase()}
+                <Text style={styles.warningText}>
+                  HEARD · {freshness.toUpperCase()} · NOT VERIFIED
                 </Text>
                 <TouchableOpacity
                   style={[
@@ -411,17 +450,18 @@ export function MapScreen({
                       styles.navigateButtonText,
                       targeted && styles.navigateButtonTextActive,
                     ]}>
-                    {targeted ? 'TARGET' : 'NAVIGATE'}
+                    {targeted ? 'BEARING ACTIVE' : 'DIRECT BEARING · UNVERIFIED'}
                   </Text>
                 </TouchableOpacity>
               </View>
             </View>
           );
         })
-      )}
+      )
+      ) : null}
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Operational markers</Text>
+        <Text style={styles.sectionTitle}>Radio-origin markers (unverified)</Text>
         <Text style={styles.sectionMeta}>{activeMarkers.length} active</Text>
       </View>
 
@@ -536,12 +576,25 @@ export function MapScreen({
       )}
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Offline map packs</Text>
+        <Text style={styles.sectionTitle}>Map pack diagnostics</Text>
         <Text style={styles.sectionMeta}>
           {coverage.readyPackIds.length} verified ready
         </Text>
       </View>
 
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={showMapDiagnostics
+          ? 'Hide advanced map diagnostics' : 'Show advanced map diagnostics'}
+        accessibilityState={{expanded: showMapDiagnostics}}
+        style={styles.mapManagerButton}
+        onPress={() => setShowMapDiagnostics(current => !current)}>
+        <Text style={styles.mapManagerText}>
+          {showMapDiagnostics ? 'HIDE PACK DIAGNOSTICS' : 'SHOW PACK DIAGNOSTICS'}
+        </Text>
+      </TouchableOpacity>
+      {showMapDiagnostics ? (
+      <>
       {packs.length === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>No map packs registered yet</Text>
@@ -587,11 +640,38 @@ export function MapScreen({
           <Text style={styles.primaryButtonText}>Load demo trip pack</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Review clear map state"
           style={[styles.button, styles.secondaryButton]}
-          onPress={clearMapState}>
-          <Text style={styles.secondaryButtonText}>Clear map state</Text>
+          onPress={() => setConfirmClearMapState(true)}>
+          <Text style={styles.secondaryButtonText}>Review clear map state</Text>
         </TouchableOpacity>
       </View>
+      {confirmClearMapState ? (
+        <View style={styles.sourceNotice}>
+          <Text style={styles.sourceNoticeTitle}>CLEAR MAP DATA?</Text>
+          <Text style={styles.warningText}>
+            This removes saved map metadata and local trip selection from the app.
+            It is not needed to change map packs.
+          </Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Confirm clear map data"
+            style={styles.mapManagerButton}
+            onPress={() => {clearMapState(); setConfirmClearMapState(false);}}>
+            <Text style={styles.mapManagerText}>CONFIRM CLEAR MAP DATA</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Cancel clear map data"
+            style={styles.mapManagerButton}
+            onPress={() => setConfirmClearMapState(false)}>
+            <Text style={styles.mapManagerText}>CANCEL</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      </>
+      ) : null}
 
       {requiredTripPoints.length > 0 ? (
         <View style={styles.tripCard}>
@@ -613,6 +693,16 @@ const styles = StyleSheet.create({
     marginBottom: 8, paddingHorizontal: 10,
   },
   screen: {flex: 1, backgroundColor: colors.background},
+  sourceNotice: {padding: 14, borderRadius: 14, backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border, gap: 8, marginBottom: 12},
+  sourceNoticeTitle: {color: colors.accent, fontSize: 13, fontWeight: '900'},
+  sourceNoticeText: {color: colors.textSecondary, fontSize: 13, lineHeight: 20,
+    paddingHorizontal: 10, marginBottom: 8},
+  mapManagerButton: {minHeight: 56, borderRadius: 12, borderWidth: 1,
+    borderColor: colors.border, backgroundColor: colors.surfaceSoft,
+    paddingHorizontal: 14, paddingVertical: 10, justifyContent: 'center',
+    alignItems: 'center', marginBottom: 8},
+  mapManagerText: {color: colors.textPrimary, fontSize: 13, fontWeight: '800'},
   content: {padding: 16, paddingBottom: 36},
   heroCard: {
     backgroundColor: colors.surface,

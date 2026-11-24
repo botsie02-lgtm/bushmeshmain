@@ -229,7 +229,9 @@ function DeviceOverview({onOpen}: {onOpen: (section: DeviceSection) => void}) {
   );
 }
 
-export function DeviceHubScreen(): React.JSX.Element {
+export function DeviceHubScreen({
+  onOpenMapPacks,
+}: {onOpenMapPacks?: () => void} = {}): React.JSX.Element {
   const [section, setSection] = useState<DeviceSection>('overview');
   const {snapshot} = useRadioConnection();
   const [ownership, setOwnership] = useState(
@@ -289,7 +291,15 @@ export function DeviceHubScreen(): React.JSX.Element {
                   Download and verify offline map packs using BushMesh’s existing map installer.
                   This screen does not start or stop any radio session.
                 </Text>
-                <MapPackCatalogPanel />
+                {onOpenMapPacks ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Open offline map-pack manager"
+                    onPress={onOpenMapPacks}
+                    style={styles.action}>
+                    <Text style={styles.actionText}>OPEN OFFLINE MAP-PACK MANAGER</Text>
+                  </TouchableOpacity>
+                ) : <MapPackCatalogPanel />}
               </ScrollView>
             ) : section === 'diagnostics' ? (
               <ScrollView style={styles.scroll} contentContainerStyle={styles.overviewContent}>
@@ -315,9 +325,9 @@ const styles = StyleSheet.create({
   navScroll: {flexGrow: 0, backgroundColor: colors.background},
   navContent: {paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12, gap: 7},
   navItem: {backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1,
-    borderRadius: 12, minHeight: 40, justifyContent: 'center', paddingHorizontal: 13},
+    borderRadius: 12, minHeight: 56, justifyContent: 'center', paddingHorizontal: 15},
   navActive: {backgroundColor: colors.accent, borderColor: colors.accent},
-  navText: {fontSize: 11, fontWeight: '800', color: colors.textSecondary},
+  navText: {fontSize: 13, fontWeight: '800', color: colors.textSecondary},
   navTextActive: {color: colors.background},
   dim: {opacity: 0.4},
   bodyContainer: {flex: 1},
@@ -327,18 +337,19 @@ const styles = StyleSheet.create({
   eyebrow: {fontSize: 10, fontWeight: '900', color: colors.accent, letterSpacing: 1},
   heroTitle: {fontSize: 22, fontWeight: '900', color: colors.textPrimary},
   phase: {fontSize: 12, fontWeight: '900', color: colors.success, marginTop: 5},
-  body: {fontSize: 11, lineHeight: 17, color: colors.textSecondary, marginTop: 4},
+  body: {fontSize: 13, lineHeight: 20, color: colors.textSecondary, marginTop: 4},
   card: {backgroundColor: colors.surface, borderColor: colors.border,
     borderWidth: 1, borderRadius: 16, padding: 14, gap: 4},
   heading: {fontSize: 15, fontWeight: '900', color: colors.textPrimary, marginBottom: 6},
   detailRow: {flexDirection: 'row', gap: 12, borderBottomColor: colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 7},
-  detailLabel: {flex: 1, fontSize: 11, color: colors.textMuted},
-  detailValue: {flex: 1, fontSize: 11, textAlign: 'right', color: colors.textPrimary},
+  detailLabel: {flex: 1, fontSize: 12, color: colors.textSecondary},
+  detailValue: {flex: 1, fontSize: 12, textAlign: 'right', color: colors.textPrimary},
   warning: {color: colors.warning, fontSize: 11, lineHeight: 17, paddingHorizontal: 8},
   action: {borderColor: colors.border, borderWidth: 1, borderRadius: 11,
-    alignItems: 'center', padding: 12, marginTop: 9},
-  actionText: {fontSize: 10, fontWeight: '900', color: colors.accent},
+    alignItems: 'center', justifyContent: 'center', minHeight: 56,
+    padding: 12, marginTop: 9},
+  actionText: {fontSize: 13, fontWeight: '900', color: colors.accent},
   label: {fontSize: 11, color: colors.textSecondary, marginTop: 7},
   buttonRow: {flexDirection: 'row', gap: 8, marginTop: 6},
   unitButton: {flex: 1, padding: 10, borderRadius: 9, borderColor: colors.border,

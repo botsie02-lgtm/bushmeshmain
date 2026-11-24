@@ -2,6 +2,8 @@ import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
 import {AppShell, MAIN_TABS} from '../src/app/shell/AppShell';
+import {ConnectedFieldPulse} from '../src/app/fieldExperience/ConnectedFieldPulse';
+import {StyleSheet} from 'react-native';
 import {ConnectedDriveDashboard} from '../src/drive/dashboard/ConnectedDriveDashboard';
 import {ConnectedFieldReadinessDashboard} from '../src/drive/fieldReadiness/ConnectedFieldReadinessDashboard';
 import {MapScreen} from '../src/screens/MapScreen';
@@ -41,6 +43,10 @@ jest.mock('../src/screens/DriveScreen', () => ({DriveScreen: () => null}));
 jest.mock('../src/drive/dashboard/ConnectedDriveDashboard', () => ({ConnectedDriveDashboard: () => null}));
 jest.mock('../src/drive/fieldReadiness/ConnectedFieldReadinessDashboard', () => ({ConnectedFieldReadinessDashboard: () => null}));
 jest.mock('../src/screens/MapScreen', () => ({MapScreen: () => null}));
+jest.mock('../src/components/MapPackCatalogPanel', () => ({MapPackCatalogPanel: () => null}));
+jest.mock('../src/app/fieldExperience/ConnectedFieldPulse', () => ({
+  ConnectedFieldPulse: () => null,
+}));
 jest.mock('../src/screens/ConvoyScreen', () => ({ConvoyScreen: () => null}));
 jest.mock('../src/screens/RadioScreen', () => ({RadioScreen: () => null}));
 jest.mock('../src/screens/ContactsScreen', () => ({ContactsScreen: () => null}));
@@ -106,7 +112,8 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
   ]);
   expect(tabs).toHaveLength(5);
   expect(tabs[0].props.accessibilityState.selected).toBe(true);
-  expect(visibleText(renderer)).toContain('No active convoy');
+  expect(StyleSheet.flatten(tabs[0].props.style).minHeight).toBeGreaterThanOrEqual(56);
+  expect(visibleText(renderer)).toContain('No verified convoy');
   const field = renderer.root.findByType(ConnectedFieldReadinessDashboard);
   expect(field.props.roster).toBeNull();
   expect(field.props.verifiedAlerts).toBeNull();
@@ -123,6 +130,7 @@ test('five top tabs start on safe Drive, with no automatic public contacts or ma
   const map = renderer.root.findByType(MapScreen);
   expect(map.props.activeConvoyId).toBeNull();
   expect(map.props.authorisedMembers).toEqual([]);
+  expect(typeof map.props.onManageMapPacks).toBe('function');
   expect(renderedTabs(renderer)).toHaveLength(5);
 
   await ReactTestRenderer.act(() => {
@@ -234,5 +242,41 @@ test('Wave 4 secure enrolment host is visible but denies all live membership act
     pressByLabel(renderer, 'Back to convoy selection');
   });
   expect(visibleText(renderer)).toContain('MeshCore carrier and legacy tools');
+  await ReactTestRenderer.act(async () => {renderer.unmount();});
+});
+
+
+test('field pulse routes to existing five-tab destinations without ownership changes', async () => {
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(async () => {
+    renderer = ReactTestRenderer.create(<AppShell />);
+  });
+  const pulse = renderer.root.findByType(ConnectedFieldPulse);
+  expect(pulse.props.compact).toBe(true);
+  await ReactTestRenderer.act(async () => {pulse.props.onOpen('maps');});
+  expect(renderedTabs(renderer)[4].props.accessibilityState.selected).toBe(true);
+  expect(visibleText(renderer)).toContain('Offline map packs');
+  expect(renderer.root.findAllByType(MapScreen)).toHaveLength(0);
+
+  await ReactTestRenderer.act(async () => {pressByLabel(renderer, 'Drive');});
+  await ReactTestRenderer.act(async () => {
+    renderer.root.findByType(ConnectedFieldPulse).props.onOpen('gps');
+  });
+  expect(renderedTabs(renderer)[4].props.accessibilityState.selected).toBe(true);
+  expect(visibleText(renderer)).toContain('GPS settings');
+
+  await ReactTestRenderer.act(async () => {pressByLabel(renderer, 'Drive');});
+  await ReactTestRenderer.act(async () => {
+    renderer.root.findByType(ConnectedFieldPulse).props.onOpen('radio');
+  });
+  expect(renderedTabs(renderer)[1].props.accessibilityState.selected).toBe(true);
+
+  await ReactTestRenderer.act(async () => {pressByLabel(renderer, 'Drive');});
+  await ReactTestRenderer.act(async () => {
+    renderer.root.findByType(ConnectedFieldPulse).props.onOpen('convoy');
+  });
+  expect(renderedTabs(renderer)[2].props.accessibilityState.selected).toBe(true);
+  expect(visibleText(renderer)).toContain('Travel together. Stay informed.');
+  expect(renderedTabs(renderer)).toHaveLength(5);
   await ReactTestRenderer.act(async () => {renderer.unmount();});
 });

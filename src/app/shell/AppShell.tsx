@@ -8,10 +8,13 @@ import {
 } from 'react-native';
 
 import {ScreenMountGate} from '../ScreenMountGate';
+import {ConnectedFieldPulse} from '../fieldExperience/ConnectedFieldPulse';
+import type {FieldPulseKind} from '../fieldExperience/fieldPulseModel';
 import {useActiveOperationalConvoy} from '../activeContext/ActiveOperationalConvoyContext';
 import {useViewedConversation} from '../activeContext/ViewedConversationContext';
 import {CarMessagingStatusBanner} from '../../components/CarMessagingStatusBanner';
 import {DeviceGpsSettingsPanel} from '../../components/DeviceGpsSettingsPanel';
+import {MapPackCatalogPanel} from '../../components/MapPackCatalogPanel';
 import {ConvoyFormationBanner} from '../../components/ConvoyFormationBanner';
 import {ConvoyFormationGapBanner} from '../../components/ConvoyFormationGapBanner';
 import {ConvoyLinkWatchBanner} from '../../components/ConvoyLinkWatchBanner';
@@ -55,12 +58,12 @@ type DeviceView = 'hub' | 'gps' | 'maps';
  * position projection here when that separately verified source is available. */
 const NO_AUTHORISED_MAP_MEMBER_POSITIONS: readonly ConvoyMapMember[] = [];
 
-export const MAIN_TABS: ReadonlyArray<{key: MainTab; label: string}> = [
-  {key: 'drive', label: 'Drive'},
-  {key: 'radio', label: 'Radio'},
-  {key: 'convoy', label: 'Convoy'},
-  {key: 'contacts', label: 'Contacts'},
-  {key: 'device', label: 'Device'},
+export const MAIN_TABS: ReadonlyArray<{key: MainTab; label: string; symbol: string}> = [
+  {key: 'drive', label: 'Drive', symbol: '➤'},
+  {key: 'radio', label: 'Radio', symbol: '≋'},
+  {key: 'convoy', label: 'Convoy', symbol: '◈'},
+  {key: 'contacts', label: 'Contacts', symbol: '◎'},
+  {key: 'device', label: 'Device', symbol: '⚙'},
 ];
 
 function Action({
@@ -113,9 +116,10 @@ function Surface({
   );
 }
 
-function ConvoySelector({openTools, openEnrolment}: {
+function ConvoySelector({openTools, openEnrolment, openFieldSection}: {
   openTools: () => void;
   openEnrolment: () => void;
+  openFieldSection: (section: FieldPulseKind) => void;
 }): React.JSX.Element {
   const {
     activeConvoy,
@@ -132,7 +136,9 @@ function ConvoySelector({openTools, openEnrolment}: {
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.pageContent}>
       <Text style={styles.eyebrow}>CONVOY / ACTIVE OPERATION</Text>
-      <Text style={styles.heroTitle}>Choose your convoy.</Text>
+      <Text style={styles.heroTitle}>Travel together. Stay informed.</Text>
+      <Text style={styles.lead}>Pick a verified convoy, review joining, or manage your carrier.</Text>
+      <ConnectedFieldPulse onOpen={openFieldSection} />
       <Text style={styles.lead}>
         Only authenticated, authorised BushMesh memberships are eligible.
         MeshCore channels and discovered contacts are managed separately.
@@ -158,7 +164,7 @@ function ConvoySelector({openTools, openEnrolment}: {
         eyebrow="AUTHORISED MEMBERSHIPS"
         title={status === 'checking' ? 'Checking…' : String(selectableConvoys.length) + ' available'}
         description={!localIdentityRef
-          ? 'No local radio identity is available yet. Connect or restore your device under Device.'
+          ? 'No authenticated Security identity is available. A MeshCore companion alone does not grant membership.'
           : selectableConvoys.length === 0
             ? 'No verified memberships are available. Carrier setup alone does not enrol or authorise a member.'
             : 'Selecting a convoy revalidates membership before activation.'}>
@@ -221,12 +227,32 @@ export function AppShell(): React.JSX.Element {
   const [gpsView, setGpsView] = useState<'controls' | 'preferences'>('controls');
   const [carrierProfile, setCarrierProfile] =
     useState<ActiveConvoyCarrierProfile | null>(null);
-  const {activeConvoy} = useActiveOperationalConvoy();
+  const {activeConvoy, status: convoyRestoreStatus} = useActiveOperationalConvoy();
   const {viewedConversation} = useViewedConversation();
 
   const openConvoy = () => {
     setConvoyView('select');
     setActiveTab('convoy');
+  };
+
+  const openFieldSection = (section: FieldPulseKind) => {
+    switch (section) {
+      case 'radio':
+        setActiveTab('radio');
+        break;
+      case 'gps':
+        setDeviceView('gps');
+        setGpsView('controls');
+        setActiveTab('device');
+        break;
+      case 'maps':
+        setDeviceView('maps');
+        setActiveTab('device');
+        break;
+      case 'convoy':
+        openConvoy();
+        break;
+    }
   };
 
   return (
@@ -241,8 +267,13 @@ export function AppShell(): React.JSX.Element {
             <Text style={styles.headerStatusLabel}>OPERATIONAL CONVOY</Text>
             <Text
               numberOfLines={1}
-              style={[styles.headerStatusValue, activeConvoy && styles.headerStatusActive]}>
-              {activeConvoy?.displayName ?? 'No active convoy'}
+              style={[styles.headerStatusValue,
+                convoyRestoreStatus === 'ready' && activeConvoy &&
+                styles.headerStatusActive]}>
+              {convoyRestoreStatus === 'checking'
+                ? 'Checking access…'
+                : convoyRestoreStatus === 'ready' && activeConvoy
+                  ? activeConvoy.displayName : 'No verified convoy'}
             </Text>
           </View>
         </View>
@@ -252,6 +283,7 @@ export function AppShell(): React.JSX.Element {
         <ScreenMountGate active={activeTab === 'drive'}>
           {driveView === 'home' ? (
             <View style={styles.screen}>
+              <ConnectedFieldPulse onOpen={openFieldSection} compact />
               <View style={styles.subnav}>
                 <Action
                   label="Detailed Drive dashboard"
@@ -310,6 +342,10 @@ export function AppShell(): React.JSX.Element {
                   <MapScreen
                     activeConvoyId={activeConvoy?.convoyId ?? null}
                     authorisedMembers={NO_AUTHORISED_MAP_MEMBER_POSITIONS}
+                    onManageMapPacks={() => {
+                      setDeviceView('maps');
+                      setActiveTab('device');
+                    }}
                   />
                 </>
               ) : (
@@ -362,6 +398,7 @@ export function AppShell(): React.JSX.Element {
             <ConvoySelector
               openTools={() => setConvoyView('tools')}
               openEnrolment={() => setConvoyView('enrolment')}
+              openFieldSection={openFieldSection}
             />
           ) : convoyView === 'enrolment' ? (
             <View style={styles.screen}>
@@ -369,7 +406,10 @@ export function AppShell(): React.JSX.Element {
                 <Action label="Back to convoy selection" onPress={() => setConvoyView('select')} secondary />
               </View>
               {/* Default null service/identity and false capabilities prevent production mutations. */}
-              <ConnectedConvoyEnrolment />
+              <ConnectedConvoyEnrolment
+                onOpenDrive={() => {setDriveView('home'); setActiveTab('drive');}}
+                onOpenMap={() => {setDriveView('map'); setActiveTab('drive');}}
+              />
             </View>
           ) : (
             <View style={styles.screen}>
@@ -440,12 +480,18 @@ export function AppShell(): React.JSX.Element {
             {deviceView === 'gps' ? (
               gpsView === 'preferences' ? <DeviceGpsSettingsPanel /> : <LocationScreen />
             ) : deviceView === 'maps' ? (
-              <>
-                <LegacyNotice kind="map" />
-                <MapScreen />
-              </>
+              <ScrollView style={styles.page} contentContainerStyle={styles.pageContent}>
+                <Text style={styles.eyebrow}>DEVICE / OFFLINE RESOURCES</Text>
+                <Text style={styles.heroTitle}>Offline map packs</Text>
+                <Text style={styles.lead}>
+                  Download, import and verify real regional archives here.
+                  Open the map from Drive to inspect rendered tiles.
+                  Verified archive metadata is not proof of a loaded image.
+                </Text>
+                <MapPackCatalogPanel />
+              </ScrollView>
             ) : (
-              <DeviceHubScreen />
+              <DeviceHubScreen onOpenMapPacks={() => setDeviceView('maps')} />
             )}
           </View>
         </ScreenMountGate>
@@ -461,7 +507,12 @@ export function AppShell(): React.JSX.Element {
               accessibilityLabel={tab.label}
               accessibilityState={{selected}}
               style={[styles.tab, selected && styles.tabActive]}
+              accessibilityHint={'Open ' + tab.label + ' section'}
               onPress={() => setActiveTab(tab.key)}>
+              <Text accessible={false}
+                style={[styles.tabSymbol, selected && styles.tabLabelActive]}>
+                {tab.symbol}
+              </Text>
               <Text style={[styles.tabLabel, selected && styles.tabLabelActive]}>
                 {tab.label}
               </Text>
@@ -484,9 +535,9 @@ const styles = StyleSheet.create({
   },
   headerTop: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
   brand: {color: colors.textPrimary, fontSize: 23, fontWeight: '800'},
-  brandDetail: {color: colors.textMuted, fontSize: 9, letterSpacing: 1, marginTop: 2},
+  brandDetail: {color: colors.textSecondary, fontSize: 10, letterSpacing: 1, marginTop: 2},
   headerStatus: {maxWidth: '47%', alignItems: 'flex-end'},
-  headerStatusLabel: {color: colors.textMuted, fontSize: 9, fontWeight: '700'},
+  headerStatusLabel: {color: colors.textSecondary, fontSize: 10, fontWeight: '700'},
   headerStatusValue: {color: colors.textSecondary, fontSize: 12, fontWeight: '700', marginTop: 4},
   headerStatusActive: {color: colors.success},
   content: {flex: 1},
@@ -507,7 +558,7 @@ const styles = StyleSheet.create({
   sectionTitle: {color: colors.textPrimary, fontSize: 20, fontWeight: '800'},
   description: {color: colors.textSecondary, fontSize: 13, lineHeight: 20},
   action: {
-    minHeight: 44,
+    minHeight: 56,
     backgroundColor: colors.accent,
     paddingHorizontal: 15,
     paddingVertical: 10,
@@ -517,7 +568,7 @@ const styles = StyleSheet.create({
   },
   secondaryAction: {backgroundColor: colors.surfaceSoft, borderWidth: 1, borderColor: colors.border},
   disabled: {opacity: 0.45},
-  actionText: {color: colors.background, fontWeight: '800', fontSize: 12},
+  actionText: {color: colors.background, fontWeight: '800', fontSize: 14, textAlign: 'center'},
   secondaryActionText: {color: colors.textPrimary},
   statsRow: {flexDirection: 'row', gap: 10},
   stat: {flex: 1, backgroundColor: colors.surfaceSoft, borderRadius: 12, padding: 14},
@@ -535,6 +586,7 @@ const styles = StyleSheet.create({
   slimText: {color: colors.textSecondary, fontSize: 11, lineHeight: 16},
   subnav: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     padding: 9,
     gap: 10,
@@ -550,8 +602,10 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     backgroundColor: colors.surface,
   },
-  tab: {flex: 1, minHeight: 48, justifyContent: 'center', alignItems: 'center', borderRadius: 10},
+  tab: {flex: 1, minHeight: 64, justifyContent: 'center', alignItems: 'center',
+    borderRadius: 12, gap: 3},
   tabActive: {backgroundColor: colors.accent},
-  tabLabel: {color: colors.textSecondary, fontSize: 11, fontWeight: '800'},
+  tabSymbol: {color: colors.textSecondary, fontSize: 19, fontWeight: '800'},
+  tabLabel: {color: colors.textSecondary, fontSize: 12, fontWeight: '800'},
   tabLabelActive: {color: colors.background},
 });
