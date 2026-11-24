@@ -280,6 +280,8 @@ export function DeviceGpsSettingsPanel(): React.JSX.Element {
       </Section>
 
       <Section title="Read-only position diagnostics">
+        <GpsRow label="Automatic legacy position sharing" value="OFF · security approval required" />
+        <Text style={styles.note}>Starting GPS records local positions only. Optional unverified channel sharing is a separate action in Drive &gt; Map.</Text>
         <GpsRow label="Location session" value={session.status} />
         <GpsRow label="Reported source"
           value={result?.locationSourceLabel ?? 'Unknown'} />

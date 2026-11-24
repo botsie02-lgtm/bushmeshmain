@@ -92,6 +92,9 @@ const LocationSessionContext = createContext<LocationSessionContextValue | null>
   null,
 );
 
+/** Raw legacy frames lack an approved authenticated position disclosure policy. */
+export const LEGACY_AUTOMATIC_LOCATION_DISCLOSURE_ALLOWED: boolean = false;
+
 const MAX_REQUEST_RESPONSE_FIX_AGE_MS = 45_000;
 const MAX_REQUEST_RESPONSE_FUTURE_SKEW_MS = 10_000;
 
@@ -317,6 +320,14 @@ export function LocationSessionProvider({
         };
       }
 
+      if (!LEGACY_AUTOMATIC_LOCATION_DISCLOSURE_ALLOWED) {
+        return {
+          queued: false, entryId: null,
+          fixAgeMs: Math.max(0, nowMs - fix.timestampMs),
+          reason: 'Legacy automatic location disclosure is disabled pending approved security.',
+        };
+      }
+
       const currentRadio = radioSessionRef.current;
       if (!currentRadio.transportReady || currentRadio.identityRef === null) {
         return {
@@ -425,6 +436,14 @@ export function LocationSessionProvider({
         currentRadio.identityRef === null
       ) {
         setStatus('tracking-no-link');
+        return;
+      }
+
+      // GPS tracking/recording is independent of radio readiness. A raw carrier
+      // must never automatically disclose a fresh fix, even if a radio is ready.
+      if (!LEGACY_AUTOMATIC_LOCATION_DISCLOSURE_ALLOWED) {
+        setStatus('tracking');
+        setLastPlan(null);
         return;
       }
 

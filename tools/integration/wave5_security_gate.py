@@ -26,4 +26,7 @@ assert "useState(false)" in panel and "privacyWarningAccepted: true" in panel
 assert "if (!consent || running.current" in panel and "AppState.currentState !== 'active'" in panel
 assert "prior?.session.dispose()" in panel and "onPositions([])" in panel
 assert "startNativeGps(" not in panel and "VerifiedConvoyTelemetry" not in panel
-print("Wave 5 static guard PASS: disabled security, empty verified roster, opt-in diagnostics.")
+location = read("src/state/LocationSessionContext.tsx")
+assert "LEGACY_AUTOMATIC_LOCATION_DISCLOSURE_ALLOWED: boolean = false" in location
+assert location.count("if (!LEGACY_AUTOMATIC_LOCATION_DISCLOSURE_ALLOWED)") == 2
+print("Wave 5 static guard PASS: disabled security, empty verified roster, opt-in diagnostics, legacy auto-disclosure blocked.")

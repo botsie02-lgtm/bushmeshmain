@@ -115,7 +115,8 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
       - name: Record debug APK SHA-256
-        run: sha256sum android/app/build/outputs/apk/debug/app-debug.apk | tee android/app/build/outputs/apk/debug/SHA256SUMS
+        working-directory: android/app/build/outputs/apk/debug
+        run: sha256sum app-debug.apk | tee SHA256SUMS
 
       - name: Publish staging debug APK
         uses: actions/upload-artifact@v4
@@ -130,7 +131,7 @@ jobs:
       # React Native debug variants omit the JS bundle and need Metro.
       # This separate debug-key-signed RELEASE variant carries offline JS
       # for Galaxy S22+ testing; it is NOT production signed or certified.
-      - name: Assemble self-contained Wave 4 staging field-test APK
+      - name: Assemble self-contained Wave 5 staging field-test APK
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon
 
@@ -157,7 +158,7 @@ jobs:
         run: |
           cd android/app/build/outputs/apk/release
           sha256sum app-release.apk | tee SHA256SUMS
-          printf 'commit=%s\\nrun=%s\\nvariant=release-debug-key-signed\\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > BUILD_PROVENANCE.txt
+          printf 'commit=%s\nrun=%s\nvariant=release-debug-key-signed\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > BUILD_PROVENANCE.txt
           cat BUILD_PROVENANCE.txt
 
       - name: Publish standalone offline Wave 5 staging field-test APK

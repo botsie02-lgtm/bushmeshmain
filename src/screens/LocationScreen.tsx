@@ -60,9 +60,10 @@ export function LocationScreen(): React.JSX.Element {
         <Text style={styles.eyebrow}>LOCATION ENGINE</Text>
         <Text style={styles.title}>GPS + LoRa position planning</Text>
         <Text style={styles.body}>
-          Bushmesh consumes real Android GPS fixes offline and only selects the
-          fixes that need LoRa airtime. Simulation remains available as an
-          explicit emulator/diagnostic source.
+          Android GPS records local fixes and trails offline. Automatic legacy
+          location transmission and recovery replies are disabled pending security
+          approval. Optional channel sharing requires separate explicit consent
+          in Drive > Map. Simulation is diagnostic only.
         </Text>
       </View>
 
@@ -163,8 +164,8 @@ export function LocationScreen(): React.JSX.Element {
           </>
         ) : (
           <Text style={styles.emptyText}>
-            A radio identity and active convoy channel are required before fixes are
-            evaluated for LoRa transmission.
+            Automatic legacy GPS disclosure is disabled. Local navigation and
+            breadcrumb recording remain available.
           </Text>
         )}
       </View>

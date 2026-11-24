@@ -27,3 +27,7 @@ MapScreen was the only overlapping operational file. Preserve map trail/route pr
 8. Record PASS/FAIL/NOT RUN per step, actual time, device/radio build, redacted observations, and screenshots without secrets or unnecessary precise location. Any unintended broadcast, BLE dual ownership, data loss, false membership, or inability to recover is a stop-test condition.
 
 Worker plans remain in docs/WAVE5_*; automated regression and Node benchmark outcomes are not real RF/GPS/rendering/power tests. Staging APK is debug-key signed, not production-certified. Do not claim physical Wave 5 acceptance until operator reports observed results.
+
+## Staging privacy hardening
+
+The inherited LocationSessionProvider previously queued raw legacy position frames after GPS acquisition if a raw link was ready and could answer unauthenticated legacy position requests. Both disclosure paths are explicitly disabled in this staging branch, even with a ready raw link. Local GPS fix, tracks, GPX, native measurements, ordinary channel messages, and the pure legacy planner contracts are preserved. Only explicit channel field-test consent may submit new position text. No migration or reset was performed. A future approved authenticated runtime must replace, not merely enable, the legacy gate.

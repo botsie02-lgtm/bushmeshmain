@@ -26,6 +26,7 @@ export function ConnectedChannelFieldLocation({onPositions}: {
   const running = useRef<{session: ChannelFieldLocationSession; unsubscribe: () => void} | null>(null);
   const mounted = useRef(true);
   const enabled = snapshot?.sharingEnabled === true;
+  const scopeKey = activeChannel ? activeChannel.channelIndex + ':' + activeChannel.channelName : null;
   const usable = activeChannel?.secret === 'Configured (redacted)' &&
     location.providerLabel === 'Android GPS' &&
     (location.status === 'tracking' || location.status === 'tracking-no-link');
@@ -65,6 +66,12 @@ export function ConnectedChannelFieldLocation({onPositions}: {
     // Never start/restart here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usable]);
+  useEffect(() => {
+    if (running.current) stop('Stopped: selected carrier changed. New consent required.');
+    else setConsent(false);
+    // Initial mount is OFF; this effect is only a scope reset, never a start.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey]);
 
   async function start() {
     if (!consent || running.current || !usable || !activeChannel ||
