@@ -240,8 +240,8 @@ export async function wave5CongestionAndAsymmetry(seed = 0x510222): Promise<Wave
   fleet.overrideLink(2, 1, {lossRate: 1});
   fleet.overrideLink(1, 2, {lossRate: 0});
   await fleet.sendMessage(1, 2);
-  for (let i = 0; i < 36; i++) await fleet.sendMessage(1, 2);
   const emergencyId = await fleet.sendMessage(1, 2, {priority: BushMeshPriority.Emergency});
+  for (let i = 0; i < 36; i++) await fleet.sendMessage(1, 2);
   await fleet.sendMessage(2, 1);
   await fleet.network.runUntilIdle();
   const starts = fleet.network.trace.filter(e => e.kind === 'tx-start' && e.from === 1 && e.to === 2);
