@@ -363,7 +363,9 @@ export async function wave5SecurityIngressNegatives(seed = 0x510223): Promise<Wa
   await deliver(await make(510007, 1)); // trusted rotation (synthetic only)
   receiver.approvedGroupDevices.delete('fake-rotated-identity');
   await deliver(await make(510008, 1)); // revoked
-  const expected = ['accepted', 'duplicate', 'accepted', 'rejected',
+  // The injected fake provider rejects its reused counter BEFORE the
+  // canonical datagram runtime can classify a semantic duplicate.
+  const expected = ['accepted', 'rejected', 'accepted', 'rejected',
     'rejected', 'accepted', 'rejected', 'accepted', 'rejected'];
   requireCondition(JSON.stringify(statuses) === JSON.stringify(expected),
     `unexpected canonical security statuses: ${statuses.join(',')}`, failures);
@@ -371,9 +373,9 @@ export async function wave5SecurityIngressNegatives(seed = 0x510223): Promise<Wa
     rejectedIngress >= 5, 'authenticated position gate accepted invalid ingress', failures);
   requireCondition(tracker.snapshot(9, sim.clock.now()).members.length === 1,
     'spoofed source injected unverified roster/map member', failures);
-  requireCondition(sim.metrics.runtimeRejected >= 4 &&
-    sim.metrics.runtimeDuplicates >= 1,
-    'runtime replay/epoch/revocation negative decisions missing', failures);
+  requireCondition(sim.metrics.runtimeRejected >= 5 &&
+    sim.metrics.runtimeDuplicates === 0,
+    'fake provider replay must be rejected at Security boundary before protocol dedup', failures);
   const extra: Wave5FieldResult['extra'] = {
     acceptedIngress, rejectedIngress,
     authorizedTrackerMembers: tracker.snapshot(9, sim.clock.now()).members.length,
@@ -405,10 +407,27 @@ export async function wave5ChannelOnlyIsolation(seed = 0x510224): Promise<Wave5F
   fleet.node(2).onInboundResult(result => {
     if (!acceptAuthenticatedConvoyPosition(tracker, result, policy)) gatedRejected++;
   });
-  const plain = await fleet.node(1).prepareOutbound(encodeBushMeshConvoyWire({
+  const unauthorizedConvoyWire = encodeBushMeshConvoyWire({
     convoyId: fleet.convoyId, nodeId: 1, sequence: 42,
     orderIndex: 0, role: 0, locationUnavailable: true,
-  }, 510250), {identityAssociation: {kind: 'none'}, label: 'channel-only-unverified'});
+  }, 510250);
+  let unprotectedConvoyRejected = false;
+  try {
+    await fleet.node(1).prepareOutbound(unauthorizedConvoyWire, {
+      identityAssociation: {kind: 'none'}, label: 'never-authorize-plain-convoy',
+    });
+  } catch (error) {
+    unprotectedConvoyRejected = error instanceof Error &&
+      error.message.includes('requires a group security association');
+  }
+  requireCondition(unprotectedConvoyRejected,
+    'canonical runtime accepted plain convoy-group outbound traffic', failures);
+  // A channel-only MeshCore message may contain arbitrary bytes that resemble
+  // a convoy location packet; it MUST remain an ordinary unverified message.
+  const plain = await fleet.node(1).prepareOutbound(encodeBushMeshWire({
+    type: BushMeshPacketType.Message, priority: BushMeshPriority.DirectMessage,
+    messageId: 510251, payload: Array.from(unauthorizedConvoyWire),
+  }), {identityAssociation: {kind: 'none'}, label: 'channel-only-unverified'});
   await fleet.network.transmit(1, 2, plain);
   await fleet.network.runUntilIdle();
   requireCondition(gatedRejected > 0 &&
