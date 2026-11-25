@@ -8,12 +8,23 @@ export type ChatConfiguration = {
   privateChannel: boolean;
 };
 
-export type ChatPreferences = {
+export const chatAvatarColors = ['lime', 'blue', 'orange', 'purple', 'teal', 'grey'] as const;
+export const chatAvatarIcons = ['initials', 'convoy', 'camp', 'mountain', 'radio', 'people'] as const;
+export type ChatAvatarColor = typeof chatAvatarColors[number];
+export type ChatAvatarIcon = typeof chatAvatarIcons[number];
+export type ChatOrigin = 'created' | 'joined' | 'unknown';
+export type ChatPersonalisation = {
+  description: string;
+  avatarColor: ChatAvatarColor;
+  avatarIcon: ChatAvatarIcon;
+};
+export type ChatPreferences = ChatPersonalisation & {
   displayName: string;
   pinned: boolean;
   archived: boolean;
   unread: boolean;
   localCreator: boolean;
+  origin: ChatOrigin;
 };
 
 export const defaultChatPreferences: ChatPreferences = {
@@ -22,6 +33,10 @@ export const defaultChatPreferences: ChatPreferences = {
   archived: false,
   unread: false,
   localCreator: false,
+  origin: 'unknown',
+  description: '',
+  avatarColor: 'lime',
+  avatarIcon: 'initials',
 };
 
 type NativeStore = {
@@ -56,7 +71,7 @@ export type ChatPreferenceSnapshot = Record<string, ChatPreferences>;
 export function decodeChatPreferences(serialized: string | null): ChatPreferenceSnapshot {
   if (serialized === null) return {};
   const parsed = JSON.parse(serialized);
-  if (!parsed || parsed.version !== 1 || !parsed.entries ||
+  if (!parsed || ![1, 2].includes(parsed.version) || !parsed.entries ||
       typeof parsed.entries !== 'object' || Array.isArray(parsed.entries)) {
     throw new Error('Invalid chat preference snapshot.');
   }
@@ -68,7 +83,19 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
         [p.pinned, p.archived, p.unread, p.localCreator].some(v => typeof v !== 'boolean')) {
       throw new Error('Invalid chat preference entry.');
     }
+    if (parsed.version === 2 &&
+        (typeof p.description !== 'string' || p.description.length > 240 ||
+          !chatAvatarColors.includes(p.avatarColor) || !chatAvatarIcons.includes(p.avatarIcon) ||
+          !['created', 'joined', 'unknown'].includes(p.origin) ||
+          (p.origin === 'created') !== p.localCreator)) {
+      throw new Error('Invalid chat personalisation.');
+    }
     entries[id] = {
+      ...defaultChatPreferences,
+      ...(parsed.version === 2 ? {
+        description: p.description, avatarColor: p.avatarColor, avatarIcon: p.avatarIcon,
+        origin: p.origin,
+      } : {origin: p.localCreator ? 'created' : 'unknown'}),
       displayName: p.displayName, pinned: p.pinned, archived: p.archived,
       unread: p.unread, localCreator: p.localCreator,
     };
@@ -76,7 +103,7 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
   return entries;
 }
 
-export type ChatPreferencePatch = Partial<Omit<ChatPreferences, 'localCreator'>>;
+export type ChatPreferencePatch = Partial<Omit<ChatPreferences, 'localCreator' | 'origin'>>;
 
 export class ChatPreferenceStore {
   private queue: Promise<unknown> = Promise.resolve();
@@ -95,7 +122,7 @@ export class ChatPreferenceStore {
       const next = update(entries[id] ?? defaultChatPreferences);
       if (next === null) delete entries[id];
       else entries[id] = next;
-      if (!await storage.saveChatPreferences(JSON.stringify({version: 1, entries}))) {
+      if (!await storage.saveChatPreferences(JSON.stringify({version: 2, entries}))) {
         throw new Error('Chat preferences were not saved.');
       }
       return entries;
@@ -109,6 +136,7 @@ export class ChatPreferenceStore {
       ...current,
       displayName: typeof patch.displayName === 'string'
         ? patch.displayName.trim().slice(0, 80) : current.displayName,
+      ...personalisationPatch(current, patch),
       pinned: typeof patch.pinned === 'boolean' ? patch.pinned : current.pinned,
       archived: typeof patch.archived === 'boolean' ? patch.archived : current.archived,
       unread: typeof patch.unread === 'boolean' ? patch.unread : current.unread,
@@ -116,8 +144,12 @@ export class ChatPreferenceStore {
   }
 
   /** Called only by the verified provisioning orchestration, not by settings. */
-  recordProvisioned(id: string, created: boolean) {
-    return this.mutate(id, () => ({...defaultChatPreferences, localCreator: created}));
+  recordProvisioned(id: string, created: boolean, personalisation?: Partial<ChatPersonalisation>) {
+    return this.mutate(id, () => ({
+      ...defaultChatPreferences,
+      ...personalisationPatch(defaultChatPreferences, personalisation ?? {}),
+      localCreator: created, origin: created ? 'created' : 'joined',
+    }));
   }
 
   forget(id: string) {
@@ -125,11 +157,21 @@ export class ChatPreferenceStore {
   }
 }
 
+function personalisationPatch(current: ChatPersonalisation, patch: Partial<ChatPersonalisation>): ChatPersonalisation {
+  return {
+    description: typeof patch.description === 'string' ? patch.description.trim().slice(0, 240) : current.description,
+    avatarColor: patch.avatarColor && chatAvatarColors.includes(patch.avatarColor) ? patch.avatarColor : current.avatarColor,
+    avatarIcon: patch.avatarIcon && chatAvatarIcons.includes(patch.avatarIcon) ? patch.avatarIcon : current.avatarIcon,
+  };
+}
+
 export const chatPreferenceStore = new ChatPreferenceStore();
+
+export type ChatSort = 'name' | 'unread' | 'slot';
 
 export function selectChats(
   chats: readonly ChatConfiguration[], preferences: ChatPreferenceSnapshot,
-  query = '', archived = false,
+  query = '', archived = false, sort: ChatSort = 'name',
 ): ChatConfiguration[] {
   const needle = query.trim().toLowerCase();
   return chats.filter(chat => {
@@ -138,9 +180,24 @@ export function selectChats(
       [chat.name, p.displayName].some(name => name.toLowerCase().includes(needle));
   }).sort((a, b) =>
     Number(!!preferences[b.id]?.pinned) - Number(!!preferences[a.id]?.pinned) ||
-    a.name.localeCompare(b.name) || a.slot - b.slot);
+    (sort === 'unread' ? Number(!!preferences[b.id]?.unread) - Number(!!preferences[a.id]?.unread) : 0) ||
+    (sort === 'slot' ? a.slot - b.slot : 0) ||
+    (preferences[a.id]?.displayName || a.name).localeCompare(preferences[b.id]?.displayName || b.name) ||
+    a.slot - b.slot);
 }
 
 export function chatRole(preferences: ChatPreferences): string {
-  return preferences.localCreator ? 'Created on this phone (local only)' : 'No verified creator or administrator role';
+  return preferences.localCreator ? 'Created on this phone (local only)'
+    : preferences.origin === 'joined' ? 'Joined on this phone' : 'Existing channel · origin unknown';
 }
+
+/** Future authorization must come from a verified membership provider, never local origin. */
+export type AuthenticatedChatRole = 'owner' | 'administrator' | 'participant';
+export type ChatAdministrationCapability =
+  | 'members' | 'assignAdmin' | 'removeMember' | 'invitePermission' | 'approveMembership'
+  | 'transferOwnership' | 'securityPolicy' | 'rotateKey';
+export type ChatAdministration = {status: 'unavailable'} | {
+  status: 'verified'; role: AuthenticatedChatRole;
+  capabilities: readonly ChatAdministrationCapability[];
+};
+export const meshCoreChatAdministration: ChatAdministration = {status: 'unavailable'};
