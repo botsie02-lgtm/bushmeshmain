@@ -65,7 +65,7 @@ describe('AppRadioConnectionService', () => {
       sendDeviceQuery: jest.fn().mockResolvedValue({deviceInfo: fakeDeviceInfo}),
       getDeviceInfo: jest.fn().mockResolvedValue(fakeDeviceInfo),
       readChannel: jest.fn(async (channelIndex: number) => emptyChannel(channelIndex)),
-      writeChannel: jest.fn(async (_slot: number, _name: string, _secret: Uint8Array) => undefined),
+      writeChannel: jest.fn().mockResolvedValue(undefined),
       probeChannels: jest.fn().mockResolvedValue([]),
       sendChannelMessage: jest.fn().mockResolvedValue({}),
       getBatteryStatus: jest.fn().mockResolvedValue({}),
