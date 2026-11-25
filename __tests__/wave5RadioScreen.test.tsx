@@ -17,7 +17,7 @@ jest.mock('../src/meshcore/nativeOutboundDiagnostics', () => ({
     subscribe: () => () => undefined,
   },
 }));
-jest.mock('../src/meshcore/meshCoreInboundDiagnostics', () => ({
+jest.mock('../src/meshcore/meshcoreInboundDiagnostics', () => ({
   meshCoreInboundDiagnostics: {
     snapshot: () => ({events: [], counts: {}}),
     subscribe: () => () => undefined,
