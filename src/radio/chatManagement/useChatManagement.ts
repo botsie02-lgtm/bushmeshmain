@@ -41,8 +41,7 @@ export function useChatManagement() {
 
   const reload = useCallback(async (expected: string) => {
     setReady(false);
-    const entries = await chatPreferenceStore.load();
-    const savedSort = await chatPreferenceStore.loadSort();
+    const {entries, sort: savedSort} = await chatPreferenceStore.loadState();
     const next = await live.current.listChatConfigurations(expected);
     if (live.current.getChatRadio() !== expected) throw new Error('Radio changed.');
     setPreferences(entries);
@@ -122,9 +121,14 @@ export function useChatManagement() {
 
   const credential = (chat: ChatConfiguration) => run(async () => {
     requireCurrent(chat);
-    const value = await live.current.revealChatCredential(chat);
-    if (live.current.getChatRadio() !== chat.radio) throw new Error('Radio changed.');
-    return value;
+    try {
+      const value = await live.current.revealChatCredential(chat);
+      if (live.current.getChatRadio() !== chat.radio) throw new Error('Radio changed.');
+      return value;
+    } catch (failure) {
+      setReady(false);
+      throw failure;
+    }
   });
 
   return {
