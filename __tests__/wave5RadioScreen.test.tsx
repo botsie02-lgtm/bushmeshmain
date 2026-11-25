@@ -88,7 +88,7 @@ async function draft(value: string) {
   await act(async () => {input.props.onChangeText(value);});
 }
 function asText(value: unknown): string {
-  if (Array.isArray(value)) return value.map(asText).join(' ');
+  if (Array.isArray(value)) return value.map(asText).join('');
   return typeof value === 'string' || typeof value === 'number'
     ? String(value) : '';
 }
