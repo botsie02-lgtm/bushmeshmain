@@ -331,7 +331,7 @@ test('unread counts and read callback require explicit authoritative input', asy
   await mount({
     trustedScopes: [scope],
     verifiedMessageOwnership: {'read-evidence': scope},
-    unreadCounts: {'KNOWN-RADIO:GEN-24:1': 2},
+    unreadCounts: {['["KNOWN-RADIO","GEN-24","1","Private"]']: 2},
     onConversationRead: read,
   });
   expect(viewText()).toContain('2 unread messages');
