@@ -67,6 +67,8 @@ export async function configurationId(
 }
 
 export type ChatPreferenceSnapshot = Record<string, ChatPreferences>;
+export type ChatSort = 'name' | 'unread' | 'slot';
+const sorts: readonly ChatSort[] = ['name', 'unread', 'slot'];
 
 export function decodeChatPreferences(serialized: string | null): ChatPreferenceSnapshot {
   if (serialized === null) return {};
@@ -74,6 +76,9 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
   if (!parsed || ![1, 2].includes(parsed.version) || !parsed.entries ||
       typeof parsed.entries !== 'object' || Array.isArray(parsed.entries)) {
     throw new Error('Invalid chat preference snapshot.');
+  }
+  if (parsed.version === 2 && parsed.sort !== undefined && !sorts.includes(parsed.sort)) {
+    throw new Error('Invalid chat sorting preference.');
   }
   const entries: ChatPreferenceSnapshot = {};
   for (const [id, value] of Object.entries(parsed.entries)) {
@@ -114,15 +119,37 @@ export class ChatPreferenceStore {
     return decodeChatPreferences(await this.storage().loadChatPreferences());
   }
 
+  async loadSort(): Promise<ChatSort> {
+    await this.queue;
+    const serialized = await this.storage().loadChatPreferences();
+    decodeChatPreferences(serialized);
+    return serialized === null ? 'name' : JSON.parse(serialized).sort ?? 'name';
+  }
+
+  saveSort(sort: ChatSort): Promise<void> {
+    const operation = this.queue.then(async () => {
+      if (!sorts.includes(sort)) throw new Error('Invalid chat sorting preference.');
+      const storage = this.storage();
+      const entries = decodeChatPreferences(await storage.loadChatPreferences());
+      if (!await storage.saveChatPreferences(JSON.stringify({version: 2, entries, sort}))) {
+        throw new Error('Chat preferences were not saved.');
+      }
+    });
+    this.queue = operation.catch(() => undefined);
+    return operation;
+  }
+
   private mutate(id: string, update: (current: ChatPreferences) => ChatPreferences | null) {
     const operation = this.queue.then(async () => {
       if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('Invalid chat identity.');
       const storage = this.storage();
-      const entries = decodeChatPreferences(await storage.loadChatPreferences());
+      const serialized = await storage.loadChatPreferences();
+      const entries = decodeChatPreferences(serialized);
+      const sort: ChatSort = serialized === null ? 'name' : JSON.parse(serialized).sort ?? 'name';
       const next = update(entries[id] ?? defaultChatPreferences);
       if (next === null) delete entries[id];
       else entries[id] = next;
-      if (!await storage.saveChatPreferences(JSON.stringify({version: 2, entries}))) {
+      if (!await storage.saveChatPreferences(JSON.stringify({version: 2, entries, sort}))) {
         throw new Error('Chat preferences were not saved.');
       }
       return entries;
@@ -166,8 +193,6 @@ function personalisationPatch(current: ChatPersonalisation, patch: Partial<ChatP
 }
 
 export const chatPreferenceStore = new ChatPreferenceStore();
-
-export type ChatSort = 'name' | 'unread' | 'slot';
 
 export function selectChats(
   chats: readonly ChatConfiguration[], preferences: ChatPreferenceSnapshot,
