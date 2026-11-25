@@ -291,28 +291,43 @@ export function RadioScreen({
       // Only the owning service issues the command. A resolved promise proves
       // PACKET_OK acceptance, never a peer acknowledgement.
       await sendChannelMessage(Number(capturedScope.channelIndex), submittedText);
-      addLocalChannelMessage({
-        channelIndex: capturedScope.channelIndex,
-        channelName: capturedScope.channelName,
-        text: submittedText, direction: 'sent', status: 'accepted',
-      });
+      // Radio accepted; a separate local history failure must not turn this
+      // into a fabricated radio rejection or trigger another transmission.
+      let recorded = true;
+      try {
+        addLocalChannelMessage({
+          channelIndex: capturedScope.channelIndex,
+          channelName: capturedScope.channelName,
+          text: submittedText, direction: 'sent', status: 'accepted',
+        });
+      } catch {
+        recorded = false;
+      }
       setDrafts(currentDrafts => ({
         ...currentDrafts,
         [capturedKey]: currentDrafts[capturedKey]?.trim() === submittedText
           ? '' : currentDrafts[capturedKey] ?? '',
       }));
-      postNotice(capturedKey, 'Radio accepted. No peer delivery confirmation.');
+      postNotice(capturedKey, recorded
+        ? 'Radio accepted. No peer delivery confirmation.'
+        : 'Radio accepted, but local history recording failed. Do not resend to repair history.');
     } catch (error) {
       const failure = classifyChannelSubmissionFailure(error);
-      addLocalChannelMessage({
-        channelIndex: capturedScope.channelIndex,
-        channelName: capturedScope.channelName,
-        text: submittedText, direction: 'sent', status: 'failed',
-        submissionFailure: failure,
-      });
+      let recorded = true;
+      try {
+        addLocalChannelMessage({
+          channelIndex: capturedScope.channelIndex,
+          channelName: capturedScope.channelName,
+          text: submittedText, direction: 'sent', status: 'failed',
+          submissionFailure: failure,
+        });
+      } catch {
+        recorded = false;
+      }
       const couldHaveSent = failure.reason !== 'firmware-error';
       if (couldHaveSent) setUncertain(currentSet => new Set(currentSet).add(capturedKey));
-      postNotice(capturedKey, formatChannelSubmissionFailure(failure));
+      postNotice(capturedKey, formatChannelSubmissionFailure(failure) +
+        (recorded ? '' : ' Local history could not record this outcome.'));
     } finally {
       sendingRef.current = false;
       setSending(false);
