@@ -36,6 +36,11 @@ type RadioConnectionContextValue = {
   removeContact: AppRadioConnectionService['removeContact'];
   exportContact: AppRadioConnectionService['exportContact'];
   importContact: AppRadioConnectionService['importContact'];
+  getChatRadio: AppRadioConnectionService['getChatRadio'];
+  listChatConfigurations: AppRadioConnectionService['listChatConfigurations'];
+  provisionChat: AppRadioConnectionService['provisionChat'];
+  revealChatCredential: AppRadioConnectionService['revealChatCredential'];
+  leaveChat: AppRadioConnectionService['leaveChat'];
   refreshChannels: AppRadioConnectionService['refreshChannels'];
   createPrivateChannel: AppRadioConnectionService['createPrivateChannel'];
   joinPrivateChannel: AppRadioConnectionService['joinPrivateChannel'];
@@ -171,6 +176,11 @@ export function RadioConnectionProvider({
       removeContact: valueToRemove => service.removeContact(valueToRemove),
       exportContact: valueToExport => service.exportContact(valueToExport),
       importContact: exported => service.importContact(exported),
+      getChatRadio: () => service.getChatRadio(),
+      listChatConfigurations: radio => service.listChatConfigurations(radio),
+      provisionChat: (radio, input) => service.provisionChat(radio, input),
+      revealChatCredential: expected => service.revealChatCredential(expected),
+      leaveChat: expected => service.leaveChat(expected),
       refreshChannels: () => service.refreshChannels(),
       createPrivateChannel: input => service.createPrivateChannel(input),
       joinPrivateChannel: input => service.joinPrivateChannel(input),
