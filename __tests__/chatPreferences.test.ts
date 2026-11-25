@@ -136,6 +136,34 @@ describe('protected chat preference model', () => {
     }}))).toThrow();
   });
 
+  it('persists sorting across restart without overwriting chat entries', async () => {
+    const {store, native} = fixture();
+    await store.recordProvisioned(one, true);
+    await Promise.all([store.saveSort('unread'), store.update(one, {pinned: true})]);
+    const restarted = new ChatPreferenceStore(() => native);
+    const state = await restarted.loadState();
+    expect(state.sort).toBe('unread');
+    expect(state.entries[one]).toEqual({...defaultChatPreferences, origin: 'created', localCreator: true, pinned: true});
+    await restarted.saveSort('slot');
+    expect(await restarted.loadSort()).toBe('slot');
+    expect((await restarted.load())[one]).toEqual(state.entries[one]);
+  });
+
+  it('sorts pinned first, then unread or radio slot as selected', () => {
+    const chats = [
+      {id: one, radio: 'radio', slot: 2, name: 'Z', privateChannel: true},
+      {id: two, radio: 'radio', slot: 1, name: 'A', privateChannel: true},
+      {id: three, radio: 'radio', slot: 0, name: 'B', privateChannel: true},
+    ];
+    const prefs = {
+      [one]: {...defaultChatPreferences, pinned: true},
+      [three]: {...defaultChatPreferences, unread: true},
+    };
+    expect(selectChats(chats, prefs, '', false, 'name').map(c => c.id)).toEqual([one, two, three]);
+    expect(selectChats(chats, prefs, '', false, 'unread').map(c => c.id)).toEqual([one, three, two]);
+    expect(selectChats(chats, prefs, '', false, 'slot').map(c => c.id)).toEqual([one, three, two]);
+  });
+
   it('rejects invalid IDs and malformed snapshots', () => {
     expect(() => decodeChatPreferences('{"version":1,"entries":{"__proto__":{}}}')).toThrow();
     expect(() => decodeChatPreferences(JSON.stringify({version: 1, entries: {[one]: {pinned: true}}}))).toThrow();
