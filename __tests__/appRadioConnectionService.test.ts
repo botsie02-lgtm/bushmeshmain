@@ -399,6 +399,8 @@ describe('AppRadioConnectionService', () => {
       await expect(service.provisionChat(radio, {name: 'camp'})).rejects.toMatchObject({code: 'duplicate'});
       await expect(service.provisionChat(radio, {name: 'Camp', secretHex: '07'.repeat(16)}))
         .rejects.toMatchObject({code: 'duplicate'});
+      await expect(service.provisionChat(radio, {name: 'Alias', secretHex: '07'.repeat(16)}))
+        .rejects.toMatchObject({code: 'duplicate'});
       expect(client.writeChannel).toHaveBeenCalledTimes(1);
       expect(provenance).toHaveBeenCalledTimes(1);
       await service.dispose();
@@ -430,6 +432,24 @@ describe('AppRadioConnectionService', () => {
       expect(channels[0].channelName).toBe('Camp');
       await expect(service.provisionChat(radio, {name: 'Camp'})).rejects.toMatchObject({code: 'duplicate'});
       expect(client.writeChannel).toHaveBeenCalledTimes(1);
+      await service.dispose();
+    });
+
+    it('does not reuse configuration identity across distinct connected radios', async () => {
+      const {service, radio, client, manager} = await chatHarness();
+      const first = await service.provisionChat(radio, {name: 'Camp'});
+      await service.disconnect();
+      expect(service.getChatRadio()).toBeNull();
+      const secondDevice = fakeDevice('CC:DD');
+      manager.connectToDevice.mockResolvedValueOnce(secondDevice);
+      client.sendAppStart.mockResolvedValue({selfInfo: {publicKeyHex: 'b'.repeat(64)}});
+      await service.connectToDevice(secondDevice);
+      const otherRadio = service.getChatRadio();
+      if (!otherRadio) throw new Error('Missing second radio');
+      const other = (await service.listChatConfigurations(otherRadio))[0];
+      expect(other.slot).toBe(first.slot);
+      expect(other.id).not.toBe(first.id);
+      await expect(service.leaveChat(first)).rejects.toThrow('changed');
       await service.dispose();
     });
 
