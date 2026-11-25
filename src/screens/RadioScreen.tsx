@@ -167,11 +167,21 @@ export function RadioScreen({
       if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
     }
   }
-  const inboxChannels = connected && radioId ? channels : [
-    ...observedLabels.map(c => ({...c, secret: ''})),
-    ...trustedScopes.filter(s => !observedLabels.some(c => c.channelIndex === s.channelIndex))
-      .map(s => ({channelIndex: s.channelIndex, channelName: s.channelName, secret: ''})),
-  ];
+  // Inbox metadata is only slot/name; never copy channel secrets into UI
+  // presentation state. Trusted archived rooms stay visible while connected
+  // even when their earlier radio used the same slot with another name.
+  const availableLabels: ChannelLabel[] = connected && radioId
+    ? channels.map(c => ({channelIndex: c.channelIndex, channelName: c.channelName}))
+    : [...observedLabels];
+  for (const scope of trustedScopes) {
+    if (!availableLabels.some(c => c.channelIndex === scope.channelIndex &&
+      c.channelName === scope.channelName)) {
+      availableLabels.push({channelIndex: scope.channelIndex, channelName: scope.channelName});
+    }
+  }
+  const inboxChannels: BushMeshChannel[] = availableLabels.map(c => ({
+    ...c, secret: '',
+  }));
 
   const conversations = buildMessengerConversations({
     channels: inboxChannels, scopes: knownScopes, messages: channelMessages,
