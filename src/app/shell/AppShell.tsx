@@ -1,5 +1,7 @@
-import React, {useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
+  BackHandler,
+  Keyboard,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,8 +13,7 @@ import {ScreenMountGate} from '../ScreenMountGate';
 import {ConnectedFieldPulse} from '../fieldExperience/ConnectedFieldPulse';
 import type {FieldPulseKind} from '../fieldExperience/fieldPulseModel';
 import {useActiveOperationalConvoy} from '../activeContext/ActiveOperationalConvoyContext';
-import {useViewedConversation} from '../activeContext/ViewedConversationContext';
-import {CarMessagingStatusBanner} from '../../components/CarMessagingStatusBanner';
+import {RadioMessagingNavigationContext} from './RadioMessagingNavigation';
 import {DeviceGpsSettingsPanel} from '../../components/DeviceGpsSettingsPanel';
 import {MapPackCatalogPanel} from '../../components/MapPackCatalogPanel';
 import {ConvoyFormationBanner} from '../../components/ConvoyFormationBanner';
@@ -26,13 +27,11 @@ import {DriveNavigationBanner} from '../../components/DriveNavigationBanner';
 import {FieldNavigationPrompt} from '../../components/FieldNavigationPrompt';
 import {FormationProposalBanner} from '../../components/FormationProposalBanner';
 import {MapTrackExportBanner} from '../../components/MapTrackExportBanner';
-import {RadioSpeechStatusBanner} from '../../components/RadioSpeechStatusBanner';
 import {RecoveryCheckpointBanner} from '../../components/RecoveryCheckpointBanner';
 import {RecoveryEscalationNotice} from '../../components/RecoveryEscalationNotice';
 import {RecoveryReferenceNotice} from '../../components/RecoveryReferenceNotice';
 import {RouteGuidanceBanner} from '../../components/RouteGuidanceBanner';
 import {SecureDataStatusBanner} from '../../components/SecureDataStatusBanner';
-import {SpeechPttPanel} from '../../components/SpeechPttPanel';
 import {SpeechStatusBanner} from '../../components/SpeechStatusBanner';
 import {ActiveConvoyCarrierProfile} from '../../convoy/carrierCredentials';
 import {ConnectedConvoyEnrolment} from '../../convoy/ui/ConnectedConvoyEnrolment';
@@ -46,6 +45,8 @@ import {DriveScreen} from '../../screens/DriveScreen';
 import {LocationScreen} from '../../screens/LocationScreen';
 import {MapScreen} from '../../screens/MapScreen';
 import {RadioScreen} from '../../screens/RadioScreen';
+import {RadioMessagingSettingsScreen} from '../../screens/RadioMessagingSettingsScreen';
+import {useBushMesh} from '../../state/BushMeshContext';
 import {colors} from '../../theme/colors';
 
 export type MainTab = 'drive' | 'radio' | 'convoy' | 'contacts' | 'device';
@@ -228,7 +229,31 @@ export function AppShell(): React.JSX.Element {
   const [carrierProfile, setCarrierProfile] =
     useState<ActiveConvoyCarrierProfile | null>(null);
   const {activeConvoy, status: convoyRestoreStatus} = useActiveOperationalConvoy();
-  const {viewedConversation} = useViewedConversation();
+  const {messagePersistenceStatus, messagePersistenceError} = useBushMesh();
+  const [radioSettingsOpen, setRadioSettingsOpen] = useState(false);
+  const openMessagingSettings = useCallback(() => {
+    Keyboard.dismiss();
+    setRadioSettingsOpen(true);
+  }, []);
+  const closeMessagingSettings = useCallback(() => setRadioSettingsOpen(false), []);
+  const radioNavigation = useMemo(() => ({
+    openMessagingSettings, closeMessagingSettings,
+  }), [openMessagingSettings, closeMessagingSettings]);
+
+  useEffect(() => {
+    if (activeTab !== 'radio') {
+      closeMessagingSettings();
+      return;
+    }
+    if (!radioSettingsOpen) {
+      return;
+    }
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeMessagingSettings();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [activeTab, radioSettingsOpen, closeMessagingSettings]);
 
   const openConvoy = () => {
     setConvoyView('select');
@@ -257,6 +282,40 @@ export function AppShell(): React.JSX.Element {
 
   return (
     <View style={styles.shell}>
+      {activeTab === 'radio' ? (
+        <View style={styles.radioHeader}>
+          {radioSettingsOpen ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Back to Radio"
+              style={styles.radioHeaderButton}
+              onPress={closeMessagingSettings}>
+              <Text style={styles.radioHeaderAction}>‹ Back</Text>
+            </TouchableOpacity>
+          ) : null}
+          <View style={styles.radioHeaderCopy}>
+            <Text style={styles.radioHeaderTitle}>
+              {radioSettingsOpen ? 'Messaging settings' : 'Radio'}
+            </Text>
+            {!radioSettingsOpen && (messagePersistenceError || messagePersistenceStatus !== 'ready') ? (
+              <Text numberOfLines={1} style={styles.warningText}>
+                {messagePersistenceStatus === 'restoring' ? 'Restoring radio history' :
+                  messagePersistenceStatus === 'unsupported' ? 'History is memory only' :
+                  'Check radio history in settings'}
+              </Text>
+            ) : null}
+          </View>
+          {!radioSettingsOpen ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Radio messaging settings"
+              style={styles.radioHeaderButton}
+              onPress={openMessagingSettings}>
+              <Text style={styles.radioHeaderAction}>⚙ Settings</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : (
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View>
@@ -278,6 +337,7 @@ export function AppShell(): React.JSX.Element {
           </View>
         </View>
       </View>
+      )}
 
       <View style={styles.content}>
         <ScreenMountGate active={activeTab === 'drive'}>
@@ -367,31 +427,25 @@ export function AppShell(): React.JSX.Element {
         </ScreenMountGate>
 
         <ScreenMountGate active={activeTab === 'radio'}>
-          <View style={styles.screen}>
-            <View style={styles.slimNotice}>
-              <Text style={styles.slimText}>
-                Radio traffic uses the selected MeshCore carrier channel, not
-                necessarily the active authorised convoy.
-              </Text>
-              <Text style={styles.slimText}>
-                {viewedConversation
-                  ? 'Explicit conversation: ' + viewedConversation.kind
-                  : 'Conversation router not yet connected; legacy Radio view follows the carrier.'}
-              </Text>
+          <RadioMessagingNavigationContext.Provider value={radioNavigation}>
+            {/* Keep only the messenger's local draft/navigation state alive while
+                the settings subpage is open. All runtime owners are above AppShell.
+                The entire Radio subtree still unmounts on leaving its tab. */}
+            <View
+              testID="radio-messenger-surface"
+              style={[styles.screen, radioSettingsOpen && styles.radioCovered]}
+              accessibilityElementsHidden={radioSettingsOpen}
+              importantForAccessibility={radioSettingsOpen ? 'no-hide-descendants' : 'auto'}
+              pointerEvents={radioSettingsOpen ? 'none' : 'auto'}>
+              <RadioScreen
+                onOpenCarrierDetails={() => {
+                  setConvoyView('tools');
+                  setActiveTab('convoy');
+                }}
+              />
             </View>
-            <SecureDataStatusBanner kind="messages" />
-            <CarMessagingStatusBanner />
-            <RadioSpeechStatusBanner />
-            <SpeechPttPanel />
-            <RadioScreen
-              onOpenCarrierDetails={() => {
-                // Recovery on app restart is read-only and does not require an
-                // in-memory Create/Join carrier profile.
-                setConvoyView('tools');
-                setActiveTab('convoy');
-              }}
-            />
-          </View>
+            {radioSettingsOpen ? <RadioMessagingSettingsScreen /> : null}
+          </RadioMessagingNavigationContext.Provider>
         </ScreenMountGate>
 
         <ScreenMountGate active={activeTab === 'convoy'}>
@@ -509,7 +563,10 @@ export function AppShell(): React.JSX.Element {
               accessibilityState={{selected}}
               style={[styles.tab, selected && styles.tabActive]}
               accessibilityHint={'Open ' + tab.label + ' section'}
-              onPress={() => setActiveTab(tab.key)}>
+              onPress={() => {
+                closeMessagingSettings();
+                setActiveTab(tab.key);
+              }}>
               <Text accessible={false}
                 style={[styles.tabSymbol, selected && styles.tabLabelActive]}>
                 {tab.symbol}
@@ -534,6 +591,13 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
   },
+  radioHeader: {minHeight: 52, paddingHorizontal: 12, flexDirection: 'row',
+    alignItems: 'center', gap: 8, borderBottomWidth: 1, borderBottomColor: colors.border},
+  radioHeaderCopy: {flex: 1},
+  radioHeaderTitle: {color: colors.textPrimary, fontSize: 19, fontWeight: '800'},
+  radioHeaderButton: {minHeight: 48, justifyContent: 'center', paddingHorizontal: 8},
+  radioHeaderAction: {color: colors.accent, fontWeight: '800', fontSize: 14},
+  radioCovered: {display: 'none'},
   headerTop: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
   brand: {color: colors.textPrimary, fontSize: 23, fontWeight: '800'},
   brandDetail: {color: colors.textSecondary, fontSize: 10, letterSpacing: 1, marginTop: 2},
