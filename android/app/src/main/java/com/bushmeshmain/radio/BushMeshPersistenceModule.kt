@@ -282,13 +282,36 @@ class BushMeshPersistenceModule(
   }
 
   @ReactMethod
+  @Synchronized
   fun loadChatPreferences(promise: Promise) {
+    try {
+      if (preferences().contains(CHAT_KEY) &&
+          (!keyStore().containsAlias(CHAT_KEY_ALIAS) || !keyStore().containsAlias(CHAT_ID_ALIAS))) {
+        promise.reject("BUSHMESH_CHAT_LOAD_FAILED", "Protected chat keys unavailable; existing preferences retained.")
+        return
+      }
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_CHAT_LOAD_FAILED", "Protected chat storage unavailable.")
+      return
+    }
     loadSecureValue(CHAT_KEY, CHAT_KEY_ALIAS, CHAT_AAD, "chat preferences",
       "BUSHMESH_CHAT_LOAD_FAILED", promise)
   }
 
   @ReactMethod
+  @Synchronized
   fun saveChatPreferences(serialized: String, promise: Promise) {
+    try {
+      val store = keyStore()
+      if (!store.containsAlias(CHAT_ID_ALIAS) ||
+          (preferences().contains(CHAT_KEY) && !store.containsAlias(CHAT_KEY_ALIAS))) {
+        promise.reject("BUSHMESH_CHAT_SAVE_FAILED", "Protected chat keys unavailable; existing preferences retained.")
+        return
+      }
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_CHAT_SAVE_FAILED", "Protected chat storage unavailable.")
+      return
+    }
     if (serialized.length > 1000000) {
       promise.reject("BUSHMESH_CHAT_SAVE_FAILED", "Chat preferences exceed storage limit.")
       return
@@ -305,6 +328,7 @@ class BushMeshPersistenceModule(
       require(configuration.length in 1..1024)
       val store = keyStore()
       val key = store.getKey(CHAT_ID_ALIAS, null) as? SecretKey ?: run {
+        check(!preferences().contains(CHAT_KEY)) { "Protected chat identity unavailable." }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, "AndroidKeyStore")
         generator.init(KeyGenParameterSpec.Builder(CHAT_ID_ALIAS, KeyProperties.PURPOSE_SIGN)
           .setDigests(KeyProperties.DIGEST_SHA256).build())
