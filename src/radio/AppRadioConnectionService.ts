@@ -1,4 +1,8 @@
 import {Buffer} from 'buffer';
+import {
+  ChatConfiguration, chatPreferenceStore, configurationId,
+} from './chatManagement/chatPreferences';
+import type {MeshCoreChannelInfo} from '../meshcore/meshcoreChannelInfo';
 import {BleManager, Device} from 'react-native-ble-plx';
 
 import {requestBlePermissions} from '../ble/blePermissions';
@@ -206,6 +210,7 @@ export class AppRadioConnectionService {
   private disposed = false;
   private lifecycleGeneration = 0;
   private scanGeneration = 0;
+  private chatOperationActive = false;
 
   constructor(deps: Partial<Dependencies> = {}) {
     this.deps = {
@@ -1001,7 +1006,180 @@ export class AppRadioConnectionService {
     }
   }
 
+  /** Radio identity is a local configuration reference, never authenticated membership. */
+  getChatRadio(): string | null {
+    const address = this.snapshot.connectedDeviceAddress;
+    const key = this.snapshot.selfInfo?.publicKeyHex;
+    return this.hasUsableSendSession() && address && key && /^[0-9a-f]{64}$/i.test(key)
+      ? JSON.stringify([address.toUpperCase(), key.toUpperCase()]) : null;
+  }
+
+  private async withChatPort<T>(
+    expectedRadio: string,
+    task: (port: MeshCoreChannelProvisioningPort, assertCurrent: () => void) => Promise<T>,
+  ): Promise<T> {
+    if (this.chatOperationActive || this.snapshot.isWriting ||
+        this.getChatRadio() !== expectedRadio) {
+      throw new Error('Radio changed or is busy. Refresh chats and retry.');
+    }
+    const port = this.requireProvisioningPort();
+    const generation = this.lifecycleGeneration;
+    const assertCurrent = () => {
+      if (!this.isActiveLifecycle(generation) || this.getChatRadio() !== expectedRadio ||
+          (this.snapshot.connectionOwner === 'android-native'
+            ? this.nativeSession !== port : this.meshCoreClient !== port)) {
+        throw new Error('Radio session changed. Refresh chats before retrying.');
+      }
+    };
+    this.chatOperationActive = true;
+    this.patch({isWriting: true});
+    const guarded: MeshCoreChannelProvisioningPort = {
+      getDeviceInfo: async () => {
+        assertCurrent();
+        const result = await port.getDeviceInfo();
+        assertCurrent();
+        return result;
+      },
+      readChannel: async index => {
+        assertCurrent();
+        const result = await port.readChannel(index);
+        assertCurrent();
+        return result;
+      },
+      writeChannel: async (index, name, secret) => {
+        assertCurrent();
+        await port.writeChannel(index, name, secret);
+        assertCurrent();
+      },
+    };
+    try {
+      assertCurrent();
+      const result = await task(guarded, assertCurrent);
+      assertCurrent();
+      return result;
+    } finally {
+      this.chatOperationActive = false;
+      if (this.getChatRadio() === expectedRadio) this.patch({isWriting: false});
+    }
+  }
+
+  private async chatConfiguration(radio: string, channel: MeshCoreChannelInfo): Promise<ChatConfiguration> {
+    if (channel.empty) throw new Error('Channel is empty.');
+    return {
+      id: await configurationId(radio, channel.channelIndex, channel.channelName,
+        meshCoreSecretToHex(channel.secret)),
+      radio, slot: channel.channelIndex, name: channel.channelName,
+      privateChannel: channel.secret.some(byte => byte !== 0),
+    };
+  }
+
+  async listChatConfigurations(radio: string): Promise<ChatConfiguration[]> {
+    return this.withChatPort(radio, async (port, assertCurrent) => {
+      const channels = await readAllMeshCoreChannels(port);
+      const configs = await Promise.all(channels.filter(c => !c.empty)
+        .map(c => this.chatConfiguration(radio, c)));
+      assertCurrent();
+      this.patch({channels: channels.map(safeMeshCoreChannel)});
+      return configs;
+    });
+  }
+
+  /** Same verified provisioning primitive as createPrivateChannel/joinPrivateChannel,
+   * but a messenger may NEVER replace a configured slot. */
+  async provisionChat(radio: string, input: {
+    name: string; secretHex?: string;
+  }): Promise<ChatConfiguration> {
+    const name = input.name.trim();
+    if (!name || name.includes('\0') || Buffer.byteLength(name, 'utf8') > 31) {
+      throw new Error('Enter a channel name of 1–31 UTF-8 bytes.');
+    }
+    if (input.secretHex !== undefined &&
+        (!/^[a-f0-9]{32}$/i.test(input.secretHex) || /^0{32}$/.test(input.secretHex))) {
+      throw new Error('Enter a non-zero 32-character private channel key.');
+    }
+    // Do not modify firmware if protected preferences cannot be loaded.
+    return this.withChatPort(radio, async (port, assertCurrent) => {
+      await chatPreferenceStore.load();
+      const emptyOnly: MeshCoreChannelProvisioningPort = {
+        ...port,
+        writeChannel: async (slot, channelName, secret) => {
+          if (!(await port.readChannel(slot)).empty) {
+            throw new Error('Channel slot is no longer empty. No replacement allowed.');
+          }
+          await port.writeChannel(slot, channelName, secret);
+        },
+      };
+      const provisioned = await provisionMeshCoreChannel(emptyOnly, {
+        channelName: name,
+        ...(input.secretHex === undefined
+          ? {randomBytes: this.deps.randomBytes}
+          : {secret: meshCoreSecretFromHex(input.secretHex)}),
+      });
+      const config = await this.chatConfiguration(radio, {
+        ...provisioned, empty: false,
+      });
+      const channels = await readAllMeshCoreChannels(port);
+      const current = channels.find(c => c.channelIndex === config.slot);
+      if (!current || current.empty ||
+          (await this.chatConfiguration(radio, current)).id !== config.id) {
+        throw new Error('Provisioned channel changed before confirmation.');
+      }
+      assertCurrent();
+      this.patch({channels: channels.map(safeMeshCoreChannel)});
+      // Durable creator evidence only after verified creation, never after joining.
+      try {
+        await chatPreferenceStore.recordProvisioned(config.id, input.secretHex === undefined);
+      } catch {
+        throw new Error('Channel was provisioned but local preferences could not be saved. Refresh before retrying.');
+      }
+      return config;
+    });
+  }
+
+  private async requireChatConfiguration(
+    port: MeshCoreChannelProvisioningPort, expected: ChatConfiguration,
+  ): Promise<MeshCoreChannelInfo> {
+    const current = await port.readChannel(expected.slot);
+    if (current.empty || (await this.chatConfiguration(expected.radio, current)).id !== expected.id) {
+      throw new Error('Channel configuration changed. Refresh chats before retrying.');
+    }
+    return current;
+  }
+
+  /** Explicitly confirmed credential sharing only; no snapshot or log receives the key. */
+  async revealChatCredential(expected: ChatConfiguration): Promise<string> {
+    return this.withChatPort(expected.radio, async port => {
+      const channel = await this.requireChatConfiguration(port, expected);
+      if (!channel.secret.some(byte => byte !== 0)) throw new Error('Not a private channel.');
+      return meshCoreSecretToHex(channel.secret);
+    });
+  }
+
+  async leaveChat(expected: ChatConfiguration): Promise<void> {
+    return this.withChatPort(expected.radio, async (port, assertCurrent) => {
+      await this.requireChatConfiguration(port, expected);
+      const checked: MeshCoreChannelProvisioningPort = {
+        ...port,
+        writeChannel: async (slot, name, secret) => {
+          await this.requireChatConfiguration(port, expected);
+          await port.writeChannel(slot, name, secret);
+        },
+      };
+      await clearMeshCoreChannel(checked, expected.slot);
+      // Never touch the Radio History store.
+      const channels = await readAllMeshCoreChannels(port);
+      assertCurrent();
+      this.patch({channels: channels.map(safeMeshCoreChannel)});
+      try {
+        await chatPreferenceStore.forget(expected.id);
+      } catch {
+        throw new Error('Channel was cleared but local preferences could not be removed. Refresh before retrying.');
+      }
+    });
+  }
+
   async refreshChannels(): Promise<BushMeshChannel[]> {
+    if (this.chatOperationActive) throw new Error('Chat management is in progress.');
     this.patch({isWriting: true});
     try {
       const channels = await readAllMeshCoreChannels(this.requireProvisioningPort());
@@ -1020,6 +1198,7 @@ export class AppRadioConnectionService {
     channelName: string;
     channelIndex?: number | null;
   }): Promise<AppProvisionedChannel> {
+    if (this.chatOperationActive) throw new Error('Chat management is in progress.');
     this.patch({isWriting: true});
     try {
       const provisioned = await provisionMeshCoreChannel(
@@ -1049,6 +1228,7 @@ export class AppRadioConnectionService {
     secretHex: string;
     channelIndex?: number | null;
   }): Promise<AppProvisionedChannel> {
+    if (this.chatOperationActive) throw new Error('Chat management is in progress.');
     this.patch({isWriting: true});
     try {
       const provisioned = await provisionMeshCoreChannel(
@@ -1074,6 +1254,7 @@ export class AppRadioConnectionService {
   }
 
   async clearChannel(channelIndex: number): Promise<void> {
+    if (this.chatOperationActive) throw new Error('Chat management is in progress.');
     this.patch({isWriting: true});
     try {
       await clearMeshCoreChannel(this.requireProvisioningPort(), channelIndex);
@@ -1087,6 +1268,7 @@ export class AppRadioConnectionService {
   }
 
   async revealChannelSecret(channelIndex: number, expectedChannelName?: string): Promise<string> {
+    if (this.chatOperationActive) throw new Error('Chat management is in progress.');
     const channel = await this.requireProvisioningPort().readChannel(channelIndex);
     if (channel.empty || channel.secret.every(byte => byte === 0)) {
       throw new Error('This channel slot has no private MeshCore carrier secret.');
@@ -1102,6 +1284,7 @@ export class AppRadioConnectionService {
     channelName?: string;
     channelIndex?: number | null;
   }): Promise<BushMeshConvoyEnrollment> {
+    if (this.chatOperationActive) throw new Error('Chat management is in progress.');
     this.patch({isWriting: true});
     try {
       const enrollment = await createBushMeshConvoy(
@@ -1122,6 +1305,7 @@ export class AppRadioConnectionService {
     invite: string;
     channelIndex?: number | null;
   }): Promise<BushMeshConvoyEnrollment> {
+    if (this.chatOperationActive) throw new Error('Chat management is in progress.');
     this.patch({isWriting: true});
     try {
       const enrollment = await joinBushMeshConvoy(
