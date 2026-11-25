@@ -134,7 +134,8 @@ export function RadioInbox({
           const id = conversationKey(item.scope);
           const open = menuFor === id;
           const repeatedSlot = conversations.filter(other =>
-            other.channel.channelIndex === item.channel.channelIndex).length > 1;
+            other.channel.channelIndex === item.channel.channelIndex &&
+            other.channel.channelName === item.channel.channelName).length > 1;
           const distinction = repeatedSlot ? ' · ' + item.scope.channelGeneration : '';
           return (
             <View style={styles.rowWrap}>
