@@ -338,3 +338,18 @@ test('unread counts and read callback require explicit authoritative input', asy
   await press('Open chat Private · GEN-24');
   expect(read).toHaveBeenCalledWith(scope, 'read-evidence');
 });
+
+
+test('local history recording failure after PACKET_OK never becomes radio failure', async () => {
+  addLocal.mockImplementationOnce(() => {
+    throw new Error('Local encrypted persistence failure');
+  });
+  await mount();
+  await room('Public');
+  await draft('Radio still accepted');
+  await press('Submit channel text to radio');
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(addLocal).toHaveBeenCalledTimes(1);
+  expect(viewText()).toContain('Radio accepted, but local history recording failed');
+  expect(viewText()).toContain('Do not resend');
+});
