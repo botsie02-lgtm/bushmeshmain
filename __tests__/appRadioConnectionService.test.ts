@@ -102,6 +102,7 @@ describe('AppRadioConnectionService', () => {
     const requestPermissions =
       options.requestPermissions ?? jest.fn().mockResolvedValue(true);
 
+    let randomByte = 7;
     const service = new AppRadioConnectionService({
       createBleManager,
       createMeshCoreClient,
@@ -113,7 +114,7 @@ describe('AppRadioConnectionService', () => {
       }),
       nativeCoordinator,
       nativeSupported: () => options.nativeSupported ?? false,
-      randomBytes: async length => new Uint8Array(length).fill(7),
+      randomBytes: async length => new Uint8Array(length).fill(randomByte++),
       getNativeStatus: jest.fn().mockResolvedValue(releasedNativeOwnerStatus()),
     });
 
@@ -389,6 +390,54 @@ describe('AppRadioConnectionService', () => {
       client.writeChannel.mockResolvedValueOnce(undefined);
       await expect(service.provisionChat(radio, {name: 'Chat'})).rejects.toThrow('did not verify');
       expect(provenance).not.toHaveBeenCalled();
+      await service.dispose();
+    });
+
+    it('rejects duplicate creation and joining without altering occupied slots', async () => {
+      const {service, radio, client, provenance} = await chatHarness();
+      await service.provisionChat(radio, {name: 'Camp'});
+      await expect(service.provisionChat(radio, {name: 'camp'})).rejects.toMatchObject({code: 'duplicate'});
+      await expect(service.provisionChat(radio, {name: 'Camp', secretHex: '07'.repeat(16)}))
+        .rejects.toMatchObject({code: 'duplicate'});
+      expect(client.writeChannel).toHaveBeenCalledTimes(1);
+      expect(provenance).toHaveBeenCalledTimes(1);
+      await service.dispose();
+    });
+
+    it('rejects concurrent management and wrong radio without starting a second write', async () => {
+      const {service, radio, client} = await chatHarness();
+      const first = service.provisionChat(radio, {name: 'Camp'});
+      await expect(service.provisionChat(radio, {name: 'Second'})).rejects.toThrow('busy');
+      await first;
+      await expect(service.provisionChat('different radio', {name: 'Wrong'})).rejects.toThrow('changed');
+      expect(client.writeChannel).toHaveBeenCalledTimes(1);
+      await service.dispose();
+    });
+
+    it('fails closed when protected configuration identity is unavailable before a write', async () => {
+      const {service, radio, client, provenance} = await chatHarness();
+      jest.mocked(chatPreferences.configurationId).mockRejectedValueOnce(new Error('Keystore unavailable'));
+      await expect(service.provisionChat(radio, {name: 'Camp'})).rejects.toThrow();
+      expect(client.writeChannel).not.toHaveBeenCalled();
+      expect(provenance).not.toHaveBeenCalled();
+      await service.dispose();
+    });
+
+    it('reports verified firmware mutation with failed persistence as partial; retry cannot duplicate', async () => {
+      const {service, radio, client, provenance, channels} = await chatHarness();
+      provenance.mockRejectedValueOnce(new Error('Keystore unavailable'));
+      await expect(service.provisionChat(radio, {name: 'Camp'})).rejects.toMatchObject({code: 'partial'});
+      expect(channels[0].channelName).toBe('Camp');
+      await expect(service.provisionChat(radio, {name: 'Camp'})).rejects.toMatchObject({code: 'duplicate'});
+      expect(client.writeChannel).toHaveBeenCalledTimes(1);
+      await service.dispose();
+    });
+
+    it('preserves the exact personalisation supplied to verified provisioning', async () => {
+      const {service, radio, provenance} = await chatHarness();
+      const personalisation = {description: 'Weekend', avatarColor: 'orange', avatarIcon: 'camp'} as const;
+      const chat = await service.provisionChat(radio, {name: 'Camp', personalisation});
+      expect(provenance).toHaveBeenCalledWith(chat.id, true, personalisation);
       await service.dispose();
     });
 
