@@ -68,7 +68,7 @@ export function scopedMessages(
   return messages
     .filter(message => message.channelIndex === scope.channelIndex &&
       message.channelName === scope.channelName)
-    .flatMap(message => {
+    .flatMap<ScopedMessage>(message => {
       if (equalProof(scope, trustedOwnership[message.id])) {
         return [{message, provenance: 'verified-history' as const}];
       }
