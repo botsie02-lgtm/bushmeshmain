@@ -1,7 +1,8 @@
 import {Buffer} from 'buffer';
 import {
-  ChatConfiguration, chatPreferenceStore, configurationId,
+  ChatConfiguration, ChatPersonalisation, chatPreferenceStore, configurationId,
 } from './chatManagement/chatPreferences';
+import {ChatOperationError, validateChatName, validateChatInvite} from './chatManagement/chatInvitations';
 import type {MeshCoreChannelInfo} from '../meshcore/meshcoreChannelInfo';
 import {BleManager, Device} from 'react-native-ble-plx';
 
@@ -1096,19 +1097,18 @@ export class AppRadioConnectionService {
   /** Same verified provisioning primitive as createPrivateChannel/joinPrivateChannel,
    * but a messenger may NEVER replace a configured slot. */
   async provisionChat(radio: string, input: {
-    name: string; secretHex?: string;
+    name: string; secretHex?: string; personalisation?: Partial<ChatPersonalisation>;
   }): Promise<ChatConfiguration> {
-    const name = input.name.trim();
-    if (!name || name.includes('\0') || Buffer.byteLength(name, 'utf8') > 31) {
-      throw new Error('Enter a channel name of 1–31 UTF-8 bytes.');
-    }
-    if (input.secretHex !== undefined &&
-        (!/^[a-f0-9]{32}$/i.test(input.secretHex) || /^0{32}$/.test(input.secretHex))) {
-      throw new Error('Enter a non-zero 32-character private channel key.');
-    }
+    const name = validateChatName(input.name);
+    if (input.secretHex !== undefined) validateChatInvite({name, secretHex: input.secretHex});
     // Do not modify firmware if protected preferences cannot be loaded.
     return this.withChatPort(radio, async (port, assertCurrent) => {
-      await chatPreferenceStore.load();
+      try {
+        await chatPreferenceStore.load();
+      } catch {
+        throw new ChatOperationError('storage', 'Protected preferences unavailable. No channel was written.');
+      }
+      let attemptedWrite = false;
       const emptyOnly: MeshCoreChannelProvisioningPort = {
         ...port,
         writeChannel: async (slot, channelName, secret) => {
@@ -1116,14 +1116,30 @@ export class AppRadioConnectionService {
           if (!(await port.readChannel(slot)).empty) {
             throw new Error('Channel slot is no longer empty. No replacement allowed.');
           }
+          // Names are ambiguous in legacy history. Refuse duplicates on this radio,
+          // even if the same name was assigned a different key.
+          const all = await readAllMeshCoreChannels(port);
+          if (all.some(c => !c.empty && c.channelName.toLowerCase() === channelName.toLowerCase())) {
+            throw new ChatOperationError('duplicate', 'A channel with this name already exists on this radio. Open it or choose a different name.');
+          }
+          if (!(await port.readChannel(slot)).empty) {
+            throw new Error('Channel slot is no longer empty. No replacement allowed.');
+          }
+          // Prove that protected configuration identity is available before writing.
+          await this.chatConfiguration(radio, {channelIndex: slot, channelName, secret, empty: false});
+          if (!(await port.readChannel(slot)).empty) {
+            throw new Error('Channel slot is no longer empty. No replacement allowed.');
+          }
+          attemptedWrite = true;
           await port.writeChannel(slot, channelName, secret);
         },
       };
+      try {
       const provisioned = await provisionMeshCoreChannel(emptyOnly, {
         channelName: name,
         ...(input.secretHex === undefined
           ? {randomBytes: this.deps.randomBytes}
-          : {secret: meshCoreSecretFromHex(input.secretHex)}),
+          : {secret: meshCoreSecretFromHex(input.secretHex.trim())}),
       });
       const config = await this.chatConfiguration(radio, {
         ...provisioned, empty: false,
@@ -1138,11 +1154,26 @@ export class AppRadioConnectionService {
       this.patch({channels: channels.map(safeMeshCoreChannel)});
       // Durable creator evidence only after verified creation, never after joining.
       try {
-        await chatPreferenceStore.recordProvisioned(config.id, input.secretHex === undefined);
+        if (input.personalisation) {
+          await chatPreferenceStore.recordProvisioned(config.id, input.secretHex === undefined, input.personalisation);
+        } else {
+          await chatPreferenceStore.recordProvisioned(config.id, input.secretHex === undefined);
+        }
       } catch {
         throw new Error('Channel was provisioned but local preferences could not be saved. Refresh before retrying.');
       }
       return config;
+      } catch (failure) {
+        if (attemptedWrite) {
+          // Existing tests and callers can distinguish failed readback from a
+          // failure before any firmware write without exposing raw errors.
+          throw new ChatOperationError('partial', 'Channel write may have completed but did not verify fully or preferences could not be saved. Refresh before retrying.');
+        }
+        if (failure instanceof Error && failure.message.includes('no empty channel slots')) {
+          throw new ChatOperationError('full', 'All radio channel slots are occupied. Leave an unused chat or use another radio.');
+        }
+        throw failure;
+      }
     });
   }
 
