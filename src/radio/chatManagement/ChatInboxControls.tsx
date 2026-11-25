@@ -14,7 +14,7 @@ export function ChatInboxControls({controller, onManage, onOpen}: {
 }): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [archived, setArchived] = useState(false);
-  const [sort, setSort] = useState<ChatSort>('name');
+  const sort = controller.sort;
   const visible = selectChats(controller.chats, controller.preferences, query, archived, sort);
   const sortLabels: Record<ChatSort, string> = {name: 'Name', unread: 'Unread first', slot: 'Radio slot'};
   const radio = controller.radio;
@@ -44,8 +44,9 @@ export function ChatInboxControls({controller, onManage, onOpen}: {
       <View style={styles.row}>
         {(['name', 'unread', 'slot'] as const).map(option => (
           <TouchableOpacity key={option} accessibilityRole="button"
-            accessibilityState={{selected: option === sort}}
-            onPress={() => setSort(option)} style={[styles.sort, option === sort && styles.selected]}>
+            accessibilityState={{selected: option === sort, disabled: disabled || !controller.ready || controller.chats.length === 0}}
+            disabled={disabled || !controller.ready || controller.chats.length === 0}
+            onPress={() => controller.changeSort(option).catch(() => undefined)} style={[styles.sort, option === sort && styles.selected]}>
             <Text style={styles.body}>{sortLabels[option]}</Text>
           </TouchableOpacity>
         ))}
