@@ -111,3 +111,13 @@ test('status labels do not invent acknowledgements; uncertain acceptance blocks 
     submissionFailure: {reason: 'firmware-error', firmwareCode: 2}}))
     .toBe('Radio rejected');
 });
+
+
+test('conversation keys do not collide when radio ID or generation includes separators', () => {
+  const a = {...scope, radioId: 'radio:abc', channelGeneration: 'def'};
+  const b = {...scope, radioId: 'radio', channelGeneration: 'abc:def'};
+  expect(conversationKey(a)).not.toBe(conversationKey(b));
+  expect(conversationKey(a)).not.toBe(conversationKey({
+    ...a, channelName: 'Other Channel',
+  }));
+});
