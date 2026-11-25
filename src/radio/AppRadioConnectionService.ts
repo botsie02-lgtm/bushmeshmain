@@ -211,6 +211,7 @@ export class AppRadioConnectionService {
   private lifecycleGeneration = 0;
   private scanGeneration = 0;
   private chatOperationActive = false;
+  private chatSessionEpoch = 0;
 
   constructor(deps: Partial<Dependencies> = {}) {
     this.deps = {
@@ -381,6 +382,7 @@ export class AppRadioConnectionService {
    * React-state divergence; never starts a JS-GATT connection or writes radio
    * configuration. The existing coordinator session is reused if active. */
   async recoverNativeCommandSession(): Promise<boolean> {
+    this.chatSessionEpoch += 1;
     if (this.snapshot.connectionOwner === 'react-native' || this.meshCoreClient) {
       throw new Error('Disconnect BLE Tools before recovering the native session.');
     }
@@ -502,6 +504,7 @@ export class AppRadioConnectionService {
   }
 
   async connectToDevice(device: Device): Promise<void> {
+    this.chatSessionEpoch += 1;
     this.stopScan();
     // Android's persisted target is authoritative even if an earlier
     // optional sync incorrectly cleared the React connection snapshot.
@@ -585,6 +588,7 @@ export class AppRadioConnectionService {
    * JavaScript connection for the same physical radio.
    */
   async handoffDiscoveredDeviceToAndroid(device: Device): Promise<void> {
+    this.chatSessionEpoch += 1;
     if (!this.nativeHandoffSupported) {
       this.patch({status: 'Error', statusDetail: 'Android native radio is unavailable.'});
       return;
@@ -646,6 +650,7 @@ export class AppRadioConnectionService {
   }
 
   async handoffToAndroid(): Promise<void> {
+    this.chatSessionEpoch += 1;
     if (!this.snapshot.connectedDeviceAddress ||
         this.snapshot.connectionOwner === 'android-native') return;
     if (!this.nativeHandoffSupported) {
@@ -689,6 +694,7 @@ export class AppRadioConnectionService {
   }
 
   async disconnect(): Promise<void> {
+    this.chatSessionEpoch += 1;
     if (this.disconnectPromise) return this.disconnectPromise;
     const operation = this.disconnectInternal();
     this.disconnectPromise = operation;
@@ -1024,8 +1030,10 @@ export class AppRadioConnectionService {
     }
     const port = this.requireProvisioningPort();
     const generation = this.lifecycleGeneration;
+    const chatEpoch = this.chatSessionEpoch;
     const assertCurrent = () => {
-      if (!this.isActiveLifecycle(generation) || this.getChatRadio() !== expectedRadio ||
+      if (!this.isActiveLifecycle(generation) || chatEpoch !== this.chatSessionEpoch ||
+          this.getChatRadio() !== expectedRadio ||
           (this.snapshot.connectionOwner === 'android-native'
             ? this.nativeSession !== port : this.meshCoreClient !== port)) {
         throw new Error('Radio session changed. Refresh chats before retrying.');
@@ -1059,7 +1067,8 @@ export class AppRadioConnectionService {
       return result;
     } finally {
       this.chatOperationActive = false;
-      if (this.getChatRadio() === expectedRadio) this.patch({isWriting: false});
+      if (chatEpoch === this.chatSessionEpoch ||
+          this.getChatRadio() === expectedRadio) this.patch({isWriting: false});
     }
   }
 
@@ -1103,6 +1112,7 @@ export class AppRadioConnectionService {
       const emptyOnly: MeshCoreChannelProvisioningPort = {
         ...port,
         writeChannel: async (slot, channelName, secret) => {
+          if (secret.every(byte => byte === 0)) throw new Error('Private key must be non-zero.');
           if (!(await port.readChannel(slot)).empty) {
             throw new Error('Channel slot is no longer empty. No replacement allowed.');
           }
@@ -1727,7 +1737,14 @@ export class AppRadioConnectionService {
 
   private patch(patch: Partial<AppRadioConnectionSnapshot>): void {
     if (this.disposed) return;
-    this.snapshot = {...this.snapshot, ...patch};
+    const next = {...this.snapshot, ...patch};
+    if (next.status !== this.snapshot.status ||
+        next.connectedDeviceAddress !== this.snapshot.connectedDeviceAddress ||
+        next.connectionOwner !== this.snapshot.connectionOwner ||
+        next.selfInfo?.publicKeyHex !== this.snapshot.selfInfo?.publicKeyHex) {
+      this.chatSessionEpoch += 1;
+    }
+    this.snapshot = next;
     this.emit();
   }
 
