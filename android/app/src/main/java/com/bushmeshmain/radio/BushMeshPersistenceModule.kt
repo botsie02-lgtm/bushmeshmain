@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
+import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
@@ -39,6 +40,10 @@ class BushMeshPersistenceModule(
     private const val CANONICAL_RUNTIME_KEY_ALIAS = "bushmesh_canonical_runtime_aes_v1"
     private const val GPS_PREFERENCES_KEY_ALIAS = "bushmesh_gps_preferences_aes_v1"
     private const val DEVICE_PREFERENCES_KEY_ALIAS = "bushmesh_device_preferences_aes_v1"
+    private const val CHAT_KEY = "encrypted_chat_preferences_v1"
+    private const val CHAT_KEY_ALIAS = "bushmesh_chat_preferences_aes_v1"
+    private const val CHAT_ID_ALIAS = "bushmesh_chat_configuration_hmac_v1"
+    private const val CHAT_AAD = "v1:chat-preferences"
     private const val ENVELOPE_VERSION = "v1"
     private const val OUTBOX_AAD = ENVELOPE_VERSION
     private const val TRACK_AAD = "$ENVELOPE_VERSION:track"
@@ -274,6 +279,44 @@ class BushMeshPersistenceModule(
       GPS_PREFERENCES_AAD, "GPS preferences",
       "BUSHMESH_GPS_PREFERENCES_SAVE_FAILED", serialized, promise,
     )
+  }
+
+  @ReactMethod
+  fun loadChatPreferences(promise: Promise) {
+    loadSecureValue(CHAT_KEY, CHAT_KEY_ALIAS, CHAT_AAD, "chat preferences",
+      "BUSHMESH_CHAT_LOAD_FAILED", promise)
+  }
+
+  @ReactMethod
+  fun saveChatPreferences(serialized: String, promise: Promise) {
+    if (serialized.length > 1000000) {
+      promise.reject("BUSHMESH_CHAT_SAVE_FAILED", "Chat preferences exceed storage limit.")
+      return
+    }
+    saveSecureValue(CHAT_KEY, CHAT_KEY_ALIAS, CHAT_AAD, "chat preferences",
+      "BUSHMESH_CHAT_SAVE_FAILED", serialized, promise)
+  }
+
+  // Local opaque configuration identifier; never a network identity or PSK.
+  @ReactMethod
+  @Synchronized
+  fun chatConfigurationId(configuration: String, promise: Promise) {
+    try {
+      require(configuration.length in 1..1024)
+      val store = keyStore()
+      val key = store.getKey(CHAT_ID_ALIAS, null) as? SecretKey ?: run {
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, "AndroidKeyStore")
+        generator.init(KeyGenParameterSpec.Builder(CHAT_ID_ALIAS, KeyProperties.PURPOSE_SIGN)
+          .setDigests(KeyProperties.DIGEST_SHA256).build())
+        generator.generateKey()
+      }
+      val mac = Mac.getInstance("HmacSHA256")
+      mac.init(key)
+      promise.resolve(mac.doFinal(configuration.toByteArray(StandardCharsets.UTF_8))
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) })
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_CHAT_ID_FAILED", "Protected chat identity unavailable.")
+    }
   }
 
   private fun loadSecureValue(
