@@ -1,7 +1,7 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {useRadioConnection} from '../../state/RadioConnectionContext';
 import {
-  ChatConfiguration, ChatPersonalisation, ChatPreferencePatch, ChatPreferenceSnapshot, chatPreferenceStore,
+  ChatConfiguration, ChatPersonalisation, ChatPreferencePatch, ChatPreferenceSnapshot, ChatSort, chatPreferenceStore,
 } from './chatPreferences';
 import {ChatOperationError} from './chatInvitations';
 
@@ -18,6 +18,7 @@ export function useChatManagement() {
   const [configs, setConfigs] = useState<ChatConfiguration[]>([]);
   const [preferences, setPreferences] = useState<ChatPreferenceSnapshot>({});
   const [ready, setReady] = useState(false);
+  const [sort, setSort] = useState<ChatSort>('name');
 
   const run = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
     if (busyRef.current) throw new Error('Chat management is busy.');
@@ -41,9 +42,11 @@ export function useChatManagement() {
   const reload = useCallback(async (expected: string) => {
     setReady(false);
     const entries = await chatPreferenceStore.load();
+    const savedSort = await chatPreferenceStore.loadSort();
     const next = await live.current.listChatConfigurations(expected);
     if (live.current.getChatRadio() !== expected) throw new Error('Radio changed.');
     setPreferences(entries);
+    setSort(savedSort);
     setConfigs(next);
     setLoadedRadio(expected);
     setReady(true);
@@ -79,6 +82,15 @@ export function useChatManagement() {
       const entries = await chatPreferenceStore.update(chat.id, patch);
       if (live.current.getChatRadio() === chat.radio) setPreferences(entries);
     });
+
+  const changeSort = (next: ChatSort) => run(async () => {
+    const expected = live.current.getChatRadio();
+    if (!ready || !expected || loadedRadio !== expected || configs.length === 0) {
+      throw new Error('Refresh a configured radio before changing sort.');
+    }
+    await chatPreferenceStore.saveSort(next);
+    setSort(next);
+  });
 
   const provision = (expectedRadio: string, input: {name: string; secretHex?: string; personalisation?: Partial<ChatPersonalisation>}) =>
     run(async () => {
@@ -122,7 +134,7 @@ export function useChatManagement() {
     ready: ready && radio === loadedRadio,
     chats: ready && radio === loadedRadio ? configs : [],
     preferences: ready && radio === loadedRadio ? preferences : {},
-    refresh, update, provision, leave, credential,
+    refresh, update, provision, leave, credential, sort, changeSort,
     isCurrentRadio: (expected: string) => live.current.getChatRadio() === expected,
     radioBusy: connection.snapshot.isWriting,
   };
