@@ -15,6 +15,7 @@ import {
 import {
   meshCoreSecretFromHex,
   meshCoreSecretToHex,
+  meshCoreSecretsEqual,
   safeMeshCoreChannel,
 } from '../meshcore/meshcoreChannelInfo';
 import {MeshCoreClient, MeshCoreLogItem} from '../meshcore/MeshCoreClient';
@@ -1122,6 +1123,9 @@ export class AppRadioConnectionService {
           if (all.some(c => !c.empty && c.channelName.toLowerCase() === channelName.toLowerCase())) {
             throw new ChatOperationError('duplicate', 'A channel with this name already exists on this radio. Open it or choose a different name.');
           }
+          if (all.some(c => !c.empty && meshCoreSecretsEqual(c.secret, secret))) {
+            throw new ChatOperationError('duplicate', 'This private channel key is already configured on the radio. Open the existing chat.');
+          }
           if (!(await port.readChannel(slot)).empty) {
             throw new Error('Channel slot is no longer empty. No replacement allowed.');
           }
@@ -1135,34 +1139,34 @@ export class AppRadioConnectionService {
         },
       };
       try {
-      const provisioned = await provisionMeshCoreChannel(emptyOnly, {
-        channelName: name,
-        ...(input.secretHex === undefined
-          ? {randomBytes: this.deps.randomBytes}
-          : {secret: meshCoreSecretFromHex(input.secretHex.trim())}),
-      });
-      const config = await this.chatConfiguration(radio, {
-        ...provisioned, empty: false,
-      });
-      const channels = await readAllMeshCoreChannels(port);
-      const current = channels.find(c => c.channelIndex === config.slot);
-      if (!current || current.empty ||
-          (await this.chatConfiguration(radio, current)).id !== config.id) {
-        throw new Error('Provisioned channel changed before confirmation.');
-      }
-      assertCurrent();
-      this.patch({channels: channels.map(safeMeshCoreChannel)});
-      // Durable creator evidence only after verified creation, never after joining.
-      try {
-        if (input.personalisation) {
-          await chatPreferenceStore.recordProvisioned(config.id, input.secretHex === undefined, input.personalisation);
-        } else {
-          await chatPreferenceStore.recordProvisioned(config.id, input.secretHex === undefined);
+        const provisioned = await provisionMeshCoreChannel(emptyOnly, {
+          channelName: name,
+          ...(input.secretHex === undefined
+            ? {randomBytes: this.deps.randomBytes}
+            : {secret: meshCoreSecretFromHex(input.secretHex.trim())}),
+        });
+        const config = await this.chatConfiguration(radio, {
+          ...provisioned, empty: false,
+        });
+        const channels = await readAllMeshCoreChannels(port);
+        const current = channels.find(c => c.channelIndex === config.slot);
+        if (!current || current.empty ||
+            (await this.chatConfiguration(radio, current)).id !== config.id) {
+          throw new Error('Provisioned channel changed before confirmation.');
         }
-      } catch {
-        throw new Error('Channel was provisioned but local preferences could not be saved. Refresh before retrying.');
-      }
-      return config;
+        assertCurrent();
+        this.patch({channels: channels.map(safeMeshCoreChannel)});
+        // Durable creator evidence only after verified creation, never after joining.
+        try {
+          if (input.personalisation) {
+            await chatPreferenceStore.recordProvisioned(config.id, input.secretHex === undefined, input.personalisation);
+          } else {
+            await chatPreferenceStore.recordProvisioned(config.id, input.secretHex === undefined);
+          }
+        } catch {
+          throw new Error('Channel was provisioned but local preferences could not be saved. Refresh before retrying.');
+        }
+        return config;
       } catch (failure) {
         if (attemptedWrite) {
           // Existing tests and callers can distinguish failed readback from a
@@ -1199,22 +1203,27 @@ export class AppRadioConnectionService {
   async leaveChat(expected: ChatConfiguration): Promise<void> {
     return this.withChatPort(expected.radio, async (port, assertCurrent) => {
       await this.requireChatConfiguration(port, expected);
+      let attemptedClear = false;
       const checked: MeshCoreChannelProvisioningPort = {
         ...port,
         writeChannel: async (slot, name, secret) => {
           await this.requireChatConfiguration(port, expected);
+          attemptedClear = true;
           await port.writeChannel(slot, name, secret);
         },
       };
-      await clearMeshCoreChannel(checked, expected.slot);
-      // Never touch the Radio History store.
-      const channels = await readAllMeshCoreChannels(port);
-      assertCurrent();
-      this.patch({channels: channels.map(safeMeshCoreChannel)});
       try {
+        await clearMeshCoreChannel(checked, expected.slot);
+        // Never touch the Radio History store.
+        const channels = await readAllMeshCoreChannels(port);
+        assertCurrent();
+        this.patch({channels: channels.map(safeMeshCoreChannel)});
         await chatPreferenceStore.forget(expected.id);
-      } catch {
-        throw new Error('Channel was cleared but local preferences could not be removed. Refresh before retrying.');
+      } catch (failure) {
+        if (attemptedClear) {
+          throw new ChatOperationError('partial', 'The radio slot may have been cleared. Refresh before retrying. Radio History has not been deleted.');
+        }
+        throw failure;
       }
     });
   }
