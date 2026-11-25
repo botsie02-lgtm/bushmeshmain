@@ -156,7 +156,9 @@ export function RadioScreen({
     }
   }, [channelMessages, connected, radioId, messagePersistenceStatus, sessionScopes]);
 
-  const liveScopes = connected && radioId ? sessionScopes.filter(s => s.radioId === radioId) : [];
+  const liveScopes = useMemo(() =>
+    connected && radioId ? sessionScopes.filter(s => s.radioId === radioId) : [],
+  [connected, radioId, sessionScopes]);
   const knownScopes = [...liveScopes];
   for (const scope of trustedScopes) {
     if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
