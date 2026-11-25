@@ -59,6 +59,10 @@ function Toggle({label, value, disabled, onChange}: {
   );
 }
 
+function localPersonalisation(value: ChatPersonalisation): ChatPersonalisation {
+  return {description: value.description, avatarColor: value.avatarColor, avatarIcon: value.avatarIcon};
+}
+
 function Personalise({name, value, onChange, disabled}: {
   name: string; value: ChatPersonalisation; onChange: (value: ChatPersonalisation) => void; disabled: boolean;
 }) {
@@ -82,7 +86,7 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
   const [name, setName] = useState('');
   const [secret, setSecret] = useState('');
   const [invite, setInvite] = useState('');
-  const [personalisation, setPersonalisation] = useState<ChatPersonalisation>(defaultChatPreferences);
+  const [personalisation, setPersonalisation] = useState<ChatPersonalisation>(() => localPersonalisation(defaultChatPreferences));
   const [review, setReview] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
   const submitting = useRef(false);
@@ -128,6 +132,7 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
       }
     } catch {
       setSecret('');
+      setInvite('');
       setReview(false);
     } finally {
       submitting.current = false;
@@ -196,11 +201,17 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
 }) {
   const p = controller.preferences[chat.id] ?? defaultChatPreferences;
   const [name, setName] = useState(p.displayName);
-  const [personalisation, setPersonalisation] = useState<ChatPersonalisation>(p);
+  const [personalisation, setPersonalisation] = useState<ChatPersonalisation>(() => localPersonalisation(p));
   const [shareError, setShareError] = useState(false);
   const current = controller.ready && controller.radio === chat.radio &&
     controller.chats.some(c => c.id === chat.id);
   const disabled = !current || controller.busy || controller.radioBusy;
+  useEffect(() => {
+    if (current) {
+      setName(p.displayName);
+      setPersonalisation({description: p.description, avatarColor: p.avatarColor, avatarIcon: p.avatarIcon});
+    }
+  }, [current, p.displayName, p.description, p.avatarColor, p.avatarIcon]);
   const update = (patch: Parameters<ChatManagementController['update']>[1]) => {
     controller.update(chat, patch).catch(() => undefined);
   };
@@ -258,7 +269,7 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
           placeholder={chat.name} placeholderTextColor={colors.textMuted}/>
         <Personalise name={name || chat.name} value={personalisation} onChange={setPersonalisation} disabled={disabled}/>
         <Action primary label="Save personalisation" disabled={disabled}
-          onPress={() => update({displayName: name, ...personalisation})}/>
+          onPress={() => update({...localPersonalisation(personalisation), displayName: name})}/>
         <Toggle label="Pin chat" value={p.pinned} disabled={disabled} onChange={pinned => update({pinned})}/>
         <Toggle label="Archive chat locally" value={p.archived} disabled={disabled} onChange={archived => update({archived})}/>
         <Toggle label="Mark unread" value={p.unread} disabled={disabled} onChange={unread => update({unread})}/>
