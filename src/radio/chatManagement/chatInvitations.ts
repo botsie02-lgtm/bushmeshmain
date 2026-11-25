@@ -5,8 +5,9 @@ const MAX_INVITE = 512;
 export type ChatInvite = {name: string; secretHex: string};
 
 export function validateChatName(value: string): string {
+  if (typeof value !== 'string') throw new Error('Invalid channel name.');
   const name = value.trim();
-  if (!name || /[\u0000-\u001f\u007f]/.test(name) || Buffer.byteLength(name, 'utf8') > 31 ||
+  if (!name || Array.from(name).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) || Buffer.byteLength(name, 'utf8') > 31 ||
       Buffer.from(name, 'utf8').toString('utf8') !== name) {
     throw new Error('Use a channel name of 1–31 UTF-8 bytes without control characters.');
   }
@@ -32,6 +33,7 @@ export function encodeChatInvite(input: ChatInvite): string {
 }
 
 export function decodeChatInvite(value: string): ChatInvite {
+  if (typeof value !== 'string' || value.length > MAX_INVITE) throw new Error('Invalid channel invitation.');
   const trimmed = value.trim();
   if (trimmed.length > MAX_INVITE) throw new Error('Invalid channel invitation.');
   // Accept the earlier human-readable invitation as well.
