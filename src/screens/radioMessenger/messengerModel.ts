@@ -135,19 +135,22 @@ export function buildMessengerConversations(input: {
   search?: string;
 }): MessengerConversation[] {
   const search = (input.search ?? '').trim().toLocaleLowerCase();
-  return input.channels.filter(c => validChannelIndex(c.channelIndex) &&
-    c.channelName.trim() && c.channelName !== 'Empty')
-    .flatMap(channel => {
-      const scope = input.scopes.find(s => s.channelIndex === channel.channelIndex &&
-        s.channelName === channel.channelName);
-      if (!validScope(scope)) return [];
+  const seen = new Set<string>();
+  // Different radio IDs / channel generations using one physical slot are
+  // different conversations. Never collapse the scopes into one slot row.
+  return input.scopes.flatMap(scope => {
+      const channel = input.channels.find(c => c.channelIndex === scope.channelIndex &&
+        c.channelName === scope.channelName);
+      if (!channel || !validScope(scope) || !validChannelIndex(channel.channelIndex) ||
+        !channel.channelName.trim() || channel.channelName === 'Empty') return [];
+      const id = conversationKey(scope);
+      if (seen.has(id)) return [];
+      seen.add(id);
       const messages = scopedMessages(input.messages, scope,
         input.verifiedOwnership, input.sessionOwnership);
       const latest = messages[messages.length - 1]?.message;
       const parsed = latest ? Date.parse(latest.createdAt) : NaN;
       const activityMs = Number.isFinite(parsed) ? parsed : null;
-      const id = scope.radioId + ':' + scope.channelGeneration + ':' +
-        scope.channelIndex;
       const preview = latest?.text ?? 'No attributed messages yet';
       if (search && !(channel.channelName.toLocaleLowerCase().includes(search) ||
         preview.toLocaleLowerCase().includes(search))) return [];
