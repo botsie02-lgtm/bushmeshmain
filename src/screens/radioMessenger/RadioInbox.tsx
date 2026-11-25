@@ -133,10 +133,13 @@ export function RadioInbox({
         renderItem={({item}) => {
           const id = conversationKey(item.scope);
           const open = menuFor === id;
+          const repeatedSlot = conversations.filter(other =>
+            other.channel.channelIndex === item.channel.channelIndex).length > 1;
+          const distinction = repeatedSlot ? ' · ' + item.scope.channelGeneration : '';
           return (
             <View style={styles.rowWrap}>
               <TouchableOpacity accessibilityRole="button"
-                accessibilityLabel={'Open chat ' + item.channel.channelName}
+                accessibilityLabel={'Open chat ' + item.channel.channelName + distinction}
                 onPress={() => {setMenuFor(null); onOpen(item.scope);}}
                 style={styles.row} activeOpacity={0.75}>
                 <View style={styles.avatar}><Text style={styles.avatarText}>#</Text></View>
@@ -148,7 +151,9 @@ export function RadioInbox({
                     <Text style={styles.when}>{clock(item.activityMs)}</Text>
                   </View>
                   <Text style={styles.preview} numberOfLines={2}>{item.preview}</Text>
-                  <Text style={styles.subline}>MeshCore channel {item.channel.channelIndex}
+                  <Text style={styles.subline}>Channel {item.channel.channelIndex} · {' '}
+                    {item.scope.channelGeneration.startsWith('session-')
+                      ? 'This-session identity' : 'Proven archive identity'}
                     {item.unreadCount === null ? '' : ' · Read state available'}
                   </Text>
                 </View>
@@ -160,7 +165,7 @@ export function RadioInbox({
                 ) : null}
               </TouchableOpacity>
               <TouchableOpacity accessibilityRole="button"
-                accessibilityLabel={'Chat options ' + item.channel.channelName}
+                accessibilityLabel={'Chat options ' + item.channel.channelName + distinction}
                 accessibilityState={{expanded: open}}
                 onPress={() => {
                   if (onOpenRowMenu) onOpenRowMenu(item.scope);
