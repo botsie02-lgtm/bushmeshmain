@@ -5,7 +5,7 @@ import {
 } from '../meshcore/channelSendDiagnostics';
 import {useViewedConversation} from '../app/activeContext/ViewedConversationContext';
 import {
-  type BushMeshChannel, type BushMeshChannelMessage, useBushMesh,
+  type BushMeshChannel, useBushMesh,
 } from '../state/BushMeshContext';
 import {useRadioConnection} from '../state/RadioConnectionContext';
 import {useRadioSession} from '../state/RadioSessionContext';
@@ -19,6 +19,7 @@ import {
 import {RadioInbox} from './radioMessenger/RadioInbox';
 import {RadioChatRoom} from './radioMessenger/RadioChatRoom';
 import {RadioTechnicalDrawer} from './radioMessenger/RadioTechnicalDrawer';
+import {RadioQuarantineReview} from './radioMessenger/RadioQuarantineReview';
 
 export type RadioScreenProps = {
   /** Existing carrier/legacy channel tools; no provisioning is performed here. */
@@ -91,6 +92,7 @@ export function RadioScreen({
   const sendingRef = useRef(false);
   const [showNew, setShowNew] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [showUnattributed, setShowUnattributed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const baseline = useRef<Set<string> | null>(null);
   const historyReady = useRef(false);
@@ -330,6 +332,12 @@ export function RadioScreen({
   };
   const isRestoring = messagePersistenceStatus === 'restoring';
 
+  if (showUnattributed) {
+    return <RadioQuarantineReview
+      messages={channelMessages.filter(message => !ownedIds.has(message.id))}
+      onBack={() => setShowUnattributed(false)} />;
+  }
+
   if (showDiagnostics) return <RadioTechnicalDrawer
     onClose={() => setShowDiagnostics(false)} />;
 
@@ -407,13 +415,17 @@ export function RadioScreen({
         conversations={conversations}
         online={connected} radioLabel={connectedDeviceName}
         restoring={isRestoring}
-        historyIssue={messagePersistenceStatus === 'error' ? messagePersistenceError ??
-          'Encrypted history could not be loaded.' : messagePersistenceError}
+        historyIssue={messagePersistenceStatus === 'error'
+          ? 'Encrypted history could not be restored; inspect device diagnostics.'
+          : messagePersistenceStatus === 'unsupported'
+            ? 'Encrypted history storage is unavailable in this environment.'
+            : messagePersistenceError ? 'History storage reported a recovery event.' : null}
         unknownHistoryCount={unknownCount}
         search={search} onSearch={setSearch}
         onOpen={openRoom} onPin={togglePinned}
         onNewChat={() => setShowNew(v => !v)}
         onSettings={openSettings}
+        onReviewUnattributed={() => setShowUnattributed(true)}
         onOpenRowMenu={onOpenConversationMenu}
         onOpenChatSettings={onOpenChatSettings}
       />
