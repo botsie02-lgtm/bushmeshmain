@@ -353,3 +353,26 @@ test('local history recording failure after PACKET_OK never becomes radio failur
   expect(viewText()).toContain('Radio accepted, but local history recording failed');
   expect(viewText()).toContain('Do not resend');
 });
+
+
+test('a proven archived chat survives another radio reusing the slot with a new name', async () => {
+  messages = [{
+    id: 'old-radio', channelIndex: '1', channelName: 'Old Expedition',
+    direction: 'received', status: 'confirmed', text: 'DO NOT MERGE',
+    createdAt: '2026-11-20T04:00:00Z',
+  }];
+  const archived = {
+    radioId: 'DIFFERENT-RADIO', channelGeneration: 'old-incarnation',
+    channelIndex: '1', channelName: 'Old Expedition',
+  };
+  await mount({
+    trustedScopes: [archived],
+    verifiedMessageOwnership: {'old-radio': archived},
+  });
+  expect(button('Open chat Old Expedition')).toBeDefined();
+  expect(button('Open chat Private')).toBeDefined();
+  await press('Open chat Old Expedition');
+  expect(viewText()).toContain('DO NOT MERGE');
+  expect(button('Submit channel text to radio').props.disabled).toBe(true);
+  expect(carrierSwitch).not.toHaveBeenCalled();
+});
