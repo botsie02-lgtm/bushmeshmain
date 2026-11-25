@@ -206,6 +206,7 @@ test('trusted provenance restores one exact channel without cross-slot history l
   // The verified scope is distinct from the ephemeral current-session scope.
   // The inbox should show only safely scoped previews, not the other slot.
   expect(viewText()).toContain('1 historical message');
+  expect(viewText()).toContain('SCOPED MESSAGE');
   expect(viewText()).not.toContain('UNOWNED MESSAGE');
 });
 
@@ -283,4 +284,57 @@ test('restoring history and absent durable storage do not fabricate unread count
   restore = 'ready';
   await rerender();
   expect(viewText()).not.toContain('Restoring encrypted Radio History');
+});
+
+
+test('new inbound during a stable mounted radio session appears on the left without sender invention', async () => {
+  await mount();
+  await room('Private');
+  messages = [{
+    id: 'fresh-inbound', channelIndex: '1', channelName: 'Private',
+    direction: 'received', status: 'confirmed',
+    text: 'NEW MESSAGE FROM RADIO', createdAt: new Date().toISOString(),
+  }];
+  await rerender();
+  expect(viewText()).toContain('NEW MESSAGE FROM RADIO');
+  expect(viewText()).toContain('sender unavailable');
+  await press('Back to chats');
+  expect(viewText()).toContain('NEW MESSAGE FROM RADIO');
+});
+
+test('offline historical chat opens only with proven radio/channel-generation owner', async () => {
+  connected = false; addr = null;
+  messages = [{
+    id: 'historic', channelIndex: '1', channelName: 'Private',
+    direction: 'received', status: 'confirmed',
+    text: 'PROVEN HISTORY', createdAt: '2026-11-25T02:00:00Z',
+  }];
+  const scope = {radioId: 'KNOWN-RADIO', channelGeneration: 'GEN-24',
+    channelIndex: '1', channelName: 'Private'};
+  await mount({trustedScopes: [scope], verifiedMessageOwnership: {historic: scope}});
+  expect(viewText()).toContain('PROVEN HISTORY');
+  await room('Private');
+  expect(viewText()).toContain('Offline · read-only');
+  expect(button('Submit channel text to radio').props.disabled).toBe(true);
+  expect(viewText()).toContain('PROVEN HISTORY');
+});
+
+test('unread counts and read callback require explicit authoritative input', async () => {
+  messages = [{
+    id: 'read-evidence', channelIndex: '1', channelName: 'Private',
+    direction: 'received', status: 'confirmed',
+    text: 'READABLE', createdAt: '2026-11-25T02:00:00Z',
+  }];
+  const scope = {radioId: 'KNOWN-RADIO', channelGeneration: 'GEN-24',
+    channelIndex: '1', channelName: 'Private'};
+  const read = jest.fn();
+  await mount({
+    trustedScopes: [scope],
+    verifiedMessageOwnership: {'read-evidence': scope},
+    unreadCounts: {'KNOWN-RADIO:GEN-24:1': 2},
+    onConversationRead: read,
+  });
+  expect(viewText()).toContain('2 unread messages');
+  await press('Open chat Private · GEN-24');
+  expect(read).toHaveBeenCalledWith(scope, 'read-evidence');
 });
