@@ -31,6 +31,8 @@ describe('protected chat preference model', () => {
     const loaded = await restarted.load();
     expect(loaded[one].localCreator).toBe(true);
     expect(loaded[two].localCreator).toBe(false);
+    expect(loaded[one].origin).toBe('created');
+    expect(loaded[two].origin).toBe('joined');
     expect(loaded[three]).toBeUndefined();
   });
 
@@ -42,12 +44,13 @@ describe('protected chat preference model', () => {
       store.update(one, {pinned: true, archived: true}),
     ]);
     expect((await store.load())[one]).toEqual({
-      displayName: 'My convoy', unread: true, pinned: true, archived: true, localCreator: true,
+      ...defaultChatPreferences,
+      displayName: 'My convoy', unread: true, pinned: true, archived: true, localCreator: true, origin: 'created',
     });
     await store.recordProvisioned(two, false);
     await store.forget(one);
     expect((await store.load())[one]).toBeUndefined();
-    expect((await store.load())[two]).toEqual(defaultChatPreferences);
+    expect((await store.load())[two]).toEqual({...defaultChatPreferences, origin: 'joined'});
   });
 
   it('does not silently replace unreadable or unsaved preferences', async () => {
@@ -81,6 +84,56 @@ describe('protected chat preference model', () => {
     expect(selectChats(chats, prefs).map(c => c.id)).toEqual([two, three]);
     expect(selectChats(chats, prefs, 'tour').map(c => c.id)).toEqual([two]);
     expect(selectChats(chats, prefs, '', true).map(c => c.id)).toEqual([one]);
+  });
+
+  it('migrates legacy preferences without guessing joined provenance', async () => {
+    const {store, native} = fixture();
+    const legacy = {displayName: 'Old', pinned: true, archived: false, unread: true, localCreator: false};
+    const snapshot = JSON.stringify({version: 1, entries: {
+      [one]: legacy, [two]: {...legacy, localCreator: true},
+    }});
+    native.loadChatPreferences.mockResolvedValueOnce(snapshot);
+    const restored = await store.load();
+    expect(restored[one]).toEqual({...defaultChatPreferences, ...legacy});
+    expect(restored[two].origin).toBe('created');
+    expect(native.saveChatPreferences).not.toHaveBeenCalled();
+    native.loadChatPreferences.mockResolvedValueOnce(snapshot);
+    await store.update(one, {description: 'Weekend trip', avatarColor: 'teal', avatarIcon: 'camp'});
+    expect(JSON.parse(native.saveChatPreferences.mock.calls[0][0]).version).toBe(2);
+    expect((await store.load())[one]).toEqual({...defaultChatPreferences, ...legacy,
+      description: 'Weekend trip', avatarColor: 'teal', avatarIcon: 'camp'});
+    expect((await store.load())[two].localCreator).toBe(true);
+  });
+
+  it('restores personalisation after restart and retains previous data after a failed save', async () => {
+    const {store, native} = fixture();
+    await store.recordProvisioned(one, true, {description: 'Camp', avatarColor: 'purple', avatarIcon: 'mountain'});
+    native.saveChatPreferences.mockRejectedValueOnce(new Error('process terminated before commit'));
+    await expect(store.update(one, {description: 'Lost write'})).rejects.toThrow();
+    const restarted = new ChatPreferenceStore(() => native);
+    expect((await restarted.load())[one]).toEqual({...defaultChatPreferences,
+      origin: 'created', localCreator: true, description: 'Camp', avatarColor: 'purple', avatarIcon: 'mountain'});
+    await restarted.update(two, {description: 'Different radio'});
+    expect((await restarted.load())[one].description).toBe('Camp');
+  });
+
+  it('fails closed when protected storage cannot be authenticated', async () => {
+    const {store, native} = fixture();
+    await store.recordProvisioned(one, true);
+    const count = native.saveChatPreferences.mock.calls.length;
+    native.loadChatPreferences.mockRejectedValueOnce(new Error('Keystore unavailable'));
+    await expect(store.update(two, {description: 'No write'})).rejects.toThrow();
+    expect(native.saveChatPreferences).toHaveBeenCalledTimes(count);
+    expect((await store.load())[one].localCreator).toBe(true);
+  });
+
+  it('rejects inconsistent provenance and invalid avatar values', () => {
+    expect(() => decodeChatPreferences(JSON.stringify({version: 2, entries: {
+      [one]: {...defaultChatPreferences, origin: 'created'},
+    }}))).toThrow();
+    expect(() => decodeChatPreferences(JSON.stringify({version: 2, entries: {
+      [one]: {...defaultChatPreferences, avatarColor: 'invalid'},
+    }}))).toThrow();
   });
 
   it('rejects invalid IDs and malformed snapshots', () => {
