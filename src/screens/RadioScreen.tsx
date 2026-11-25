@@ -1,652 +1,463 @@
-import {Buffer} from 'buffer';
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
+import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
-
-import {
-  classifyChannelSubmissionFailure,
-  formatChannelSubmissionFailure,
+  classifyChannelSubmissionFailure, formatChannelSubmissionFailure,
 } from '../meshcore/channelSendDiagnostics';
-import {meshCoreInboundDiagnostics} from '../meshcore/meshcoreInboundDiagnostics';
-import {nativeOutboundDiagnostics} from '../meshcore/nativeOutboundDiagnostics';
-import {estimateLoRaAirtimeMs} from '../radio/loraAirtime';
+import {useViewedConversation} from '../app/activeContext/ViewedConversationContext';
 import {
-  BushMeshChannel,
-  BushMeshChannelMessage,
-  useBushMesh,
+  type BushMeshChannel, type BushMeshChannelMessage, useBushMesh,
 } from '../state/BushMeshContext';
+import {useRadioConnection} from '../state/RadioConnectionContext';
 import {useRadioSession} from '../state/RadioSessionContext';
 import {colors} from '../theme/colors';
-import {carrierMessageSummary, deriveRadioPresentation, scopedCarrierHistory} from './radioPresentation';
+import {deriveRadioPresentation} from './radioPresentation';
+import {
+  buildMessengerConversations, conversationKey, equalScope,
+  quarantineCount, scopedMessages, validateCarrierText, validChannelIndex,
+  type MessageOwnershipProof, type RadioConversationScope,
+} from './radioMessenger/messengerModel';
+import {RadioInbox} from './radioMessenger/RadioInbox';
+import {RadioChatRoom} from './radioMessenger/RadioChatRoom';
+import {RadioTechnicalDrawer} from './radioMessenger/RadioTechnicalDrawer';
 
-function isPrivateChannel(channel: BushMeshChannel): boolean {
-  return (
-    channel.secret !== 'Empty / Public' &&
-    channel.secret !== 'Unknown' &&
-    channel.secret.length > 0
-  );
-}
+export type RadioScreenProps = {
+  /** Existing carrier/legacy channel tools; no provisioning is performed here. */
+  onOpenCarrierDetails?: () => void;
+  /** Owned by the channel-management worker. If absent, fall back to carrier tools. */
+  onCreateChat?: () => void;
+  onJoinChat?: () => void;
+  onOpenChatSettings?: (scope: RadioConversationScope) => void;
+  onOpenConversationMenu?: (scope: RadioConversationScope) => void;
+  onOpenMessagingSettings?: () => void;
+  /**
+   * Durable, non-secret radio ID and channel configuration generation from the
+   * radio/history worker. Must be verified before use, not inferred from a
+   * slot, channel name or PSK. Optional: default fails closed for old history.
+   */
+  trustedScopes?: readonly RadioConversationScope[];
+  /** Individual message ID -> independently proven stable channel owner. */
+  verifiedMessageOwnership?: Readonly<Record<string, MessageOwnershipProof>>;
+  /** Optional genuine persisted unread counts, keyed by conversationKey. */
+  unreadCounts?: Readonly<Record<string, number>>;
+  onConversationRead?: (scope: RadioConversationScope, messageId: string) => void;
+};
 
-function deliveryLabel(message: BushMeshChannelMessage): string {
-  if (message.direction === 'received') {
-    return 'RECEIVED';
-  }
+type ChannelLabel = Pick<BushMeshChannel, 'channelIndex' | 'channelName'>;
 
-  switch (message.status) {
-    case 'pending':
-      return 'PENDING';
-    case 'accepted':
-      return 'RADIO ACCEPTED';
-    case 'confirmed':
-      return 'PEER CONFIRMED';
-    case 'failed':
-      return message.submissionFailure?.reason === 'timeout'
-        ? 'ACCEPTANCE UNKNOWN'
-        : 'FAILED';
-  }
-}
+const NO_PROOF: Readonly<Record<string, MessageOwnershipProof>> = {};
+const NO_UNREAD: Readonly<Record<string, number>> = {};
 
-function deliveryColor(message: BushMeshChannelMessage): string {
-  if (message.direction === 'received' || message.status === 'confirmed') {
-    return colors.success;
-  }
-  if (message.status === 'failed') {
-    return message.submissionFailure?.reason === 'timeout'
-      ? colors.warning
-      : colors.danger;
-  }
-  if (message.status === 'accepted') {
-    return colors.accent;
-  }
-  return colors.warning;
+function eligible(channel: ChannelLabel): boolean {
+  return validChannelIndex(channel.channelIndex) &&
+    !!channel.channelName.trim() && channel.channelName !== 'Empty';
 }
 
 export function RadioScreen({
-  onOpenCarrierDetails,
-}: {
-  onOpenCarrierDetails?: () => void;
-} = {}): React.JSX.Element {
+  onOpenCarrierDetails, onCreateChat, onJoinChat,
+  onOpenChatSettings, onOpenConversationMenu, onOpenMessagingSettings,
+  trustedScopes = [], verifiedMessageOwnership = NO_PROOF,
+  unreadCounts = NO_UNREAD, onConversationRead,
+}: RadioScreenProps = {}): React.JSX.Element {
   const {
-    connectionStatus,
-    connectedDeviceName,
-    channels,
-    activeChannelIndex,
-    activeChannel,
-    channelMessages,
-    messagePersistenceStatus,
-    messagePersistenceError,
-    canSendChannelMessage,
-    sendChannelMessage,
-    addLocalChannelMessage,
-    setActiveChannelIndex,
+    connectionStatus, connectedDeviceName, channels, channelMessages,
+    messagePersistenceStatus, messagePersistenceError,
+    canSendChannelMessage, sendChannelMessage, addLocalChannelMessage,
   } = useBushMesh();
   const {snapshot: radioSession} = useRadioSession();
-  // Preserve drafts per carrier so switching channels cannot send old text on a new one.
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [submitStatus, setSubmitStatus] = useState<Record<string, string>>({});
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const draftKey = activeChannel?.channelIndex ?? '';
-  const messageText = drafts[draftKey] ?? '';
-  const sendStatus = submitStatus[draftKey] ?? null;
-  const setMessageText = (text: string) =>
-    setDrafts(current => ({...current, [draftKey]: text}));
-  const setChannelStatus = (key: string, text: string) =>
-    setSubmitStatus(current => ({...current, [key]: text}));
-  const [nativeTxMetrics, setNativeTxMetrics] = useState(() =>
-    nativeOutboundDiagnostics.snapshot(),
-  );
-  useEffect(() => nativeOutboundDiagnostics.subscribe(() => {
-    setNativeTxMetrics(nativeOutboundDiagnostics.snapshot());
-  }), []);
-  const nativeTxIssue = nativeTxMetrics.events.find(item =>
-    item.stage === 'response-timeout' || item.stage === 'firmware-rejected' ||
-    item.stage === 'write-failed' || item.stage === 'stop-failed' ||
-    item.stage === 'session-disconnected',
-  );
-  const [inboundMetrics, setInboundMetrics] = useState(() =>
-    meshCoreInboundDiagnostics.snapshot(),
-  );
-  useEffect(() => meshCoreInboundDiagnostics.subscribe(() => {
-    setInboundMetrics(meshCoreInboundDiagnostics.snapshot());
-  }), []);
-  const inboundFailure = inboundMetrics.events.find(item =>
-    item.stage === 'drain-error' || item.stage === 'persistence-error',
-  );
+  const {snapshot: connection} = useRadioConnection();
+  const {viewedConversation, setViewedConversation} = useViewedConversation();
 
-  const visibleChannels = useMemo(
-    () =>
-      channels.filter(
-        channel => channel.channelName && channel.channelName !== 'Empty',
-      ),
-    [channels],
-  );
-  const activeHistory = useMemo(
-    () => scopedCarrierHistory(activeChannel?.channelIndex ?? null, channelMessages),
-    [activeChannel, channelMessages],
-  );
-  const counts = useMemo(() => carrierMessageSummary(activeHistory), [activeHistory]);
+  const connected = connectionStatus === 'Connected';
+  const radioId = connected && connection.connectedDeviceAddress?.trim()
+    ? connection.connectedDeviceAddress.trim() : null;
+  const [observedLabels, setObservedLabels] = useState<ChannelLabel[]>([]);
+  const [sessionScopes, setSessionScopes] = useState<RadioConversationScope[]>([]);
+  const [sessionOwnership, setSessionOwnership] = useState<
+    Record<string, RadioConversationScope>
+  >({});
+  const generation = useRef(0);
+  const lastBinding = useRef<{
+    radioId: string | null; channels: readonly BushMeshChannel[] | null;
+    connected: boolean;
+  }>({radioId: null, channels: null, connected: false});
+  const [search, setSearch] = useState('');
+  const [pinned, setPinned] = useState<ReadonlySet<string>>(new Set());
+  const [selectedScope, setSelectedScope] = useState<RadioConversationScope | null>(null);
+  const lastNavigation = useRef<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [notices, setNotices] = useState<Record<string, string>>({});
+  const [uncertain, setUncertain] = useState<ReadonlySet<string>>(new Set());
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const baseline = useRef<Set<string> | null>(null);
+  const historyReady = useRef(false);
+
+  // A new radio connection or channel enumeration is a new ephemeral generation.
+  // Do not store keys, derive a stable channel identity from names or slots,
+  // or mutate the carrier selected for background location sharing.
+  useEffect(() => {
+    const changed = lastBinding.current.radioId !== radioId ||
+      lastBinding.current.channels !== channels ||
+      lastBinding.current.connected !== connected;
+    if (!changed) return;
+    lastBinding.current = {radioId, channels, connected};
+    if (!radioId || !connected) return; // Retain this-session read-only rooms offline.
+    generation.current += 1;
+    const revision = 'session-' + generation.current;
+    const labels = channels.filter(eligible).map(channel => ({
+      channelIndex: channel.channelIndex, channelName: channel.channelName,
+    }));
+    setObservedLabels(labels);
+    setSessionScopes(labels.map(channel => ({
+      ...channel, radioId, channelGeneration: revision,
+    })));
+  }, [radioId, connected, channels]);
+
+  // The legacy encrypted snapshot has no durable radio/channel incarnation.
+  // Baseline loaded IDs are always quarantined. Only later arrivals that
+  // appeared while this radio was connected and matching the known channel
+  // can be displayed as explicitly ephemeral, "this-session" observations.
+  useEffect(() => {
+    const ids = new Set(channelMessages.map(message => message.id));
+    const ready = messagePersistenceStatus === 'ready' ||
+      messagePersistenceStatus === 'unsupported';
+    if (!ready) {
+      baseline.current = ids;
+      historyReady.current = false;
+      return;
+    }
+    if (!historyReady.current || !baseline.current) {
+      baseline.current = ids;
+      historyReady.current = true;
+      return;
+    }
+    const old = baseline.current;
+    baseline.current = ids;
+    if (!connected || !radioId) return;
+    const observed: Record<string, RadioConversationScope> = {};
+    for (const message of channelMessages) {
+      if (old.has(message.id)) continue;
+      const scope = sessionScopes.find(s =>
+        s.radioId === radioId &&
+        s.channelIndex === message.channelIndex &&
+        s.channelName === message.channelName);
+      if (!scope) continue;
+      const age = Date.now() - Date.parse(message.createdAt);
+      if (!Number.isFinite(age) || age < -10_000 || age > 120_000) continue;
+      observed[message.id] = scope;
+    }
+    if (Object.keys(observed).length > 0) {
+      setSessionOwnership(existing => ({...existing, ...observed}));
+    }
+  }, [channelMessages, connected, radioId, messagePersistenceStatus, sessionScopes]);
+
+  const liveScopes = connected && radioId ? sessionScopes.filter(s => s.radioId === radioId) : [];
+  const knownScopes = [...liveScopes];
+  for (const scope of trustedScopes) {
+    if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
+  }
+  // In this mounted session, offline previously-seen rooms are read-only.
+  if (!connected) {
+    for (const scope of sessionScopes) {
+      if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
+    }
+  }
+  const inboxChannels = connected && radioId ? channels : [
+    ...observedLabels.map(c => ({...c, secret: ''})),
+    ...trustedScopes.filter(s => !observedLabels.some(c => c.channelIndex === s.channelIndex))
+      .map(s => ({channelIndex: s.channelIndex, channelName: s.channelName, secret: ''})),
+  ];
+
+  const conversations = buildMessengerConversations({
+    channels: inboxChannels, scopes: knownScopes, messages: channelMessages,
+    verifiedOwnership: verifiedMessageOwnership,
+    sessionOwnership, pinned, unread: unreadCounts, search,
+  });
+  const allConversations = buildMessengerConversations({
+    channels: inboxChannels, scopes: knownScopes, messages: channelMessages,
+    verifiedOwnership: verifiedMessageOwnership,
+    sessionOwnership, pinned, unread: unreadCounts,
+  });
+  const ownedIds = new Set(allConversations.flatMap(c => c.messages.map(m => m.message.id)));
+  const unknownCount = quarantineCount(channelMessages, ownedIds);
+
+  // View selection is navigation only. An external channel-index request can
+  // open the currently observed room, never rewrite the actual carrier.
+  useEffect(() => {
+    const navigation = viewedConversation?.kind === 'meshcore-channel'
+      ? viewedConversation.channelIndex : null;
+    if (navigation === lastNavigation.current) return;
+    lastNavigation.current = navigation;
+    if (navigation === null) {
+      setSelectedScope(null);
+      return;
+    }
+    const scope = liveScopes.find(s => s.channelIndex === navigation) ??
+      trustedScopes.find(s => s.channelIndex === navigation) ?? null;
+    setSelectedScope(scope);
+  }, [viewedConversation, liveScopes, trustedScopes]);
+
+  const activeKey = selectedScope ? conversationKey(selectedScope) : null;
+  const activeDraft = activeKey ? drafts[activeKey] ?? '' : '';
+  const activeNotice = activeKey ? notices[activeKey] ?? null : null;
+  const selectedMessages = useMemo(() => selectedScope
+    ? scopedMessages(channelMessages, selectedScope,
+      verifiedMessageOwnership, sessionOwnership) : [],
+    [channelMessages, selectedScope, verifiedMessageOwnership, sessionOwnership]);
+
+  const currentChannel = selectedScope && radioId === selectedScope.radioId && connected
+    ? channels.find(c => c.channelIndex === selectedScope.channelIndex &&
+      c.channelName === selectedScope.channelName) ?? null : null;
+  const boundNow = !!currentChannel && liveScopes.some(s => equalScope(s, selectedScope));
   const presentation = deriveRadioPresentation({
-    connected: connectionStatus === 'Connected',
+    connected: connected && !!radioId && boundNow,
     canSendChannelMessage,
-    channelIndex: activeChannel?.channelIndex ?? null,
-    channelName: activeChannel?.channelName ?? null,
+    channelIndex: boundNow ? selectedScope?.channelIndex ?? null : null,
+    channelName: boundNow ? selectedScope?.channelName ?? null : null,
     protocolTransportReady: radioSession.transportReady,
   });
+  const canSubmit = boundNow && presentation.maySubmitCarrierText &&
+    !sending && (activeKey === null || !uncertain.has(activeKey));
+  const unavailableReason = !connected
+    ? 'Radio disconnected. Proven history is readable; sending is unavailable.'
+    : !radioId ? 'A stable connected radio address is unavailable. Cannot safely address this chat.'
+      : !boundNow ? 'Channel configuration or radio identity changed. Return to Chats and reopen it.'
+        : activeKey && uncertain.has(activeKey)
+          ? 'Prior submission acceptance is uncertain. Review before choosing to send again.'
+          : presentation.explanation;
 
-  const cleanMessage = messageText.trim();
-  const messageBytes = Buffer.byteLength(cleanMessage, 'utf8');
-  const modem = radioSession.radioProfile?.modem ?? null;
-  const airtimeFloor = useMemo(() => {
-    if (!modem || messageBytes === 0) {
-      return null;
+  const openRoom = (scope: RadioConversationScope) => {
+    setSelectedScope(scope);
+    lastNavigation.current = scope.channelIndex;
+    setViewedConversation({kind: 'meshcore-channel', channelIndex: scope.channelIndex});
+    const key = conversationKey(scope);
+    const count = unreadCounts[key];
+    if (onConversationRead && Number.isSafeInteger(count) && count > 0) {
+      const mostRecent = scopedMessages(channelMessages, scope,
+        verifiedMessageOwnership, sessionOwnership).slice(-1)[0];
+      if (mostRecent) onConversationRead(scope, mostRecent.message.id);
     }
-    try {
-      return estimateLoRaAirtimeMs(messageBytes, modem);
-    } catch {
-      return null;
-    }
-  }, [messageBytes, modem]);
-  const canSend =
-    presentation.maySubmitCarrierText &&
-    activeChannel !== null &&
-    canSendChannelMessage &&
-    cleanMessage.length > 0 &&
-    cleanMessage.length <= 133 &&
-    !isSending;
+  };
+  const closeRoom = () => {
+    setSelectedScope(null);
+    lastNavigation.current = null;
+    setViewedConversation(null);
+  };
+  const togglePinned = (scope: RadioConversationScope) => {
+    const key = conversationKey(scope);
+    setPinned(current => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+  const updateDraft = (value: string) => {
+    if (!activeKey) return;
+    setDrafts(current => ({...current, [activeKey]: value}));
+  };
+  const postNotice = (key: string, value: string) => {
+    setNotices(current => ({...current, [key]: value}));
+  };
 
-  const handleSend = async () => {
-    if (!activeChannel || !canSend) {
+  const submit = async () => {
+    if (!selectedScope || !activeKey || sendingRef.current || !canSubmit) return;
+    const validation = validateCarrierText(activeDraft);
+    if (!validation.valid) {
+      postNotice(activeKey, validation.issue ?? 'Message not ready.');
       return;
     }
-
-    const channelIndex = Number(activeChannel.channelIndex);
-    if (!Number.isInteger(channelIndex)) {
-      setChannelStatus(activeChannel.channelIndex, 'Active channel index is invalid.');
+    // Revalidation against current enumerated slot, name and actual radio
+    // identity is mandatory. Never select a carrier or switch the convoy.
+    const current = channels.find(c => c.channelIndex === selectedScope.channelIndex &&
+      c.channelName === selectedScope.channelName);
+    if (!connected || !radioId || radioId !== selectedScope.radioId ||
+      !current || !liveScopes.some(s => equalScope(s, selectedScope)) ||
+      !canSendChannelMessage || !validChannelIndex(selectedScope.channelIndex)) {
+      postNotice(activeKey, 'Chat binding changed. Message was not submitted.');
       return;
     }
-
-    setIsSending(true);
-    const submittedIndex = activeChannel.channelIndex;
-    setChannelStatus(submittedIndex, `Submitting to ${activeChannel.channelName}…`);
-
+    const capturedScope = selectedScope;
+    const capturedKey = activeKey;
+    const submittedText = validation.text;
+    sendingRef.current = true;
+    setSending(true);
+    postNotice(capturedKey, 'Submitting to the current radio…');
     try {
-      await sendChannelMessage(channelIndex, cleanMessage);
+      // Only the owning service issues the command. A resolved promise proves
+      // PACKET_OK acceptance, never a peer acknowledgement.
+      await sendChannelMessage(Number(capturedScope.channelIndex), submittedText);
       addLocalChannelMessage({
-        channelIndex: activeChannel.channelIndex,
-        channelName: activeChannel.channelName,
-        text: cleanMessage,
-        direction: 'sent',
-        status: 'accepted',
+        channelIndex: capturedScope.channelIndex,
+        channelName: capturedScope.channelName,
+        text: submittedText, direction: 'sent', status: 'accepted',
       });
-      setDrafts(current => ({...current, [submittedIndex]: ''}));
-      setChannelStatus(
-        submittedIndex,
-        'RADIO ACCEPTED — MeshCore PACKET_OK (0x00). Peer delivery is not confirmed.',
-      );
+      setDrafts(currentDrafts => ({
+        ...currentDrafts,
+        [capturedKey]: currentDrafts[capturedKey]?.trim() === submittedText
+          ? '' : currentDrafts[capturedKey] ?? '',
+      }));
+      postNotice(capturedKey, 'Radio accepted. No peer delivery confirmation.');
     } catch (error) {
-      const submissionFailure = classifyChannelSubmissionFailure(error);
+      const failure = classifyChannelSubmissionFailure(error);
       addLocalChannelMessage({
-        channelIndex: activeChannel.channelIndex,
-        channelName: activeChannel.channelName,
-        text: cleanMessage,
-        direction: 'sent',
-        status: 'failed',
-        submissionFailure,
+        channelIndex: capturedScope.channelIndex,
+        channelName: capturedScope.channelName,
+        text: submittedText, direction: 'sent', status: 'failed',
+        submissionFailure: failure,
       });
-      setChannelStatus(submittedIndex, formatChannelSubmissionFailure(submissionFailure));
+      const couldHaveSent = failure.reason !== 'firmware-error';
+      if (couldHaveSent) setUncertain(currentSet => new Set(currentSet).add(capturedKey));
+      postNotice(capturedKey, formatChannelSubmissionFailure(failure));
     } finally {
-      setIsSending(false);
+      sendingRef.current = false;
+      setSending(false);
     }
   };
 
-  return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View style={styles.heroCard}>
-        <View style={styles.heroRow}>
-          <View style={styles.heroCopy}>
-            <Text style={styles.eyebrow}>RADIO</Text>
-            <Text style={styles.title}>Convoy comms</Text>
-          </View>
-          <View style={[
-            styles.linkPill,
-            presentation.maySubmitCarrierText ? styles.linkReady : styles.linkOffline,
-          ]}>
-            <Text style={styles.linkText}>{presentation.badge}</Text>
-          </View>
+  const openSettings = () => {
+    if (onOpenMessagingSettings) onOpenMessagingSettings();
+    else setSettingsOpen(true);
+  };
+  const provision = (action: 'create' | 'join') => {
+    setShowNew(false);
+    const callback = action === 'create' ? onCreateChat : onJoinChat;
+    if (callback) callback();
+    else if (onOpenCarrierDetails) onOpenCarrierDetails();
+    else setSettingsOpen(true);
+  };
+  const isRestoring = messagePersistenceStatus === 'restoring';
+
+  if (showDiagnostics) return <RadioTechnicalDrawer
+    onClose={() => setShowDiagnostics(false)} />;
+
+  if (settingsOpen) {
+    return (
+      <View style={styles.panel}>
+        <View style={styles.panelHead}>
+          <Text style={styles.panelTitle}>Messaging settings</Text>
+          <TouchableOpacity accessibilityRole="button"
+            accessibilityLabel="Back to messaging"
+            onPress={() => setSettingsOpen(false)} style={styles.panelAction}>
+            <Text style={styles.actionText}>Done</Text>
+          </TouchableOpacity>
         </View>
-        <Text style={styles.summaryTitle}>{presentation.title}</Text>
-        <Text style={styles.body}>{presentation.explanation}</Text>
-        <Text style={styles.body}>
-          Channel traffic is not an authenticated convoy conversation.
-          Radio acceptance is not peer delivery.
+        <Text style={styles.panelCopy}>
+          Message transport is owned by MeshCore. No automatic retries,
+          verified convoy membership or channel provisioning occurs here.
+          Legacy Radio History is encrypted but lacks durable radio/channel
+          incarnation metadata, so ambiguous messages stay quarantined.
         </Text>
-        {connectedDeviceName ? (
-          <Text style={styles.nodeText}>Companion: {connectedDeviceName}</Text>
-        ) : null}
-      </View>
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Carrier channel</Text>
-        <Text style={styles.sectionMeta}>{visibleChannels.length} available</Text>
-      </View>
-
-      {activeChannel ? (
-        <View style={styles.activeCard}>
-          <View style={styles.activeRow}>
-            <View style={styles.activeCopy}>
-              <Text style={styles.activeName}>{activeChannel.channelName}</Text>
-              <Text style={styles.activeMeta}>
-                Channel #{activeChannel.channelIndex} ·{' '}
-                {isPrivateChannel(activeChannel) ? 'PRIVATE' : 'PUBLIC'}
-              </Text>
-            </View>
-            <View style={styles.activeBadge}>
-              <Text style={styles.activeBadgeText}>SELECTED CARRIER</Text>
-            </View>
-          </View>
-          <Text style={styles.securityText}>
-            Channel key material is hidden from the driver-facing radio screen.
-          </Text>
-          {onOpenCarrierDetails ? (
-            <TouchableOpacity
-              style={styles.carrierDetailsButton}
-              onPress={onOpenCarrierDetails}>
-              <Text style={styles.carrierDetailsText}>Carrier details</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      ) : (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No carrier channel selected</Text>
-          <Text style={styles.emptyText}>
-            Connect a MeshCore companion node and let Bushmesh load its configured
-            channels.
-          </Text>
-        </View>
-      )}
-
-      {visibleChannels.length > 1 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.channelStrip}>
-          {visibleChannels.map(channel => {
-            const active = channel.channelIndex === activeChannelIndex;
-            return (
-              <TouchableOpacity
-                key={channel.channelIndex}
-                accessibilityRole="button"
-                accessibilityLabel={'Choose carrier ' + channel.channelName}
-                accessibilityState={{selected: active}}
-                style={[styles.channelChip, active && styles.channelChipActive]}
-                onPress={() => setActiveChannelIndex(channel.channelIndex)}>
-                <Text
-                  style={[
-                    styles.channelChipName,
-                    active && styles.channelChipNameActive,
-                  ]}>
-                  {channel.channelName}
-                </Text>
-                <Text style={styles.channelChipMeta}>#{channel.channelIndex}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      ) : null}
-
-      <View style={styles.composeCard}>
-        <Text style={styles.sectionTitle}>Message this channel</Text>
-        <Text style={styles.smallHint}>
-          Text is submitted to the selected MeshCore carrier, not to a
-          verified BushMesh convoy. Drafts are retained separately by channel.
-        </Text>
-        <TextInput
-          accessibilityLabel="Carrier message draft"
-          style={styles.input}
-          value={messageText}
-          onChangeText={setMessageText}
-          placeholder={
-            activeChannel ? `Message ${activeChannel.channelName}` : 'Select a channel first'
-          }
-          placeholderTextColor={colors.textMuted}
-          multiline
-          maxLength={133}
-          editable={activeChannel !== null && !isSending}
-        />
-        <View style={styles.composeMeta}>
-          <Text style={styles.characterCount}>
-            {cleanMessage.length}/133 · {messageBytes} UTF-8 bytes
-          </Text>
-          <Text style={styles.transportState}>
-            {presentation.maySubmitCarrierText ? 'CARRIER SUBMISSION READY' : 'CARRIER NOT READY'}
-          </Text>
-        </View>
-
-        <View style={styles.airtimeCard}>
-          <View style={styles.airtimeCopy}>
-            <Text style={styles.airtimeLabel}>PAYLOAD-ONLY RF FLOOR</Text>
-            <Text style={styles.airtimeValue}>
-              {airtimeFloor ? `${airtimeFloor.totalDurationMs.toFixed(0)} ms` : 'UNKNOWN'}
-            </Text>
-          </View>
-          <Text style={styles.airtimeMeta}>
-            {modem
-              ? `SF${modem.spreadingFactor} · ${modem.bandwidthKhz} kHz · 4/${modem.codingRate}`
-              : 'Waiting for radio SF/BW/CR'}
-          </Text>
-        </View>
-        <Text style={styles.airtimeNote}>
-          This is the physical airtime floor for the text bytes only. MeshCore
-          routing, encryption and framing add additional radio bytes, so Bushmesh
-          does not present this as total packet airtime.
-        </Text>
-
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="Submit channel text to radio"
-          accessibilityState={{disabled: !canSend}}
-          style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-          disabled={!canSend}
-          onPress={() => {
-            handleSend().catch(() => undefined);
-          }}>
-          <Text style={styles.sendButtonText}>
-            {isSending ? 'SUBMITTING…' : 'SUBMIT TO RADIO'}
-          </Text>
+        <TouchableOpacity accessibilityRole="button"
+          accessibilityLabel="Show radio technical diagnostics"
+          onPress={() => {setShowDiagnostics(true); setSettingsOpen(false);}}
+          style={styles.panelAction}>
+          <Text style={styles.actionText}>Technical diagnostics</Text>
         </TouchableOpacity>
-        {sendStatus ? <Text style={styles.sendStatus}>{sendStatus}</Text> : null}
+        {onOpenCarrierDetails ? <TouchableOpacity accessibilityRole="button"
+          accessibilityLabel="Open carrier management"
+          onPress={onOpenCarrierDetails} style={styles.panelAction}>
+          <Text style={styles.actionText}>Manage MeshCore channels</Text>
+        </TouchableOpacity> : null}
       </View>
+    );
+  }
 
-      <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel={showDiagnostics
-          ? 'Hide radio technical diagnostics' : 'Show radio technical diagnostics'}
-        accessibilityState={{expanded: showDiagnostics}}
-        style={styles.diagnosticsToggle}
-        onPress={() => setShowDiagnostics(current => !current)}>
-        <Text style={styles.diagnosticsToggleText}>
-          {showDiagnostics ? 'Hide technical diagnostics' : 'Show technical diagnostics'}
-        </Text>
-      </TouchableOpacity>
-      {showDiagnostics ? (
-      <>
-      <View style={styles.inboundDiagnostics}>
-        <Text style={styles.inboundTitle}>NATIVE OUTBOUND · MESHCORE COMMANDS</Text>
-        <Text style={styles.inboundMeta}>
-          queued {nativeTxMetrics.counts['command-queued'] ?? 0} · transport ready {nativeTxMetrics.counts['transport-ready'] ?? 0} · Android write queued {nativeTxMetrics.counts['native-write-queued'] ?? 0}
-        </Text>
-        <Text style={styles.inboundMeta}>
-          GATT callback confirmed (all commands) {nativeTxMetrics.counts['gatt-write-confirmed'] ?? 0} · write failures {nativeTxMetrics.counts['write-failed'] ?? 0}
-        </Text>
-        <Text style={styles.inboundMeta}>
-          response observed {nativeTxMetrics.counts['response-observed'] ?? 0} · matched 0x00 {nativeTxMetrics.counts['response-matched'] ?? 0} · timeout {nativeTxMetrics.counts['response-timeout'] ?? 0} · firmware rejected {nativeTxMetrics.counts['firmware-rejected'] ?? 0}
-        </Text>
-        <Text style={styles.inboundMeta}>
-          Stop requested {nativeTxMetrics.counts['stop-requested'] ?? 0} · confirmed {nativeTxMetrics.counts['stop-confirmed'] ?? 0} · failed {nativeTxMetrics.counts['stop-failed'] ?? 0}
-        </Text>
-        <Text style={styles.inboundMeta}>
-          Android write queued, confirmed GATT callback, and PACKET_OK (0x00) are distinct stages. None confirms peer delivery.
-        </Text>
-        {nativeTxIssue ? (
-          <Text style={styles.inboundFailure}>
-            Last native issue: {nativeTxIssue.stage} / {nativeTxIssue.reason ?? 'unknown'}
-            {nativeTxIssue.firmwareCode === undefined ? '' : ` · firmware code ${nativeTxIssue.firmwareCode}`}
-          </Text>
+  if (selectedScope) {
+    const warned = !!activeKey && uncertain.has(activeKey);
+    return (
+      <View style={styles.root}>
+        <RadioChatRoom
+          scope={selectedScope} messages={selectedMessages}
+          connected={connected && radioId === selectedScope.radioId}
+          canSubmit={canSubmit} reason={unavailableReason}
+          draft={activeDraft} notice={activeNotice}
+          isSubmitting={sending} onDraft={updateDraft}
+          onSend={() => {submit().catch(() => undefined);}}
+          onBack={closeRoom}
+          onOpenSettings={onOpenChatSettings}
+          onOpenMenu={onOpenConversationMenu}
+          pinned={!!activeKey && pinned.has(activeKey)}
+          onTogglePinned={() => togglePinned(selectedScope)}
+        />
+        {warned ? (
+          <TouchableOpacity accessibilityRole="button"
+            accessibilityLabel="Acknowledge uncertain radio submission"
+            style={styles.uncertainButton}
+            onPress={() => {
+              if (!activeKey) return;
+              setUncertain(current => {
+                const next = new Set(current); next.delete(activeKey); return next;
+              });
+              postNotice(activeKey,
+                'Manual retry enabled. The previous packet may have transmitted; check the radio first.');
+            }}>
+            <Text style={styles.uncertainText}>I understand the duplicate-send risk</Text>
+          </TouchableOpacity>
         ) : null}
       </View>
+    );
+  }
 
-      <View style={styles.inboundDiagnostics}>
-        <Text style={styles.inboundTitle}>LIVE INBOUND · MESHCORE QUEUE</Text>
-        <Text style={styles.inboundMeta}>
-          0x83 push {inboundMetrics.counts['push-0x83'] ?? 0} · drain scheduled {inboundMetrics.counts['drain-scheduled'] ?? 0} · sync 0x0A {inboundMetrics.counts['sync-submitted'] ?? 0}
-        </Text>
-        <Text style={styles.inboundMeta}>
-          received 0x08 {inboundMetrics.counts['received-0x08'] ?? 0} · 0x11 {inboundMetrics.counts['received-0x11'] ?? 0} · channel parsed {inboundMetrics.counts['channel-parsed'] ?? 0}
-        </Text>
-        <Text style={styles.inboundMeta}>
-          inbox {inboundMetrics.counts['inbox-accepted'] ?? 0} · persisted {inboundMetrics.counts.persisted ?? 0} · history visible {inboundMetrics.counts['history-visible'] ?? 0} · duplicate {inboundMetrics.counts.duplicate ?? 0} · queue empty {inboundMetrics.counts['queue-empty'] ?? 0}
-        </Text>
-        {inboundFailure ? (
-          <Text style={styles.inboundFailure}>
-            Last inbound issue: {inboundFailure.stage} / {inboundFailure.reason ?? 'unknown'}
-          </Text>
-        ) : null}
-      </View>
-
-      </>
-      ) : null}
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Channel history</Text>
-        <Text style={styles.sectionMeta}>{activeHistory.length} messages</Text>
-      </View>
-
-      <View style={styles.historySummary}>
-        <Text style={styles.historySummaryText}>
-          {counts.received} received · {counts.pending} pending ·
-          {' '}{counts.accepted} radio-accepted · {counts.confirmed} peer-confirmed ·
-          {' '}{counts.failed} failed
-        </Text>
-      </View>
-      {messagePersistenceStatus === 'restoring' ? (
-        <Text style={styles.warningText}>Restoring saved carrier messages…</Text>
-      ) : null}
-      {messagePersistenceStatus === 'error' ? (
-        <Text style={styles.warningText}>
-          Saved history could not be restored. {messagePersistenceError ?? 'Inspect Device diagnostics.'}
-        </Text>
-      ) : null}
-      {activeHistory.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyText}>
-            {activeChannel
-              ? 'No stored messages on this carrier yet. Incoming text appears when heard; sending requires a connected companion.'
-              : 'Choose a carrier channel to see its own messages. Other channels remain separate.'}
+  return (
+    <View style={styles.root}>
+      <RadioInbox
+        conversations={conversations}
+        online={connected} radioLabel={connectedDeviceName}
+        restoring={isRestoring}
+        historyIssue={messagePersistenceStatus === 'error' ? messagePersistenceError ??
+          'Encrypted history could not be loaded.' : messagePersistenceError}
+        unknownHistoryCount={unknownCount}
+        search={search} onSearch={setSearch}
+        onOpen={openRoom} onPin={togglePinned}
+        onNewChat={() => setShowNew(v => !v)}
+        onSettings={openSettings}
+        onOpenRowMenu={onOpenConversationMenu}
+        onOpenChatSettings={onOpenChatSettings}
+      />
+      {showNew ? (
+        <View style={styles.newMenu}>
+          <Text style={styles.newTitle}>Start a channel chat</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Create channel"
+            onPress={() => provision('create')} style={styles.panelAction}>
+            <Text style={styles.actionText}>＋ Create a channel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Join channel"
+            onPress={() => provision('join')} style={styles.panelAction}>
+            <Text style={styles.actionText}>↳ Join a channel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel new chat"
+            onPress={() => setShowNew(false)} style={styles.panelAction}>
+            <Text style={styles.actionText}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={styles.panelCopy}>
+            Channel creation and joining are managed by the existing carrier
+            setup tools, not by this messenger.
           </Text>
         </View>
-      ) : (
-        activeHistory.map(message => (
-          <View key={message.id} style={styles.messageCard}>
-            <View style={styles.messageTopRow}>
-              <Text style={styles.messageChannel}>
-                {message.channelName} #{message.channelIndex}
-              </Text>
-              <Text
-                style={[
-                  styles.deliveryState,
-                  {color: deliveryColor(message)},
-                ]}>
-                {deliveryLabel(message)}
-              </Text>
-            </View>
-            <Text style={styles.messageOrigin}>
-              {message.direction === 'received' ? 'CARRIER INCOMING' : 'LOCAL OUTGOING'}
-            </Text>
-            <Text style={styles.messageText}>{message.text}</Text>
-            {message.submissionFailure ? (
-              <Text style={styles.submissionFailure}>
-                {formatChannelSubmissionFailure(message.submissionFailure)}
-              </Text>
-            ) : null}
-            <Text style={styles.messageTime}>
-              {new Date(message.createdAt).toLocaleString()}
-            </Text>
-          </View>
-        ))
-      )}
-    </ScrollView>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {flex: 1, backgroundColor: colors.background},
-  content: {padding: 16, paddingBottom: 38},
-  heroCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 18,
-  },
-  heroRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  heroCopy: {flex: 1},
-  eyebrow: {color: colors.accent, fontSize: 11, fontWeight: '900', letterSpacing: 1.2},
-  title: {color: colors.textPrimary, fontSize: 27, fontWeight: '900', marginTop: 4},
-  summaryTitle: {color: colors.textPrimary, fontSize: 16, fontWeight: '900', marginTop: 10},
-  smallHint: {color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8},
-  body: {color: colors.textSecondary, fontSize: 13, lineHeight: 20, marginTop: 10},
-  nodeText: {color: colors.textSecondary, fontSize: 12, marginTop: 9},
-  linkPill: {borderWidth: 1, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 6},
-  linkReady: {borderColor: colors.success},
-  linkOffline: {borderColor: colors.border},
-  linkText: {color: colors.textPrimary, fontSize: 11, fontWeight: '900'},
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 9,
-  },
-  sectionTitle: {color: colors.textPrimary, fontSize: 17, fontWeight: '900'},
-  sectionMeta: {color: colors.textMuted, fontSize: 11, fontWeight: '700'},
-  activeCard: {
-    backgroundColor: colors.surfaceSoft,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    borderRadius: 18,
-    padding: 15,
-    marginBottom: 11,
-  },
-  activeRow: {flexDirection: 'row', alignItems: 'center', gap: 10},
-  activeCopy: {flex: 1},
-  activeName: {color: colors.textPrimary, fontSize: 21, fontWeight: '900'},
-  activeMeta: {color: colors.textSecondary, fontSize: 11, fontWeight: '700', marginTop: 3},
-  activeBadge: {backgroundColor: colors.accent, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5},
-  activeBadgeText: {color: colors.background, fontSize: 8, fontWeight: '900'},
-  securityText: {color: colors.textMuted, fontSize: 10, lineHeight: 15, marginTop: 10},
-  carrierDetailsButton: {
-    alignSelf: 'flex-start',
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 11,
-    paddingVertical: 12,
-    minHeight: 56,
-    justifyContent: 'center',
-  },
-  carrierDetailsText: {color: colors.accent, fontSize: 13, fontWeight: '900'},
-  emptyCard: {backgroundColor: colors.surface, borderRadius: 16, padding: 14, marginBottom: 14},
-  emptyTitle: {color: colors.textPrimary, fontSize: 14, fontWeight: '900'},
-  emptyText: {color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 3},
-  channelStrip: {gap: 8, paddingBottom: 16},
-  channelChip: {
-    minWidth: 115, minHeight: 56,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  channelChipActive: {borderColor: colors.accent, backgroundColor: colors.surfaceSoft},
-  channelChipName: {color: colors.textSecondary, fontSize: 12, fontWeight: '800'},
-  channelChipNameActive: {color: colors.textPrimary},
-  channelChipMeta: {color: colors.textMuted, fontSize: 9, marginTop: 3},
-  composeCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 18,
-    padding: 15,
-    marginBottom: 20,
-  },
-  input: {
-    minHeight: 92,
-    marginTop: 10,
-    backgroundColor: colors.background,
-    color: colors.textPrimary,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 14,
-    padding: 12,
-    textAlignVertical: 'top',
-    fontSize: 15,
-  },
-  composeMeta: {flexDirection: 'row', justifyContent: 'space-between', marginTop: 7},
-  characterCount: {color: colors.textMuted, fontSize: 10, fontWeight: '700'},
-  transportState: {color: colors.textMuted, fontSize: 9, fontWeight: '900'},
-  airtimeCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 10,
-    backgroundColor: colors.surfaceSoft,
-    borderRadius: 12,
-    padding: 11,
-    marginTop: 11,
-  },
-  airtimeCopy: {flex: 1},
-  airtimeLabel: {color: colors.textMuted, fontSize: 8, fontWeight: '900'},
-  airtimeValue: {color: colors.accent, fontSize: 20, fontWeight: '900', marginTop: 2},
-  airtimeMeta: {color: colors.textSecondary, fontSize: 9, fontWeight: '800'},
-  airtimeNote: {color: colors.textMuted, fontSize: 9, lineHeight: 14, marginTop: 7},
-  sendButton: {
-    minHeight: 58,
-    marginTop: 12,
-    backgroundColor: colors.accent,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendButtonDisabled: {opacity: 0.35},
-  sendButtonText: {color: colors.background, fontSize: 15, fontWeight: '900'},
-  sendStatus: {color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 9},
-  warningText: {color: colors.warning, fontSize: 13, lineHeight: 20, marginBottom: 12},
-  historySummary: {backgroundColor: colors.surfaceSoft, padding: 12,
-    borderRadius: 12, marginBottom: 12},
-  historySummaryText: {color: colors.textPrimary, fontSize: 12, lineHeight: 19},
-  messageOrigin: {color: colors.textSecondary, fontSize: 11, fontWeight: '800',
-    marginTop: 8},
-  diagnosticsToggle: {minHeight: 56, padding: 12, marginBottom: 14,
-    borderRadius: 12, borderWidth: 1, borderColor: colors.border,
-    justifyContent: 'center', alignItems: 'center'},
-  diagnosticsToggleText: {color: colors.accent, fontSize: 14, fontWeight: '800'},
-  inboundDiagnostics: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceSoft,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 17,
-    gap: 6,
-  },
-  inboundTitle: {color: colors.textPrimary, fontSize: 11, fontWeight: '900'},
-  inboundMeta: {color: colors.textSecondary, fontSize: 10, lineHeight: 15},
-  inboundFailure: {color: colors.warning, fontSize: 10},
-  messageCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 9,
-  },
-  messageTopRow: {flexDirection: 'row', alignItems: 'center', gap: 9},
-  messageChannel: {flex: 1, color: colors.textSecondary, fontSize: 12, fontWeight: '800'},
-  deliveryState: {fontSize: 11, fontWeight: '900'},
-  messageText: {color: colors.textPrimary, fontSize: 17, lineHeight: 24, marginTop: 7},
-  messageTime: {color: colors.textSecondary, fontSize: 12, marginTop: 8},
-  submissionFailure: {color: colors.warning, fontSize: 10, lineHeight: 15, marginTop: 7},
+  root: {flex: 1, backgroundColor: colors.background},
+  panel: {flex: 1, backgroundColor: colors.background, padding: 18, gap: 14},
+  panelHead: {minHeight: 64, flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between'},
+  panelTitle: {color: colors.textPrimary, fontSize: 22, fontWeight: '900'},
+  panelCopy: {color: colors.textSecondary, fontSize: 14, lineHeight: 21},
+  panelAction: {minHeight: 52, paddingHorizontal: 16, borderRadius: 12,
+    backgroundColor: colors.surfaceSoft, justifyContent: 'center'},
+  actionText: {color: colors.textPrimary, fontSize: 14, fontWeight: '800'},
+  newMenu: {position: 'absolute', left: 12, right: 12, top: 78,
+    padding: 15, borderRadius: 18, backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border, gap: 8},
+  newTitle: {color: colors.textPrimary, fontSize: 18, fontWeight: '800'},
+  uncertainButton: {marginHorizontal: 12, marginBottom: 8,
+    minHeight: 54, borderRadius: 12, borderWidth: 1,
+    borderColor: colors.warning, alignItems: 'center', justifyContent: 'center'},
+  uncertainText: {color: colors.warning, fontSize: 13, fontWeight: '800'},
 });
