@@ -167,5 +167,9 @@ export function buildMessengerConversations(input: {
 }
 
 export function conversationKey(scope: RadioConversationScope): string {
-  return scope.radioId + ':' + scope.channelGeneration + ':' + scope.channelIndex;
+  // Serialized tuple is injective: naive colon concatenation can collide
+  // when real radio addresses themselves contain ':'.
+  return JSON.stringify([
+    scope.radioId, scope.channelGeneration, scope.channelIndex, scope.channelName,
+  ]);
 }
