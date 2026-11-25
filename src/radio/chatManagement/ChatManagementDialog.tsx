@@ -29,7 +29,7 @@ function Action({label, onPress, disabled, danger, primary}: {
   label: string; onPress: () => void; disabled?: boolean; danger?: boolean; primary?: boolean;
 }) {
   return (
-    <TouchableOpacity accessibilityRole="button" accessibilityState={{disabled: !!disabled}}
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled: !!disabled}}
       disabled={disabled} style={[styles.action, primary && styles.primary, disabled && styles.disabled]}
       onPress={onPress}>
       <Text style={[styles.actionText, primary && styles.primaryText, danger && styles.danger]}>{label}</Text>
@@ -256,6 +256,8 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
         {current && <Text style={styles.label}>{chatRole(p)}</Text>}
       </View>
       {!current && <Text style={styles.danger}>Connect to the original radio and refresh this chat before changing settings.</Text>}
+      {!current && controller.radio === chat.radio && <Action label="Refresh chat" disabled={controller.busy || controller.radioBusy}
+        onPress={() => controller.refresh().catch(() => undefined)}/>}
       <Section title="Conversation information">
         <Text style={styles.label}>MeshCore channel</Text>
         <Text style={styles.name}>{chat.name}</Text>
