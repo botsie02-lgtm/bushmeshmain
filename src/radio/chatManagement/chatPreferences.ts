@@ -108,6 +108,12 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
   return entries;
 }
 
+function decodeSort(serialized: string | null): ChatSort {
+  if (serialized === null) return 'name';
+  const parsed = JSON.parse(serialized);
+  return parsed.version === 2 && sorts.includes(parsed.sort) ? parsed.sort : 'name';
+}
+
 export type ChatPreferencePatch = Partial<Omit<ChatPreferences, 'localCreator' | 'origin'>>;
 
 export class ChatPreferenceStore {
@@ -119,11 +125,17 @@ export class ChatPreferenceStore {
     return decodeChatPreferences(await this.storage().loadChatPreferences());
   }
 
+  async loadState(): Promise<{entries: ChatPreferenceSnapshot; sort: ChatSort}> {
+    await this.queue;
+    const serialized = await this.storage().loadChatPreferences();
+    return {entries: decodeChatPreferences(serialized), sort: decodeSort(serialized)};
+  }
+
   async loadSort(): Promise<ChatSort> {
     await this.queue;
     const serialized = await this.storage().loadChatPreferences();
     decodeChatPreferences(serialized);
-    return serialized === null ? 'name' : JSON.parse(serialized).sort ?? 'name';
+    return decodeSort(serialized);
   }
 
   saveSort(sort: ChatSort): Promise<void> {
@@ -145,7 +157,7 @@ export class ChatPreferenceStore {
       const storage = this.storage();
       const serialized = await storage.loadChatPreferences();
       const entries = decodeChatPreferences(serialized);
-      const sort: ChatSort = serialized === null ? 'name' : JSON.parse(serialized).sort ?? 'name';
+      const sort = decodeSort(serialized);
       const next = update(entries[id] ?? defaultChatPreferences);
       if (next === null) delete entries[id];
       else entries[id] = next;
