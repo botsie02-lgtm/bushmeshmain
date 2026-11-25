@@ -31,6 +31,7 @@ export type RadioInboxProps = {
   onPin: (scope: RadioConversationScope) => void;
   onNewChat: () => void;
   onSettings: () => void;
+  onReviewUnattributed: () => void;
   onOpenRowMenu?: (scope: RadioConversationScope) => void;
   onOpenChatSettings?: (scope: RadioConversationScope) => void;
 };
@@ -45,7 +46,7 @@ function clock(value: number | null) {
 export function RadioInbox({
   conversations, online, radioLabel, restoring, historyIssue,
   unknownHistoryCount, search, onSearch, onOpen, onPin, onNewChat,
-  onSettings, onOpenRowMenu, onOpenChatSettings,
+  onSettings, onReviewUnattributed, onOpenRowMenu, onOpenChatSettings,
 }: RadioInboxProps): React.JSX.Element {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
@@ -113,8 +114,14 @@ export function RadioInbox({
           </Text>
           <Text style={styles.quarantineText}>
             Legacy history has no proven radio identity/channel generation.
-            It is preserved in encrypted storage, but not mixed into chats.
+            It remains encrypted and can be reviewed separately, not mixed into chats.
           </Text>
+          <TouchableOpacity accessibilityRole="button"
+            accessibilityLabel="Review unattributed Radio History"
+            onPress={onReviewUnattributed}
+            style={styles.reviewButton}>
+            <Text style={styles.reviewText}>Review saved records</Text>
+          </TouchableOpacity>
         </View>
       ) : null}
       <FlatList
@@ -253,6 +260,9 @@ const styles = StyleSheet.create({
   quarantine: {backgroundColor: colors.surfaceSoft, marginHorizontal: 16,
     padding: 11, borderRadius: 11, marginBottom: 6},
   quarantineTitle: {fontSize: 12, fontWeight: '800', color: colors.warning},
+  reviewButton: {minHeight: 48, marginTop: 7, justifyContent: 'center',
+    alignItems: 'center', borderRadius: 10, borderWidth: 1, borderColor: colors.border},
+  reviewText: {fontSize: 13, color: colors.accent, fontWeight: '800'},
   quarantineText: {fontSize: 12, color: colors.textSecondary, lineHeight: 18, marginTop: 3},
   empty: {paddingHorizontal: 26, paddingTop: 45, alignItems: 'center'},
   emptySymbol: {color: colors.accent, fontSize: 44},
