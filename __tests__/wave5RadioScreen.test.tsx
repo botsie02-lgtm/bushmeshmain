@@ -87,7 +87,19 @@ async function draft(value: string) {
   if (!input) throw new Error('No message draft');
   await act(async () => {input.props.onChangeText(value);});
 }
-function viewText() {return JSON.stringify(tree.toJSON());}
+function asText(value: unknown): string {
+  if (Array.isArray(value)) return value.map(asText).join(' ');
+  return typeof value === 'string' || typeof value === 'number'
+    ? String(value) : '';
+}
+function viewText(): string {
+  const visible = tree.root.findAllByType('Text' as unknown as React.ElementType)
+    .map(node => asText(node.props.children));
+  const accessible = tree.root.findAll(node =>
+    typeof node.props.accessibilityLabel === 'string')
+    .map(node => node.props.accessibilityLabel as string);
+  return [...visible, ...accessible].join(' ');
+}
 async function room(label: string) {await press('Open chat ' + label);}
 afterEach(async () => {
   if (tree) await act(async () => {tree.unmount();});
