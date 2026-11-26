@@ -9,6 +9,7 @@ import {
 type NativePersistenceModule = {
   loadMessages: () => Promise<string | null>;
   saveMessages: (serializedSnapshot: string) => Promise<boolean>;
+  saveMessagesWithRetention?: (serializedSnapshot: string, retentionJson: string) => Promise<boolean>;
   clearMessages: () => Promise<boolean>;
   resetMessagesStorage: () => Promise<boolean>;
 };
@@ -36,7 +37,15 @@ export class AndroidMessagePersistence {
       return;
     }
 
-    if (!await module.saveMessages(encodeMessageSnapshot(snapshot))) {
+    const serialized = encodeMessageSnapshot(snapshot);
+    let committed: boolean;
+    if (snapshot.retention) {
+      if (!module.saveMessagesWithRetention) throw new Error('Protected history retention storage unavailable.');
+      committed = await module.saveMessagesWithRetention(serialized, JSON.stringify(snapshot.retention));
+    } else {
+      committed = await module.saveMessages(serialized);
+    }
+    if (!committed) {
       throw new Error('Encrypted message history was not committed.');
     }
   }

@@ -142,8 +142,8 @@ export function createMessageSnapshot(
   return {
     version: BUSHMESH_MESSAGE_SNAPSHOT_VERSION,
     savedAtMs,
-    messages: bounded,
     ...(retention ? {retention} : {}),
+    messages: bounded,
   };
 }
 

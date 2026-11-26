@@ -18,6 +18,8 @@ import javax.crypto.spec.GCMParameterSpec
 
 class BushMeshPersistenceModule(
   private val reactContext: ReactApplicationContext,
+  private val storageName: String = STORE_NAME,
+  private val messageKeyAlias: String = MESSAGES_KEY_ALIAS,
 ) : ReactContextBaseJavaModule(reactContext) {
 
   companion object {
@@ -26,6 +28,8 @@ class BushMeshPersistenceModule(
     private const val TRACK_KEY = "encrypted_track_snapshot"
     private const val CONTACTS_KEY = "encrypted_contacts_snapshot"
     private const val MESSAGES_KEY = "encrypted_messages_snapshot"
+    private const val MESSAGE_RETENTION_KEY = "encrypted_message_retention_guard_v1"
+    private const val MESSAGE_RETENTION_AAD = "v1:message-retention"
     private const val MAP_STATE_KEY = "encrypted_map_state_snapshot"
     private const val FORMATION_KEY = "encrypted_formation_snapshot"
     private const val CANONICAL_RUNTIME_KEY = "encrypted_canonical_runtime_state"
@@ -121,23 +125,79 @@ class BushMeshPersistenceModule(
   }
 
   @ReactMethod
+  @Synchronized
   fun loadMessages(promise: Promise) {
-    loadSecureValue(MESSAGES_KEY, MESSAGES_KEY_ALIAS, MESSAGES_AAD, "messages", "BUSHMESH_MESSAGES_LOAD_FAILED", promise)
+    try {
+      val marker = preferences().getString(MESSAGE_RETENTION_KEY, null)
+      if (marker == null) {
+        loadSecureValue(MESSAGES_KEY, messageKeyAlias, MESSAGES_AAD, "messages", "BUSHMESH_MESSAGES_LOAD_FAILED", promise)
+        return
+      }
+      val envelope = checkNotNull(preferences().getString(MESSAGES_KEY, null))
+      val snapshot = decrypt(envelope, messageKeyAlias, MESSAGES_AAD, "messages")
+      val guard = MessageRetentionGuard.parse(decrypt(marker, messageKeyAlias, MESSAGE_RETENTION_AAD, "retention"))
+      check(guard == MessageRetentionGuard.fromSnapshot(snapshot))
+      promise.resolve(snapshot)
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_MESSAGES_LOAD_FAILED", "Encrypted history retention could not be verified. Existing storage retained.")
+    }
   }
 
   @ReactMethod
+  @Synchronized
   fun saveMessages(serializedSnapshot: String, promise: Promise) {
-    saveSecureValue(MESSAGES_KEY, MESSAGES_KEY_ALIAS, MESSAGES_AAD, "messages", "BUSHMESH_MESSAGES_SAVE_FAILED", serializedSnapshot, promise)
+    if (preferences().contains(MESSAGE_RETENTION_KEY)) {
+      promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", "History write lacks the protected retention ledger.")
+      return
+    }
+    saveSecureValue(MESSAGES_KEY, messageKeyAlias, MESSAGES_AAD, "messages", "BUSHMESH_MESSAGES_SAVE_FAILED", serializedSnapshot, promise)
   }
 
   @ReactMethod
+  @Synchronized
+  fun saveMessagesWithRetention(serializedSnapshot: String, retentionJson: String, promise: Promise) {
+    try {
+      val next = MessageRetentionGuard.parse(retentionJson)
+      check(next == MessageRetentionGuard.fromSnapshot(serializedSnapshot))
+      val prefs = preferences()
+      val previous = prefs.getString(MESSAGE_RETENTION_KEY, null)
+      if (previous != null) {
+        val guard = MessageRetentionGuard.parse(decrypt(previous, messageKeyAlias, MESSAGE_RETENTION_AAD, "retention"))
+        check(next.includes(guard))
+      }
+      val snapshotEnvelope = encrypt(serializedSnapshot, messageKeyAlias, MESSAGES_AAD)
+      val markerEnvelope = encrypt(retentionJson, messageKeyAlias, MESSAGE_RETENTION_AAD)
+      check(prefs.edit().putString(MESSAGES_KEY, snapshotEnvelope).putString(MESSAGE_RETENTION_KEY, markerEnvelope).commit())
+      promise.resolve(true)
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", "Encrypted history and retention could not be committed.")
+    }
+  }
+
+  @ReactMethod
+  @Synchronized
   fun clearMessages(promise: Promise) {
+    if (preferences().contains(MESSAGE_RETENTION_KEY)) {
+      promise.reject("BUSHMESH_MESSAGES_CLEAR_FAILED", "Clear must preserve the protected retention ledger.")
+      return
+    }
     clearSecureValue(MESSAGES_KEY, "messages", "BUSHMESH_MESSAGES_CLEAR_FAILED", promise)
   }
 
   @ReactMethod
+  @Synchronized
   fun resetMessagesStorage(promise: Promise) {
-    resetStorage(MESSAGES_KEY, MESSAGES_KEY_ALIAS, "BUSHMESH_MESSAGES_RESET_FAILED", "messages", promise)
+    // Existing explicit destructive reset is the only operation allowed to
+    // discard the entire store and its retention ledger together.
+    try {
+      check(preferences().edit().remove(MESSAGES_KEY).remove(MESSAGE_RETENTION_KEY).commit())
+      val store = keyStore()
+      if (store.containsAlias(messageKeyAlias)) store.deleteEntry(messageKeyAlias)
+      getOrCreateKey(messageKeyAlias)
+      promise.resolve(true)
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_MESSAGES_RESET_FAILED", "Encrypted message storage reset could not be confirmed.")
+    }
   }
 
   @ReactMethod
@@ -405,7 +465,7 @@ class BushMeshPersistenceModule(
   }
 
   private fun preferences() = reactContext.getSharedPreferences(
-    STORE_NAME,
+    storageName,
     Context.MODE_PRIVATE,
   )
 
