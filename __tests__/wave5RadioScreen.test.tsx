@@ -604,7 +604,7 @@ test('durable associated receive stays unread behind a hidden room until visible
   await rerender({enableChatManagement: true, tabVisible: false});
   messages = [{id: 'offscreen-durable', channelIndex: '1', channelName: 'Private', direction: 'received', status: 'confirmed',
     text: 'OFFSCREEN DURABLE RECEIVE', createdAt: new Date().toISOString(),
-    conversation: {radioId: chatRadio, channelGeneration: 'config:1:' + chatConfigs[1].id, channelIndex: '1', channelName: 'Private', provenance: 'local-observation'}}];
+    conversation: {version: 1, radioId: chatRadio, channelGeneration: 'config:1:' + chatConfigs[1].id, channelIndex: '1', channelName: 'Private', provenance: 'local-observation'}}];
   await rerender({enableChatManagement: true, tabVisible: false});
   expect(chatPreferenceStore.update).not.toHaveBeenCalledWith(chatConfigs[1].id, expect.objectContaining({readIds: ['offscreen-durable']}), 1);
   await rerender({enableChatManagement: true, tabVisible: true});
