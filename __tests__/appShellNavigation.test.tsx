@@ -3,11 +3,23 @@ import ReactTestRenderer from 'react-test-renderer';
 
 import {AppShell, MAIN_TABS} from '../src/app/shell/AppShell';
 import {ConnectedFieldPulse} from '../src/app/fieldExperience/ConnectedFieldPulse';
-import {StyleSheet} from 'react-native';
+import {BackHandler, StyleSheet} from 'react-native';
 import {ConnectedDriveDashboard} from '../src/drive/dashboard/ConnectedDriveDashboard';
 import {ConnectedFieldReadinessDashboard} from '../src/drive/fieldReadiness/ConnectedFieldReadinessDashboard';
 import {MapScreen} from '../src/screens/MapScreen';
 import {RadioScreen} from '../src/screens/RadioScreen';
+import {RadioMessagingSettingsScreen} from '../src/screens/RadioMessagingSettingsScreen';
+import {CarMessagingStatusBanner} from '../src/components/CarMessagingStatusBanner';
+import {RadioSpeechStatusBanner} from '../src/components/RadioSpeechStatusBanner';
+import {SpeechPttPanel} from '../src/components/SpeechPttPanel';
+import {nativeOutboundDiagnostics} from '../src/meshcore/nativeOutboundDiagnostics';
+
+jest.mock('../src/state/SpeechContext', () => ({
+  useSpeech: () => ({supported: true, runtimeState: 'ready', languageTag: 'en-AU'}),
+}));
+jest.mock('../src/state/CarMessagingContext', () => ({
+  useCarMessaging: () => ({supported: true}),
+}));
 
 jest.mock('../src/state/LocationSessionContext', () => ({
   useLocationSession: () => ({status: 'stopped', latestFix: null}),
@@ -18,6 +30,7 @@ jest.mock('../src/state/OfflineMapContext', () => ({
 jest.mock('../src/state/BushMeshContext', () => ({
   useBushMesh: () => ({
     connectionStatus: 'Connected',
+    messagePersistenceStatus: 'ready',
     activeChannel: {channelIndex: '0', channelName: 'Public carrier'},
     contacts: [{name: 'UNTRUSTED PUBLIC DEVICE'}],
   }),
@@ -279,4 +292,59 @@ test('field pulse routes to existing five-tab destinations without ownership cha
   expect(visibleText(renderer)).toContain('Travel together. Stay informed.');
   expect(renderedTabs(renderer)).toHaveLength(5);
   await ReactTestRenderer.act(async () => {renderer.unmount();});
+});
+
+
+test('radio settings replaces the banner stack, preserves messenger instance, and returns on Back', async () => {
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  const remove = jest.fn();
+  const back = jest.spyOn(BackHandler, 'addEventListener').mockReturnValue({remove});
+  try {
+    await ReactTestRenderer.act(() => {renderer = ReactTestRenderer.create(<AppShell />);});
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio');});
+    const messenger = renderer.root.findByType(RadioScreen);
+    expect(renderer.root.findAllByType(CarMessagingStatusBanner)).toHaveLength(0);
+    expect(renderer.root.findAllByType(RadioSpeechStatusBanner)).toHaveLength(0);
+    expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(0);
+    expect(visibleText(renderer)).not.toContain('Conversation router not yet connected');
+    expect(visibleText(renderer)).not.toContain('Radio traffic uses the selected');
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio messaging settings');});
+    expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
+    expect(renderer.root.findByType(RadioMessagingSettingsScreen)).toBeDefined();
+    expect(renderer.root.findAllByType(CarMessagingStatusBanner)).toHaveLength(1);
+    expect(renderer.root.findAllByType(RadioSpeechStatusBanner)).toHaveLength(1);
+    expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(1);
+    expect(visibleText(renderer)).toContain('not a per-conversation mute');
+    expect(visibleText(renderer)).toContain('does not prove verified membership');
+    expect(renderedTabs(renderer)).toHaveLength(5);
+    expect(renderedTabs(renderer)[1].props.accessibilityState.selected).toBe(true);
+
+    await ReactTestRenderer.act(() => {
+      nativeOutboundDiagnostics.record('response-timeout', 'channel-text', {reason: 'timeout'});
+    });
+    expect(visibleText(renderer)).toContain('response-timeout');
+
+    const handler = back.mock.calls[back.mock.calls.length - 1][1];
+    await ReactTestRenderer.act(() => {expect(handler()).toBe(true);});
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(renderer.root.findAllByType(RadioMessagingSettingsScreen)).toHaveLength(0);
+    expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
+
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio messaging settings');});
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
+    expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio messaging settings');});
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Contacts');});
+    expect(renderer.root.findAllByType(RadioScreen)).toHaveLength(0);
+    expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(0);
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio');});
+    expect(renderer.root.findAllByType(RadioMessagingSettingsScreen)).toHaveLength(0);
+    expect(renderer.root.findAllByType(RadioScreen)).toHaveLength(1);
+  } finally {
+    if (renderer) {
+      await ReactTestRenderer.act(() => {renderer.unmount();});
+    }
+    nativeOutboundDiagnostics.reset();
+    back.mockRestore();
+  }
 });

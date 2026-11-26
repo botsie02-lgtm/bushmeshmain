@@ -1,4 +1,5 @@
 import {Device} from 'react-native-ble-plx';
+import * as chatPreferences from '../src/radio/chatManagement/chatPreferences';
 
 import {AppRadioConnectionService} from '../src/radio/AppRadioConnectionService';
 import {releasedNativeOwnerStatus} from './testNativeOwnerStatus';
@@ -101,6 +102,7 @@ describe('AppRadioConnectionService', () => {
     const requestPermissions =
       options.requestPermissions ?? jest.fn().mockResolvedValue(true);
 
+    let randomByte = 7;
     const service = new AppRadioConnectionService({
       createBleManager,
       createMeshCoreClient,
@@ -112,6 +114,7 @@ describe('AppRadioConnectionService', () => {
       }),
       nativeCoordinator,
       nativeSupported: () => options.nativeSupported ?? false,
+      randomBytes: async length => new Uint8Array(length).fill(randomByte++),
       getNativeStatus: jest.fn().mockResolvedValue(releasedNativeOwnerStatus()),
     });
 
@@ -295,5 +298,179 @@ describe('AppRadioConnectionService', () => {
 
     expect(client.stop).toHaveBeenCalledTimes(1);
     expect(manager.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  describe('guarded messenger management', () => {
+    async function chatHarness() {
+      const harness = createHarness();
+      const {service, client, device} = harness;
+      client.sendAppStart.mockResolvedValue({selfInfo: {publicKeyHex: 'a'.repeat(64)}});
+      const channels = [emptyChannel(0), emptyChannel(1)];
+      const ids = new Map<string, string>();
+      jest.spyOn(chatPreferences, 'configurationId').mockImplementation(async (...args) => {
+        const key = JSON.stringify(args);
+        if (!ids.has(key)) ids.set(key, (ids.size + 1).toString(16).padStart(64, '0'));
+        return ids.get(key)!;
+      });
+      jest.spyOn(chatPreferences.chatPreferenceStore, 'load').mockResolvedValue({});
+      const provenance = jest.spyOn(chatPreferences.chatPreferenceStore, 'recordProvisioned')
+        .mockResolvedValue({});
+      const forget = jest.spyOn(chatPreferences.chatPreferenceStore, 'forget').mockResolvedValue({});
+      client.readChannel.mockImplementation(async slot => ({
+        ...channels[slot], secret: Uint8Array.from(channels[slot].secret),
+      }));
+      client.writeChannel.mockImplementation(async (slot: number, name: string, secret: Uint8Array) => {
+        channels[slot] = {channelIndex: slot, channelName: name,
+          secret: Uint8Array.from(secret), empty: name === '' && secret.every(b => b === 0)};
+      });
+      await service.initialize();
+      await service.connectToDevice(device);
+      const radio = service.getChatRadio();
+      if (!radio) throw new Error('Missing test radio identity');
+      return {...harness, radio, channels, provenance, forget};
+    }
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it('creates and joins verified empty slots, without exposing PSKs in list results', async () => {
+      const {service, radio, provenance, client} = await chatHarness();
+      const created = await service.provisionChat(radio, {name: 'Created'});
+      const joined = await service.provisionChat(radio, {name: 'Joined', secretHex: 'ab'.repeat(16)});
+      expect(created.slot).toBe(0);
+      expect(joined.slot).toBe(1);
+      expect(provenance).toHaveBeenNthCalledWith(1, created.id, true);
+      expect(provenance).toHaveBeenNthCalledWith(2, joined.id, false);
+      expect(await service.listChatConfigurations(radio)).toEqual([created, joined]);
+      expect(JSON.stringify(service.getSnapshot().channels)).not.toContain('AB'.repeat(16));
+      await expect(service.provisionChat(radio, {name: 'Full'})).rejects.toThrow();
+      expect(client.writeChannel).toHaveBeenCalledTimes(2);
+      await service.dispose();
+    });
+
+    it('refuses a slot that becomes occupied after empty-slot selection', async () => {
+      const {service, radio, client, provenance, channels} = await chatHarness();
+      client.readChannel.mockImplementationOnce(async slot => {
+        const empty = emptyChannel(slot);
+        channels[slot] = {channelIndex: slot, channelName: 'Other',
+          secret: new Uint8Array(16).fill(3), empty: false};
+        return empty;
+      });
+      await expect(service.provisionChat(radio, {name: 'Mine'})).rejects.toThrow('no longer empty');
+      expect(client.writeChannel).not.toHaveBeenCalled();
+      expect(provenance).not.toHaveBeenCalled();
+      await service.dispose();
+    });
+
+    it('refuses stale same-name slots for leave and credential sharing', async () => {
+      const {service, radio, channels, client, forget} = await chatHarness();
+      const chat = await service.provisionChat(radio, {name: 'Chat'});
+      channels[chat.slot].secret = new Uint8Array(16).fill(8);
+      await expect(service.revealChatCredential(chat)).rejects.toThrow('changed');
+      await expect(service.leaveChat(chat)).rejects.toThrow('changed');
+      expect(client.writeChannel).toHaveBeenCalledTimes(1);
+      expect(forget).not.toHaveBeenCalled();
+      await service.dispose();
+    });
+
+    it('cancels provisioning after transient disconnect even if the same session reconnects', async () => {
+      const {service, radio, client, provenance, getClientEvents} = await chatHarness();
+      client.readChannel.mockImplementationOnce(async slot => {
+        getClientEvents()?.onConnectionState?.('reconnecting', 'test reconnect');
+        getClientEvents()?.onConnectionState?.('connected', 'test recovered');
+        return emptyChannel(slot);
+      });
+      await expect(service.provisionChat(radio, {name: 'Chat'})).rejects.toThrow('session changed');
+      expect(client.writeChannel).not.toHaveBeenCalled();
+      expect(provenance).not.toHaveBeenCalled();
+      await service.dispose();
+    });
+
+    it('does not claim creator when firmware readback fails', async () => {
+      const {service, radio, client, provenance} = await chatHarness();
+      client.writeChannel.mockResolvedValueOnce(undefined);
+      await expect(service.provisionChat(radio, {name: 'Chat'})).rejects.toThrow('did not verify');
+      expect(provenance).not.toHaveBeenCalled();
+      await service.dispose();
+    });
+
+    it('rejects duplicate creation and joining without altering occupied slots', async () => {
+      const {service, radio, client, provenance} = await chatHarness();
+      await service.provisionChat(radio, {name: 'Camp'});
+      await expect(service.provisionChat(radio, {name: 'camp'})).rejects.toMatchObject({code: 'duplicate'});
+      await expect(service.provisionChat(radio, {name: 'Camp', secretHex: '07'.repeat(16)}))
+        .rejects.toMatchObject({code: 'duplicate'});
+      await expect(service.provisionChat(radio, {name: 'Alias', secretHex: '07'.repeat(16)}))
+        .rejects.toMatchObject({code: 'duplicate'});
+      expect(client.writeChannel).toHaveBeenCalledTimes(1);
+      expect(provenance).toHaveBeenCalledTimes(1);
+      await service.dispose();
+    });
+
+    it('rejects concurrent management and wrong radio without starting a second write', async () => {
+      const {service, radio, client} = await chatHarness();
+      const first = service.provisionChat(radio, {name: 'Camp'});
+      await expect(service.provisionChat(radio, {name: 'Second'})).rejects.toThrow('busy');
+      await first;
+      await expect(service.provisionChat('different radio', {name: 'Wrong'})).rejects.toThrow('changed');
+      expect(client.writeChannel).toHaveBeenCalledTimes(1);
+      await service.dispose();
+    });
+
+    it('fails closed when protected configuration identity is unavailable before a write', async () => {
+      const {service, radio, client, provenance} = await chatHarness();
+      jest.mocked(chatPreferences.configurationId).mockRejectedValueOnce(new Error('Keystore unavailable'));
+      await expect(service.provisionChat(radio, {name: 'Camp'})).rejects.toThrow();
+      expect(client.writeChannel).not.toHaveBeenCalled();
+      expect(provenance).not.toHaveBeenCalled();
+      await service.dispose();
+    });
+
+    it('reports verified firmware mutation with failed persistence as partial; retry cannot duplicate', async () => {
+      const {service, radio, client, provenance, channels} = await chatHarness();
+      provenance.mockRejectedValueOnce(new Error('Keystore unavailable'));
+      await expect(service.provisionChat(radio, {name: 'Camp'})).rejects.toMatchObject({code: 'partial'});
+      expect(channels[0].channelName).toBe('Camp');
+      await expect(service.provisionChat(radio, {name: 'Camp'})).rejects.toMatchObject({code: 'duplicate'});
+      expect(client.writeChannel).toHaveBeenCalledTimes(1);
+      await service.dispose();
+    });
+
+    it('does not reuse configuration identity across distinct connected radios', async () => {
+      const {service, radio, client, manager} = await chatHarness();
+      const first = await service.provisionChat(radio, {name: 'Camp'});
+      await service.disconnect();
+      expect(service.getChatRadio()).toBeNull();
+      const secondDevice = fakeDevice('CC:DD');
+      manager.connectToDevice.mockResolvedValueOnce(secondDevice);
+      client.sendAppStart.mockResolvedValue({selfInfo: {publicKeyHex: 'b'.repeat(64)}});
+      await service.connectToDevice(secondDevice);
+      const otherRadio = service.getChatRadio();
+      if (!otherRadio) throw new Error('Missing second radio');
+      const other = (await service.listChatConfigurations(otherRadio))[0];
+      expect(other.slot).toBe(first.slot);
+      expect(other.id).not.toBe(first.id);
+      await expect(service.leaveChat(first)).rejects.toThrow('changed');
+      await service.dispose();
+    });
+
+    it('preserves the exact personalisation supplied to verified provisioning', async () => {
+      const {service, radio, provenance} = await chatHarness();
+      const personalisation = {description: 'Weekend', avatarColor: 'orange', avatarIcon: 'camp'} as const;
+      const chat = await service.provisionChat(radio, {name: 'Camp', personalisation});
+      expect(provenance).toHaveBeenCalledWith(chat.id, true, personalisation);
+      await service.dispose();
+    });
+
+    it('clears only the matching slot after verification', async () => {
+      const {service, radio, channels, forget} = await chatHarness();
+      const first = await service.provisionChat(radio, {name: 'First'});
+      const second = await service.provisionChat(radio, {name: 'Second'});
+      expect(await service.revealChatCredential(first)).toBe('07'.repeat(16));
+      await service.leaveChat(first);
+      expect(channels[first.slot].empty).toBe(true);
+      expect(channels[second.slot].channelName).toBe('Second');
+      expect(forget).toHaveBeenCalledWith(first.id);
+      await service.dispose();
+    });
   });
 });

@@ -1,0 +1,75 @@
+name: Radio messenger UI v1 — full validation
+
+on:
+  push:
+    branches:
+      - feature/radio-messenger-ui-v1
+  workflow_dispatch:
+
+concurrency:
+  group: radio-messenger-ui-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application:
+    name: Jest, TypeScript, ESLint, simulator, map fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Full Jest regression suite
+        run: npm test -- --runInBand
+      - name: Full TypeScript check
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npm run lint
+      - name: Deterministic simulator compile
+        run: npx tsc -p tsconfig.network-simulator-v1.json --noEmit
+      - name: Install raster fixture dependencies
+        run: python -m pip install "Pillow>=11,<14"
+      - name: Map raster fixture unit tests
+        run: python -m unittest discover -s tools/maps -p 'test_*.py'
+
+  android:
+    name: Android assembleDebug and native unit tests — no install
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Install dependencies
+        run: npm ci
+      - name: Compile Android debug APK (no adb install)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - name: Native JVM unit tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+      - name: Record artifact hash
+        working-directory: android/app/build/outputs/apk/debug
+        run: sha256sum app-debug.apk | tee SHA256SUMS
+      - name: Upload APK artifact only
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-radio-messenger-ui-debug-${{ github.sha }}
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/debug/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7

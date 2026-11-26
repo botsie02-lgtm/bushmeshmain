@@ -1,0 +1,66 @@
+name: Radio messaging settings Android screenshots
+
+on:
+  push:
+    branches:
+      - feature/radio-messaging-settings-v1
+  workflow_dispatch:
+
+concurrency:
+  group: radio-settings-capture-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      BASE_SHA: 261a12ce05f8ab7c70ae6c37cba03d32cf2c1361
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Build feature standalone APK
+        run: |
+          chmod +x android/gradlew
+          (cd android && ./gradlew :app:assembleRelease --no-daemon)
+          cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/radio-feature.apk"
+      - name: Build exact base standalone APK
+        run: |
+          git fetch --depth=1 origin "$BASE_SHA"
+          git checkout --detach "$BASE_SHA"
+          chmod +x android/gradlew
+          (cd android && ./gradlew :app:assembleRelease --no-daemon)
+          cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/radio-base.apk"
+          git checkout --detach "$GITHUB_SHA"
+      - name: Start isolated Android emulator
+        run: |
+          sudo chmod 666 /dev/kvm
+          sdkmanager --install "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
+          echo no | avdmanager create avd --force -n radio-settings -k "system-images;android-35;google_apis;x86_64"
+          nohup emulator -avd radio-settings -no-window -no-audio -no-snapshot -gpu swiftshader_indirect >"$RUNNER_TEMP/emulator.log" 2>&1 &
+          timeout 180 adb wait-for-device
+          timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = 1 ]; do sleep 3; done'
+          adb shell input keyevent 82
+      - name: Capture installed base and feature screens
+        run: |
+          python3 tools/radio/capture_messaging_settings.py \
+            --base-apk "$RUNNER_TEMP/radio-base.apk" \
+            --feature-apk "$RUNNER_TEMP/radio-feature.apk" \
+            --output radio-screenshots
+          printf 'base=%s\nfeature=%s\nrun=%s\n' "$BASE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" > radio-screenshots/BUILD_PROVENANCE.txt
+      - name: Upload real emulator screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: radio-settings-screenshots-${{ github.sha }}
+          path: radio-screenshots/
+          if-no-files-found: error
+          retention-days: 14
