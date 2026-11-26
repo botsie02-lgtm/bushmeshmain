@@ -84,7 +84,11 @@ test('settings distinguish local creator from network authority and expose no au
   });
   expect(visibleText(renderer)).toContain('Created on this phone');
   expect(visibleText(renderer)).toContain('does not grant authority');
-  expect(visibleText(renderer)).toContain('Individual chat mute and auto-read are not available');
+  expect(visibleText(renderer)).toContain('Android and Android Auto notifications and critical safety alerts are separate');
+  const autoRead = renderer.root.findAll(node => node.props.accessibilityLabel === 'Auto-read associated messages' && typeof node.props.onValueChange === 'function')[0];
+  expect(autoRead.props.value).toBe(true);
+  await ReactTestRenderer.act(async () => autoRead.props.onValueChange(false));
+  expect(value.updateLocal).toHaveBeenCalledWith(chat.id, {autoRead: false}, 1);
   expect(value.credential).not.toHaveBeenCalled();
   expect(value.leave).not.toHaveBeenCalled();
   await ReactTestRenderer.act(() => renderer.unmount());
