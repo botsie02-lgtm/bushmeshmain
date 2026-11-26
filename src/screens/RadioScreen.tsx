@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Alert, AppState, BackHandler, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {Alert, AppState, BackHandler, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {ChatManagementDialog, type ChatManagementSelection} from '../radio/chatManagement/ChatManagementDialog';
 import {useChatManagement, type ChatManagementController} from '../radio/chatManagement/useChatManagement';
 import {chatPreferenceStore, DEFAULT_QUICK_MESSAGES, defaultChatPreferences, type ChatConfiguration} from '../radio/chatManagement/chatPreferences';
@@ -11,7 +11,7 @@ import {
 } from '../meshcore/channelSendDiagnostics';
 import {useViewedConversation} from '../app/activeContext/ViewedConversationContext';
 import {
-  type BushMeshChannel, useBushMesh,
+  type BushMeshChannel, type BushMeshChannelMessage, useBushMesh,
 } from '../state/BushMeshContext';
 import {useRadioConnection} from '../state/RadioConnectionContext';
 import {useRadioSession} from '../state/RadioSessionContext';
@@ -135,6 +135,8 @@ function RadioMessenger({
   const [search, setSearch] = useState('');
   const [pinned, setPinned] = useState<ReadonlySet<string>>(new Set());
   const [selectedScope, setSelectedScope] = useState<RadioConversationScope | null>(null);
+  const [forwardingMessage, setForwardingMessage] = useState<BushMeshChannelMessage | null>(null);
+  useEffect(() => {if (!tabVisible || settingsVisible || appState !== 'active') setForwardingMessage(null);}, [tabVisible, settingsVisible, appState]);
   const [searchRoom, setSearchRoom] = useState(false);
   const [globalTemplates, setGlobalTemplates] = useState<readonly string[]>(DEFAULT_QUICK_MESSAGES);
   // Management availability is stable even when the controller object changes.
@@ -380,7 +382,7 @@ function RadioMessenger({
   // A mounted room is not necessarily visible. Do not consume unread state
   // behind settings, diagnostics, another tab or a backgrounded activity.
   const roomVisible = appState === 'active' && tabVisible && !settingsVisible &&
-    !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew;
+    !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage;
   useEffect(() => {
     if (!management || !activeKey || !roomVisible || !localId || !localPreference) {
       readAttempt.current = null;
@@ -674,11 +676,40 @@ function RadioMessenger({
     return (
       <View style={styles.root}>
         <View style={[styles.root, coveredBySettings && styles.covered]} importantForAccessibility={coveredBySettings ? 'no-hide-descendants' : 'auto'} pointerEvents={coveredBySettings ? 'none' : 'auto'}>
+        {forwardingMessage ? <Modal transparent visible animationType="none" onRequestClose={() => setForwardingMessage(null)}>
+          <View style={{flex: 1, justifyContent: 'flex-end', backgroundColor: '#0009'}}>
+            <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel="Dismiss forwarding" onPress={() => setForwardingMessage(null)}/>
+            <View accessibilityViewIsModal style={{backgroundColor: colors.surface, padding: 18, borderTopLeftRadius: 20, borderTopRightRadius: 20}}>
+              <Text style={{color: colors.textPrimary, fontSize: 18, fontWeight: 'bold'}}>Forward text to chat</Text>
+              <Text style={{color: colors.textSecondary, marginVertical: 8}}>Choose a verified destination. This only prepares a draft; nothing is transmitted.</Text>
+              <ScrollView style={{maxHeight: 320}}>
+                {liveScopes.map(scope => <TouchableOpacity key={conversationKey(scope)} accessibilityRole="button" accessibilityLabel={'Forward to ' + scope.channelName} style={{minHeight: 48, justifyContent: 'center'}} onPress={() => {
+                  const key = conversationKey(scope);
+                  const value = forwardingMessage.text;
+                  const prepare = () => {
+                    if (!validateCarrierText(value).valid) {Alert.alert('Message too long', 'MeshCore permits 133 UTF-8 bytes.'); return;}
+                    setForwardingMessage(null);
+                    setDrafts(current => ({...current, [key]: value}));
+                    const destination = preferencesFor(scope);
+                    const chat = chatFor(scope);
+                    if (management && chat && destination) management.updateLocal(chat.id, {draft: value}, destination.incarnation ?? 1).catch(() => postNotice(key, 'Forward draft could not be saved.'));
+                    openRoom(scope);
+                    postNotice(key, 'Forward draft ready. Check the destination and press Send to transmit.');
+                  };
+                  if ((drafts[key] ?? preferencesFor(scope)?.draft ?? '').trim()) Alert.alert('Replace draft?', 'The destination already has an unsent draft.', [{text: 'Cancel', style: 'cancel'}, {text: 'Replace draft', onPress: prepare}]);
+                  else prepare();
+                }}><Text style={{color: colors.accent, fontSize: 16}}>{preferencesFor(scope)?.displayName || scope.channelName}</Text></TouchableOpacity>)}
+              </ScrollView>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel forwarding" onPress={() => setForwardingMessage(null)} style={{minHeight: 48, justifyContent: 'center'}}><Text style={{color: colors.textPrimary}}>Cancel</Text></TouchableOpacity>
+            </View>
+          </View>
+        </Modal> : null}
         <RadioChatRoom
           scope={selectedScope} messages={selectedMessages} initialSearch={searchRoom}
           connected={connected && radioId === selectedScope.radioId}
           visible={roomVisible}
           firstUnreadId={unreadAnchor?.key === activeKey ? unreadAnchor?.id : undefined}
+          onForwardMessage={management && liveScopes.length ? setForwardingMessage : undefined}
           quickMessages={localPreference?.quickMessages ?? globalTemplates}
           onSaveQuickMessages={management && localId && localPreference ? templates => management.updateLocal(localId, {quickMessages: templates}, localIncarnation) : undefined}
           starredIds={localPreference?.starredIds}

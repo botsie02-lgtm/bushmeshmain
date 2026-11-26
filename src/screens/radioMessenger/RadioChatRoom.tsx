@@ -1,9 +1,10 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
-  Alert, BackHandler, FlatList, KeyboardAvoidingView, ScrollView, NativeScrollEvent, NativeSyntheticEvent,
+  Alert, BackHandler, FlatList, KeyboardAvoidingView, Modal, Pressable, ScrollView, NativeScrollEvent, NativeSyntheticEvent,
   Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
+import {radioMessageClipboard} from '../../native/SensitiveClipboard';
 import {QuickMessageEditor} from '../../radio/chatManagement/QuickMessageEditor';
 import {ChatAvatar} from '../../radio/chatManagement/ChatAvatar';
 import type {ChatPersonalisation} from '../../radio/chatManagement/chatPreferences';
@@ -25,6 +26,7 @@ export type RadioChatRoomProps = {
   starredIds?: readonly string[];
   pinnedIds?: readonly string[];
   onMessagePreference?: (id: string, kind: 'starredIds' | 'pinnedIds') => void;
+  onForwardMessage?: (message: BushMeshChannelMessage) => void;
   messages: readonly ScopedMessage[];
   connected: boolean;
   canSubmit: boolean;
@@ -98,9 +100,15 @@ export function RadioChatRoom({
   scope, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
   onTogglePinned, personalisation, displayName, persistentPin, visible = true,
-  starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false, firstUnreadId,
+  starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false, firstUnreadId, onForwardMessage,
 }: RadioChatRoomProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [replyId, setReplyId] = useState<string | null>(null);
+  const actionMessage = messages.find(m => m.message.id === actionId)?.message;
+  const replyMessage = messages.find(m => m.message.id === replyId)?.message;
+  useEffect(() => {setActionId(null); setReplyId(null);}, [scope.radioId, scope.channelGeneration, scope.channelIndex]);
+  useEffect(() => {if (!draft && !isSubmitting) setReplyId(null);}, [draft, isSubmitting]);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [pageSize, setPageSize] = useState(100);
@@ -110,7 +118,7 @@ export function RadioChatRoom({
   const [editingQuick, setEditingQuick] = useState(false);
   const templates = quickMessages ?? ['Ready to go.', 'All clear.', 'Stopping shortly.', 'Need assistance.', 'Vehicle issue.', 'Radio check.', 'Regroup ahead.', 'Convoy accounted for.'];
   useEffect(() => {
-    if (!visible) {setMenuOpen(false); setQuickOpen(false); setEditingQuick(false); return;}
+    if (!visible) {setMenuOpen(false); setQuickOpen(false); setEditingQuick(false); setActionId(null); return;}
     if (!menuOpen && !searching) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {setMenuOpen(false); setSearching(false); setQuery(''); return true;});
     return () => sub.remove();
@@ -229,14 +237,7 @@ export function RadioChatRoom({
             dateLabel(older.message.createdAt) !== dateLabel(item.message.createdAt);
           return (
             <View>
-              <TouchableOpacity activeOpacity={1} accessibilityRole="button" accessibilityLabel="Message actions" onLongPress={() => {
-                if (!onMessagePreference) return;
-                Alert.alert('Message actions', 'Local only', [
-                  {text: starredIds?.includes(item.message.id) ? 'Unstar' : 'Star', onPress: () => onMessagePreference(item.message.id, 'starredIds')},
-                  {text: pinnedIds?.includes(item.message.id) ? 'Unpin' : 'Pin', onPress: () => onMessagePreference(item.message.id, 'pinnedIds')},
-                  {text: 'Cancel', style: 'cancel'},
-                ]);
-              }}><Bubble entry={item} />{starredIds?.includes(item.message.id) || pinnedIds?.includes(item.message.id) ? <Text style={styles.statusText}>{starredIds?.includes(item.message.id) ? '★ Starred ' : ''}{pinnedIds?.includes(item.message.id) ? '• Pinned' : ''}</Text> : null}</TouchableOpacity>
+              <TouchableOpacity activeOpacity={1} accessibilityRole="button" accessibilityLabel="Message actions" onLongPress={() => setActionId(item.message.id)}><Bubble entry={item} />{starredIds?.includes(item.message.id) || pinnedIds?.includes(item.message.id) ? <Text style={styles.statusText}>{starredIds?.includes(item.message.id) ? '★ Starred ' : ''}{pinnedIds?.includes(item.message.id) ? '• Pinned' : ''}</Text> : null}</TouchableOpacity>
               {item.message.id === firstUnreadId ? <View style={styles.dateWrap}><Text accessibilityLabel="First unread message" style={[styles.dateText, {color: colors.accent}]}>Unread messages</Text></View> : null}
               {firstInDay ? (
                 <View style={styles.dateWrap}>
@@ -257,12 +258,37 @@ export function RadioChatRoom({
           </View>
         }
       />
+      {visible && actionMessage ? <Modal transparent visible animationType="none" onRequestClose={() => setActionId(null)}>
+        <View style={styles.actionOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel="Dismiss message actions" onPress={() => setActionId(null)}/>
+          <View accessibilityViewIsModal style={styles.actionSheet}>
+            <Text numberOfLines={2} style={styles.title}>{actionMessage.text}</Text>
+            {radioMessageClipboard.supported() ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Copy message" style={styles.menuButton} onPress={() => {setActionId(null); radioMessageClipboard.copy(actionMessage.text).catch(() => Alert.alert('Copy unavailable', 'The message was not copied.'));}}><Text style={styles.menuText}>Copy text</Text></TouchableOpacity> : null}
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Message details" style={styles.menuButton} onPress={() => {setActionId(null); Alert.alert('Message details', new Date(actionMessage.createdAt).toLocaleString() + '\n' + deliveryText(actionMessage) + '\nMeshCore channel ' + actionMessage.channelName + '\nLocal history only.');}}><Text style={styles.menuText}>Message details</Text></TouchableOpacity>
+            {onMessagePreference ? <>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={starredIds?.includes(actionMessage.id) ? 'Unstar message' : 'Star message'} style={styles.menuButton} onPress={() => {onMessagePreference(actionMessage.id, 'starredIds'); setActionId(null);}}><Text style={styles.menuText}>{starredIds?.includes(actionMessage.id) ? 'Unstar' : 'Star'}</Text></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={pinnedIds?.includes(actionMessage.id) ? 'Unpin message' : 'Pin message'} style={styles.menuButton} onPress={() => {onMessagePreference(actionMessage.id, 'pinnedIds'); setActionId(null);}}><Text style={styles.menuText}>{pinnedIds?.includes(actionMessage.id) ? 'Unpin' : 'Pin locally'}</Text></TouchableOpacity>
+            </> : null}
+            {connected && !isSubmitting ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Reply to message" style={styles.menuButton} onPress={() => {setReplyId(actionMessage.id); setActionId(null);}}><Text style={styles.menuText}>Reply</Text></TouchableOpacity> : null}
+            {onForwardMessage ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Forward message" style={styles.menuButton} onPress={() => {setActionId(null); onForwardMessage(actionMessage);}}><Text style={styles.menuText}>Forward as text</Text></TouchableOpacity> : null}
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close message actions" style={styles.menuButton} onPress={() => setActionId(null)}><Text style={styles.menuText}>Close</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal> : null}
       {unreadIndex >= 0 ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to first unread message" onPress={() => {setPageSize(n => Math.max(n, unreadIndex + 1)); setJumpUnread(true);}} style={styles.menuButton}><Text style={styles.menuText}>↑ First unread</Text></TouchableOpacity> : null}
       <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => listRef.current?.scrollToOffset({offset: 0, animated: true})} style={styles.menuButton}><Text style={styles.menuText}>↓ Latest</Text></TouchableOpacity>
       <View style={styles.composerArea}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Quick messages" onPress={() => setQuickOpen(v => !v)} style={styles.menuButton}><Text style={styles.menuText}>Quick messages</Text></TouchableOpacity>
         {quickOpen && <ScrollView style={{maxHeight: 180}} keyboardShouldPersistTaps="always"><View style={styles.quick}>{templates.map((text, index) => <TouchableOpacity key={index} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}{onSaveQuickMessages && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit quick messages" style={styles.quickItem} onPress={() => {setQuickOpen(false); setEditingQuick(true);}}><Text style={styles.menuText}>Edit templates</Text></TouchableOpacity>}</View></ScrollView>}
         {editingQuick && onSaveQuickMessages && <QuickMessageEditor initial={templates} onSave={onSaveQuickMessages} onClose={() => setEditingQuick(false)}/>}
+        {replyMessage ? <View style={styles.details}>
+          <Text numberOfLines={2} style={styles.menuText}>Replying to: {replyMessage.text}</Text>
+          <Text style={styles.statusText}>Local reference only. Include quote to transmit it as ordinary text.</Text>
+          <View style={styles.quick}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Include reply quote" style={styles.quickItem} onPress={() => {const quoted = '> ' + replyMessage.text.replace(/\r?\n/g, ' ') + '\n' + draft; if (!validateCarrierText(quoted).valid) {Alert.alert('Quote too long', 'MeshCore permits 133 UTF-8 bytes. Shorten the draft or reply without a quote.'); return;} onDraft(quoted); setReplyId(null);}}><Text style={styles.menuText}>Include quote</Text></TouchableOpacity>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel reply" style={styles.quickItem} onPress={() => setReplyId(null)}><Text style={styles.menuText}>Cancel</Text></TouchableOpacity>
+          </View>
+        </View> : null}
         {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
         <View style={styles.composerRow}>
           <TextInput
@@ -298,6 +324,8 @@ export function RadioChatRoom({
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
+  actionOverlay: {flex: 1, backgroundColor: '#0009', justifyContent: 'flex-end'},
+  actionSheet: {backgroundColor: colors.surface, padding: 16, borderTopLeftRadius: 20, borderTopRightRadius: 20},
   header: {minHeight: 67, flexDirection: 'row', alignItems: 'center',
     paddingLeft: 6, paddingRight: 10, backgroundColor: colors.surface,
     borderBottomWidth: 1, borderBottomColor: colors.border},

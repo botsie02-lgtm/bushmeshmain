@@ -135,6 +135,17 @@ class BushMeshRadioServiceModule(
     }
   }
 
+  @ReactMethod
+  fun copyRadioMessageTextToClipboard(text: String, promise: Promise) {
+    try {
+      require(text.isNotBlank() && text.length <= 4096)
+      ProtectedChannelClipboard.copy(reactContext, text, "BushMesh radio message")
+      promise.resolve(true)
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_MESSAGE_COPY_FAILED", "Radio message could not be copied.")
+    }
+  }
+
   private fun copySensitiveText(text: String) {
     ProtectedChannelClipboard.copy(reactContext, text)
   }

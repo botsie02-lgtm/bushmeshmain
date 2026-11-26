@@ -2,6 +2,7 @@ import {NativeModules, Platform} from 'react-native';
 
 type SensitiveClipboardModule = {
   copySensitiveTextToClipboard?: (text: string) => Promise<boolean>;
+  copyRadioMessageTextToClipboard?: (text: string) => Promise<boolean>;
   showSharedChannelKey?: (secret: string) => Promise<boolean>;
   hideSharedChannelKey?: () => void;
 };
@@ -41,4 +42,12 @@ export const protectedChannelKey = {
     if (!module?.showSharedChannelKey || !await module.showSharedChannelKey(secret)) throw new Error('Protected key reveal unavailable.');
   },
   hide: () => module?.hideSharedChannelKey?.(),
+};
+
+/** Explicitly requested copy, using the same sensitive clipboard protection as PSKs. */
+export const radioMessageClipboard = {
+  supported: () => Platform.OS === 'android' && typeof module?.copyRadioMessageTextToClipboard === 'function',
+  async copy(text: string): Promise<void> {
+    if (!text.trim() || !module?.copyRadioMessageTextToClipboard || !await module.copyRadioMessageTextToClipboard(text)) throw new Error('Message copy unavailable.');
+  },
 };

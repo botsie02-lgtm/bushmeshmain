@@ -613,3 +613,23 @@ test('durable associated receive stays unread behind a hidden room until visible
   expect(viewText()).toContain('First unread message');
   expect(verifiedSend).not.toHaveBeenCalled();
 });
+
+
+test('message reply and forwarding prepare drafts without transmitting', async () => {
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'recent'});
+  messages = [{id: 'forward-source', channelIndex: '1', channelName: 'Private', direction: 'received', status: 'confirmed', text: 'Camp is ready', createdAt: new Date().toISOString(), conversation: {version: 1, radioId: chatRadio, channelGeneration: 'config:1:' + chatConfigs[1].id, channelIndex: '1', channelName: 'Private', provenance: 'local-observation'}}];
+  await mount({enableChatManagement: true});
+  await room('Private');
+  const actions = () => tree.root.findAll(node => node.props.accessibilityLabel === 'Message actions' && typeof node.props.onLongPress === 'function')[0];
+  await act(async () => {actions().props.onLongPress();});
+  await press('Reply to message');
+  expect(viewText()).toContain('Replying to: Camp is ready');
+  await press('Include reply quote');
+  expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' && typeof node.props.onChangeText === 'function')[0].props.value).toBe('> Camp is ready\n');
+  await act(async () => {actions().props.onLongPress();});
+  await press('Forward message');
+  await press('Forward to Public');
+  expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' && typeof node.props.onChangeText === 'function')[0].props.value).toBe('Camp is ready');
+  expect(verifiedSend).not.toHaveBeenCalled();
+  expect(send).not.toHaveBeenCalled();
+});
