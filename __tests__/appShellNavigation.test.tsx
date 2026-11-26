@@ -62,6 +62,7 @@ jest.mock('../src/app/fieldExperience/ConnectedFieldPulse', () => ({
 }));
 jest.mock('../src/screens/ConvoyScreen', () => ({ConvoyScreen: () => null}));
 jest.mock('../src/screens/RadioScreen', () => ({RadioScreen: () => null}));
+jest.mock('../src/screens/NativeRadioSetupScreen', () => ({NativeRadioSetupScreen: () => null}));
 jest.mock('../src/screens/ContactsScreen', () => ({ContactsScreen: () => null}));
 jest.mock('../src/screens/LocationScreen', () => ({LocationScreen: () => null}));
 jest.mock('../src/components/DeviceGpsSettingsPanel', () => ({DeviceGpsSettingsPanel: () => null}));
@@ -313,11 +314,21 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
     await ReactTestRenderer.act(() => {messenger.props.onOpenMessagingSettings();});
     expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
     expect(renderer.root.findByType(RadioMessagingSettingsScreen)).toBeDefined();
+    expect(renderer.root.findAllByType(CarMessagingStatusBanner)).toHaveLength(0);
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Notifications and Android Auto');});
     expect(renderer.root.findAllByType(CarMessagingStatusBanner)).toHaveLength(1);
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Speech and auto-read');});
     expect(renderer.root.findAllByType(RadioSpeechStatusBanner)).toHaveLength(1);
-    expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(1);
     expect(visibleText(renderer)).toContain('not a per-conversation mute');
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Privacy and storage');});
     expect(visibleText(renderer)).toContain('does not prove verified membership');
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Push-to-talk');});
+    expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(1);
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Advanced diagnostics');});
     expect(renderedTabs(renderer)).toHaveLength(5);
     expect(renderedTabs(renderer)[1].props.accessibilityState.selected).toBe(true);
 
@@ -328,7 +339,9 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
 
     const handler = back.mock.calls[back.mock.calls.length - 1][1];
     await ReactTestRenderer.act(() => {expect(handler()).toBe(true);});
-    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalled();
+    expect(renderer.root.findByType(RadioMessagingSettingsScreen).props.page).toBe('hub');
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
     expect(renderer.root.findAllByType(RadioMessagingSettingsScreen)).toHaveLength(0);
     expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
 

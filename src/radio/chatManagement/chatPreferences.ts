@@ -76,6 +76,18 @@ export async function configurationId(
   return id;
 }
 
+export const DEFAULT_QUICK_MESSAGES = ['Ready to go.', 'All clear.', 'Stopping shortly.', 'Need assistance.', 'Vehicle issue.', 'Radio check.', 'Regroup ahead.', 'Convoy accounted for.'] as const;
+function validateTemplates(values: unknown): string[] {
+  if (!Array.isArray(values) || values.length < 1 || values.length > 24 || values.some(v => typeof v !== 'string' || !v.trim() || Buffer.byteLength(v.trim(), 'utf8') > 133)) throw new Error('Use 1–24 templates of at most 133 UTF-8 bytes.');
+  return values.map(v => v.trim());
+}
+function decodeGlobalTemplates(serialized: string | null): string[] | undefined {
+  const value = serialized === null ? undefined : JSON.parse(serialized).globalQuickMessages;
+  return value === undefined ? undefined : validateTemplates(value);
+}
+function encodePreferences(entries: ChatPreferenceSnapshot, sort: ChatSort, serialized: string | null, templates = decodeGlobalTemplates(serialized)): string {
+  return JSON.stringify({version: 2, entries, sort, ...(templates ? {globalQuickMessages: templates} : {})});
+}
 export type ChatPreferenceSnapshot = Record<string, ChatPreferences>;
 export const CHAT_SORT_OPTIONS = ['recent', 'name', 'unread', 'slot'] as const;
 export type ChatSort = typeof CHAT_SORT_OPTIONS[number];
@@ -159,6 +171,27 @@ export class ChatPreferenceStore {
     return {entries: decodeChatPreferences(serialized), sort: decodeSort(serialized)};
   }
 
+  async loadGlobalQuickMessages(): Promise<string[]> {
+    await this.queue;
+    const serialized = await this.storage().loadChatPreferences();
+    decodeChatPreferences(serialized);
+    return decodeGlobalTemplates(serialized) ?? [...DEFAULT_QUICK_MESSAGES];
+  }
+
+  saveGlobalQuickMessages(values: string[]): Promise<void> {
+    const operation = this.queue.then(async () => {
+      const templates = validateTemplates(values);
+      const storage = this.storage();
+      const serialized = await storage.loadChatPreferences();
+      const entries = decodeChatPreferences(serialized);
+      // Initialise the existing protected identity key only for a genuinely new store.
+      if (serialized === null) await storage.chatConfigurationId('meshcore-chat-preference-initialisation-v1');
+      if (!await storage.saveChatPreferences(encodePreferences(entries, decodeSort(serialized), serialized, templates))) throw new Error('Quick messages were not saved.');
+    });
+    this.queue = operation.catch(() => undefined);
+    return operation;
+  }
+
   async loadSort(): Promise<ChatSort> {
     await this.queue;
     const serialized = await this.storage().loadChatPreferences();
@@ -170,8 +203,9 @@ export class ChatPreferenceStore {
     const operation = this.queue.then(async () => {
       if (!sorts.includes(sort)) throw new Error('Invalid chat sorting preference.');
       const storage = this.storage();
-      const entries = decodeChatPreferences(await storage.loadChatPreferences());
-      if (!await storage.saveChatPreferences(JSON.stringify({version: 2, entries, sort}))) {
+      const serialized = await storage.loadChatPreferences();
+      const entries = decodeChatPreferences(serialized);
+      if (!await storage.saveChatPreferences(encodePreferences(entries, sort, serialized))) {
         throw new Error('Chat preferences were not saved.');
       }
     });
@@ -189,7 +223,7 @@ export class ChatPreferenceStore {
       const next = update(entries[id] ?? defaultChatPreferences);
       if (next === null) delete entries[id];
       else entries[id] = next;
-      if (!await storage.saveChatPreferences(JSON.stringify({version: 2, entries, sort}))) {
+      if (!await storage.saveChatPreferences(encodePreferences(entries, sort, serialized))) {
         throw new Error('Chat preferences were not saved.');
       }
       return entries;
@@ -216,7 +250,7 @@ export class ChatPreferenceStore {
         entries[c.id] = {...previous, configuration: {id: c.id, radio, slot: c.slot, name: c.name, privateChannel: c.privateChannel}, incarnation, retired: false,
           ...(previous.retired ? {draft: '', readIds: [], starredIds: [], pinnedIds: [], unread: false} : {})};
       }
-      const next = JSON.stringify({version: 2, entries, sort});
+      const next = encodePreferences(entries, sort, serialized);
       decodeChatPreferences(next);
       if (next !== serialized && !await storage.saveChatPreferences(next)) throw new Error('Chat catalogue was not saved.');
       return entries;

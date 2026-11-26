@@ -45,7 +45,7 @@ import {DriveScreen} from '../../screens/DriveScreen';
 import {LocationScreen} from '../../screens/LocationScreen';
 import {MapScreen} from '../../screens/MapScreen';
 import {RadioScreen} from '../../screens/RadioScreen';
-import {RadioMessagingSettingsScreen} from '../../screens/RadioMessagingSettingsScreen';
+import {RadioMessagingSettingsScreen, RADIO_SETTINGS_LABELS, type RadioSettingsPage} from '../../screens/RadioMessagingSettingsScreen';
 import {colors} from '../../theme/colors';
 
 export type MainTab = 'drive' | 'radio' | 'convoy' | 'contacts' | 'device';
@@ -229,13 +229,22 @@ export function AppShell(): React.JSX.Element {
     useState<ActiveConvoyCarrierProfile | null>(null);
   const {activeConvoy, status: convoyRestoreStatus} = useActiveOperationalConvoy();
   const [radioSettingsOpen, setRadioSettingsOpen] = useState(false);
+  const [radioPage, setRadioPage] = useState<RadioSettingsPage>('hub');
+  const [directRadioPage, setDirectRadioPage] = useState(false);
   const [radioVisited, setRadioVisited] = useState(false);
   useEffect(() => {if (activeTab === 'radio') setRadioVisited(true);}, [activeTab]);
   const openMessagingSettings = useCallback(() => {
     Keyboard.dismiss();
+    setDirectRadioPage(false);
+    setRadioPage('hub');
     setRadioSettingsOpen(true);
   }, []);
+  const openRadioConnection = useCallback(() => {Keyboard.dismiss(); setDirectRadioPage(true); setRadioPage('connection'); setRadioSettingsOpen(true);}, []);
   const closeMessagingSettings = useCallback(() => setRadioSettingsOpen(false), []);
+  const backRadioSettings = useCallback(() => {
+    if (radioPage === 'hub' || directRadioPage) closeMessagingSettings();
+    else setRadioPage('hub');
+  }, [radioPage, directRadioPage, closeMessagingSettings]);
   const radioNavigation = useMemo(() => ({
     openMessagingSettings, closeMessagingSettings,
   }), [openMessagingSettings, closeMessagingSettings]);
@@ -249,11 +258,11 @@ export function AppShell(): React.JSX.Element {
       return;
     }
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      closeMessagingSettings();
+      backRadioSettings();
       return true;
     });
     return () => subscription.remove();
-  }, [activeTab, radioSettingsOpen, closeMessagingSettings]);
+  }, [activeTab, radioSettingsOpen, closeMessagingSettings, backRadioSettings]);
 
   const openConvoy = () => {
     setConvoyView('select');
@@ -285,11 +294,11 @@ export function AppShell(): React.JSX.Element {
       {activeTab === 'radio' ? (radioSettingsOpen ? (
         <View style={styles.radioHeader}>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to Radio"
-            style={styles.radioHeaderButton} onPress={closeMessagingSettings}>
+            style={styles.radioHeaderButton} onPress={backRadioSettings}>
             <Text style={styles.radioHeaderAction}>‹ Back</Text>
           </TouchableOpacity>
           <View style={styles.radioHeaderCopy}>
-            <Text style={styles.radioHeaderTitle}>Messaging settings</Text>
+            <Text style={styles.radioHeaderTitle}>{RADIO_SETTINGS_LABELS[radioPage]}</Text>
           </View>
         </View>
       ) : null) : (
@@ -420,13 +429,14 @@ export function AppShell(): React.JSX.Element {
                 settingsVisible={radioSettingsOpen || activeTab !== 'radio'}
                 tabVisible={activeTab === 'radio'}
                 onOpenMessagingSettings={openMessagingSettings}
+                onOpenRadioConnection={openRadioConnection}
                 onOpenCarrierDetails={() => {
                   setConvoyView('tools');
                   setActiveTab('convoy');
                 }}
               />
             </View>
-            {radioSettingsOpen ? <RadioMessagingSettingsScreen /> : null}
+            {radioSettingsOpen ? <RadioMessagingSettingsScreen page={radioPage} onNavigate={setRadioPage} onBack={backRadioSettings}/> : null}
           </RadioMessagingNavigationContext.Provider>
         </View>}
 

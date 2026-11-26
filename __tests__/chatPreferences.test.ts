@@ -213,3 +213,16 @@ test('recent sorting preserves pinned priority and orders only known activity be
   expect(selectChats(chats, {[one]: {...defaultChatPreferences, pinned: true}}, '', false, 'recent', {[two]: 200}).map(c => c.id)).toEqual([one, two, three]);
   expect(selectChats(chats, {}, '', false, 'recent', {[one]: NaN, [three]: Infinity}).map(c => c.id)).toEqual([one, three, two]);
 });
+
+test('global quick library preserves existing per-chat overrides across all preference writes', async () => {
+  const {store, native} = fixture();
+  await store.update(one, {quickMessages: ['My custom message']});
+  await store.saveGlobalQuickMessages(['Second', 'First']);
+  await store.saveSort('recent');
+  await store.update(one, {pinned: true});
+  const restored = new ChatPreferenceStore(() => native);
+  expect(await restored.loadGlobalQuickMessages()).toEqual(['Second', 'First']);
+  expect((await restored.load())[one].quickMessages).toEqual(['My custom message']);
+  await expect(restored.saveGlobalQuickMessages(['🚙'.repeat(34)])).rejects.toThrow();
+  expect(await restored.loadGlobalQuickMessages()).toEqual(['Second', 'First']);
+});

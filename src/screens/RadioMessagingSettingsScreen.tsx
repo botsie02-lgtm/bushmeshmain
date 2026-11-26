@@ -11,6 +11,14 @@ import {nativeOutboundDiagnostics} from '../meshcore/nativeOutboundDiagnostics';
 import {useCarMessaging} from '../state/CarMessagingContext';
 import {useSpeech} from '../state/SpeechContext';
 import {colors} from '../theme/colors';
+import {NativeRadioSetupScreen} from './NativeRadioSetupScreen';
+import {QuickMessageEditor} from '../radio/chatManagement/QuickMessageEditor';
+import {chatPreferenceStore, DEFAULT_QUICK_MESSAGES} from '../radio/chatManagement/chatPreferences';
+import {RadioQuarantineReview} from './radioMessenger/RadioQuarantineReview';
+import {useBushMesh} from '../state/BushMeshContext';
+
+export type RadioSettingsPage = 'hub' | 'connection' | 'quick' | 'notifications' | 'speech' | 'ptt' | 'history' | 'privacy' | 'diagnostics';
+export const RADIO_SETTINGS_LABELS: Record<RadioSettingsPage, string> = {hub: 'Messaging settings', connection: 'Radio connection', quick: 'Quick messages', notifications: 'Notifications and Android Auto', speech: 'Speech and auto-read', ptt: 'Push-to-talk', history: 'Radio History', privacy: 'Privacy and storage', diagnostics: 'Advanced diagnostics'};
 
 function Section({
   heading,
@@ -31,7 +39,24 @@ function Section({
 }
 
 /** Presentation only: runtime providers and bridges live above the tab shell. */
-export function RadioMessagingSettingsScreen(): React.JSX.Element {
+export function RadioMessagingSettingsScreen({page = 'hub', onNavigate, onBack}: {page?: RadioSettingsPage; onNavigate?: (page: RadioSettingsPage) => void; onBack?: () => void}): React.JSX.Element {
+  if (page === 'connection') return <NativeRadioSetupScreen/>;
+  if (page === 'quick') return <GlobalQuickMessages onBack={onBack ?? (() => undefined)}/>;
+  if (page === 'history') return <HistoryPage onBack={onBack ?? (() => undefined)}/>;
+  if (page === 'hub') return <ScrollView style={styles.screen} contentContainerStyle={styles.content}>{(Object.keys(RADIO_SETTINGS_LABELS) as RadioSettingsPage[]).filter(key => key !== 'hub').map(key => <TouchableOpacity key={key} accessibilityRole="button" accessibilityLabel={RADIO_SETTINGS_LABELS[key]} style={styles.destination} onPress={() => onNavigate?.(key)}><Text style={styles.heading}>{RADIO_SETTINGS_LABELS[key]}</Text><Text style={styles.actionText}>›</Text></TouchableOpacity>)}</ScrollView>;
+  return <SettingsDetail page={page}/>;
+}
+function HistoryPage({onBack}: {onBack: () => void}) {
+  const {channelMessages} = useBushMesh();
+  return <RadioQuarantineReview messages={(channelMessages ?? []).filter(m => !m.conversation)} onBack={onBack}/>;
+}
+function GlobalQuickMessages({onBack}: {onBack: () => void}) {
+  const [values, setValues] = useState<string[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {let active = true; chatPreferenceStore.loadGlobalQuickMessages().then(v => {if (active) setValues(v);}).catch(() => {if (active) setFailed(true);}); return () => {active = false;};}, []);
+  return values ? <QuickMessageEditor initial={values} defaults={DEFAULT_QUICK_MESSAGES} onSave={v => chatPreferenceStore.saveGlobalQuickMessages(v)} onClose={onBack}/> : <Text style={styles.detail}>{failed ? 'Protected templates could not be loaded. Existing storage retained.' : 'Loading templates…'}</Text>;
+}
+function SettingsDetail({page}: {page: RadioSettingsPage}): React.JSX.Element {
   const {supported, runtimeState, languageTag, errorMessage} = useSpeech();
   const {supported: carSupported} = useCarMessaging();
   const [inbound, setInbound] = useState(() => meshCoreInboundDiagnostics.snapshot());
@@ -64,7 +89,7 @@ export function RadioMessagingSettingsScreen(): React.JSX.Element {
       accessibilityLabel="Radio messaging settings content"
       style={styles.screen}
       contentContainerStyle={styles.content}>
-      <Section
+      {page === 'notifications' && <Section
         heading="Android Auto & notifications"
         detail="Android Auto read/reply depends on notification permission and compatible device support. Notification permission is separate from local speech and radio delivery.">
         {carSupported ? <CarMessagingStatusBanner /> : (
@@ -83,8 +108,8 @@ export function RadioMessagingSettingsScreen(): React.JSX.Element {
         {settingsError ? (
           <Text style={styles.warning}>Could not open settings. Use your device settings.</Text>
         ) : null}
-      </Section>
-      <Section
+      </Section>}
+      {page === 'speech' && <><Section
         heading="Incoming message auto-read"
         detail="Auto-read mute is a global local speech preference, not a per-conversation mute. Replay Last speaks the latest received channel message aloud, even when auto-read is off.">
         {supported ? <RadioSpeechStatusBanner /> : (
@@ -99,18 +124,18 @@ export function RadioMessagingSettingsScreen(): React.JSX.Element {
         </Text>
         {errorMessage ? <Text style={styles.warning}>{errorMessage}</Text> : null}
         <SpeechStatusBanner />
-      </Section>
-      <Section
+      </Section></>}
+      {page === 'ptt' && <Section
         heading="Push-to-talk diagnostics"
         detail="Hold to create a local speech draft, then review it before explicitly submitting text to the selected MeshCore carrier. Opening settings never activates the microphone.">
         <SpeechPttPanel />
-      </Section>
-      <Section
+      </Section>}
+      {page === 'privacy' && <Section
         heading="Message history & privacy"
         detail="MeshCore carrier traffic is not necessarily part of an authorised BushMesh convoy. A private carrier does not prove verified membership.">
         <SecureDataStatusBanner kind="messages" />
-      </Section>
-      <Section
+      </Section>}
+      {page === 'diagnostics' && <Section
         heading="Radio diagnostics"
         detail="Runtime counters are not delivery receipts. GATT confirmation and a matched MeshCore response do not establish peer delivery.">
         <Text style={styles.detail}>
@@ -137,7 +162,7 @@ export function RadioMessagingSettingsScreen(): React.JSX.Element {
             Last native issue: {lastIssue.stage}{lastIssue.reason ? ' / ' + lastIssue.reason : ''}
           </Text>
         ) : null}
-      </Section>
+      </Section>}
     </ScrollView>
   );
 }
@@ -145,6 +170,7 @@ export function RadioMessagingSettingsScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   screen: {flex: 1, backgroundColor: colors.background},
   content: {padding: 16, paddingBottom: 32, gap: 12},
+  destination: {minHeight: 64, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.surface, borderRadius: 14, padding: 16},
   section: {backgroundColor: colors.surface, borderColor: colors.border,
     borderWidth: 1, borderRadius: 14, padding: 12, gap: 8},
   heading: {color: colors.textPrimary, fontSize: 16, fontWeight: '800'},

@@ -1,9 +1,10 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
-  Alert, BackHandler, FlatList, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent,
+  Alert, BackHandler, FlatList, KeyboardAvoidingView, Modal, ScrollView, NativeScrollEvent, NativeSyntheticEvent,
   Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
+import {QuickMessageEditor} from '../../radio/chatManagement/QuickMessageEditor';
 import {ChatAvatar} from '../../radio/chatManagement/ChatAvatar';
 import type {ChatPersonalisation} from '../../radio/chatManagement/chatPreferences';
 import type {BushMeshChannelMessage} from '../../state/BushMeshContext';
@@ -17,7 +18,7 @@ export type RadioChatRoomProps = {
   initialSearch?: boolean;
   visible?: boolean;
   quickMessages?: readonly string[];
-  onSaveQuickMessages?: (values: string[]) => void;
+  onSaveQuickMessages?: (values: string[]) => Promise<void>;
   observedCount?: number;
   onReviewObserved?: () => void;
   starredIds?: readonly string[];
@@ -106,7 +107,6 @@ export function RadioChatRoom({
   const [messageFilter, setMessageFilter] = useState<'all' | 'starred' | 'pinned'>('all');
   const [quickOpen, setQuickOpen] = useState(false);
   const [editingQuick, setEditingQuick] = useState(false);
-  const [quickDraft, setQuickDraft] = useState('');
   const templates = quickMessages ?? ['Ready to go.', 'All clear.', 'Stopping shortly.', 'Need assistance.', 'Vehicle issue.', 'Radio check.', 'Regroup ahead.', 'Convoy accounted for.'];
   useEffect(() => {
     if (!visible) {setMenuOpen(false); setQuickOpen(false); setEditingQuick(false); return;}
@@ -250,8 +250,8 @@ export function RadioChatRoom({
       <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => listRef.current?.scrollToOffset({offset: 0, animated: true})} style={styles.menuButton}><Text style={styles.menuText}>↓ Latest</Text></TouchableOpacity>
       <View style={styles.composerArea}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Quick messages" onPress={() => setQuickOpen(v => !v)} style={styles.menuButton}><Text style={styles.menuText}>Quick messages</Text></TouchableOpacity>
-        {quickOpen && <View style={styles.quick}>{templates.map(text => <TouchableOpacity key={text} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}<Text style={styles.statusText}>Fills draft only. Assistance is not emergency dispatch.</Text>{onSaveQuickMessages && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit quick messages" style={styles.quickItem} onPress={() => {setQuickDraft(templates.join('\n')); setEditingQuick(true);}}><Text style={styles.menuText}>Edit templates</Text></TouchableOpacity>}</View>}
-        {editingQuick && <View style={styles.details}><Text style={styles.detailsText}>One template per line, up to 24. Each must fit 133 UTF-8 bytes.</Text><TextInput multiline accessibilityLabel="Quick message templates" value={quickDraft} onChangeText={setQuickDraft} style={styles.input}/><TouchableOpacity accessibilityRole="button" accessibilityLabel="Save quick message templates" style={styles.menuButton} onPress={() => {const values = [...new Set(quickDraft.split('\n').map(t => t.trim()).filter(Boolean))]; if (!values.length || values.length > 24 || values.some(t => !validateCarrierText(t).valid)) {Alert.alert('Check templates', 'Use 1–24 messages, each within 133 UTF-8 bytes.'); return;} onSaveQuickMessages?.(values); setEditingQuick(false);}}><Text style={styles.menuText}>Save templates</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel template editing" onPress={() => setEditingQuick(false)} style={styles.menuButton}><Text style={styles.menuText}>Cancel</Text></TouchableOpacity></View>}
+        {quickOpen && <ScrollView style={{maxHeight: 180}} keyboardShouldPersistTaps="always"><View style={styles.quick}>{templates.map(text => <TouchableOpacity key={text} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}{onSaveQuickMessages && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit quick messages" style={styles.quickItem} onPress={() => {setQuickOpen(false); setEditingQuick(true);}}><Text style={styles.menuText}>Edit templates</Text></TouchableOpacity>}</View></ScrollView>}
+        {editingQuick && onSaveQuickMessages && <Modal visible animationType="none" onRequestClose={() => undefined}><QuickMessageEditor initial={templates} onSave={onSaveQuickMessages} onClose={() => setEditingQuick(false)}/></Modal>}
         {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
         <View style={styles.composerRow}>
           <TextInput

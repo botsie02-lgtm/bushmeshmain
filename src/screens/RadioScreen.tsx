@@ -2,7 +2,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Alert, BackHandler, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {ChatManagementDialog, type ChatManagementSelection} from '../radio/chatManagement/ChatManagementDialog';
 import {useChatManagement, type ChatManagementController} from '../radio/chatManagement/useChatManagement';
-import {defaultChatPreferences, type ChatConfiguration} from '../radio/chatManagement/chatPreferences';
+import {chatPreferenceStore, DEFAULT_QUICK_MESSAGES, defaultChatPreferences, type ChatConfiguration} from '../radio/chatManagement/chatPreferences';
 import {ChatOperationError} from '../radio/chatManagement/chatInvitations';
 import {meshCoreInboundInbox} from '../meshcore/meshcoreInboundInbox';
 import {meshCoreInboundMessageId} from '../meshcore/meshcoreInboundIdentity';
@@ -129,6 +129,13 @@ function RadioMessenger({
   const [pinned, setPinned] = useState<ReadonlySet<string>>(new Set());
   const [selectedScope, setSelectedScope] = useState<RadioConversationScope | null>(null);
   const [searchRoom, setSearchRoom] = useState(false);
+  const [globalTemplates, setGlobalTemplates] = useState<readonly string[]>(DEFAULT_QUICK_MESSAGES);
+  useEffect(() => {
+    if (!management || settingsVisible || !tabVisible) return;
+    let active = true;
+    chatPreferenceStore.loadGlobalQuickMessages().then(values => {if (active) setGlobalTemplates(values);}).catch(() => undefined);
+    return () => {active = false;};
+  }, [!!management, settingsVisible, tabVisible]);
   const selectionRef = useRef(managementSelection);
   selectionRef.current = managementSelection;
   const selectedRef = useRef(selectedScope);
@@ -646,8 +653,8 @@ function RadioMessenger({
           scope={selectedScope} messages={selectedMessages} initialSearch={searchRoom}
           connected={connected && radioId === selectedScope.radioId}
           visible={tabVisible && !settingsVisible && !managementSelection}
-          quickMessages={localPreference?.quickMessages}
-          onSaveQuickMessages={management && localId && localPreference ? templates => management.updateLocal(localId, {quickMessages: templates}, localIncarnation).catch(() => Alert.alert('Could not save', 'Quick messages were not saved.')) : undefined}
+          quickMessages={localPreference?.quickMessages ?? globalTemplates}
+          onSaveQuickMessages={management && localId && localPreference ? templates => management.updateLocal(localId, {quickMessages: templates}, localIncarnation) : undefined}
           starredIds={localPreference?.starredIds}
           pinnedIds={localPreference?.pinnedIds}
           onMessagePreference={management && localId && localPreference ? (id, kind) => {
