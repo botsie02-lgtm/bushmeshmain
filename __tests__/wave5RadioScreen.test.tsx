@@ -552,3 +552,45 @@ test('connection strip opens existing setup navigation callback', async () => {
   expect(open).toHaveBeenCalledTimes(1);
   expect(send).not.toHaveBeenCalled();
 });
+
+test('global templates reload on settings return, not ordinary controller renders, and ignore stale reads', async () => {
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'recent'});
+  let resolveOld!: (values: string[]) => void;
+  const oldRead = new Promise<string[]>(resolve => {resolveOld = resolve;});
+  const load = jest.spyOn(chatPreferenceStore, 'loadGlobalQuickMessages')
+    .mockReturnValueOnce(oldRead)
+    .mockResolvedValue(['Updated global template']);
+  await mount({enableChatManagement: true});
+  expect(load).toHaveBeenCalledTimes(1);
+  await room('Private');
+  await draft('Draft retained');
+  await rerender({enableChatManagement: true});
+  expect(load).toHaveBeenCalledTimes(1);
+  await rerender({enableChatManagement: true, settingsVisible: true});
+  expect(load).toHaveBeenCalledTimes(1);
+  await rerender({enableChatManagement: true, settingsVisible: false});
+  expect(load).toHaveBeenCalledTimes(2);
+  await act(async () => {resolveOld(['Stale template']);});
+  await press('Quick messages');
+  expect(button('Updated global template')).toBeDefined();
+  expect(viewText()).not.toContain('Stale template');
+  expect(load).toHaveBeenCalledTimes(2);
+  const input = tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' && typeof node.props.onChangeText === 'function')[0];
+  expect(input.props.value).toBe('Draft retained');
+  expect(verifiedSend).not.toHaveBeenCalled();
+});
+
+test('global template restoration pauses off-tab and leaves unmanaged messenger untouched', async () => {
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'recent'});
+  const load = jest.spyOn(chatPreferenceStore, 'loadGlobalQuickMessages').mockResolvedValue(['Global template']);
+  await mount({enableChatManagement: true, tabVisible: false});
+  expect(load).not.toHaveBeenCalled();
+  await rerender({enableChatManagement: true, tabVisible: true});
+  expect(load).toHaveBeenCalledTimes(1);
+  await rerender({enableChatManagement: true, tabVisible: false});
+  expect(load).toHaveBeenCalledTimes(1);
+  await rerender({enableChatManagement: true, tabVisible: true});
+  expect(load).toHaveBeenCalledTimes(2);
+  await rerender({enableChatManagement: false, tabVisible: true});
+  expect(load).toHaveBeenCalledTimes(2);
+});

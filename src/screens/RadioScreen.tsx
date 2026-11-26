@@ -130,12 +130,14 @@ function RadioMessenger({
   const [selectedScope, setSelectedScope] = useState<RadioConversationScope | null>(null);
   const [searchRoom, setSearchRoom] = useState(false);
   const [globalTemplates, setGlobalTemplates] = useState<readonly string[]>(DEFAULT_QUICK_MESSAGES);
+  // Management availability is stable even when the controller object changes.
+  const managementEnabled = management !== undefined;
   useEffect(() => {
-    if (!management || settingsVisible || !tabVisible) return;
+    if (!managementEnabled || settingsVisible || !tabVisible) return;
     let active = true;
     chatPreferenceStore.loadGlobalQuickMessages().then(values => {if (active) setGlobalTemplates(values);}).catch(() => undefined);
     return () => {active = false;};
-  }, [!!management, settingsVisible, tabVisible]);
+  }, [managementEnabled, settingsVisible, tabVisible]);
   const selectionRef = useRef(managementSelection);
   selectionRef.current = managementSelection;
   const selectedRef = useRef(selectedScope);
