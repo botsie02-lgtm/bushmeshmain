@@ -15,6 +15,8 @@ export type MeshCoreInboundObservation = {
   pathLength: number | null;
   /** Local receive association, never original PSK or authenticated sender evidence. */
   association?: {version: 1; evidence: 'post-empty-local-observation'; incarnation: number};
+  /** One locally observed serialized queue reply, not a firmware packet ID. */
+  queueOccurrenceId?: string;
 };
 
 export type MeshCoreInboundEnvelope = {
@@ -24,17 +26,22 @@ export type MeshCoreInboundEnvelope = {
 };
 
 type Consumer = (event: MeshCoreInboundEnvelope) => Promise<void>;
+type Association = NonNullable<MeshCoreInboundObservation['association']>;
+type PendingEnvelope = MeshCoreInboundEnvelope & {confirmAssociation?: () => Promise<Association | undefined>};
 
 export const MESHCORE_INBOX_PENDING_LIMIT = 128;
 
 export class MeshCoreInboundInbox {
-  private pending: MeshCoreInboundEnvelope[] = [];
+  private pending: PendingEnvelope[] = [];
+  private readonly occurrenceNamespace = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+  private occurrenceSequence = 0;
   private consumer: Consumer | null = null;
   private readonly observers = new Set<(envelope: MeshCoreInboundEnvelope) => void>();
   private busy = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  publish(message: ParsedChannelMessage, observation?: MeshCoreInboundObservation): void {
+  publish(message: ParsedChannelMessage, observation?: MeshCoreInboundObservation,
+    options?: {matchedQueueReply: boolean; confirmAssociation?: () => Promise<Association | undefined>}): void {
     const channelIndex = Number(message.channelIndex);
     if (!Number.isInteger(channelIndex) || channelIndex < 0 || channelIndex > 255 ||
         !message.text.trim()) return;
@@ -47,14 +54,22 @@ export class MeshCoreInboundInbox {
       meshCoreInboundDiagnostics.record('persistence-error', {reason: 'capacity'});
       throw new Error('MeshCore application inbox is full; radio queue drain must pause.');
     }
-    const envelope: MeshCoreInboundEnvelope = {
-      message: {...message}, receivedAtMs: Date.now(), ...(observation ? {observation: {...observation}} : {}),
+    const envelope: PendingEnvelope = {
+      message: {...message}, receivedAtMs: Date.now(),
+      ...(observation ? {observation: {...observation,
+        ...(observation.association ? {association: {...observation.association}} : {}),
+        ...(options?.matchedQueueReply && observation.radio ? {
+          queueOccurrenceId: this.occurrenceNamespace + '-' + (++this.occurrenceSequence).toString(36),
+        } : {})}} : {}),
+      ...(options?.confirmAssociation ? {confirmAssociation: options.confirmAssociation} : {}),
     };
     this.pending.push(envelope);
     // Optional read-only observers never replace the single durable-history
     // consumer, never acknowledge its queue, and cannot block its delivery.
     this.observers.forEach(observer => {
-      try {observer({...envelope, message: {...envelope.message}, ...(envelope.observation ? {observation: {...envelope.observation}} : {})});}
+      try {observer({message: {...envelope.message}, receivedAtMs: envelope.receivedAtMs,
+        ...(envelope.observation ? {observation: {...envelope.observation,
+          ...(envelope.observation.association ? {association: {...envelope.observation.association}} : {})}} : {})});}
       catch { /* A field-test observer is never an inbox persistence authority. */ }
     });
     meshCoreInboundDiagnostics.record('inbox-accepted', {channelIndex});
@@ -89,6 +104,16 @@ export class MeshCoreInboundInbox {
       while (this.consumer && this.pending.length > 0) {
         const first = this.pending[0];
         try {
+          // Freeze the evidence decision before the first persistence attempt.
+          // Storage retry retains the same association and occurrence ID even
+          // if the radio disconnects or changes configuration in the meantime.
+          if (first.confirmAssociation) {
+            const confirm = first.confirmAssociation;
+            delete first.confirmAssociation;
+            const association = await confirm().catch(() => undefined);
+            if (association && first.observation) first.observation = {...first.observation, association};
+          }
+          if (!this.consumer) return;
           await this.consumer(first);
         } catch {
           meshCoreInboundDiagnostics.record('persistence-error', {reason: 'storage'});

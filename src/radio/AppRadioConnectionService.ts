@@ -220,13 +220,41 @@ export class AppRadioConnectionService {
 
   private publishChannelObservation(message: import('../meshcore/meshcoreParsers').ParsedChannelMessage, source: 'js-gatt' | 'native-session', matched = false) {
     const radio = this.getChatRadio();
-    const observed = this.inboundBoundary.observe(radio, this.chatSessionEpoch, message.channelIndex, matched,
-      !!radio && this.isChatObservationCurrent(radio, this.chatSessionEpoch));
+    const epoch = this.chatSessionEpoch;
+    const observed = this.inboundBoundary.observe(radio, epoch, message.channelIndex, matched,
+      !!radio && this.isChatObservationCurrent(radio, epoch));
     const config = observed?.config;
     meshCoreInboundInbox.publish(message, {version: 1, source, origin: 'queued-generation-unknown',
       radio, configurationId: config?.id ?? null, configurationName: config?.name ?? null,
       timestamp: message.timestamp, snr: message.snr, pathLength: message.pathLength,
-      ...(observed?.incarnation !== undefined ? {association: {version: 1 as const, evidence: 'post-empty-local-observation' as const, incarnation: observed.incarnation}} : {})});
+    }, {matchedQueueReply: matched, ...(observed?.incarnation !== undefined ? {
+      confirmAssociation: () => this.confirmInboundAssociation(observed.config, observed.incarnation!, observed.revision, epoch),
+    } : {})});
+  }
+
+  private async confirmInboundAssociation(config: ChatConfiguration, incarnation: number, revision: number, epoch: number) {
+    const current = () => this.isChatObservationCurrent(config.radio, epoch) &&
+      this.inboundBoundary.isCurrent(config.radio, epoch, config.id, incarnation, revision);
+    if (!current()) return undefined;
+    try {
+      const session = this.requireManagementSession();
+      // Use the existing serialized command path; do not start a second drain.
+      const channel = await session.readChannel(config.slot);
+      if (!current()) return undefined;
+      const id = channel.empty ? null : (await this.chatConfiguration(config.radio, channel)).id;
+      if (!current()) return undefined;
+      if (id !== config.id) {
+        // A currently observed external change invalidates all existing live
+        // room bindings and requests the ordinary catalogue refresh path.
+        this.chatSessionEpoch += 1;
+        this.inboundBoundary.clear();
+        this.patch({});
+        return undefined;
+      }
+      return {version: 1 as const, evidence: 'post-empty-local-observation' as const, incarnation};
+    } catch {
+      return undefined;
+    }
   }
 
   private async installInboundBinding(radio: string, epoch: number, configs: ChatConfiguration[]): Promise<void> {

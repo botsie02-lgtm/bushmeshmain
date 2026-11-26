@@ -29,12 +29,12 @@ export function NativeChannelMessageBridge(): null {
     );
     const observation = envelope.observation;
     const association = observation?.association;
-    const conversation = association && observation.radio && observation.configurationId && observation.configurationName
+    const conversation = observation && association && observation.radio && observation.configurationId && observation.configurationName
       ? {version: 1 as const, provenance: 'local-observation' as const, radioId: observation.radio,
         channelGeneration: 'config:' + association.incarnation + ':' + observation.configurationId,
         channelIndex: message.channelIndex, channelName: observation.configurationName} : undefined;
     const inserted = await addDurableChannelMessage({
-      id: meshCoreInboundMessageId(message),
+      id: meshCoreInboundMessageId(message, observation?.radio, observation?.queueOccurrenceId),
       channelIndex: message.channelIndex,
       channelName: envelope.observation ? envelope.observation.configurationName ?? `Channel ${index}` : stored?.channelName ?? `Channel ${index}`,
       text: message.text.trim(),

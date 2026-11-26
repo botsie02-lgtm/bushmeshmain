@@ -62,3 +62,14 @@ test('snapshot rejects mismatched or fabricated local receive scopes', () => {
   expect(() => createMessageSnapshot([{...message, observation: undefined}])).toThrow();
   expect(() => createMessageSnapshot([{...message, conversation: undefined}])).toThrow();
 });
+
+test('readback revision is invalidated by errors and by refreshed catalogues', () => {
+  const b = new InboundConversationBoundary();
+  b.install(radio, 1, [config], entries);
+  b.startRead(radio, 1); b.emptyReply(radio, 1); b.startRead(radio, 1);
+  const observation = b.observe(radio, 1, '2', true, true)!;
+  expect(b.isCurrent(radio, 1, config.id, 3, observation.revision)).toBe(true);
+  b.loseEvidence();
+  b.startRead(radio, 1); b.emptyReply(radio, 1);
+  expect(b.isCurrent(radio, 1, config.id, 3, observation.revision)).toBe(false);
+});

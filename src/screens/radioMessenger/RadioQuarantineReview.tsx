@@ -27,7 +27,7 @@ export function RadioQuarantineReview({
       <View style={styles.warning}>
         <Text style={styles.warningTitle}>{allHistory ? 'ENCRYPTED LOCAL RECORDS' : 'ENCRYPTED · OWNERSHIP UNPROVEN'}</Text>
         <Text style={styles.warningText}>
-          {allHistory ? 'Read-only saved records. Attributed local submissions and unattributed records are labelled separately.' : 'These saved messages have no proven original channel generation. Slot numbers and recorded names may have been reused. They are preserved as separate read-only records, not merged into chats.'}
+          {allHistory ? 'Read-only saved records. Local submissions, locally associated receives and unassociated records are labelled separately.' : 'These saved messages have no proven original channel generation. Slot numbers and recorded names may have been reused. They are preserved as separate read-only records, not merged into chats.'}
         </Text>
       </View>
       <TextInput accessibilityLabel="Search saved records" value={search} onChangeText={setSearch} placeholder="Search saved records" placeholderTextColor={colors.textSecondary} style={styles.search}/>
@@ -41,7 +41,7 @@ export function RadioQuarantineReview({
             <Text style={styles.meta}>
               Recorded slot {item.channelIndex} · {item.channelName || 'Name unknown'}
             </Text>
-            {allHistory && <Text style={styles.direction}>{item.conversation ? 'Attributed local submission' : 'Original channel ownership unproven'}</Text>}
+            {allHistory && <Text style={styles.direction}>{item.conversation?.provenance === 'local-observation' ? 'Locally associated receive · original key unknown' : item.conversation ? 'Attributed local submission' : 'Original channel ownership unproven'}</Text>}
             <Text style={styles.direction}>
               {item.direction === 'received'
                 ? 'Incoming · sender not recorded' : 'Outgoing · local record'}

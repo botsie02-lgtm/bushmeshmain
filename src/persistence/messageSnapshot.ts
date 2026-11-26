@@ -63,6 +63,7 @@ function validatePersistedMessage(
         candidate.direction !== 'received' || (o.radio !== null && (typeof o.radio !== 'string' || !o.radio)) ||
         (o.configurationId !== null && (typeof o.configurationId !== 'string' || !/^[a-f0-9]{64}$/.test(o.configurationId))) ||
         (o.configurationName !== null && typeof o.configurationName !== 'string') ||
+        (o.queueOccurrenceId !== undefined && (!o.radio || typeof o.queueOccurrenceId !== 'string' || !/^[a-z0-9-]{1,128}$/.test(o.queueOccurrenceId))) ||
         [o.timestamp, o.snr, o.pathLength].some(v => v !== null && !Number.isFinite(v))) throw new Error('Invalid persisted radio observation.');
   }
   if (candidate.observation?.association !== undefined && candidate.conversation?.provenance !== 'local-observation') throw new Error('Local observation association has no matching conversation.');

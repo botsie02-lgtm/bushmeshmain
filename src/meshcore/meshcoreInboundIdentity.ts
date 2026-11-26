@@ -67,7 +67,13 @@ export function meshCoreSha256Hex(source: Uint8Array): string {
   }
   return state.map(value => value.toString(16).padStart(8, '0')).join('');
 }
-export function meshCoreInboundMessageId(message: ParsedChannelMessage): string {
+export function meshCoreInboundMessageId(message: ParsedChannelMessage, radio?: string | null, occurrenceId?: string): string {
+  if (radio) {
+    const scoped = occurrenceId
+      ? ['meshcore-local-queue-occurrence-v2', radio, occurrenceId]
+      : ['meshcore-observed-content-v2', radio, message.channelIndex, message.timestamp, message.textType, message.text.trim()];
+    return 'meshcore-in-' + meshCoreSha256Hex(Buffer.from(JSON.stringify(scoped), 'utf8'));
+  }
   const content = JSON.stringify([
     'meshcore-channel-text-v1', message.channelIndex, message.timestamp,
     message.textType, message.text.trim(),

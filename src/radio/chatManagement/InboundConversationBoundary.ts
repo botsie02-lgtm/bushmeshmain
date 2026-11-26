@@ -7,11 +7,13 @@ type Binding = {radio: string; epoch: number; configs: readonly ChatConfiguratio
 export class InboundConversationBoundary {
   private binding: Binding | null = null;
   private read: Binding | null = null;
+  private revision = 0;
 
-  clear(): void { this.binding = null; this.read = null; }
+  clear(): void { this.binding = null; this.read = null; this.revision += 1; }
   loseEvidence(): void {
     if (this.binding) this.binding.empty = false;
     this.read = null;
+    this.revision += 1;
   }
   install(radio: string, epoch: number, configs: readonly ChatConfiguration[], entries: ChatPreferenceSnapshot): void {
     const incarnations: Record<string, number> = {};
@@ -25,6 +27,7 @@ export class InboundConversationBoundary {
     }
     this.binding = {radio, epoch, configs, incarnations, empty: false};
     this.read = null;
+    this.revision += 1;
   }
   startRead(radio: string | null, epoch: number): void {
     this.read = this.binding?.radio === radio && this.binding.epoch === epoch ? this.binding : null;
@@ -40,6 +43,11 @@ export class InboundConversationBoundary {
     if (!config) return undefined;
     const incarnation = b.incarnations[config.id];
     const associated = matched && this.read === b && b.empty && incarnation !== undefined;
-    return {config, incarnation: associated ? incarnation : undefined};
+    return {config, incarnation: associated ? incarnation : undefined, revision: this.revision};
+  }
+  isCurrent(radio: string, epoch: number, id: string, incarnation: number, revision: number): boolean {
+    const b = this.binding;
+    return revision === this.revision && !!b && b.radio === radio && b.epoch === epoch &&
+      b.empty && b.incarnations[id] === incarnation;
   }
 }
