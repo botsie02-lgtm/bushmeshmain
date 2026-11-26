@@ -32,6 +32,8 @@ export type ChatPreferences = ChatPersonalisation & {
   retired?: boolean;
   draft?: string;
   readIds?: string[];
+  /** Ordinary JS radio speech only; does not alter native notifications or safety alerts. */
+  autoRead?: boolean;
   starredIds?: string[];
   pinnedIds?: string[];
   quickMessages?: string[];
@@ -124,6 +126,7 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
         !Number.isInteger(c.slot) || c.slot < 0 || c.slot > 7 || typeof c.name !== 'string' || !c.name ||
         typeof c.privateChannel !== 'boolean' || !Number.isSafeInteger(p.incarnation) || p.incarnation! < 1 ||
         typeof p.retired !== 'boolean')) throw new Error('Invalid cached chat configuration.');
+    if (p.autoRead !== undefined && typeof p.autoRead !== 'boolean') throw new Error('Invalid chat auto-read preference.');
     if (p.draft !== undefined && (typeof p.draft !== 'string' || p.draft.length > 512)) throw new Error('Invalid chat draft.');
     for (const ids of [p.readIds, p.starredIds, p.pinnedIds]) {
       if (ids !== undefined && (!Array.isArray(ids) || ids.some(value => typeof value !== 'string' || !value || value.length > 256))) throw new Error('Invalid chat message preferences.');
@@ -139,6 +142,7 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
       unread: p.unread, localCreator: p.localCreator,
       ...(c ? {configuration: {id, radio: c.radio, slot: c.slot, name: c.name, privateChannel: c.privateChannel}, incarnation: p.incarnation, retired: p.retired} : {}),
       ...(p.draft !== undefined ? {draft: p.draft} : {}),
+      ...(p.autoRead !== undefined ? {autoRead: p.autoRead} : {}),
       ...(p.readIds ? {readIds: [...new Set(p.readIds)]} : {}),
       ...(p.starredIds ? {starredIds: [...new Set(p.starredIds)]} : {}),
       ...(p.pinnedIds ? {pinnedIds: [...new Set(p.pinnedIds)]} : {}),
@@ -248,7 +252,7 @@ export class ChatPreferenceStore {
         const previous = entries[c.id] ?? defaultChatPreferences;
         const incarnation = (previous.incarnation ?? 1) + (previous.retired ? 1 : 0);
         entries[c.id] = {...previous, configuration: {id: c.id, radio, slot: c.slot, name: c.name, privateChannel: c.privateChannel}, incarnation, retired: false,
-          ...(previous.retired ? {draft: '', readIds: [], starredIds: [], pinnedIds: [], unread: false} : {})};
+          ...(previous.retired ? {draft: '', readIds: [], starredIds: [], pinnedIds: [], unread: false, autoRead: true} : {})};
       }
       const next = encodePreferences(entries, sort, serialized);
       decodeChatPreferences(next);
@@ -271,6 +275,7 @@ export class ChatPreferenceStore {
       pinned: typeof patch.pinned === 'boolean' ? patch.pinned : current.pinned,
       archived: typeof patch.archived === 'boolean' ? patch.archived : current.archived,
       unread: typeof patch.unread === 'boolean' ? patch.unread : current.unread,
+      ...(typeof patch.autoRead === 'boolean' ? {autoRead: patch.autoRead} : {}),
       ...(typeof patch.draft === 'string' ? {draft: patch.draft.slice(0, 512)} : {}),
       ...(Array.isArray(patch.quickMessages) ? {quickMessages: [...new Set(patch.quickMessages.map(value => value.trim()))]} : {}),
       ...Object.fromEntries((['readIds', 'starredIds', 'pinnedIds'] as const).flatMap(key => Array.isArray(patch[key]) ? [[key, [...new Set([...(key === 'readIds' ? current.readIds ?? [] : []), ...patch[key]!.filter(v => typeof v === 'string' && v.length > 0 && v.length <= 256)])]]] : [])),

@@ -304,7 +304,8 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation
         <Toggle label="Mark unread" value={p.unread} disabled={localDisabled} onChange={unread => update({unread})}/>
       </Section>
       <Section title="Notifications">
-        <Text style={styles.body}>Individual chat mute and auto-read are not available. Global radio speech settings are separate. Critical safety alerts remain independent.</Text>
+        <Toggle label="Auto-read associated messages" value={p.autoRead !== false} disabled={localDisabled} onChange={autoRead => update({autoRead})}/>
+        <Text style={styles.body}>Controls ordinary app speech for messages locally associated with this exact conversation. Global radio speech must also be enabled. Unassociated traffic follows the global setting; Android and Android Auto notifications and critical safety alerts are separate.</Text>
       </Section>
       <Section title={p.localCreator ? 'Creator tools' : 'Channel access'}>
         <Text style={styles.body}>{current && p.localCreator
