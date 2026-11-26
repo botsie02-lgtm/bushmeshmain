@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
-  Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, Share,
+  Alert, AppState, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, Share,
   StyleSheet, Switch, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import {
 } from './chatPreferences';
 import {decodeChatInvite, encodeChatInvite, validateChatInvite, validateChatName} from './chatInvitations';
 import {ChatManagementController} from './useChatManagement';
+import {protectedChannelKey} from '../../native/SensitiveClipboard';
 
 export type ChatManagementSelection =
   | {kind: 'create' | 'join'; radio: string}
@@ -203,6 +204,15 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
   const [name, setName] = useState(p.displayName);
   const [personalisation, setPersonalisation] = useState<ChatPersonalisation>(() => localPersonalisation(p));
   const [shareError, setShareError] = useState(false);
+  const [revealError, setRevealError] = useState(false);
+  const revealToken = useRef(0);
+  const liveController = useRef(controller);
+  liveController.current = controller;
+  useEffect(() => {
+    const hide = () => {revealToken.current += 1; protectedChannelKey.hide();};
+    const sub = AppState.addEventListener('change', state => {if (state !== 'active') hide();});
+    return () => {hide(); sub.remove();};
+  }, [chat.id, controller.radio, controller.sessionEpoch, controller.ready]);
   const current = controller.ready && controller.radio === chat.radio &&
     controller.chats.some(c => c.id === chat.id);
   const disabled = !current || controller.busy || controller.radioBusy;
@@ -214,6 +224,18 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
   }, [current, p.displayName, p.description, p.avatarColor, p.avatarIcon]);
   const update = (patch: Parameters<ChatManagementController['update']>[1]) => {
     controller.update(chat, patch).catch(() => undefined);
+  };
+  const reveal = async () => {
+    const token = ++revealToken.current;
+    const epoch = controller.sessionEpoch;
+    setRevealError(false);
+    try {
+      const secret = await controller.credential(chat);
+      if (token !== revealToken.current || AppState.currentState === 'background' ||
+          liveController.current.sessionEpoch !== epoch || !liveController.current.isCurrentRadio(chat.radio) ||
+          !liveController.current.ready) return;
+      await protectedChannelKey.reveal(secret);
+    } catch {if (token === revealToken.current) setRevealError(true);}
   };
   const invite = () => Alert.alert(
     'Share private invitation?',
@@ -236,7 +258,7 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
   );
   const leave = () => Alert.alert(
     'Leave this chat?',
-    'Clears this channel from the connected radio and removes its local preferences. Other radios and your encrypted Radio History are unchanged. You will need the key to join again.',
+    'Clears this channel from the connected radio. Local conversation history is retained. Other radios and your encrypted Radio History are unchanged. You will need the key to join again.',
     [
       {text: 'Cancel', style: 'cancel'},
       {text: 'Leave chat', style: 'destructive', onPress: () => {
@@ -283,13 +305,18 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
         <Text style={styles.body}>{current && p.localCreator
           ? 'You created this configuration on this phone. This does not grant authority over other radios.'
           : 'Sharing a private invitation is possible for anyone with the channel key.'}</Text>
+        {chat.privateChannel && <><Text style={styles.label}>Shared channel key (PSK)</Text><Text style={styles.name}>•••• •••• •••• ••••</Text>
+          <Action label="Reveal shared channel key" disabled={disabled || !protectedChannelKey.supported()} onPress={() => {reveal().catch(() => undefined);}}/>
+          {!protectedChannelKey.supported() && <Text style={styles.body}>Protected key reveal is unavailable on this platform.</Text>}
+          {revealError && <Text style={styles.danger}>Key could not be revealed. Refresh and retry.</Text>}
+          <Text style={styles.body}>Reveal opens a protected Android window for up to 30 seconds. Hide or copy there. Anyone possessing this shared key may access the channel.</Text></>}
         <Action label="Share private invitation" disabled={disabled || !chat.privateChannel} onPress={invite}/>
         {shareError && <Text style={styles.danger}>Invitation could not be shared. Refresh the chat before trying again.</Text>}
         <Text style={styles.body}>Verified member lists, administrator roles and membership controls require authenticated group security and are unavailable.</Text>
       </Section>
       <Section title="Privacy and history">
         <Text style={styles.body}>A MeshCore shared key allows channel access, not proof of who sent a message. Archive hides the chat locally; it does not erase messages or change the radio.</Text>
-        <Text style={styles.body}>Per-chat message search, export and deletion are unavailable because existing history cannot reliably identify the original channel configuration.</Text>
+        <Text style={styles.body}>Search safely associated messages in the conversation. Export and per-chat deletion are unavailable until history provenance and retention are fully validated.</Text>
       </Section>
       <Section title="Leave chat">
         <Text style={styles.body}>Remove this channel from the connected radio only. Your encrypted Radio History is retained.</Text>

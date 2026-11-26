@@ -1,5 +1,9 @@
 package com.bushmeshmain.radio
 
+import android.app.AlertDialog
+import android.view.WindowManager
+import android.os.Handler
+import android.os.Looper
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -8,6 +12,7 @@ import android.os.Build
 import android.os.PersistableBundle
 import android.util.Base64
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -19,7 +24,69 @@ import org.json.JSONArray
 
 class BushMeshRadioServiceModule(
   private val reactContext: ReactApplicationContext,
-) : ReactContextBaseJavaModule(reactContext) {
+) : ReactContextBaseJavaModule(reactContext), LifecycleEventListener {
+  private val credentialHandler = Handler(Looper.getMainLooper())
+  private var credentialDialog: AlertDialog? = null
+  init { reactContext.addLifecycleEventListener(this) }
+
+  private fun hideCredential() {
+    credentialDialog?.dismiss()
+    credentialDialog = null
+  }
+
+  override fun onHostResume() = Unit
+  override fun onHostPause() { credentialHandler.post { hideCredential() } }
+  override fun onHostDestroy() { credentialHandler.post { hideCredential() } }
+
+  override fun invalidate() {
+    reactContext.removeLifecycleEventListener(this)
+    credentialHandler.post { hideCredential() }
+    super.invalidate()
+  }
+
+  @ReactMethod
+  fun hideSharedChannelKey() {
+    credentialHandler.post { hideCredential() }
+  }
+
+  // A separate native window is protected before the secret is rendered.
+  // Do not return the secret in a promise, exception or diagnostic.
+  @ReactMethod
+  fun showSharedChannelKey(secret: String, promise: Promise) {
+    credentialHandler.post {
+      try {
+        hideCredential()
+        require(secret.matches(Regex("[0-9a-fA-F]{32}")))
+        val activity = reactContext.currentActivity
+        check(activity != null && !activity.isFinishing && !activity.isDestroyed && reactContext.lifecycleState == com.facebook.react.common.LifecycleState.RESUMED)
+        val dialog = AlertDialog.Builder(activity)
+          .setTitle("Shared channel key (PSK)")
+          .setMessage(secret + "\n\nAnyone possessing this key may access this channel. This is not an identity private key.")
+          .setPositiveButton("Hide", null)
+          .setNeutralButton("Copy key") { _, _ ->
+            try { copySensitiveText(secret) } catch (_: Exception) {
+              android.widget.Toast.makeText(activity, "Sensitive copy failed.", android.widget.Toast.LENGTH_SHORT).show()
+            }
+          }
+          .create()
+        val window = checkNotNull(dialog.window)
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        val timeout = Runnable { if (credentialDialog === dialog) hideCredential() }
+        dialog.setOnDismissListener {
+          credentialHandler.removeCallbacks(timeout)
+          if (credentialDialog === dialog) credentialDialog = null
+        }
+        credentialDialog = dialog
+        dialog.show()
+        credentialHandler.postDelayed(timeout, 30_000)
+        promise.resolve(true)
+      } catch (_: Exception) {
+        hideCredential()
+        promise.reject("BUSHMESH_SHARED_KEY_REVEAL_FAILED", "Protected key reveal is unavailable.")
+      }
+    }
+  }
+
 
   override fun getName(): String = "BushMeshRadioService"
 
@@ -88,18 +155,22 @@ class BushMeshRadioServiceModule(
         return
       }
 
-      val clipboard = reactContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-      val clip = ClipData.newPlainText("BushMesh MeshCore carrier PSK", text)
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        clip.description.extras = PersistableBundle().apply {
-          putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
-        }
-      }
-      clipboard.setPrimaryClip(clip)
+      copySensitiveText(text)
       promise.resolve(true)
     } catch (error: Exception) {
       promise.reject("BUSHMESH_SENSITIVE_CLIPBOARD_FAILED", error.message, error)
     }
+  }
+
+  private fun copySensitiveText(text: String) {
+    val clipboard = reactContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clip = ClipData.newPlainText("BushMesh MeshCore carrier PSK", text)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      clip.description.extras = PersistableBundle().apply {
+        putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+      }
+    }
+    clipboard.setPrimaryClip(clip)
   }
 
   @ReactMethod

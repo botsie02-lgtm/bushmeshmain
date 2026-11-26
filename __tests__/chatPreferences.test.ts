@@ -169,3 +169,17 @@ describe('protected chat preference model', () => {
     expect(() => decodeChatPreferences(JSON.stringify({version: 1, entries: {[one]: {pinned: true}}}))).toThrow();
   });
 });
+
+ test('catalogue restores offline metadata, drafts and local incarnation after removal', async () => {
+  const {store, native} = fixture();
+  const c = {id: one, radio: 'radio-a', slot: 1, name: 'Camp', privateChannel: true};
+  await store.rememberConfigurations(c.radio, [c]);
+  await store.update(one, {draft: 'Ready', starredIds: ['m1'], readIds: ['m2']}, 1);
+  const restarted = new ChatPreferenceStore(() => native);
+  expect((await restarted.load())[one]).toMatchObject({configuration: c, incarnation: 1, draft: 'Ready', starredIds: ['m1']});
+  await restarted.rememberConfigurations(c.radio, []);
+  expect((await restarted.load())[one].retired).toBe(true);
+  await restarted.rememberConfigurations(c.radio, [c]);
+  expect((await restarted.load())[one]).toMatchObject({incarnation: 2, draft: '', starredIds: [], readIds: []});
+  await expect(restarted.update(one, {draft: 'old'}, 1)).rejects.toThrow('changed');
+});

@@ -1,6 +1,6 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
-  BackHandler, FlatList, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent,
+  Alert, BackHandler, FlatList, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent,
   Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
@@ -15,6 +15,9 @@ import {
 export type RadioChatRoomProps = {
   scope: RadioConversationScope;
   visible?: boolean;
+  starredIds?: readonly string[];
+  pinnedIds?: readonly string[];
+  onMessagePreference?: (id: string, kind: 'starredIds' | 'pinnedIds') => void;
   messages: readonly ScopedMessage[];
   connected: boolean;
   canSubmit: boolean;
@@ -88,11 +91,13 @@ export function RadioChatRoom({
   scope, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
   onTogglePinned, personalisation, displayName, persistentPin, visible = true,
+  starredIds, pinnedIds, onMessagePreference,
 }: RadioChatRoomProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
+  const [messageFilter, setMessageFilter] = useState<'all' | 'starred' | 'pinned'>('all');
   const [quickOpen, setQuickOpen] = useState(false);
   useEffect(() => {
     if (!visible) {setMenuOpen(false); setQuickOpen(false); return;}
@@ -102,7 +107,8 @@ export function RadioChatRoom({
   }, [visible, menuOpen, searching]);
   const listRef = useRef<FlatList<ScopedMessage>>(null);
   const nearBottom = useRef(true);
-  const descending = useMemo(() => [...messages].filter(m => m.message.text.toLowerCase().includes(query.toLowerCase())).reverse(), [messages, query]);
+  const descending = useMemo(() => [...messages].filter(m => m.message.text.toLowerCase().includes(query.toLowerCase()) &&
+    (messageFilter === 'all' || (messageFilter === 'starred' ? starredIds : pinnedIds)?.includes(m.message.id))).reverse(), [messages, query, messageFilter, starredIds, pinnedIds]);
   const validation = validateCarrierText(draft);
   const sendEnabled = canSubmit && validation.valid && !isSubmitting;
 
@@ -154,6 +160,7 @@ export function RadioChatRoom({
             <Text style={styles.menuText}>{pinned ? 'Unpin' : 'Pin'}{persistentPin ? ' chat' : ' for this session'}</Text>
           </TouchableOpacity>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Search chat history" onPress={() => {setSearching(true); setMenuOpen(false);}} style={styles.menuButton}><Text style={styles.menuText}>Search messages</Text></TouchableOpacity>
+          {onMessagePreference && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Filter important messages" onPress={() => {setMessageFilter(v => v === 'all' ? 'starred' : v === 'starred' ? 'pinned' : 'all'); setMenuOpen(false);}} style={styles.menuButton}><Text style={styles.menuText}>Show {messageFilter === 'all' ? 'starred' : messageFilter === 'starred' ? 'pinned' : 'all'} messages</Text></TouchableOpacity>}
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close room options"
             onPress={() => setMenuOpen(false)} style={styles.menuButton}>
             <Text style={styles.menuText}>Close</Text>
@@ -198,7 +205,14 @@ export function RadioChatRoom({
             dateLabel(older.message.createdAt) !== dateLabel(item.message.createdAt);
           return (
             <View>
-              <Bubble entry={item} />
+              <TouchableOpacity activeOpacity={1} accessibilityRole="button" accessibilityLabel="Message actions" onLongPress={() => {
+                if (!onMessagePreference) return;
+                Alert.alert('Message actions', 'Local only', [
+                  {text: starredIds?.includes(item.message.id) ? 'Unstar' : 'Star', onPress: () => onMessagePreference(item.message.id, 'starredIds')},
+                  {text: pinnedIds?.includes(item.message.id) ? 'Unpin' : 'Pin', onPress: () => onMessagePreference(item.message.id, 'pinnedIds')},
+                  {text: 'Cancel', style: 'cancel'},
+                ]);
+              }}><Bubble entry={item} />{starredIds?.includes(item.message.id) || pinnedIds?.includes(item.message.id) ? <Text style={styles.statusText}>{starredIds?.includes(item.message.id) ? '★ Starred ' : ''}{pinnedIds?.includes(item.message.id) ? '• Pinned' : ''}</Text> : null}</TouchableOpacity>
               {firstInDay ? (
                 <View style={styles.dateWrap}>
                   <Text style={styles.dateText}>{dateLabel(item.message.createdAt)}</Text>

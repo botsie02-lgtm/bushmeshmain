@@ -343,6 +343,9 @@ function RadioMessenger({
 
   const activeKey = selectedScope ? conversationKey(selectedScope) : null;
   const activeDraft = activeKey ? drafts[activeKey] ?? (selectedScope ? preferencesFor(selectedScope)?.draft : '') ?? '' : '';
+  const localPreference = selectedScope ? preferencesFor(selectedScope) : undefined;
+  const localId = selectedScope?.channelGeneration.startsWith('config:') ? selectedScope.channelGeneration.split(':').pop() : undefined;
+  const localIncarnation = localPreference?.incarnation ?? 1;
   const activeNotice = activeKey ? notices[activeKey] ?? null : null;
   const selectedMessages = useMemo(() => selectedScope
     ? scopedMessages(channelMessages, selectedScope,
@@ -351,12 +354,16 @@ function RadioMessenger({
 
   useEffect(() => {
     if (!management || !selectedScope || !selectedMessages.length || settingsVisible || managementSelection || !tabVisible) return;
+    const receivedIds = selectedMessages.filter(item => item.message.direction === 'received').map(item => item.message.id);
+    if (localId && localPreference && receivedIds.some(id => !readIds.has(id) && !localPreference.readIds?.includes(id))) {
+      management.updateLocal(localId, {readIds: [...new Set([...(localPreference.readIds ?? []), ...receivedIds])]}, localIncarnation).catch(() => undefined);
+    }
     setReadIds(previous => {
       const next = new Set(previous);
       for (const item of selectedMessages) next.add(item.message.id);
       return next.size === previous.size ? previous : next;
     });
-  }, [selectedScope, selectedMessages, management, settingsVisible, managementSelection, tabVisible]);
+  }, [selectedScope, selectedMessages, management, settingsVisible, managementSelection, tabVisible, localId, localPreference, localIncarnation, readIds]);
   const currentChannel = selectedScope && radioId === selectedScope.radioId && connected
     ? channels.find(c => c.channelIndex === selectedScope.channelIndex &&
       c.channelName === selectedScope.channelName) ?? null : null;
@@ -435,8 +442,7 @@ function RadioMessenger({
   const updateDraft = (value: string) => {
     if (!activeKey) return;
     setDrafts(current => ({...current, [activeKey]: value}));
-    const chat = selectedScope && chatFor(selectedScope);
-    if (chat && management) management.updateLocal(chat.id, {draft: value}).catch(() => postNotice(activeKey, 'Draft could not be saved on this phone.'));
+    if (localId && localPreference && management) management.updateLocal(localId, {draft: value}, localIncarnation).catch(() => postNotice(activeKey, 'Draft could not be saved on this phone.'));
   };
   const postNotice = (key: string, value: string) => {
     setNotices(current => ({...current, [key]: value}));
@@ -500,7 +506,7 @@ function RadioMessenger({
         [capturedKey]: currentDrafts[capturedKey]?.trim() === submittedText
           ? '' : currentDrafts[capturedKey] ?? '',
       }));
-      if (verifiedChat && management) management.updateLocal(verifiedChat.id, {draft: ''}).catch(() => undefined);
+      if (verifiedChat && management) management.updateLocal(verifiedChat.id, {draft: ''}, Number(capturedScope.channelGeneration.split(':')[1])).catch(() => undefined);
       postNotice(capturedKey, recorded
         ? 'Radio accepted. No peer delivery confirmation.'
         : 'Radio accepted, but local history recording failed. Do not resend to repair history.');
@@ -603,6 +609,12 @@ function RadioMessenger({
           scope={selectedScope} messages={selectedMessages}
           connected={connected && radioId === selectedScope.radioId}
           visible={tabVisible && !settingsVisible && !managementSelection}
+          starredIds={localPreference?.starredIds}
+          pinnedIds={localPreference?.pinnedIds}
+          onMessagePreference={management && localId && localPreference ? (id, kind) => {
+            const existing = localPreference[kind] ?? [];
+            management.updateLocal(localId, {[kind]: existing.includes(id) ? existing.filter(v => v !== id) : [...existing, id]}, localIncarnation).catch(() => postNotice(activeKey ?? '', 'Message preference could not be saved.'));
+          } : undefined}
           canSubmit={canSubmit} reason={unavailableReason}
           draft={activeDraft} notice={activeNotice}
           isSubmitting={sending} onDraft={updateDraft}

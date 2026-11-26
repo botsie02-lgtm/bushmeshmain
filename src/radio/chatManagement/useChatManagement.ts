@@ -106,7 +106,7 @@ export function useChatManagement() {
       if (live.current.getChatRadio() === chat.radio) setPreferences(entries);
     });
 
-  const updateLocal = (id: string, patch: ChatPreferencePatch) => chatPreferenceStore.update(id, patch).then(entries => {setPreferences(entries);});
+  const updateLocal = (id: string, patch: ChatPreferencePatch, incarnation?: number) => chatPreferenceStore.update(id, patch, incarnation).then(entries => {setPreferences(entries);});
 
   const changeSort = (next: ChatSort) => run(async () => {
     const expected = live.current.getChatRadio();

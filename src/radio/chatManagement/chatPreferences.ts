@@ -219,8 +219,10 @@ export class ChatPreferenceStore {
     return operation;
   }
 
-  update(id: string, patch: ChatPreferencePatch) {
-    return this.mutate(id, current => ({
+  update(id: string, patch: ChatPreferencePatch, incarnation?: number) {
+    return this.mutate(id, current => {
+      if (incarnation !== undefined && (current.incarnation ?? 1) !== incarnation) throw new Error('Local conversation changed.');
+      return ({
       ...current,
       displayName: typeof patch.displayName === 'string'
         ? patch.displayName.trim().slice(0, 80) : current.displayName,
@@ -230,7 +232,7 @@ export class ChatPreferenceStore {
       unread: typeof patch.unread === 'boolean' ? patch.unread : current.unread,
       ...(typeof patch.draft === 'string' ? {draft: patch.draft.slice(0, 512)} : {}),
       ...Object.fromEntries((['readIds', 'starredIds', 'pinnedIds'] as const).flatMap(key => Array.isArray(patch[key]) ? [[key, [...new Set(patch[key]!.filter(v => typeof v === 'string' && v.length > 0 && v.length <= 256))]]] : [])),
-    }));
+    });});
   }
 
   /** Called only by the verified provisioning orchestration, not by settings. */
