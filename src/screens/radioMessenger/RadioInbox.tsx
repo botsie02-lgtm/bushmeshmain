@@ -1,6 +1,6 @@
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {
-  FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View,
+  BackHandler, FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
 import {ChatAvatar} from '../../radio/chatManagement/ChatAvatar';
@@ -22,6 +22,11 @@ function Action({label, onPress, subtle = false}: ActionProps) {
 export type RadioInboxProps = {
   conversations: readonly MessengerConversation[];
   managed?: boolean;
+  visible?: boolean;
+  filter?: 'all' | 'unread' | 'pinned' | 'archived';
+  onFilter?: (value: 'all' | 'unread' | 'pinned' | 'archived') => void;
+  onRefresh?: () => void;
+  refreshing?: boolean;
   online: boolean;
   radioLabel: string | null;
   restoring: boolean;
@@ -49,9 +54,16 @@ export function RadioInbox({
   conversations, online, radioLabel, restoring, historyIssue,
   unknownHistoryCount, search, onSearch, onOpen, onPin, onNewChat,
   onSettings, onReviewUnattributed, onOpenRowMenu, onOpenChatSettings, managed,
+  visible = true, filter = 'all', onFilter, onRefresh, refreshing = false,
 }: RadioInboxProps): React.JSX.Element {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
+  useEffect(() => {
+    if (!visible) {setMenuFor(null); return;}
+    if (!menuFor) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {setMenuFor(null); return true;});
+    return () => subscription.remove();
+  }, [visible, menuFor]);
   return (
     <View style={styles.root}>
       <View style={styles.header}>
@@ -105,32 +117,25 @@ export function RadioInbox({
           <Text style={styles.clearText}>×</Text>
         </TouchableOpacity> : null}
       </View>
+      {managed && onFilter ? <View style={styles.filters}>{(['all', 'unread', 'pinned', 'archived'] as const).map(value => <TouchableOpacity key={value}
+        accessibilityRole="button" accessibilityLabel={value === 'archived' ? 'Show archived chats' : 'Filter ' + value}
+        accessibilityState={{selected: filter === value}} onPress={() => onFilter(value)} style={[styles.filter, filter === value && styles.selectedFilter]}>
+        <Text style={styles.filterText}>{value[0].toUpperCase() + value.slice(1)}</Text>
+      </TouchableOpacity>)}</View> : null}
       {restoring ? <Text style={styles.notice}>Restoring encrypted Radio History…</Text> : null}
       {historyIssue ? <Text style={styles.warning}>
         History storage needs attention. {historyIssue}
       </Text> : null}
-      {unknownHistoryCount > 0 ? (
-        <View style={styles.quarantine}>
-          <Text style={styles.quarantineTitle}>
-            {unknownHistoryCount} historical message{unknownHistoryCount === 1 ? '' : 's'} held separately
-          </Text>
-          <Text style={styles.quarantineText}>
-            Legacy history has no proven radio identity/channel generation.
-            It remains encrypted and can be reviewed separately, not mixed into chats.
-          </Text>
-          <TouchableOpacity accessibilityRole="button"
-            accessibilityLabel="Review unattributed Radio History"
-            onPress={onReviewUnattributed}
-            style={styles.reviewButton}>
-            <Text style={styles.reviewText}>Review saved records</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
+      {unknownHistoryCount > 0 ? <TouchableOpacity accessibilityRole="button"
+        accessibilityLabel="Review unattributed Radio History" onPress={onReviewUnattributed} style={styles.reviewButton}>
+        <Text style={styles.reviewText}>{unknownHistoryCount} historical message{unknownHistoryCount === 1 ? '' : 's'} held separately</Text>
+      </TouchableOpacity> : null}
       <FlatList
         accessibilityLabel="Conversation inbox"
         data={conversations}
         keyExtractor={item => conversationKey(item.scope)}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
+        onRefresh={onRefresh} refreshing={refreshing}
         contentContainerStyle={styles.list}
         renderItem={({item}) => {
           const id = conversationKey(item.scope);
@@ -141,9 +146,11 @@ export function RadioInbox({
           const distinction = repeatedSlot ? ' · ' + item.scope.channelGeneration : '';
           return (
             <View style={styles.rowWrap}>
+              <View style={styles.rowLine}>
               <TouchableOpacity accessibilityRole="button"
                 accessibilityLabel={'Open chat ' + item.channel.channelName + distinction}
                 onPress={() => {setMenuFor(null); onOpen(item.scope);}}
+                onLongPress={() => setMenuFor(id)}
                 style={styles.row} activeOpacity={0.75}>
                 {item.personalisation ? <ChatAvatar name={item.displayName || item.channel.channelName}
                   {...item.personalisation}/> : <View style={styles.avatar}><Text style={styles.avatarText}>#</Text></View>}
@@ -157,7 +164,7 @@ export function RadioInbox({
                   <Text style={styles.preview} numberOfLines={2}>{item.preview}</Text>
                   <Text style={styles.subline}>Channel {item.channel.channelIndex} · {' '}
                     {item.scope.channelGeneration.startsWith('session-')
-                      ? 'This-session identity' : 'Proven archive identity'}
+                      ? 'This-session identity' : 'Saved conversation'}
                     {item.unreadCount === null ? '' : managed ? ' · Session read state' : ' · Read state available'}
                   </Text>
                 </View>
@@ -180,6 +187,7 @@ export function RadioInbox({
                 style={styles.rowMore}>
                 <Text style={styles.moreText}>⋮</Text>
               </TouchableOpacity>
+              </View>
               {open ? <View style={styles.menu}>
                 <Action subtle label={item.pinned ? 'Unpin chat' : 'Pin chat'}
                   onPress={() => {onPin(item.scope); setMenuFor(null);}} />
@@ -240,9 +248,14 @@ const styles = StyleSheet.create({
   search: {flex: 1, padding: 0, color: colors.textPrimary, fontSize: 15},
   clear: {minHeight: 44, minWidth: 44, justifyContent: 'center', alignItems: 'center'},
   clearText: {fontSize: 24, color: colors.textPrimary},
+  filters: {flexDirection: 'row', paddingHorizontal: 12, gap: 5},
+  filter: {flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center'},
+  selectedFilter: {borderBottomWidth: 2, borderBottomColor: colors.accent},
+  filterText: {color: colors.textPrimary, fontSize: 13, fontWeight: '700'},
   list: {flexGrow: 1, paddingBottom: 22},
   rowWrap: {borderBottomWidth: 1, borderBottomColor: colors.border},
-  row: {flexDirection: 'row', minHeight: 86, paddingLeft: 16, paddingRight: 48,
+  rowLine: {flexDirection: 'row', alignItems: 'center'},
+  row: {flex: 1, flexDirection: 'row', minHeight: 86, paddingLeft: 16, paddingRight: 4,
     alignItems: 'center', gap: 11},
   avatar: {width: 49, height: 49, borderRadius: 17, backgroundColor: '#29382E',
     alignItems: 'center', justifyContent: 'center'},
@@ -253,11 +266,10 @@ const styles = StyleSheet.create({
   when: {color: colors.textSecondary, fontSize: 11},
   preview: {fontSize: 13, lineHeight: 18, color: colors.textSecondary, marginTop: 3},
   subline: {fontSize: 11, color: colors.textSecondary, marginTop: 4},
-  rowMore: {position: 'absolute', right: 4, top: 12,
-    width: 44, height: 58, alignItems: 'center', justifyContent: 'center'},
+  rowMore: {width: 52, height: 58, alignItems: 'center', justifyContent: 'center'},
   moreText: {color: colors.textPrimary, fontSize: 25},
   unread: {minWidth: 25, minHeight: 25, borderRadius: 13, backgroundColor: colors.accent,
-    justifyContent: 'center', alignItems: 'center', marginRight: 40},
+    justifyContent: 'center', alignItems: 'center', marginRight: 4},
   unreadText: {fontSize: 12, fontWeight: '900', color: colors.background},
   menu: {marginLeft: 75, marginRight: 16, paddingVertical: 5, gap: 6},
   action: {minHeight: 48, paddingHorizontal: 14, borderRadius: 11,

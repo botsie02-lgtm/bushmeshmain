@@ -13,6 +13,7 @@ export function useChatManagement() {
   const live = useRef(connection);
   live.current = connection;
   const busyRef = useRef(false);
+  const refreshFlight = useRef<Promise<void> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadedRadio, setLoadedRadio] = useState<string | null>(null);
@@ -56,18 +57,19 @@ export function useChatManagement() {
     setReady(true);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(() => {
+    if (refreshFlight.current) return refreshFlight.current;
     const expected = live.current.getChatRadio();
-    if (!expected) throw new Error('Connect a radio and sync its identity first.');
-    await run(() => reload(expected));
+    if (!expected) return Promise.reject(new Error('Connect a radio and sync its identity first.'));
+    const flight = run(() => reload(expected)).finally(() => {refreshFlight.current = null;});
+    refreshFlight.current = flight;
+    return flight;
   }, [reload, run]);
 
   useEffect(() => {
     setReady(false);
     setLoadedRadio(null);
     setLoadedEpoch(null);
-    setConfigs([]);
-    setPreferences({});
     setError(null);
     // The host may request a refresh after the radio is idle; no write occurs here.
   }, [radio, sessionEpoch]);
@@ -136,7 +138,7 @@ export function useChatManagement() {
     requireCurrent(chat);
     try {
       const value = await live.current.revealChatCredential(chat);
-      if (live.current.getChatRadio() !== chat.radio) throw new Error('Radio changed.');
+      requireCurrent(chat);
       return value;
     } catch (failure) {
       setReady(false);
@@ -150,8 +152,9 @@ export function useChatManagement() {
     capacity: radio && current
       ? {used: configs.length, total: connection.snapshot.channels.length} : null,
     ready: current,
-    chats: current ? configs : [],
-    preferences: current ? preferences : {},
+    // Display cache only: all transport operations continue to require current.
+    chats: configs,
+    preferences,
     refresh, update, provision, leave, credential, sort, changeSort,
     invalidate: () => setReady(false),
     isCurrentRadio: (expected: string) => live.current.getChatRadio() === expected,

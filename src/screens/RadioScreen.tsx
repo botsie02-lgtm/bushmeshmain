@@ -30,6 +30,7 @@ import {RadioQuarantineReview} from './radioMessenger/RadioQuarantineReview';
 export type RadioScreenProps = {
   enableChatManagement?: boolean;
   settingsVisible?: boolean;
+  tabVisible?: boolean;
   /** Existing carrier/legacy channel tools; no provisioning is performed here. */
   onOpenCarrierDetails?: () => void;
   /** Owned by the channel-management worker. If absent, fall back to carrier tools. */
@@ -88,12 +89,12 @@ function RadioMessenger({
   onOpenCarrierDetails, onCreateChat, onJoinChat,
   onOpenChatSettings, onOpenConversationMenu, onOpenMessagingSettings,
   trustedScopes = [], verifiedMessageOwnership = NO_PROOF,
-  unreadCounts = NO_UNREAD, onConversationRead, management, settingsVisible,
+  unreadCounts = NO_UNREAD, onConversationRead, management, settingsVisible, tabVisible = true,
 }: RadioScreenProps & {management?: ChatManagementController}): React.JSX.Element {
   const {
     connectionStatus, connectedDeviceName, channels, channelMessages,
     messagePersistenceStatus, messagePersistenceError,
-    canSendChannelMessage, sendChannelMessage, addLocalChannelMessage,
+    canSendChannelMessage, sendChannelMessage, addLocalChannelMessage, addDurableChannelMessage,
   } = useBushMesh();
   const {snapshot: radioSession} = useRadioSession();
   const radioConnection = useRadioConnection();
@@ -108,6 +109,8 @@ function RadioMessenger({
     ? JSON.stringify(management.chats.map(chat => chat.id).sort()) : null;
   const [managementSelection, setManagementSelection] = useState<ChatManagementSelection | null>(null);
   const [archived, setArchived] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'unread' | 'pinned'>('all');
+  useEffect(() => {if (!tabVisible) {setManagementSelection(null); setShowNew(false);}}, [tabVisible]);
   const [pendingChat, setPendingChat] = useState<ChatConfiguration | null>(null);
   const [readIds, setReadIds] = useState<ReadonlySet<string>>(new Set());
 
@@ -168,7 +171,7 @@ function RadioMessenger({
         previous.sessionEpoch === epoch && existing.find(s =>
           s.radioId === radioId && s.channelIndex === channel.channelIndex &&
           s.channelName === channel.channelName && s.channelGeneration.endsWith(':' + chat.id));
-      return retained || {...channel, radioId, channelGeneration: chat ? revision + ':' + chat.id : revision};
+      return retained || {...channel, radioId, channelGeneration: chat ? 'config:' + chat.id : revision};
     }));
   }, [radioId, connected, channels, configurationKey, management]);
 
@@ -238,8 +241,8 @@ function RadioMessenger({
     String(chat.slot) === scope.channelIndex && chat.name === scope.channelName &&
     scope.channelGeneration.endsWith(':' + chat.id));
   const preferencesFor = (scope: RadioConversationScope) => {
-    const chat = chatFor(scope);
-    return chat ? management?.preferences[chat.id] ?? defaultChatPreferences : undefined;
+    const id = scope.channelGeneration.startsWith('config:') ? scope.channelGeneration.slice(7) : chatFor(scope)?.id;
+    return id ? management?.preferences[id] ?? defaultChatPreferences : undefined;
   };
   useEffect(() => {
     if (!pendingChat) return;
@@ -251,13 +254,19 @@ function RadioMessenger({
     lastNavigation.current = scope.channelIndex;
     setViewedConversation({kind: 'meshcore-channel', channelIndex: scope.channelIndex});
   }, [pendingChat, liveScopes, setViewedConversation]);
+  const durableScopes = management ? channelMessages.flatMap(m => m.conversation ? [m.conversation] : []) : [];
+  const persistedOwnership = useMemo(() => ({...verifiedMessageOwnership,
+    ...Object.fromEntries(channelMessages.flatMap(m => m.conversation ? [[m.id, m.conversation]] : [])),
+  }), [verifiedMessageOwnership, channelMessages]);
   const knownScopes = [...liveScopes];
+  for (const scope of durableScopes) {
+    if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
+  }
   for (const scope of trustedScopes) {
     if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
   }
   // In this mounted session, offline previously-seen rooms are read-only.
-  if (!connected || (management && !management.ready && radioId === lastBinding.current.radioId &&
-      management.sessionEpoch === lastBinding.current.sessionEpoch)) {
+  if (!connected || (management && !management.ready)) {
     for (const scope of sessionScopes) {
       if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
     }
@@ -268,7 +277,7 @@ function RadioMessenger({
   const availableLabels: ChannelLabel[] = connected && radioId && (!management || management.ready)
     ? channels.map(c => ({channelIndex: c.channelIndex, channelName: c.channelName}))
     : [...observedLabels];
-  for (const scope of trustedScopes) {
+  for (const scope of knownScopes) {
     if (!availableLabels.some(c => c.channelIndex === scope.channelIndex &&
       c.channelName === scope.channelName)) {
       availableLabels.push({channelIndex: scope.channelIndex, channelName: scope.channelName});
@@ -280,7 +289,7 @@ function RadioMessenger({
 
   const allConversations = buildMessengerConversations({
     channels: inboxChannels, scopes: knownScopes, messages: channelMessages,
-    verifiedOwnership: verifiedMessageOwnership,
+    verifiedOwnership: persistedOwnership,
     sessionOwnership, pinned, unread: unreadCounts,
   });
   const needle = search.trim().toLocaleLowerCase();
@@ -292,9 +301,10 @@ function RadioMessenger({
       unreadCount: management ? (c.messages.length ? c.messages.filter(m =>
         m.message.direction === 'received' && !readIds.has(m.message.id)).length : null) : c.unreadCount};
   }).filter(c => (!management || !!preferencesFor(c.scope)?.archived === archived) &&
+    (filter === 'all' || (filter === 'pinned' ? c.pinned : !!c.manualUnread || !!c.unreadCount)) &&
     (!needle || c.displayName.toLocaleLowerCase().includes(needle) ||
       c.channel.channelName.toLocaleLowerCase().includes(needle) ||
-      c.preview.toLocaleLowerCase().includes(needle)))
+      c.messages.some(m => m.message.text.toLocaleLowerCase().includes(needle))))
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) ||
       (management?.sort === 'name' ? a.displayName.localeCompare(b.displayName) :
         management?.sort === 'slot' ? Number(a.channel.channelIndex) - Number(b.channel.channelIndex) :
@@ -326,8 +336,8 @@ function RadioMessenger({
   const activeNotice = activeKey ? notices[activeKey] ?? null : null;
   const selectedMessages = useMemo(() => selectedScope
     ? scopedMessages(channelMessages, selectedScope,
-      verifiedMessageOwnership, sessionOwnership) : [],
-    [channelMessages, selectedScope, verifiedMessageOwnership, sessionOwnership]);
+      persistedOwnership, sessionOwnership) : [],
+    [channelMessages, selectedScope, persistedOwnership, sessionOwnership]);
 
   useEffect(() => {
     if (!management || !selectedScope || !selectedMessages.length || settingsVisible || managementSelection) return;
@@ -371,7 +381,7 @@ function RadioMessenger({
     const count = unreadCounts[key];
     if (onConversationRead && Number.isSafeInteger(count) && count > 0) {
       const mostRecent = scopedMessages(channelMessages, scope,
-        verifiedMessageOwnership, sessionOwnership).slice(-1)[0];
+        persistedOwnership, sessionOwnership).slice(-1)[0];
       if (mostRecent) onConversationRead(scope, mostRecent.message.id);
     }
   };
@@ -381,7 +391,7 @@ function RadioMessenger({
     setViewedConversation(null);
   };
   useEffect(() => {
-    if (settingsVisible || managementSelection || !selectedScope) return;
+    if (!tabVisible || settingsVisible || managementSelection || !selectedScope) return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       setSelectedScope(null);
       lastNavigation.current = null;
@@ -389,7 +399,7 @@ function RadioMessenger({
       return true;
     });
     return () => subscription.remove();
-  }, [settingsVisible, managementSelection, selectedScope, setViewedConversation]);
+  }, [tabVisible, settingsVisible, managementSelection, selectedScope, setViewedConversation]);
   const openChatManagement = (scope: RadioConversationScope) => {
     const chat = chatFor(scope);
     if (chat && management) {
@@ -445,6 +455,18 @@ function RadioMessenger({
     }
     const capturedKey = activeKey;
     const submittedText = validation.text;
+    const recordSubmission = async (status: 'accepted' | 'failed', submissionFailure?: ReturnType<typeof classifyChannelSubmissionFailure>) => {
+      const record = {channelIndex: capturedScope.channelIndex, channelName: capturedScope.channelName,
+        text: submittedText, direction: 'sent' as const, status, ...(submissionFailure ? {submissionFailure} : {})};
+      if (verifiedChat && addDurableChannelMessage) {
+        const id = 'submission-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+        await addDurableChannelMessage({...record, id, createdAt: new Date().toISOString(),
+          conversation: {...capturedScope, version: 1, provenance: 'local-submission'}});
+      } else {
+        const id = addLocalChannelMessage(record);
+        if (management && id) setSessionOwnership(current => ({...current, [id]: capturedScope}));
+      }
+    };
     sendingRef.current = true;
     setSending(true);
     postNotice(capturedKey, 'Submitting to the current radio…');
@@ -457,12 +479,7 @@ function RadioMessenger({
       // into a fabricated radio rejection or trigger another transmission.
       let recorded = true;
       try {
-        const id = addLocalChannelMessage({
-          channelIndex: capturedScope.channelIndex,
-          channelName: capturedScope.channelName,
-          text: submittedText, direction: 'sent', status: 'accepted',
-        });
-        if (management && id) setSessionOwnership(current => ({...current, [id]: capturedScope}));
+        await recordSubmission('accepted');
       } catch {
         recorded = false;
       }
@@ -483,13 +500,7 @@ function RadioMessenger({
       const failure = classifyChannelSubmissionFailure(error);
       let recorded = true;
       try {
-        const id = addLocalChannelMessage({
-          channelIndex: capturedScope.channelIndex,
-          channelName: capturedScope.channelName,
-          text: submittedText, direction: 'sent', status: 'failed',
-          submissionFailure: failure,
-        });
-        if (management && id) setSessionOwnership(current => ({...current, [id]: capturedScope}));
+        await recordSubmission('failed', failure);
       } catch {
         recorded = false;
       }
@@ -522,7 +533,7 @@ function RadioMessenger({
     else setSettingsOpen(true);
   };
   const isRestoring = messagePersistenceStatus === 'restoring';
-  const dialog = management ? <ChatManagementDialog controller={management}
+  const dialog = management && tabVisible ? <ChatManagementDialog controller={management}
     selection={managementSelection} onClose={() => setManagementSelection(null)}
     onProvisioned={setPendingChat}
     onLeft={chat => {
@@ -578,6 +589,7 @@ function RadioMessenger({
         <RadioChatRoom
           scope={selectedScope} messages={selectedMessages}
           connected={connected && radioId === selectedScope.radioId}
+          visible={tabVisible && !settingsVisible && !managementSelection}
           canSubmit={canSubmit} reason={unavailableReason}
           draft={activeDraft} notice={activeNotice}
           isSubmitting={sending} onDraft={updateDraft}
@@ -622,27 +634,15 @@ function RadioMessenger({
 
   return (
     <View style={styles.root}>
-      {management ? <View style={styles.managementBar}>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Refresh verified chats"
-          disabled={!management.radio || management.busy || management.radioBusy}
-          onPress={() => management.refresh().catch(() => undefined)}>
-          <Text style={styles.actionText}>{management.busy ? 'Checking chats…' : 'Refresh'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel={archived ? 'Show active chats' : 'Show archived chats'}
-          onPress={() => setArchived(v => !v)}>
-          <Text style={styles.actionText}>{archived ? 'Active chats' : 'Archived'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Change conversation sorting"
-          disabled={!management.ready || management.busy || management.radioBusy}
-          onPress={() => management.changeSort(management.sort === 'name' ? 'unread' :
-            management.sort === 'unread' ? 'slot' : 'name').catch(() => undefined)}>
-          <Text style={styles.actionText}>Sort: {management.sort}</Text>
-        </TouchableOpacity>
-      </View> : null}
       {management?.error ? <Text style={styles.uncertainText}>{management.error}</Text> : null}
       <RadioInbox
         conversations={conversations}
         managed={!!management}
+        visible={tabVisible && !settingsVisible}
+        filter={archived ? 'archived' : filter}
+        onFilter={next => {setArchived(next === 'archived'); setFilter(next === 'archived' ? 'all' : next);}}
+        onRefresh={management?.radio && !management.radioBusy ? () => management.refresh().catch(() => undefined) : undefined}
+        refreshing={management?.busy ?? false}
         online={connected} radioLabel={connectedDeviceName}
         restoring={isRestoring}
         historyIssue={messagePersistenceStatus === 'error'

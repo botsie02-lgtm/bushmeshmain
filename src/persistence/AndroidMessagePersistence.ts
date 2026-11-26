@@ -36,7 +36,9 @@ export class AndroidMessagePersistence {
       return;
     }
 
-    await module.saveMessages(encodeMessageSnapshot(snapshot));
+    if (!await module.saveMessages(encodeMessageSnapshot(snapshot))) {
+      throw new Error('Encrypted message history was not committed.');
+    }
   }
 
   async clear(): Promise<void> {

@@ -56,6 +56,15 @@ function validatePersistedMessage(
   ) {
     throw new Error('Persisted Bushmesh message has an invalid status.');
   }
+  if (candidate.conversation !== undefined) {
+    const c = candidate.conversation;
+    if (!c || c.version !== 1 || c.provenance !== 'local-submission' ||
+        candidate.direction !== 'sent' || typeof c.radioId !== 'string' || !c.radioId ||
+        !/^config:[a-f0-9]{64}$/.test(c.channelGeneration) ||
+        c.channelIndex !== candidate.channelIndex || c.channelName !== candidate.channelName) {
+      throw new Error('Invalid persisted conversation attribution.');
+    }
+  }
   if (candidate.submissionFailure !== undefined) {
     const failure = candidate.submissionFailure;
     if (!failure || typeof failure !== 'object' ||

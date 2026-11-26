@@ -41,6 +41,8 @@ export type BushMeshChannelMessage = {
   /** Bounded, non-sensitive submission diagnostics, never a raw device error. */
   submissionFailure?: ChannelSubmissionFailure;
   createdAt: string;
+  /** Protected configuration observed by a guarded local submission, not peer identity. */
+  conversation?: import('../screens/radioMessenger/messengerModel').MessageOwnershipProof & {version: 1; provenance: 'local-submission'};
 };
 type BushMeshChannelMessageInput = Omit<
   BushMeshChannelMessage,

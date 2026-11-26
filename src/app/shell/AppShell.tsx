@@ -229,6 +229,8 @@ export function AppShell(): React.JSX.Element {
     useState<ActiveConvoyCarrierProfile | null>(null);
   const {activeConvoy, status: convoyRestoreStatus} = useActiveOperationalConvoy();
   const [radioSettingsOpen, setRadioSettingsOpen] = useState(false);
+  const [radioVisited, setRadioVisited] = useState(false);
+  useEffect(() => {if (activeTab === 'radio') setRadioVisited(true);}, [activeTab]);
   const openMessagingSettings = useCallback(() => {
     Keyboard.dismiss();
     setRadioSettingsOpen(true);
@@ -401,11 +403,12 @@ export function AppShell(): React.JSX.Element {
           )}
         </ScreenMountGate>
 
-        <ScreenMountGate active={activeTab === 'radio'}>
+        {(radioVisited || activeTab === 'radio') && <View style={[styles.screen, activeTab !== 'radio' && styles.radioCovered]}
+          pointerEvents={activeTab === 'radio' ? 'auto' : 'none'}
+          importantForAccessibility={activeTab === 'radio' ? 'auto' : 'no-hide-descendants'}
+          accessibilityElementsHidden={activeTab !== 'radio'}>
           <RadioMessagingNavigationContext.Provider value={radioNavigation}>
-            {/* Keep only the messenger's local draft/navigation state alive while
-                the settings subpage is open. All runtime owners are above AppShell.
-                The entire Radio subtree still unmounts on leaving its tab. */}
+            {/* Retain the messenger session after first visit; other screens keep their mount gates. */}
             <View
               testID="radio-messenger-surface"
               style={[styles.screen, radioSettingsOpen && styles.radioCovered]}
@@ -414,7 +417,8 @@ export function AppShell(): React.JSX.Element {
               pointerEvents={radioSettingsOpen ? 'none' : 'auto'}>
               <RadioScreen
                 enableChatManagement
-                settingsVisible={radioSettingsOpen}
+                settingsVisible={radioSettingsOpen || activeTab !== 'radio'}
+                tabVisible={activeTab === 'radio'}
                 onOpenMessagingSettings={openMessagingSettings}
                 onOpenCarrierDetails={() => {
                   setConvoyView('tools');
@@ -424,7 +428,7 @@ export function AppShell(): React.JSX.Element {
             </View>
             {radioSettingsOpen ? <RadioMessagingSettingsScreen /> : null}
           </RadioMessagingNavigationContext.Provider>
-        </ScreenMountGate>
+        </View>}
 
         <ScreenMountGate active={activeTab === 'convoy'}>
           {convoyView === 'select' ? (

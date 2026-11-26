@@ -1,6 +1,6 @@
-import React, {useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
-  FlatList, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent,
+  BackHandler, FlatList, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent,
   Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
@@ -14,6 +14,7 @@ import {
 
 export type RadioChatRoomProps = {
   scope: RadioConversationScope;
+  visible?: boolean;
   messages: readonly ScopedMessage[];
   connected: boolean;
   canSubmit: boolean;
@@ -86,13 +87,22 @@ function Bubble({entry}: {entry: ScopedMessage}) {
 export function RadioChatRoom({
   scope, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
-  onTogglePinned, personalisation, displayName, persistentPin,
+  onTogglePinned, personalisation, displayName, persistentPin, visible = true,
 }: RadioChatRoomProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
+  useEffect(() => {
+    if (!visible) {setMenuOpen(false); setQuickOpen(false); return;}
+    if (!menuOpen && !searching) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {setMenuOpen(false); setSearching(false); setQuery(''); return true;});
+    return () => sub.remove();
+  }, [visible, menuOpen, searching]);
   const listRef = useRef<FlatList<ScopedMessage>>(null);
   const nearBottom = useRef(true);
-  const descending = useMemo(() => [...messages].reverse(), [messages]);
+  const descending = useMemo(() => [...messages].filter(m => m.message.text.toLowerCase().includes(query.toLowerCase())).reverse(), [messages, query]);
   const validation = validateCarrierText(draft);
   const sendEnabled = canSubmit && validation.valid && !isSubmitting;
 
@@ -143,6 +153,7 @@ export function RadioChatRoom({
             style={styles.menuButton}>
             <Text style={styles.menuText}>{pinned ? 'Unpin' : 'Pin'}{persistentPin ? ' chat' : ' for this session'}</Text>
           </TouchableOpacity>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Search chat history" onPress={() => {setSearching(true); setMenuOpen(false);}} style={styles.menuButton}><Text style={styles.menuText}>Search messages</Text></TouchableOpacity>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close room options"
             onPress={() => setMenuOpen(false)} style={styles.menuButton}>
             <Text style={styles.menuText}>Close</Text>
@@ -163,6 +174,7 @@ export function RadioChatRoom({
           <Text style={styles.statusText}>{reason}</Text>
         </View>
       ) : null}
+      {searching ? <TextInput accessibilityLabel="Search chat messages" value={query} onChangeText={setQuery} placeholder="Search messages" placeholderTextColor={colors.textSecondary} style={styles.input}/> : null}
       <FlatList
         ref={listRef}
         accessibilityLabel="Chat message history"
@@ -207,7 +219,10 @@ export function RadioChatRoom({
           </View>
         }
       />
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => listRef.current?.scrollToOffset({offset: 0, animated: true})} style={styles.menuButton}><Text style={styles.menuText}>↓ Latest</Text></TouchableOpacity>
       <View style={styles.composerArea}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Quick messages" onPress={() => setQuickOpen(v => !v)} style={styles.menuButton}><Text style={styles.menuText}>Quick messages</Text></TouchableOpacity>
+        {quickOpen && <View style={styles.quick}>{['Ready to go.', 'All clear.', 'Stopping shortly.', 'Need assistance.', 'Vehicle issue.', 'Radio check.', 'Regroup ahead.', 'Convoy accounted for.'].map(text => <TouchableOpacity key={text} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}<Text style={styles.statusText}>Fills draft only. Assistance is not emergency dispatch.</Text></View>}
         {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
         <View style={styles.composerRow}>
           <TextInput
@@ -291,6 +306,8 @@ const styles = StyleSheet.create({
   emptyTitle: {color: colors.textPrimary, fontSize: 16, fontWeight: '900', marginTop: 9},
   emptyBody: {color: colors.textSecondary, fontSize: 13, lineHeight: 19,
     textAlign: 'center', marginTop: 7},
+  quick: {flexDirection: 'row', flexWrap: 'wrap', gap: 5},
+  quickItem: {minHeight: 48, paddingHorizontal: 8, justifyContent: 'center', backgroundColor: colors.surfaceSoft},
   composerArea: {paddingHorizontal: 10, paddingTop: 8, paddingBottom: 6,
     borderTopColor: colors.border, borderTopWidth: 1,
     backgroundColor: colors.surface},
