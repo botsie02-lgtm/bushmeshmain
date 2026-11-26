@@ -148,13 +148,19 @@ class BushMeshNativeOutboxStore(context: Context) {
 
     root.put("entries", jsonEntries)
     val envelope = encrypt(root.toString())
-    if (!preferences.edit().putString(OUTBOX_KEY, envelope).commit()) {
+    val committed = HistoryCommitTransaction.withStoreWrite(STORE_NAME) {
+      preferences.edit().putString(OUTBOX_KEY, envelope).commit()
+    }
+    if (!committed) {
       throw IllegalStateException("Android native outbox storage did not commit the snapshot.")
     }
   }
 
   fun clear() {
-    if (!preferences.edit().remove(OUTBOX_KEY).commit()) {
+    val committed = HistoryCommitTransaction.withStoreWrite(STORE_NAME) {
+      preferences.edit().remove(OUTBOX_KEY).commit()
+    }
+    if (!committed) {
       throw IllegalStateException("Android native outbox storage did not clear the snapshot.")
     }
   }

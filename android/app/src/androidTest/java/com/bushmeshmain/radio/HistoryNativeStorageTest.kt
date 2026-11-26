@@ -245,5 +245,18 @@ class HistoryNativeStorageTest {
     assertEquals(2, calls)
     assertTrue(fenced)
     assertEquals(Pair(true, snapshot), nativeCall { store.loadMessages(it) })
+    // The background and bridge writers share this exact lock and fence.
+    val scratchFence = "synthetic-test-fence-" + UUID.randomUUID()
+    try {
+      HistoryCommitTransaction.setUncertain(scratchFence, true)
+      var entered = false
+      assertThrows(IllegalStateException::class.java) {
+        HistoryCommitTransaction.withStoreWrite(scratchFence) { entered = true }
+      }
+      assertFalse(entered)
+      HistoryCommitTransaction.setUncertain(scratchFence, false)
+      HistoryCommitTransaction.withStoreWrite(scratchFence) { entered = true }
+      assertTrue(entered)
+    } finally { HistoryCommitTransaction.setUncertain(scratchFence, false) }
   }
 }

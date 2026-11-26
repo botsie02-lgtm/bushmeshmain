@@ -30,9 +30,6 @@ class BushMeshPersistenceModule(
     private const val OUTBOX_KEY = "encrypted_outbox_snapshot"
     private const val TRACK_KEY = "encrypted_track_snapshot"
     private const val CONTACTS_KEY = "encrypted_contacts_snapshot"
-    // Process-wide fence: a failed rollback must not be followed by another
-    // history transaction against SharedPreferences' speculative memory map.
-    private val uncertainMessageStores = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private const val MESSAGES_KEY = "encrypted_messages_snapshot"
     private const val MESSAGE_RETENTION_KEY = "encrypted_message_retention_guard_v1"
     private const val MESSAGE_RETENTION_AAD = "v1:message-retention"
@@ -131,7 +128,7 @@ class BushMeshPersistenceModule(
   }
 
   private fun checkMessageStore() {
-    check(storageName !in uncertainMessageStores) { "History commit recovery is uncertain. Restart before retrying." }
+    HistoryCommitTransaction.requireWritable(storageName)
   }
 
   private fun messageCapacity(promise: Promise, restoring: Boolean = false) {
@@ -214,21 +211,23 @@ class BushMeshPersistenceModule(
       messageCapacity(promise)
     } catch (_: OutOfMemoryError) {
       // Last-resort error boundary; preflight is the primary protection.
-      if (storageName in uncertainMessageStores) {
+      if (HistoryCommitTransaction.isUncertain(storageName)) {
         promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", "History commit is uncertain. Restart before retrying; no save acknowledged.")
       } else {
         messageCapacity(promise)
       }
     } catch (_: Exception) {
-      promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", if (storageName in uncertainMessageStores)
+      promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", if (HistoryCommitTransaction.isUncertain(storageName))
         "History commit recovery is uncertain. Restart before retrying; no save acknowledged."
         else "Encrypted history and retention could not be committed. No save acknowledged.")
     }
   }
 
   private fun commitMessageValues(prefs: SharedPreferences, snapshot: String?, marker: String?) =
-    HistoryCommitTransaction.commit(prefs, MESSAGES_KEY, MESSAGE_RETENTION_KEY, snapshot, marker,
-      fence = { uncertain -> if (uncertain) uncertainMessageStores.add(storageName) else uncertainMessageStores.remove(storageName) })
+    HistoryCommitTransaction.withStoreWrite(storageName) {
+      HistoryCommitTransaction.commit(prefs, MESSAGES_KEY, MESSAGE_RETENTION_KEY, snapshot, marker,
+        fence = { uncertain -> HistoryCommitTransaction.setUncertain(storageName, uncertain) })
+    }
 
   @ReactMethod
   @Synchronized
@@ -499,7 +498,9 @@ class BushMeshPersistenceModule(
     try {
       checkMessageStore()
       val envelope = encrypt(serializedSnapshot, keyAlias, aad)
-      val committed = preferences().edit().putString(preferenceKey, envelope).commit()
+      val committed = HistoryCommitTransaction.withStoreWrite(storageName) {
+        preferences().edit().putString(preferenceKey, envelope).commit()
+      }
       if (!committed) {
         promise.reject(errorCode, "Android secure $label storage did not commit the snapshot.")
         return
@@ -519,7 +520,9 @@ class BushMeshPersistenceModule(
   ) {
     try {
       checkMessageStore()
-      val committed = preferences().edit().remove(preferenceKey).commit()
+      val committed = HistoryCommitTransaction.withStoreWrite(storageName) {
+        preferences().edit().remove(preferenceKey).commit()
+      }
       if (!committed) {
         promise.reject(errorCode, "Android secure $label storage did not clear the snapshot.")
         return
@@ -661,7 +664,9 @@ class BushMeshPersistenceModule(
   ) {
     try {
       checkMessageStore()
-      val cleared = preferences().edit().remove(preferenceKey).commit()
+      val cleared = HistoryCommitTransaction.withStoreWrite(storageName) {
+        preferences().edit().remove(preferenceKey).commit()
+      }
       if (!cleared) {
         promise.reject(errorCode, "Android secure $label storage did not clear the unreadable snapshot.")
         return
