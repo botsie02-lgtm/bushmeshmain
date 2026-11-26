@@ -26,8 +26,7 @@ export function RadioQuarantineReview({
       <View style={styles.warning}>
         <Text style={styles.warningTitle}>ENCRYPTED · OWNERSHIP UNPROVEN</Text>
         <Text style={styles.warningText}>
-          These saved messages have no durable radio identity or channel
-          generation. Slot numbers and recorded names may have been reused.
+          These saved messages have no proven original channel generation. Slot numbers and recorded names may have been reused.
           They are preserved as separate read-only records, not merged into chats.
         </Text>
       </View>
@@ -45,6 +44,7 @@ export function RadioQuarantineReview({
               {item.direction === 'received'
                 ? 'Incoming · sender not recorded' : 'Outgoing · local record'}
             </Text>
+            {item.observation && <Text style={styles.direction}>Observed via {item.observation.source === 'native-session' ? 'Android radio' : 'Bluetooth session'}{item.observation.configurationName ? ' · locally configured ' + item.observation.configurationName : ''} · original queue key unknown{item.observation.snr !== null ? ' · SNR ' + item.observation.snr : ''}{item.observation.pathLength !== null ? ' · path ' + item.observation.pathLength : ''}</Text>}
             <Text style={styles.message}>{item.text}</Text>
             <Text style={styles.time}>
               {new Date(item.createdAt).toLocaleString()} · {deliveryText(item)}

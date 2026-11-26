@@ -69,7 +69,7 @@ describe('MeshCore live Radio History durable bridge', () => {
         pathLength: 255, textType: 0, snr: 2,
       };
       await ReactTestRenderer.act(async () => {
-        meshCoreInboundInbox.publish(incoming);
+        meshCoreInboundInbox.publish(incoming, {version: 1, source: 'native-session', origin: 'queued-generation-unknown', radio: 'radio-a', configurationId: 'a'.repeat(64), configurationName: 'Existing private convoy', timestamp: 304, snr: 2, pathLength: 255});
         await until(() => meshCoreInboundDiagnostics.snapshot().counts['persistence-error']! >= 1, 'failed first write');
       });
       expect(meshCoreInboundInbox.pendingCount()).toBe(1);
@@ -81,6 +81,7 @@ describe('MeshCore live Radio History durable bridge', () => {
       expect(currentContext()?.channelMessages).toHaveLength(1);
       expect(currentContext()?.channelMessages[0]).toMatchObject({
         channelIndex: '4', channelName: 'Existing private convoy', status: 'confirmed',
+        observation: {origin: 'queued-generation-unknown', configurationId: 'a'.repeat(64)},
       });
       expect(meshCoreInboundInbox.pendingCount()).toBe(0);
 

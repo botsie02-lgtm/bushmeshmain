@@ -94,7 +94,7 @@ function RadioMessenger({
   const {
     connectionStatus, connectedDeviceName, channels, channelMessages,
     messagePersistenceStatus, messagePersistenceError,
-    canSendChannelMessage, sendChannelMessage, addLocalChannelMessage, addDurableChannelMessage,
+    canSendChannelMessage, sendChannelMessage, addLocalChannelMessage, addDurableChannelMessage, finishDurableSubmission,
   } = useBushMesh();
   const {snapshot: radioSession} = useRadioSession();
   const radioConnection = useRadioConnection();
@@ -228,6 +228,9 @@ function RadioMessenger({
     if (!management?.ready || !radioId || !connected) return;
     const epoch = management.sessionEpoch;
     return meshCoreInboundInbox.subscribeObserved(envelope => {
+      // Real firmware queue events carry an explicit ambiguity marker. Never
+      // attach them to a currently configured chat as if original generation were known.
+      if (envelope.observation?.origin === 'queued-generation-unknown') return;
       if (!historyReady.current || !radioConnection.isChatObservationCurrent(radioId, epoch)) return;
       const id = meshCoreInboundMessageId(envelope.message);
       if (baseline.current?.has(id)) return; // Never reassign a persisted duplicate.
@@ -375,13 +378,15 @@ function RadioMessenger({
     channelName: boundNow ? selectedScope?.channelName ?? null : null,
     protocolTransportReady: radioSession.transportReady,
   });
-  const canSubmit = boundNow && (!management || (!!selectedScope && !!chatFor(selectedScope) &&
+  const pendingInterrupted = selectedMessages.some(m => m.message.direction === 'sent' && m.message.status === 'pending');
+  const canSubmit = !pendingInterrupted && boundNow && (!management || (!!selectedScope && !!chatFor(selectedScope) &&
     !management.busy && !management.radioBusy)) && presentation.maySubmitCarrierText &&
     !sending && (activeKey === null || !uncertain.has(activeKey));
   const unavailableReason = !connected
     ? 'Radio disconnected. Proven history is readable; sending is unavailable.'
     : !radioId ? 'A stable connected radio address is unavailable. Cannot safely address this chat.'
       : !boundNow ? 'Channel configuration or radio identity changed. Return to Chats and reopen it.'
+        : pendingInterrupted ? 'An interrupted submission remains unresolved. Check saved history; sending is paused.'
         : activeKey && uncertain.has(activeKey)
           ? 'Prior submission acceptance is uncertain. Review before choosing to send again.'
           : presentation.explanation;
@@ -473,13 +478,22 @@ function RadioMessenger({
     }
     const capturedKey = activeKey;
     const submittedText = validation.text;
+    let durableId: string | null = null;
+    const durable = !!verifiedChat && !!addDurableChannelMessage && !!finishDurableSubmission;
+    const beforeSubmit = async () => {
+      const id = 'submission-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+      const inserted = await addDurableChannelMessage({id, createdAt: new Date().toISOString(), channelIndex: capturedScope.channelIndex,
+        channelName: capturedScope.channelName, text: submittedText, direction: 'sent', status: 'pending',
+        conversation: {...capturedScope, version: 1, provenance: 'local-submission'}});
+      if (!inserted) throw new Error('Submission journal was not saved.');
+      durableId = id;
+    };
     const recordSubmission = async (status: 'accepted' | 'failed', submissionFailure?: ReturnType<typeof classifyChannelSubmissionFailure>) => {
       const record = {channelIndex: capturedScope.channelIndex, channelName: capturedScope.channelName,
         text: submittedText, direction: 'sent' as const, status, ...(submissionFailure ? {submissionFailure} : {})};
-      if (verifiedChat && addDurableChannelMessage) {
-        const id = 'submission-' + Date.now() + '-' + Math.random().toString(16).slice(2);
-        await addDurableChannelMessage({...record, id, createdAt: new Date().toISOString(),
-          conversation: {...capturedScope, version: 1, provenance: 'local-submission'}});
+      if (durable) {
+        if (!durableId) throw new Error('No durable submission journal exists.');
+        await finishDurableSubmission(durableId, {status, ...(submissionFailure ? {submissionFailure} : {})});
       } else {
         const id = addLocalChannelMessage(record);
         if (management && id) setSessionOwnership(current => ({...current, [id]: capturedScope}));
@@ -491,7 +505,8 @@ function RadioMessenger({
     try {
       // Only the owning service issues the command. A resolved promise proves
       // PACKET_OK acceptance, never a peer acknowledgement.
-      if (verifiedChat) await radioConnection.sendVerifiedChat(verifiedChat, submittedText);
+      if (verifiedChat && durable) await radioConnection.sendVerifiedChat(verifiedChat, submittedText, beforeSubmit);
+      else if (verifiedChat) await radioConnection.sendVerifiedChat(verifiedChat, submittedText);
       else await sendChannelMessage(Number(capturedScope.channelIndex), submittedText);
       // Radio accepted; a separate local history failure must not turn this
       // into a fabricated radio rejection or trigger another transmission.
@@ -513,6 +528,10 @@ function RadioMessenger({
     } catch (error) {
       if (management) management.invalidate();
       if (error instanceof ChatOperationError && error.code === 'stale') {
+        if (durableId) {
+          try {await finishDurableSubmission(durableId, {status: 'failed', submissionNotAttempted: true});}
+          catch {postNotice(capturedKey, 'No message submitted; pending history outcome could not be saved.'); return;}
+        }
         postNotice(capturedKey, error.message);
         return; // No command was submitted, no uncertain delivery record.
       }

@@ -56,6 +56,15 @@ function validatePersistedMessage(
   ) {
     throw new Error('Persisted Bushmesh message has an invalid status.');
   }
+  if (candidate.observation !== undefined) {
+    const o = candidate.observation;
+    if (!o || o.version !== 1 || !['native-session', 'js-gatt'].includes(o.source) || o.origin !== 'queued-generation-unknown' ||
+        candidate.direction !== 'received' || (o.radio !== null && (typeof o.radio !== 'string' || !o.radio)) ||
+        (o.configurationId !== null && (typeof o.configurationId !== 'string' || !/^[a-f0-9]{64}$/.test(o.configurationId))) ||
+        (o.configurationName !== null && typeof o.configurationName !== 'string') ||
+        [o.timestamp, o.snr, o.pathLength].some(v => v !== null && !Number.isFinite(v))) throw new Error('Invalid persisted radio observation.');
+  }
+  if (candidate.submissionNotAttempted !== undefined && (candidate.submissionNotAttempted !== true || candidate.direction !== 'sent' || candidate.status !== 'failed')) throw new Error('Invalid submission outcome.');
   if (candidate.conversation !== undefined) {
     const c = candidate.conversation;
     if (!c || c.version !== 1 || c.provenance !== 'local-submission' ||

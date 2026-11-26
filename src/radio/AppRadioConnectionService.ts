@@ -214,6 +214,17 @@ export class AppRadioConnectionService {
   private scanGeneration = 0;
   private chatOperationActive = false;
   private chatSessionEpoch = 0;
+  private chatObservationBinding: {radio: string; epoch: number; configs: ChatConfiguration[]} | null = null;
+
+  private publishChannelObservation(message: import('../meshcore/meshcoreParsers').ParsedChannelMessage, source: 'js-gatt' | 'native-session') {
+    const binding = this.chatObservationBinding;
+    const radio = this.getChatRadio();
+    const config = binding && radio && binding.radio === radio && this.isChatObservationCurrent(radio, binding.epoch)
+      ? binding.configs.find(c => String(c.slot) === message.channelIndex) : undefined;
+    meshCoreInboundInbox.publish(message, {version: 1, source, origin: 'queued-generation-unknown',
+      radio, configurationId: config?.id ?? null, configurationName: config?.name ?? null,
+      timestamp: message.timestamp, snr: message.snr, pathLength: message.pathLength});
+  }
 
   constructor(deps: Partial<Dependencies> = {}) {
     this.deps = {
@@ -554,7 +565,7 @@ export class AppRadioConnectionService {
       const client = this.deps.createMeshCoreClient(manager, readyDevice, {
         onTxChunk: log => this.addChunk(log),
         onTxFrame: log => this.addFrame(log),
-        onChannelMessage: message => meshCoreInboundInbox.publish(message),
+        onChannelMessage: message => this.publishChannelObservation(message, 'js-gatt'),
         onMessagesWaiting: () => {
           // JS-GATT session schedules its own bounded inbound drain.
         },
@@ -1102,6 +1113,7 @@ export class AppRadioConnectionService {
         .map(c => this.chatConfiguration(radio, c)));
       assertCurrent();
       this.patch({channels: channels.map(safeMeshCoreChannel)});
+      this.chatObservationBinding = {radio, epoch: this.chatSessionEpoch, configs};
       return configs;
     });
   }
@@ -1111,6 +1123,7 @@ export class AppRadioConnectionService {
   async provisionChat(radio: string, input: {
     name: string; secretHex?: string; personalisation?: Partial<ChatPersonalisation>;
   }): Promise<ChatConfiguration> {
+    this.chatObservationBinding = null;
     const name = validateChatName(input.name);
     if (input.secretHex !== undefined) validateChatInvite({name, secretHex: input.secretHex});
     // Do not modify firmware if protected preferences cannot be loaded.
@@ -1210,11 +1223,13 @@ export class AppRadioConnectionService {
   }
 
   /** Check and submit within the same guarded radio command ownership scope. */
-  async sendVerifiedChat(expected: ChatConfiguration, text: string): Promise<void> {
+  async sendVerifiedChat(expected: ChatConfiguration, text: string, beforeSubmit?: () => Promise<void>): Promise<void> {
     let submitted = false;
     try {
       await this.withChatPort(expected.radio, async (port, assertCurrent) => {
         await this.requireChatConfiguration(port, expected);
+        assertCurrent();
+        if (beforeSubmit) await beforeSubmit();
         assertCurrent();
         submitted = true;
         await this.sendChannelMessage(expected.slot, text);
@@ -1237,6 +1252,7 @@ export class AppRadioConnectionService {
   }
 
   async leaveChat(expected: ChatConfiguration): Promise<void> {
+    this.chatObservationBinding = null;
     return this.withChatPort(expected.radio, async (port, assertCurrent) => {
       await this.requireChatConfiguration(port, expected);
       let attemptedClear = false;
@@ -1575,7 +1591,7 @@ export class AppRadioConnectionService {
         status: this.hasUsableSendSession() ? 'Connected' : 'Error',
         statusDetail: `Native frame warning (${this.nativeFailureReason(new Error(message))}).`,
       }),
-      onChannelMessage: message => meshCoreInboundInbox.publish(message),
+      onChannelMessage: message => this.publishChannelObservation(message, 'native-session'),
       onMessagesWaiting: () => {
         // Native session owns the queued read commands; never open JS GATT.
       },

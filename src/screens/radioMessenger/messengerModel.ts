@@ -115,8 +115,9 @@ export function validateCarrierText(value: string): {
 
 export function deliveryText(message: BushMeshChannelMessage): string {
   if (message.direction === 'received') return 'Received · peer identity unverified';
+  if (message.submissionNotAttempted) return 'Not submitted · configuration or storage changed';
   switch (message.status) {
-    case 'pending': return 'Pending radio response';
+    case 'pending': return message.conversation ? 'Submission journal · outcome unconfirmed' : 'Pending radio response';
     case 'accepted': return 'Radio accepted · delivery not confirmed';
     case 'confirmed': return 'Peer confirmed by matching ACK';
     case 'failed':

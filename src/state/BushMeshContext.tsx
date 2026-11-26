@@ -43,6 +43,8 @@ export type BushMeshChannelMessage = {
   createdAt: string;
   /** Protected configuration observed by a guarded local submission, not peer identity. */
   conversation?: import('../screens/radioMessenger/messengerModel').MessageOwnershipProof & {version: 1; provenance: 'local-submission'};
+  observation?: import('../meshcore/meshcoreInboundInbox').MeshCoreInboundObservation;
+  submissionNotAttempted?: boolean;
 };
 type BushMeshChannelMessageInput = Omit<
   BushMeshChannelMessage,
@@ -118,6 +120,7 @@ type BushMeshContextValue = {
   addDurableChannelMessage: (
     message: BushMeshDurableChannelMessageInput,
   ) => Promise<boolean>;
+  finishDurableSubmission: (id: string, outcome: {status: 'accepted' | 'failed'; submissionFailure?: ChannelSubmissionFailure; submissionNotAttempted?: boolean}) => Promise<void>;
   updateChannelMessageStatus: (
     messageId: string,
     status: BushMeshMessageDeliveryStatus,
@@ -321,8 +324,6 @@ export function BushMeshProvider({
   }, []);
 
   useEffect(() => {
-    channelMessagesRef.current = channelMessages;
-
     if (
       !androidMessagePersistence.isSupported() ||
       !messagePersistenceReadyRef.current
@@ -523,6 +524,21 @@ export function BushMeshProvider({
     [],
   );
 
+  const finishDurableSubmission = useCallback(async (id: string, outcome: {status: 'accepted' | 'failed'; submissionFailure?: ChannelSubmissionFailure; submissionNotAttempted?: boolean}) => {
+    if (!messagePersistenceReadyRef.current) throw new Error('Encrypted history is unavailable.');
+    const operation = messageWriteChainRef.current.then(async () => {
+      if (!channelMessagesRef.current.some(m => m.id === id && m.conversation && m.status === 'pending')) throw new Error('Pending submission record unavailable.');
+      const snapshot = createMessageSnapshot(channelMessagesRef.current.map(m => m.id === id ? {...m, ...outcome} : m));
+      if (androidMessagePersistence.isSupported()) await androidMessagePersistence.save(snapshot);
+      const latest = channelMessagesRef.current.map(m => m.id === id ? {...m, ...outcome} : m);
+      channelMessagesRef.current = latest;
+      setChannelMessages(latest);
+    });
+    const reported = operation.catch(error => {setMessagePersistenceStatus('error'); setMessagePersistenceError('Submission outcome could not be saved. Do not resend automatically.'); throw error;});
+    messageWriteChainRef.current = reported.catch(() => undefined);
+    await reported;
+  }, []);
+
   const updateChannelMessageStatus = useCallback(
     (messageId: string, status: BushMeshMessageDeliveryStatus) => {
       const next = channelMessagesRef.current.map(message =>
@@ -583,6 +599,7 @@ export function BushMeshProvider({
       syncContacts,
       addLocalChannelMessage,
       addDurableChannelMessage,
+      finishDurableSubmission,
       updateChannelMessageStatus,
       clearChannels,
       clearChannelMessages,
@@ -611,6 +628,7 @@ export function BushMeshProvider({
       syncContacts,
       addLocalChannelMessage,
       addDurableChannelMessage,
+      finishDurableSubmission,
       updateChannelMessageStatus,
       clearChannels,
       clearChannelMessages,

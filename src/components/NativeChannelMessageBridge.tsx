@@ -19,7 +19,7 @@ export function NativeChannelMessageBridge(): null {
   useEffect(() => meshCoreInboundInbox.setConsumer(async envelope => {
     const message = envelope.message;
     const index = Number(message.channelIndex);
-    if (channelsRef.current.length === 0) {
+    if (!envelope.observation && channelsRef.current.length === 0) {
       // Startup channel enumeration has not completed yet. Retry so the
       // durable history row carries the correct slot name on first save.
       throw new Error('MeshCore channel index is not yet available.');
@@ -30,11 +30,12 @@ export function NativeChannelMessageBridge(): null {
     const inserted = await addDurableChannelMessage({
       id: meshCoreInboundMessageId(message),
       channelIndex: message.channelIndex,
-      channelName: stored?.channelName ?? `Channel ${index}`,
+      channelName: envelope.observation ? envelope.observation.configurationName ?? `Channel ${index}` : stored?.channelName ?? `Channel ${index}`,
       text: message.text.trim(),
       direction: 'received',
       status: 'confirmed',
       createdAt: new Date(envelope.receivedAtMs).toISOString(),
+      ...(envelope.observation ? {observation: envelope.observation} : {}),
     });
     if (inserted) {
       if (androidMessagePersistence.isSupported()) {

@@ -2,9 +2,23 @@ import {ParsedChannelMessage} from './meshcoreParsers';
 import {meshCoreInboundDiagnostics} from './meshcoreInboundDiagnostics';
 
 /** Message content stays in the application inbox; diagnostics are metadata-only. */
+/** Captures local radio context at decode time, not the packet's original key generation. */
+export type MeshCoreInboundObservation = {
+  version: 1;
+  source: 'js-gatt' | 'native-session';
+  origin: 'queued-generation-unknown';
+  radio: string | null;
+  configurationId: string | null;
+  configurationName: string | null;
+  timestamp: number | null;
+  snr: number | null;
+  pathLength: number | null;
+};
+
 export type MeshCoreInboundEnvelope = {
   message: ParsedChannelMessage;
   receivedAtMs: number;
+  observation?: MeshCoreInboundObservation;
 };
 
 type Consumer = (event: MeshCoreInboundEnvelope) => Promise<void>;
@@ -18,7 +32,7 @@ export class MeshCoreInboundInbox {
   private busy = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  publish(message: ParsedChannelMessage): void {
+  publish(message: ParsedChannelMessage, observation?: MeshCoreInboundObservation): void {
     const channelIndex = Number(message.channelIndex);
     if (!Number.isInteger(channelIndex) || channelIndex < 0 || channelIndex > 255 ||
         !message.text.trim()) return;
@@ -32,13 +46,13 @@ export class MeshCoreInboundInbox {
       throw new Error('MeshCore application inbox is full; radio queue drain must pause.');
     }
     const envelope: MeshCoreInboundEnvelope = {
-      message: {...message}, receivedAtMs: Date.now(),
+      message: {...message}, receivedAtMs: Date.now(), ...(observation ? {observation: {...observation}} : {}),
     };
     this.pending.push(envelope);
     // Optional read-only observers never replace the single durable-history
     // consumer, never acknowledge its queue, and cannot block its delivery.
     this.observers.forEach(observer => {
-      try {observer({message: {...envelope.message}, receivedAtMs: envelope.receivedAtMs});}
+      try {observer({...envelope, message: {...envelope.message}, ...(envelope.observation ? {observation: {...envelope.observation}} : {})});}
       catch { /* A field-test observer is never an inbox persistence authority. */ }
     });
     meshCoreInboundDiagnostics.record('inbox-accepted', {channelIndex});

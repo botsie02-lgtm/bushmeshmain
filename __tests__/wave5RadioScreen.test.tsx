@@ -469,6 +469,11 @@ test('managed inbox counts actual observed inbound, never a new history row alon
   await rerender({enableChatManagement: true});
   expect(viewText()).toContain('OBSERVED RADIO MESSAGE');
   expect(viewText()).toContain('1 unread messages');
+  const ambiguous: ParsedChannelMessage = {...message, text: 'AMBIGUOUS QUEUE RECORD', timestamp: 101};
+  await act(async () => {meshCoreInboundInbox.publish(ambiguous, {version: 1, source: 'native-session', origin: 'queued-generation-unknown', radio: null, configurationId: null, configurationName: null, timestamp: 101, snr: 0, pathLength: 0});});
+  messages = [...messages, {id: meshCoreInboundMessageId(ambiguous), channelIndex: '1', channelName: 'Private', direction: 'received', status: 'confirmed', text: ambiguous.text, createdAt: new Date().toISOString()}];
+  await rerender({enableChatManagement: true});
+  expect(viewText()).not.toContain('AMBIGUOUS QUEUE RECORD');
   await room('Private');
   await press('Back to chats');
   expect(viewText()).not.toContain('1 unread messages');
