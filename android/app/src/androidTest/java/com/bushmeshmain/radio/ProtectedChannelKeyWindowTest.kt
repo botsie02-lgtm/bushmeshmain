@@ -43,9 +43,15 @@ class ProtectedChannelKeyWindowTest {
         assertTrue(owner.keyView!!.text.toString().replace("\n", "") == synthetic)
       }
     }
-    fun tap(view: View) {
+    fun tap(button: Int) {
       val position = IntArray(2)
-      instrumentation.runOnMainSync { view.getLocationOnScreen(position); position[0] += view.width / 2; position[1] += view.height / 2 }
+      instrumentation.runOnMainSync {
+        val view: View = checkNotNull(owner.dialog?.getButton(button))
+        assertTrue("Protected window button must be visible and enabled", view.isShown && view.isEnabled)
+        view.getLocationOnScreen(position)
+        position[0] += view.width / 2
+        position[1] += view.height / 2
+      }
       val now = SystemClock.uptimeMillis()
       for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
         val event = MotionEvent.obtain(now, SystemClock.uptimeMillis(), action, position[0].toFloat(), position[1].toFloat(), 0)
@@ -56,10 +62,10 @@ class ProtectedChannelKeyWindowTest {
     }
     try {
       show()
-      tap(owner.dialog!!.getButton(AlertDialog.BUTTON_NEUTRAL))
+      tap(AlertDialog.BUTTON_NEUTRAL)
       waitFor { clipboard.primaryClipDescription?.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true }
       instrumentation.runOnMainSync { assertTrue(clipboard.primaryClip?.getItemAt(0)?.text?.toString() == synthetic) }
-      tap(owner.dialog!!.getButton(AlertDialog.BUTTON_POSITIVE))
+      tap(AlertDialog.BUTTON_POSITIVE)
       waitFor { owner.dialog == null && owner.keyView == null }
       show()
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)

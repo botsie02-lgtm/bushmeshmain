@@ -8,6 +8,7 @@ import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import com.bushmeshmain.MainActivity
+import com.bushmeshmain.MainApplication
 import com.facebook.react.bridge.Callback
 import com.facebook.react.bridge.PromiseImpl
 import com.facebook.react.bridge.ReactApplicationContext
@@ -24,7 +25,6 @@ class ConversationMenuUiTest {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val context = instrumentation.targetContext
     check(context.packageName == "com.bushmeshmain.radioredesign")
-    val store = BushMeshPersistenceModule(ReactApplicationContext(context))
     fun nativeCall(call: (PromiseImpl) -> Unit): Any? {
       val result = AtomicReference<Any?>()
       val done = CountDownLatch(1)
@@ -35,17 +35,13 @@ class ConversationMenuUiTest {
       assertFalse("Protected fixture write failed", failure.get())
       return result.get()
     }
-    val entries = JSONObject()
-    for ((slot, name) in listOf("Smoke Alpha", "Smoke Bravo").withIndex()) {
-      val id = nativeCall { store.chatConfigurationId("synthetic-menu-fixture-" + slot, it) } as String
-      val config = JSONObject().put("id", id).put("radio", "synthetic-offline-radio").put("slot", slot).put("name", name).put("privateChannel", true)
-      entries.put(id, JSONObject().put("displayName", "").put("pinned", false).put("archived", false).put("unread", false)
-        .put("localCreator", false).put("origin", "unknown").put("description", "").put("avatarColor", "lime").put("avatarIcon", "initials")
-        .put("configuration", config).put("incarnation", 1).put("retired", false))
-    }
-    val original = nativeCall { store.loadChatPreferences(it) } as? String
-    assertTrue(nativeCall { store.saveChatPreferences(JSONObject().put("version", 2).put("entries", entries).put("sort", "recent").toString(), it) } == true)
+    // Start the real RN host. Radio is lazy-mounted; prepare the catalogue
+    // while the app is still on its initial Drive tab.
     val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    val host = (context.applicationContext as MainApplication).reactHost
+    var fixtureStore: BushMeshPersistenceModule? = null
+    var original: String? = null
+    var fixtureSaved = false
     val automation = instrumentation.uiAutomation
     fun find(node: AccessibilityNodeInfo?, label: String): Rect? {
       if (node == null) return null
@@ -76,6 +72,29 @@ class ConversationMenuUiTest {
       instrumentation.waitForIdleSync()
     }
     try {
+      // Waiting for actual UI ensures the production React instance is running.
+      await("Radio")
+      val deadline = SystemClock.uptimeMillis() + 20_000
+      var reactContext: ReactApplicationContext? = null
+      while (reactContext == null && SystemClock.uptimeMillis() < deadline) {
+        reactContext = host.currentReactContext as? ReactApplicationContext
+        if (reactContext == null) SystemClock.sleep(100)
+      }
+      val store = BushMeshPersistenceModule(checkNotNull(reactContext) { "Live React application context unavailable" })
+      fixtureStore = store
+      original = nativeCall { store.loadChatPreferences(it) } as? String
+      val entries = JSONObject()
+      for ((slot, name) in listOf("Smoke Alpha", "Smoke Bravo").withIndex()) {
+        val id = nativeCall { store.chatConfigurationId("synthetic-menu-fixture-" + slot, it) } as String
+        val config = JSONObject().put("id", id).put("radio", "synthetic-offline-radio").put("slot", slot).put("name", name).put("privateChannel", true)
+        entries.put(id, JSONObject().put("displayName", "").put("pinned", false).put("archived", false).put("unread", false)
+          .put("localCreator", false).put("origin", "unknown").put("description", "").put("avatarColor", "lime").put("avatarIcon", "initials")
+          .put("configuration", config).put("incarnation", 1).put("retired", false))
+      }
+      val fixture = JSONObject().put("version", 2).put("entries", entries).put("sort", "recent").toString()
+      assertTrue(nativeCall { store.saveChatPreferences(fixture, it) } == true)
+      fixtureSaved = true
+      assertTrue("Encrypted catalogue readback mismatch", nativeCall { store.loadChatPreferences(it) } == fixture)
       tap("Radio")
       tap("Chat options Smoke Alpha")
       await("Close chat options")
@@ -98,8 +117,12 @@ class ConversationMenuUiTest {
       tap("Close chat options")
     } finally {
       instrumentation.runOnMainSync { activity.finish() }
-      // Test environment only. Restore the original encrypted catalogue or an empty one.
-      nativeCall { store.saveChatPreferences(original ?: "{\"version\":2,\"entries\":{},\"sort\":\"recent\"}", it) }
+      // Restore only if the fixture actually wrote to the isolated store.
+      if (fixtureSaved) {
+        val store = checkNotNull(fixtureStore)
+        val restored = original ?: "{\"version\":2,\"entries\":{},\"sort\":\"recent\"}"
+        assertTrue("Protected catalogue restoration failed", nativeCall { store.saveChatPreferences(restored, it) } == true)
+      }
     }
   }
 }
