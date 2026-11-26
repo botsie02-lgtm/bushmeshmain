@@ -106,7 +106,7 @@ function RadioMessenger({
     : connected && connection.connectedDeviceAddress?.trim()
       ? connection.connectedDeviceAddress.trim() : null;
   const configurationKey = management?.ready
-    ? JSON.stringify(management.chats.map(chat => chat.id).sort()) : null;
+    ? JSON.stringify(management.chats.map(chat => [chat.id, management.preferences[chat.id]?.incarnation ?? 1]).sort()) : null;
   const [managementSelection, setManagementSelection] = useState<ChatManagementSelection | null>(null);
   const [archived, setArchived] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unread' | 'pinned'>('all');
@@ -170,8 +170,8 @@ function RadioMessenger({
       const retained = chat && previous.radioId === radioId && previous.connected &&
         previous.sessionEpoch === epoch && existing.find(s =>
           s.radioId === radioId && s.channelIndex === channel.channelIndex &&
-          s.channelName === channel.channelName && s.channelGeneration.endsWith(':' + chat.id));
-      return retained || {...channel, radioId, channelGeneration: chat ? 'config:' + chat.id : revision};
+          s.channelName === channel.channelName && s.channelGeneration === 'config:' + (management?.preferences[chat.id]?.incarnation ?? 1) + ':' + chat.id);
+      return retained || {...channel, radioId, channelGeneration: chat ? 'config:' + (management?.preferences[chat.id]?.incarnation ?? 1) + ':' + chat.id : revision};
     }));
   }, [radioId, connected, channels, configurationKey, management]);
 
@@ -241,8 +241,11 @@ function RadioMessenger({
     String(chat.slot) === scope.channelIndex && chat.name === scope.channelName &&
     scope.channelGeneration.endsWith(':' + chat.id));
   const preferencesFor = (scope: RadioConversationScope) => {
-    const id = scope.channelGeneration.startsWith('config:') ? scope.channelGeneration.slice(7) : chatFor(scope)?.id;
-    return id ? management?.preferences[id] ?? defaultChatPreferences : undefined;
+    const id = scope.channelGeneration.startsWith('config:') ? scope.channelGeneration.split(':').pop() : chatFor(scope)?.id;
+    const prefs = id ? management?.preferences[id] : undefined;
+    // Earlier incarnations must not inherit current draft/read state.
+    if (prefs && scope.channelGeneration.startsWith('config:') && scope.channelGeneration !== 'config:' + (prefs.incarnation ?? 1) + ':' + id) return undefined;
+    return id ? prefs ?? defaultChatPreferences : undefined;
   };
   useEffect(() => {
     if (!pendingChat) return;
@@ -259,6 +262,13 @@ function RadioMessenger({
     ...Object.fromEntries(channelMessages.flatMap(m => m.conversation ? [[m.id, m.conversation]] : [])),
   }), [verifiedMessageOwnership, channelMessages]);
   const knownScopes = [...liveScopes];
+  for (const pref of Object.values(management?.preferences ?? {})) {
+    const c = pref.configuration;
+    if (!c) continue;
+    const scope = {radioId: c.radio, channelGeneration: 'config:' + (pref.incarnation ?? 1) + ':' + c.id,
+      channelIndex: String(c.slot), channelName: c.name};
+    if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
+  }
   for (const scope of durableScopes) {
     if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
   }
@@ -299,7 +309,7 @@ function RadioMessenger({
       displayName: prefs?.displayName || c.channel.channelName,
       personalisation: prefs, manualUnread: prefs?.unread,
       unreadCount: management ? (c.messages.length ? c.messages.filter(m =>
-        m.message.direction === 'received' && !readIds.has(m.message.id)).length : null) : c.unreadCount};
+        m.message.direction === 'received' && !readIds.has(m.message.id) && !prefs?.readIds?.includes(m.message.id)).length : null) : c.unreadCount};
   }).filter(c => (!management || !!preferencesFor(c.scope)?.archived === archived) &&
     (filter === 'all' || (filter === 'pinned' ? c.pinned : !!c.manualUnread || !!c.unreadCount)) &&
     (!needle || c.displayName.toLocaleLowerCase().includes(needle) ||
@@ -332,7 +342,7 @@ function RadioMessenger({
   }, [viewedConversation, liveScopes, trustedScopes]);
 
   const activeKey = selectedScope ? conversationKey(selectedScope) : null;
-  const activeDraft = activeKey ? drafts[activeKey] ?? '' : '';
+  const activeDraft = activeKey ? drafts[activeKey] ?? (selectedScope ? preferencesFor(selectedScope)?.draft : '') ?? '' : '';
   const activeNotice = activeKey ? notices[activeKey] ?? null : null;
   const selectedMessages = useMemo(() => selectedScope
     ? scopedMessages(channelMessages, selectedScope,
@@ -340,13 +350,13 @@ function RadioMessenger({
     [channelMessages, selectedScope, persistedOwnership, sessionOwnership]);
 
   useEffect(() => {
-    if (!management || !selectedScope || !selectedMessages.length || settingsVisible || managementSelection) return;
+    if (!management || !selectedScope || !selectedMessages.length || settingsVisible || managementSelection || !tabVisible) return;
     setReadIds(previous => {
       const next = new Set(previous);
       for (const item of selectedMessages) next.add(item.message.id);
       return next.size === previous.size ? previous : next;
     });
-  }, [selectedScope, selectedMessages, management, settingsVisible, managementSelection]);
+  }, [selectedScope, selectedMessages, management, settingsVisible, managementSelection, tabVisible]);
   const currentChannel = selectedScope && radioId === selectedScope.radioId && connected
     ? channels.find(c => c.channelIndex === selectedScope.channelIndex &&
       c.channelName === selectedScope.channelName) ?? null : null;
@@ -425,6 +435,8 @@ function RadioMessenger({
   const updateDraft = (value: string) => {
     if (!activeKey) return;
     setDrafts(current => ({...current, [activeKey]: value}));
+    const chat = selectedScope && chatFor(selectedScope);
+    if (chat && management) management.updateLocal(chat.id, {draft: value}).catch(() => postNotice(activeKey, 'Draft could not be saved on this phone.'));
   };
   const postNotice = (key: string, value: string) => {
     setNotices(current => ({...current, [key]: value}));
@@ -488,6 +500,7 @@ function RadioMessenger({
         [capturedKey]: currentDrafts[capturedKey]?.trim() === submittedText
           ? '' : currentDrafts[capturedKey] ?? '',
       }));
+      if (verifiedChat && management) management.updateLocal(verifiedChat.id, {draft: ''}).catch(() => undefined);
       postNotice(capturedKey, recorded
         ? 'Radio accepted. No peer delivery confirmation.'
         : 'Radio accepted, but local history recording failed. Do not resend to repair history.');

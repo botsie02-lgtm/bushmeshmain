@@ -337,11 +337,13 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
     expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
     await ReactTestRenderer.act(() => {messenger.props.onOpenMessagingSettings();});
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Contacts');});
-    expect(renderer.root.findAllByType(RadioScreen)).toHaveLength(0);
+    expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
+    expect(messenger.props.tabVisible).toBe(false);
     expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(0);
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio');});
     expect(renderer.root.findAllByType(RadioMessagingSettingsScreen)).toHaveLength(0);
-    expect(renderer.root.findAllByType(RadioScreen)).toHaveLength(1);
+    expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
+    expect(messenger.props.tabVisible).toBe(true);
   } finally {
     if (renderer) {
       await ReactTestRenderer.act(() => {renderer.unmount();});

@@ -60,7 +60,7 @@ function validatePersistedMessage(
     const c = candidate.conversation;
     if (!c || c.version !== 1 || c.provenance !== 'local-submission' ||
         candidate.direction !== 'sent' || typeof c.radioId !== 'string' || !c.radioId ||
-        !/^config:[a-f0-9]{64}$/.test(c.channelGeneration) ||
+        !/^config:(?:[1-9][0-9]*:)?[a-f0-9]{64}$/.test(c.channelGeneration) ||
         c.channelIndex !== candidate.channelIndex || c.channelName !== candidate.channelName) {
       throw new Error('Invalid persisted conversation attribution.');
     }
@@ -112,8 +112,7 @@ export function createMessageSnapshot(
   });
 
   const bounded = Array.from(deduped.values())
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
-    .slice(0, BUSHMESH_MAX_PERSISTED_MESSAGES);
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
   return {
     version: BUSHMESH_MESSAGE_SNAPSHOT_VERSION,

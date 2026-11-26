@@ -21,7 +21,14 @@ export function useChatManagement() {
   const [configs, setConfigs] = useState<ChatConfiguration[]>([]);
   const [preferences, setPreferences] = useState<ChatPreferenceSnapshot>({});
   const [ready, setReady] = useState(false);
-  const [sort, setSort] = useState<ChatSort>('name');
+  const [sort, setSort] = useState<ChatSort>('recent');
+  useEffect(() => {
+    let active = true;
+    chatPreferenceStore.loadState().then(({entries, sort: savedSort}) => {
+      if (active && !busyRef.current) {setPreferences(entries); setSort(savedSort);}
+    }).catch(() => {if (active) setError('Saved chats could not be restored.');});
+    return () => {active = false;};
+  }, []);
 
   const run = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
     if (busyRef.current) throw new Error('Chat management is busy.');
@@ -45,10 +52,12 @@ export function useChatManagement() {
   const reload = useCallback(async (expected: string) => {
     setReady(false);
     const expectedEpoch = live.current.getChatSessionEpoch();
-    const {entries, sort: savedSort} = await chatPreferenceStore.loadState();
+    const {sort: savedSort} = await chatPreferenceStore.loadState();
     const next = await live.current.listChatConfigurations(expected);
     if (live.current.getChatRadio() !== expected ||
         live.current.getChatSessionEpoch() !== expectedEpoch) throw new Error('Radio changed.');
+    const entries = await chatPreferenceStore.rememberConfigurations(expected, next);
+    if (live.current.getChatRadio() !== expected || live.current.getChatSessionEpoch() !== expectedEpoch) throw new Error('Radio changed.');
     setPreferences(entries);
     setSort(savedSort);
     setConfigs(next);
@@ -96,6 +105,8 @@ export function useChatManagement() {
       const entries = await chatPreferenceStore.update(chat.id, patch);
       if (live.current.getChatRadio() === chat.radio) setPreferences(entries);
     });
+
+  const updateLocal = (id: string, patch: ChatPreferencePatch) => chatPreferenceStore.update(id, patch).then(entries => {setPreferences(entries);});
 
   const changeSort = (next: ChatSort) => run(async () => {
     const expected = live.current.getChatRadio();
@@ -156,6 +167,7 @@ export function useChatManagement() {
     chats: configs,
     preferences,
     refresh, update, provision, leave, credential, sort, changeSort,
+    updateLocal,
     invalidate: () => setReady(false),
     isCurrentRadio: (expected: string) => live.current.getChatRadio() === expected,
     radioBusy: connection.snapshot.isWriting,

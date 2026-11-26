@@ -91,7 +91,7 @@ export function RadioInbox({
           {online ? 'Companion connected' : 'Radio disconnected'}
         </Text>
         <Text style={styles.connectionDetail} numberOfLines={1}>
-          {online ? radioLabel ?? 'MeshCore' : managed ? 'This-session history only' : 'Saved conversations only'}
+          {online ? radioLabel ?? 'MeshCore' : 'Saved conversations only'}
         </Text>
         <Text style={styles.chevron}>ⓘ</Text>
       </TouchableOpacity>

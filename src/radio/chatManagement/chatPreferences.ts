@@ -25,6 +25,14 @@ export type ChatPreferences = ChatPersonalisation & {
   unread: boolean;
   localCreator: boolean;
   origin: ChatOrigin;
+  /** Non-secret catalogue metadata, from successful full radio readback only. */
+  configuration?: ChatConfiguration;
+  incarnation?: number;
+  retired?: boolean;
+  draft?: string;
+  readIds?: string[];
+  starredIds?: string[];
+  pinnedIds?: string[];
 };
 
 export const defaultChatPreferences: ChatPreferences = {
@@ -67,8 +75,8 @@ export async function configurationId(
 }
 
 export type ChatPreferenceSnapshot = Record<string, ChatPreferences>;
-export type ChatSort = 'name' | 'unread' | 'slot';
-const sorts: readonly ChatSort[] = ['name', 'unread', 'slot'];
+export type ChatSort = 'name' | 'unread' | 'slot' | 'recent';
+const sorts: readonly ChatSort[] = ['name', 'unread', 'slot', 'recent'];
 
 export function decodeChatPreferences(serialized: string | null): ChatPreferenceSnapshot {
   if (serialized === null) return {};
@@ -95,6 +103,15 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
           (p.origin === 'created') !== p.localCreator)) {
       throw new Error('Invalid chat personalisation.');
     }
+    const c = p.configuration;
+    if (c !== undefined && (!c || c.id !== id || typeof c.radio !== 'string' || !c.radio ||
+        !Number.isInteger(c.slot) || c.slot < 0 || c.slot > 7 || typeof c.name !== 'string' || !c.name ||
+        typeof c.privateChannel !== 'boolean' || !Number.isSafeInteger(p.incarnation) || p.incarnation! < 1 ||
+        typeof p.retired !== 'boolean')) throw new Error('Invalid cached chat configuration.');
+    if (p.draft !== undefined && (typeof p.draft !== 'string' || p.draft.length > 512)) throw new Error('Invalid chat draft.');
+    for (const ids of [p.readIds, p.starredIds, p.pinnedIds]) {
+      if (ids !== undefined && (!Array.isArray(ids) || ids.some(value => typeof value !== 'string' || !value || value.length > 256))) throw new Error('Invalid chat message preferences.');
+    }
     entries[id] = {
       ...defaultChatPreferences,
       ...(parsed.version === 2 ? {
@@ -103,18 +120,23 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
       } : {origin: p.localCreator ? 'created' : 'unknown'}),
       displayName: p.displayName, pinned: p.pinned, archived: p.archived,
       unread: p.unread, localCreator: p.localCreator,
+      ...(c ? {configuration: {id, radio: c.radio, slot: c.slot, name: c.name, privateChannel: c.privateChannel}, incarnation: p.incarnation, retired: p.retired} : {}),
+      ...(p.draft !== undefined ? {draft: p.draft} : {}),
+      ...(p.readIds ? {readIds: [...new Set(p.readIds)]} : {}),
+      ...(p.starredIds ? {starredIds: [...new Set(p.starredIds)]} : {}),
+      ...(p.pinnedIds ? {pinnedIds: [...new Set(p.pinnedIds)]} : {}),
     };
   }
   return entries;
 }
 
 function decodeSort(serialized: string | null): ChatSort {
-  if (serialized === null) return 'name';
+  if (serialized === null) return 'recent';
   const parsed = JSON.parse(serialized);
-  return parsed.version === 2 && sorts.includes(parsed.sort) ? parsed.sort : 'name';
+  return parsed.version === 2 && sorts.includes(parsed.sort) ? parsed.sort : 'recent';
 }
 
-export type ChatPreferencePatch = Partial<Omit<ChatPreferences, 'localCreator' | 'origin'>>;
+export type ChatPreferencePatch = Partial<Omit<ChatPreferences, 'localCreator' | 'origin' | 'configuration' | 'incarnation' | 'retired'>>;
 
 export class ChatPreferenceStore {
   private queue: Promise<unknown> = Promise.resolve();
@@ -170,6 +192,33 @@ export class ChatPreferenceStore {
     return operation;
   }
 
+  /** A complete verified enumeration is the only way to update catalogue membership. */
+  rememberConfigurations(radio: string, configs: readonly ChatConfiguration[]): Promise<ChatPreferenceSnapshot> {
+    const operation = this.queue.then(async () => {
+      const storage = this.storage();
+      const serialized = await storage.loadChatPreferences();
+      const entries = decodeChatPreferences(serialized);
+      const sort = decodeSort(serialized);
+      const present = new Set(configs.map(c => c.id));
+      for (const [id, p] of Object.entries(entries)) {
+        if (p.configuration?.radio === radio && !present.has(id)) entries[id] = {...p, retired: true};
+      }
+      for (const c of configs) {
+        if (c.radio !== radio || !/^[a-f0-9]{64}$/.test(c.id)) throw new Error('Invalid verified configuration.');
+        const previous = entries[c.id] ?? defaultChatPreferences;
+        const incarnation = (previous.incarnation ?? 1) + (previous.retired ? 1 : 0);
+        entries[c.id] = {...previous, configuration: {id: c.id, radio, slot: c.slot, name: c.name, privateChannel: c.privateChannel}, incarnation, retired: false,
+          ...(previous.retired ? {draft: '', readIds: [], starredIds: [], pinnedIds: [], unread: false} : {})};
+      }
+      const next = JSON.stringify({version: 2, entries, sort});
+      decodeChatPreferences(next);
+      if (next !== serialized && !await storage.saveChatPreferences(next)) throw new Error('Chat catalogue was not saved.');
+      return entries;
+    });
+    this.queue = operation.catch(() => undefined);
+    return operation;
+  }
+
   update(id: string, patch: ChatPreferencePatch) {
     return this.mutate(id, current => ({
       ...current,
@@ -179,20 +228,23 @@ export class ChatPreferenceStore {
       pinned: typeof patch.pinned === 'boolean' ? patch.pinned : current.pinned,
       archived: typeof patch.archived === 'boolean' ? patch.archived : current.archived,
       unread: typeof patch.unread === 'boolean' ? patch.unread : current.unread,
+      ...(typeof patch.draft === 'string' ? {draft: patch.draft.slice(0, 512)} : {}),
+      ...Object.fromEntries((['readIds', 'starredIds', 'pinnedIds'] as const).flatMap(key => Array.isArray(patch[key]) ? [[key, [...new Set(patch[key]!.filter(v => typeof v === 'string' && v.length > 0 && v.length <= 256))]]] : [])),
     }));
   }
 
   /** Called only by the verified provisioning orchestration, not by settings. */
   recordProvisioned(id: string, created: boolean, personalisation?: Partial<ChatPersonalisation>) {
-    return this.mutate(id, () => ({
+    return this.mutate(id, previous => ({
       ...defaultChatPreferences,
+      ...(previous.configuration ? {configuration: previous.configuration, incarnation: previous.incarnation, retired: true} : {}),
       ...personalisationPatch(defaultChatPreferences, personalisation ?? {}),
       localCreator: created, origin: created ? 'created' : 'joined',
     }));
   }
 
   forget(id: string) {
-    return this.mutate(id, () => null);
+    return this.mutate(id, previous => previous.configuration ? {...previous, retired: true} : null);
   }
 }
 

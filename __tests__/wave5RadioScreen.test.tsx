@@ -130,6 +130,8 @@ beforeEach(() => {
   ready = true; restore = 'ready'; messages = [];
   send.mockReset(); send.mockResolvedValue(undefined);
   addLocal.mockClear(); carrierSwitch.mockClear();
+  jest.spyOn(chatPreferenceStore, 'rememberConfigurations').mockImplementation(async () => (await chatPreferenceStore.loadState()).entries);
+  jest.spyOn(chatPreferenceStore, 'update').mockResolvedValue({});
   listChats.mockReset(); listChats.mockResolvedValue(chatConfigs);
   verifiedSend.mockReset(); verifiedSend.mockResolvedValue(undefined);
   verifyChat.mockClear();

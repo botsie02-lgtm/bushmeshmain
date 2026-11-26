@@ -304,27 +304,12 @@ export function BushMeshProvider({
             ? restoreError.message
             : 'Encrypted Bushmesh message history could not be restored.';
 
-        try {
-          await androidMessagePersistence.resetSecureStorage();
-          messagePersistenceReadyRef.current = true;
-          if (active) {
-            channelMessagesRef.current = [];
-            setChannelMessages([]);
-            setMessagePersistenceStatus('ready');
-            setMessagePersistenceError(
-              `The previous encrypted radio history could not be authenticated and was discarded. Secure message storage was re-keyed. ${restoreMessage}`,
-            );
-          }
-        } catch (resetError) {
-          messagePersistenceReadyRef.current = true;
-          if (active) {
-            setMessagePersistenceStatus('error');
-            setMessagePersistenceError(
-              resetError instanceof Error
-                ? `Message restore failed (${restoreMessage}) and secure storage could not be reinitialized: ${resetError.message}`
-                : `Message restore failed (${restoreMessage}) and secure storage could not be reinitialized.`,
-            );
-          }
+        // Do not discard an unreadable encrypted history or overwrite it with
+        // a partial in-memory snapshot. A later restart can recover the store.
+        messagePersistenceReadyRef.current = false;
+        if (active) {
+          setMessagePersistenceStatus('error');
+          setMessagePersistenceError('Encrypted history could not be restored. Existing storage retained. ' + restoreMessage);
         }
       }
     };

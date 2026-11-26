@@ -22,6 +22,7 @@ function controller() {
     preferences: {[chat.id]: {...defaultChatPreferences, localCreator: true, origin: 'created'}},
     refresh: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockResolvedValue(undefined),
+    updateLocal: jest.fn().mockResolvedValue(undefined),
     provision, leave: jest.fn().mockResolvedValue(undefined),
     credential: jest.fn().mockResolvedValue('ab'.repeat(16)),
     isCurrentRadio: jest.fn(radio => radio === chat.radio),
