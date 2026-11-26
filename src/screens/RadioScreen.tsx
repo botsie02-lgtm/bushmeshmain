@@ -96,11 +96,12 @@ function RadioMessenger({
 }: RadioScreenProps & {management?: ChatManagementController}): React.JSX.Element {
   const {
     connectionStatus, connectedDeviceName, channels, channelMessages,
-    messagePersistenceStatus, messagePersistenceError,
+    messagePersistenceStatus, messagePersistenceError, messageHistoryAvailable,
     canSendChannelMessage, sendChannelMessage, addLocalChannelMessage, addDurableChannelMessage, finishDurableSubmission, clearConversationHistory,
   } = useBushMesh();
-  const exportState = useRef({channelMessages, messagePersistenceStatus});
-  exportState.current = {channelMessages, messagePersistenceStatus};
+  const historyAvailable = messageHistoryAvailable ?? messagePersistenceStatus === 'ready';
+  const exportState = useRef({channelMessages, historyAvailable});
+  exportState.current = {channelMessages, historyAvailable};
   const {snapshot: radioSession} = useRadioSession();
   const radioConnection = useRadioConnection();
   const {snapshot: connection} = radioConnection;
@@ -627,7 +628,7 @@ function RadioMessenger({
   const isRestoring = messagePersistenceStatus === 'restoring';
   const dialog = management && tabVisible && !settingsVisible ? <ChatManagementDialog controller={management}
     selection={managementSelection} onClose={() => setManagementSelection(null)}
-    onClearHistory={typeof clearConversationHistory === 'function' && messagePersistenceStatus === 'ready' ? async (chat, incarnation) => {
+    onClearHistory={typeof clearConversationHistory === 'function' && historyAvailable ? async (chat, incarnation) => {
       const scope = {radioId: chat.radio, channelGeneration: 'config:' + incarnation + ':' + chat.id, channelIndex: String(chat.slot), channelName: chat.name};
       const removed = await clearConversationHistory(scope);
       setReadIds(previous => {const next = new Set(previous); for (const id of removed) next.delete(id); return next;});
@@ -639,8 +640,8 @@ function RadioMessenger({
       }
       Alert.alert('Local history cleared', removed.length + ' records removed. Radio configuration and other conversations are unchanged.');
     } : undefined}
-    onExport={nativeFileExport.conversationSupported() && messagePersistenceStatus === 'ready' ? async (chat, incarnation, format) => {
-      if (exportState.current.messagePersistenceStatus !== 'ready') throw new Error('Encrypted history unavailable.');
+    onExport={nativeFileExport.conversationSupported() && historyAvailable ? async (chat, incarnation, format) => {
+      if (!exportState.current.historyAvailable) throw new Error('Encrypted history unavailable.');
       const scope = {radioId: chat.radio, channelGeneration: 'config:' + incarnation + ':' + chat.id, channelIndex: String(chat.slot), channelName: chat.name};
       const result = buildConversationExport(exportState.current.channelMessages, scope, format);
       const saved = await nativeFileExport.saveConversation(result.content, format);
@@ -763,7 +764,7 @@ function RadioMessenger({
           onReviewObserved={() => setShowUnattributed(true)}
         />
         {management && (messagePersistenceStatus === 'error' || messagePersistenceError) ?
-          <Text style={styles.uncertainText}>Radio History storage needs attention. Check Messaging Settings.</Text> : null}
+          <Text style={styles.uncertainText}>{messagePersistenceError || 'Radio History storage needs attention. Check Messaging Settings.'}</Text> : null}
         {management && !management.ready && management.radio ? (
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Refresh verified chats"
             style={styles.panelAction} disabled={management.busy || management.radioBusy}
@@ -835,7 +836,7 @@ function RadioMessenger({
         canLeave={scope => !!chatFor(scope) && !management?.busy && !management?.radioBusy}
         restoring={isRestoring}
         historyIssue={messagePersistenceStatus === 'error'
-          ? 'Encrypted history could not be restored; inspect device diagnostics.'
+          ? (messagePersistenceError || 'Encrypted history storage needs attention. Inspect device diagnostics.')
           : messagePersistenceStatus === 'unsupported'
             ? 'Encrypted history storage is unavailable in this environment.'
             : messagePersistenceError ? 'History storage reported a recovery event.' : null}

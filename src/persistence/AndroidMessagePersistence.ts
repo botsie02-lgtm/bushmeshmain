@@ -5,6 +5,7 @@ import {
   decodeMessageSnapshot,
   encodeMessageSnapshot,
 } from './messageSnapshot';
+import {assertHistoryBridgeBudget, HISTORY_CAPACITY_MESSAGE, HISTORY_MAX_BRIDGE_BYTES, utf8SnapshotBytes} from './historySnapshotBudget';
 
 type NativePersistenceModule = {
   loadMessages: () => Promise<string | null>;
@@ -37,11 +38,14 @@ export class AndroidMessagePersistence {
       return;
     }
 
+    assertHistoryBridgeBudget(snapshot);
     const serialized = encodeMessageSnapshot(snapshot);
+    const retentionJson = snapshot.retention ? JSON.stringify(snapshot.retention) : null;
+    if (utf8SnapshotBytes(serialized) + (retentionJson ? utf8SnapshotBytes(retentionJson) : 0) > HISTORY_MAX_BRIDGE_BYTES) throw new Error(HISTORY_CAPACITY_MESSAGE);
     let committed: boolean;
-    if (snapshot.retention) {
+    if (retentionJson !== null) {
       if (!module.saveMessagesWithRetention) throw new Error('Protected history retention storage unavailable.');
-      committed = await module.saveMessagesWithRetention(serialized, JSON.stringify(snapshot.retention));
+      committed = await module.saveMessagesWithRetention(serialized, retentionJson);
     } else {
       committed = await module.saveMessages(serialized);
     }

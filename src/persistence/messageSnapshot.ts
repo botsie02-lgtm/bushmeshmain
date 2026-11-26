@@ -167,7 +167,7 @@ export function decodeMessageSnapshot(
   validateMessageSnapshot(parsed);
   const snapshot = parsed as PersistedMessageSnapshotV1;
   return createMessageSnapshot(
-    snapshot.messages.map(normalizePersistedMessage),
+    snapshot.messages as BushMeshChannelMessage[],
     snapshot.savedAtMs,
     snapshot.retention,
   );

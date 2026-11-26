@@ -105,6 +105,8 @@ type BushMeshContextValue = {
   contactPersistenceError: string | null;
   messagePersistenceStatus: MessagePersistenceStatus;
   messagePersistenceError: string | null;
+  /** Restored history remains readable after an admission/write failure. */
+  messageHistoryAvailable: boolean;
 
   setContacts: (contacts: BushMeshContact[]) => void;
   setDeviceStatus: (status: BushMeshDeviceStatus | null) => void;
@@ -167,6 +169,7 @@ export function BushMeshProvider({
   >([]);
   const channelMessagesRef = useRef<BushMeshChannelMessage[]>([]);
   const retentionRef = useRef<HistoryRetention | undefined>(undefined);
+  const committedMessagesRef = useRef<BushMeshChannelMessage[] | null>(null);
   const [messagePersistenceStatus, setMessagePersistenceStatus] =
     useState<MessagePersistenceStatus>(() =>
       androidMessagePersistence.isSupported() ? 'restoring' : 'unsupported',
@@ -192,16 +195,21 @@ export function BushMeshProvider({
 
       const operation = messageWriteChainRef.current.then(async () => {
         // Snapshot at execution time: stale render writes cannot erase durable inbox data.
-        const snapshot = createMessageSnapshot(channelMessagesRef.current, Date.now(), retentionRef.current);
+        const current = channelMessagesRef.current;
+        if (committedMessagesRef.current === current) return false;
+        const snapshot = createMessageSnapshot(current, Date.now(), retentionRef.current);
         if (snapshot.messages.length === 0 && !snapshot.retention) {
           await androidMessagePersistence.clear();
         } else {
           await androidMessagePersistence.save(snapshot);
         }
+        committedMessagesRef.current = current;
+        return true;
       });
 
       const reported = operation
-        .then(() => {
+        .then(written => {
+          if (!written) return;
           setMessagePersistenceStatus('ready');
           setMessagePersistenceError(null);
         })
@@ -294,11 +302,13 @@ export function BushMeshProvider({
         if (active) {
           const restored = snapshot?.messages ?? [];
           retentionRef.current = snapshot?.retention;
+          const hadLocalChanges = channelMessagesRef.current.length > 0;
           const merged = createMessageSnapshot(
             [...channelMessagesRef.current, ...restored],
             Date.now(), retentionRef.current,
           ).messages;
           channelMessagesRef.current = merged;
+          if (!hadLocalChanges) committedMessagesRef.current = merged;
           setChannelMessages(merged);
         }
         messagePersistenceReadyRef.current = true;
@@ -494,18 +504,21 @@ export function BushMeshProvider({
           return;
         }
 
+        const before = channelMessagesRef.current;
         const snapshot = createMessageSnapshot(
-          [durableMessage, ...channelMessagesRef.current],
+          [durableMessage, ...before],
           Date.now(), retentionRef.current,
         );
         await androidMessagePersistence.save(snapshot);
 
         // Merge against the newest in-memory state after the durable write in
         // case a local message arrived while Android storage was completing.
-        const latest = createMessageSnapshot(
+        const unchanged = channelMessagesRef.current === before;
+        const latest = unchanged ? snapshot.messages : createMessageSnapshot(
           [durableMessage, ...channelMessagesRef.current],
           Date.now(), retentionRef.current,
         ).messages;
+        if (unchanged) committedMessagesRef.current = latest;
         channelMessagesRef.current = latest;
         setChannelMessages(latest);
         setMessagePersistenceStatus('ready');
@@ -533,13 +546,16 @@ export function BushMeshProvider({
     if (!androidMessagePersistence.isSupported() || !messagePersistenceReadyRef.current) throw new Error('Encrypted history unavailable.');
     let removed: string[] = [];
     const operation = messageWriteChainRef.current.then(async () => {
-      const plan = planConversationClear(channelMessagesRef.current, scope, retentionRef.current);
+      const before = channelMessagesRef.current;
+      const plan = planConversationClear(before, scope, retentionRef.current);
       if (!plan.deletedIds.length) return;
       const snapshot = createMessageSnapshot(plan.remaining, Date.now(), plan.retention);
       // The records and replay ledger are one authenticated, committed snapshot.
       await androidMessagePersistence.save(snapshot);
       retentionRef.current = plan.retention;
-      const latest = createMessageSnapshot(channelMessagesRef.current, Date.now(), plan.retention).messages;
+      const unchanged = channelMessagesRef.current === before;
+      const latest = unchanged ? snapshot.messages : createMessageSnapshot(channelMessagesRef.current, Date.now(), plan.retention).messages;
+      if (unchanged) committedMessagesRef.current = latest;
       channelMessagesRef.current = latest;
       setChannelMessages(latest);
       setMessagePersistenceStatus('ready');
@@ -556,9 +572,12 @@ export function BushMeshProvider({
     if (!messagePersistenceReadyRef.current) throw new Error('Encrypted history is unavailable.');
     const operation = messageWriteChainRef.current.then(async () => {
       if (!channelMessagesRef.current.some(m => m.id === id && m.conversation && m.status === 'pending')) throw new Error('Pending submission record unavailable.');
-      const snapshot = createMessageSnapshot(channelMessagesRef.current.map(m => m.id === id ? {...m, ...outcome} : m), Date.now(), retentionRef.current);
+      const before = channelMessagesRef.current;
+      const snapshot = createMessageSnapshot(before.map(m => m.id === id ? {...m, ...outcome} : m), Date.now(), retentionRef.current);
       if (androidMessagePersistence.isSupported()) await androidMessagePersistence.save(snapshot);
-      const latest = channelMessagesRef.current.map(m => m.id === id ? {...m, ...outcome} : m);
+      const unchanged = channelMessagesRef.current === before;
+      const latest = unchanged ? snapshot.messages : channelMessagesRef.current.map(m => m.id === id ? {...m, ...outcome} : m);
+      if (unchanged) committedMessagesRef.current = latest;
       channelMessagesRef.current = latest;
       setChannelMessages(latest);
       setMessagePersistenceStatus(androidMessagePersistence.isSupported() ? 'ready' : 'unsupported');
@@ -615,6 +634,7 @@ export function BushMeshProvider({
       contactPersistenceError,
       messagePersistenceStatus,
       messagePersistenceError,
+      messageHistoryAvailable: messagePersistenceReadyRef.current && androidMessagePersistence.isSupported(),
       canSendChannelMessage: sendChannelMessageHandlerState !== null,
       canSyncContacts: syncContactsHandlerState !== null,
       setDeviceStatus,
