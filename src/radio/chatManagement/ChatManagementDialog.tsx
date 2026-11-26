@@ -12,6 +12,7 @@ import {
 import {decodeChatInvite, encodeChatInvite, validateChatInvite, validateChatName} from './chatInvitations';
 import {ChatManagementController} from './useChatManagement';
 import {protectedChannelKey} from '../../native/SensitiveClipboard';
+import {nativeChatInvitationQr} from '../../native/NativeChatInvitationQr';
 
 export type ChatManagementSelection =
   | {kind: 'create' | 'join'; radio: string}
@@ -92,6 +93,11 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
   const [review, setReview] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
   const submitting = useRef(false);
+  const scanToken = useRef(0);
+  const [scanning, setScanning] = useState(false);
+  const live = useRef(controller);
+  live.current = controller;
+  useEffect(() => () => {scanToken.current += 1; nativeChatInvitationQr.hide();}, [selection.radio, controller.sessionEpoch]);
   const current = controller.radio === selection.radio;
   const disabled = !current || controller.busy || controller.radioBusy;
   const full = !!controller.capacity && controller.capacity.used >= controller.capacity.total;
@@ -102,6 +108,28 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
       setReview(false);
     }
   }, [current]);
+  const scan = async () => {
+    const token = ++scanToken.current;
+    const epoch = controller.sessionEpoch;
+    setScanning(true);
+    setInputError(null);
+    Keyboard.dismiss();
+    try {
+      const value = await nativeChatInvitationQr.scan();
+      if (token !== scanToken.current || live.current.sessionEpoch !== epoch || !live.current.isCurrentRadio(selection.radio)) return;
+      if (value === null) return;
+      const parsed = decodeChatInvite(value);
+      setMode('invite');
+      setName(parsed.name);
+      setSecret(parsed.secretHex);
+      setInvite('');
+      setReview(true);
+    } catch {
+      if (token === scanToken.current) setInputError('Could not scan a valid invitation. Check camera permission or paste the invitation manually.');
+    } finally {
+      if (token === scanToken.current) setScanning(false);
+    }
+  };
   const reviewInput = () => {
     setInputError(null);
     try {
@@ -152,6 +180,7 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
       {!review ? (
         <>
           <Section title={joining ? 'Invitation' : 'Chat details'}>
+            {joining && nativeChatInvitationQr.supported() && <Action label="Scan QR invitation" disabled={disabled || full || scanning} onPress={() => {scan().catch(() => undefined);}}/>}
             {joining && <Action label={mode === 'invite' ? 'Enter name and key manually' : 'Paste an invitation instead'}
               disabled={disabled} onPress={() => {
                 setMode(mode === 'invite' ? 'manual' : 'invite');
@@ -250,6 +279,18 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, onExport, i
       await protectedChannelKey.reveal(secret);
     } catch {if (token === revealToken.current) setRevealError(true);}
   };
+  const showQr = async () => {
+    const token = ++revealToken.current;
+    const epoch = controller.sessionEpoch;
+    Keyboard.dismiss();
+    try {
+      const secret = await controller.credential(chat);
+      if (token !== revealToken.current || AppState.currentState === 'background' ||
+          liveController.current.sessionEpoch !== epoch || !liveController.current.isCurrentRadio(chat.radio) ||
+          !liveController.current.ready || (liveController.current.preferences[chat.id]?.incarnation ?? 1) !== incarnation) return;
+      await nativeChatInvitationQr.show(encodeChatInvite({name: chat.name, secretHex: secret}));
+    } catch {if (token === revealToken.current) setRevealError(true);}
+  };
   const invite = () => Alert.alert(
     'Share private invitation?',
     'Anyone receiving this invitation can access the shared channel. Only share with trusted people. The receiving app may keep a copy. This is not an authenticated convoy invitation.',
@@ -326,6 +367,7 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, onExport, i
           {!protectedChannelKey.supported() && <Text style={styles.body}>Protected key reveal is unavailable on this platform.</Text>}
           {revealError && <Text style={styles.danger}>Key could not be revealed. Refresh and retry.</Text>}
           <Text style={styles.body}>Reveal opens a protected Android window for up to 30 seconds. Hide or copy there. Anyone possessing this shared key may access the channel.</Text></>}
+        {chat.privateChannel && nativeChatInvitationQr.supported() && <Action label="Show private invitation QR" disabled={disabled} onPress={() => {showQr().catch(() => undefined);}}/>}
         <Action label="Share private invitation" disabled={disabled || !chat.privateChannel} onPress={invite}/>
         {shareError && <Text style={styles.danger}>Invitation could not be shared. Refresh the chat before trying again.</Text>}
         <Text style={styles.body}>Verified member lists, administrator roles and membership controls require authenticated group security and are unavailable.</Text>

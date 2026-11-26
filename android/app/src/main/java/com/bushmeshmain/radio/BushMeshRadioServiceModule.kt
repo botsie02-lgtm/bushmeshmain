@@ -19,10 +19,12 @@ class BushMeshRadioServiceModule(
 ) : ReactContextBaseJavaModule(reactContext), LifecycleEventListener {
   private val credentialHandler = Handler(Looper.getMainLooper())
   private val credentialWindow = ProtectedChannelKeyWindow()
+  private val invitationWindow = ProtectedInvitationWindow()
   init { reactContext.addLifecycleEventListener(this) }
 
   private fun hideCredential() {
     credentialWindow.hide()
+    invitationWindow.hide()
   }
 
   override fun onHostResume() = Unit
@@ -60,6 +62,37 @@ class BushMeshRadioServiceModule(
     }
   }
 
+
+  @ReactMethod
+  fun showChatInvitationQr(invitation: String, promise: Promise) {
+    credentialHandler.post {
+      try {
+        hideCredential()
+        val activity = checkNotNull(reactContext.currentActivity)
+        check(reactContext.lifecycleState == com.facebook.react.common.LifecycleState.RESUMED)
+        invitationWindow.showQr(activity, invitation)
+        promise.resolve(true)
+      } catch (_: Exception) {
+        hideCredential()
+        promise.reject("BUSHMESH_QR_FAILED", "Protected invitation QR unavailable.")
+      }
+    }
+  }
+
+  @ReactMethod
+  fun scanChatInvitationQr(promise: Promise) {
+    credentialHandler.post {
+      try {
+        hideCredential()
+        val activity = checkNotNull(reactContext.currentActivity)
+        check(reactContext.lifecycleState == com.facebook.react.common.LifecycleState.RESUMED)
+        invitationWindow.scan(activity) { value -> promise.resolve(value) }
+      } catch (_: Exception) {
+        hideCredential()
+        promise.reject("BUSHMESH_QR_SCAN_FAILED", "Invitation scanner unavailable.")
+      }
+    }
+  }
 
   override fun getName(): String = "BushMeshRadioService"
 
