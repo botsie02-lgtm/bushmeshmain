@@ -1,6 +1,9 @@
 package com.bushmeshmain.radio
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Base64OutputStream
+import java.io.OutputStream
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -27,6 +30,9 @@ class BushMeshPersistenceModule(
     private const val OUTBOX_KEY = "encrypted_outbox_snapshot"
     private const val TRACK_KEY = "encrypted_track_snapshot"
     private const val CONTACTS_KEY = "encrypted_contacts_snapshot"
+    // Process-wide fence: a failed rollback must not be followed by another
+    // history transaction against SharedPreferences' speculative memory map.
+    private val uncertainMessageStores = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private const val MESSAGES_KEY = "encrypted_messages_snapshot"
     private const val MESSAGE_RETENTION_KEY = "encrypted_message_retention_guard_v1"
     private const val MESSAGE_RETENTION_AAD = "v1:message-retention"
@@ -124,73 +130,140 @@ class BushMeshPersistenceModule(
     resetStorage(CONTACTS_KEY, CONTACTS_KEY_ALIAS, "BUSHMESH_CONTACTS_RESET_FAILED", "contacts", promise)
   }
 
+  private fun checkMessageStore() {
+    check(storageName !in uncertainMessageStores) { "History commit recovery is uncertain. Restart before retrying." }
+  }
+
+  private fun messageCapacity(promise: Promise) {
+    promise.reject("BUSHMESH_HISTORY_CAPACITY", "Encrypted history exceeds the safe snapshot memory budget. Existing history retained; export or clear selected local history to free capacity. New messages are not confirmed saved.")
+  }
+
   @ReactMethod
   @Synchronized
   fun loadMessages(promise: Promise) {
     try {
-      val marker = preferences().getString(MESSAGE_RETENTION_KEY, null)
-      if (marker == null) {
-        loadSecureValue(MESSAGES_KEY, messageKeyAlias, MESSAGES_AAD, "messages", "BUSHMESH_MESSAGES_LOAD_FAILED", promise)
+      checkMessageStore()
+      val prefs = preferences()
+      val marker = prefs.getString(MESSAGE_RETENTION_KEY, null)
+      val envelope = prefs.getString(MESSAGES_KEY, null)
+      if (envelope == null) {
+        check(marker == null)
+        promise.resolve(null)
         return
       }
-      val envelope = checkNotNull(preferences().getString(MESSAGES_KEY, null))
+      // Preserve compatibility with larger legacy snapshots when enough heap
+      // remains; do not overwrite or reset an unreadable snapshot.
+      HistorySnapshotBudget.requireRestore(envelope.length.toLong() + (marker?.length ?: 0))
       val snapshot = decrypt(envelope, messageKeyAlias, MESSAGES_AAD, "messages")
-      val guard = MessageRetentionGuard.parse(decrypt(marker, messageKeyAlias, MESSAGE_RETENTION_AAD, "retention"))
-      check(guard == MessageRetentionGuard.fromSnapshot(snapshot))
+      if (marker != null) {
+        val guard = MessageRetentionGuard.parse(decrypt(marker, messageKeyAlias, MESSAGE_RETENTION_AAD, "retention"))
+        check(guard == MessageRetentionGuard.fromSnapshot(snapshot))
+      }
       promise.resolve(snapshot)
+    } catch (_: HistoryCapacityException) {
+      messageCapacity(promise)
+    } catch (_: OutOfMemoryError) {
+      messageCapacity(promise)
     } catch (_: Exception) {
-      promise.reject("BUSHMESH_MESSAGES_LOAD_FAILED", "Encrypted history retention could not be verified. Existing storage retained.")
+      promise.reject("BUSHMESH_MESSAGES_LOAD_FAILED", "Encrypted history could not be verified. Existing storage retained.")
     }
   }
 
   @ReactMethod
   @Synchronized
   fun saveMessages(serializedSnapshot: String, promise: Promise) {
-    if (preferences().contains(MESSAGE_RETENTION_KEY)) {
-      promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", "History write lacks the protected retention ledger.")
-      return
-    }
-    saveSecureValue(MESSAGES_KEY, messageKeyAlias, MESSAGES_AAD, "messages", "BUSHMESH_MESSAGES_SAVE_FAILED", serializedSnapshot, promise)
+    saveMessageTransaction(serializedSnapshot, null, promise)
   }
 
   @ReactMethod
   @Synchronized
   fun saveMessagesWithRetention(serializedSnapshot: String, retentionJson: String, promise: Promise) {
+    saveMessageTransaction(serializedSnapshot, retentionJson, promise)
+  }
+
+  private fun saveMessageTransaction(snapshot: String, retention: String?, promise: Promise) {
     try {
-      val next = MessageRetentionGuard.parse(retentionJson)
-      check(next == MessageRetentionGuard.fromSnapshot(serializedSnapshot))
+      checkMessageStore()
+      // No full UTF-8 byte array, encryption or Base64 before preflight.
+      val snapshotBytes = HistorySnapshotBudget.utf8Bytes(snapshot)
+      val retentionBytes = retention?.let { HistorySnapshotBudget.utf8Bytes(it) } ?: 0L
+      HistorySnapshotBudget.requireWrite(snapshotBytes + retentionBytes)
       val prefs = preferences()
       val previous = prefs.getString(MESSAGE_RETENTION_KEY, null)
-      if (previous != null) {
-        val guard = MessageRetentionGuard.parse(decrypt(previous, messageKeyAlias, MESSAGE_RETENTION_AAD, "retention"))
-        check(next.includes(guard))
+      if (retention == null) {
+        check(previous == null) { "History write lacks protected retention ledger." }
+      } else {
+        val next = MessageRetentionGuard.parse(retention)
+        check(next == MessageRetentionGuard.fromSnapshot(snapshot))
+        if (previous != null) {
+          HistorySnapshotBudget.requireRestore(previous.length.toLong())
+          val guard = MessageRetentionGuard.parse(decrypt(previous, messageKeyAlias, MESSAGE_RETENTION_AAD, "retention"))
+          check(next.includes(guard))
+        }
       }
-      val snapshotEnvelope = encrypt(serializedSnapshot, messageKeyAlias, MESSAGES_AAD)
-      val markerEnvelope = encrypt(retentionJson, messageKeyAlias, MESSAGE_RETENTION_AAD)
-      check(prefs.edit().putString(MESSAGES_KEY, snapshotEnvelope).putString(MESSAGE_RETENTION_KEY, markerEnvelope).commit())
+      val snapshotEnvelope = encryptMessageEnvelope(snapshot, snapshotBytes.toInt(), MESSAGES_AAD)
+      val markerEnvelope = retention?.let { encryptMessageEnvelope(it, retentionBytes.toInt(), MESSAGE_RETENTION_AAD) }
+      commitMessageValues(prefs, snapshotEnvelope, markerEnvelope)
       promise.resolve(true)
+    } catch (_: HistoryCapacityException) {
+      messageCapacity(promise)
+    } catch (_: OutOfMemoryError) {
+      // Last-resort error boundary; preflight is the primary protection.
+      if (storageName in uncertainMessageStores) {
+        promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", "History commit is uncertain. Restart before retrying; no save acknowledged.")
+      } else {
+        messageCapacity(promise)
+      }
     } catch (_: Exception) {
-      promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", "Encrypted history and retention could not be committed.")
+      promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", "Encrypted history and retention could not be committed. No save acknowledged.")
+    }
+  }
+
+  /** SharedPreferences changes its in-process map before disk commit. Restore
+   * both previous values on a failed commit; fence the store if rollback is
+   * not confirmed. No later history save may acknowledge speculative data. */
+  private fun commitMessageValues(prefs: SharedPreferences, snapshot: String?, marker: String?) {
+    val beforeSnapshot = prefs.getString(MESSAGES_KEY, null)
+    val beforeMarker = prefs.getString(MESSAGE_RETENTION_KEY, null)
+    fun edit(value: String?, guard: String?): SharedPreferences.Editor =
+      prefs.edit().putString(MESSAGES_KEY, value).putString(MESSAGE_RETENTION_KEY, guard)
+    uncertainMessageStores.add(storageName)
+    try {
+      check(edit(snapshot, marker).commit())
+      uncertainMessageStores.remove(storageName)
+    } catch (failure: Exception) {
+      if (edit(beforeSnapshot, beforeMarker).commit()) uncertainMessageStores.remove(storageName)
+      throw failure
+    } catch (failure: OutOfMemoryError) {
+      // Rollback also may fail under pressure; keep the fence on failure.
+      if (edit(beforeSnapshot, beforeMarker).commit()) uncertainMessageStores.remove(storageName)
+      throw failure
     }
   }
 
   @ReactMethod
   @Synchronized
   fun clearMessages(promise: Promise) {
-    if (preferences().contains(MESSAGE_RETENTION_KEY)) {
-      promise.reject("BUSHMESH_MESSAGES_CLEAR_FAILED", "Clear must preserve the protected retention ledger.")
-      return
+    try {
+      checkMessageStore()
+      val prefs = preferences()
+      check(!prefs.contains(MESSAGE_RETENTION_KEY))
+      commitMessageValues(prefs, null, null)
+      promise.resolve(true)
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_MESSAGES_CLEAR_FAILED", "Encrypted history clear was not confirmed.")
+    } catch (_: OutOfMemoryError) {
+      promise.reject("BUSHMESH_MESSAGES_CLEAR_FAILED", "Encrypted history clear was not confirmed.")
     }
-    clearSecureValue(MESSAGES_KEY, "messages", "BUSHMESH_MESSAGES_CLEAR_FAILED", promise)
   }
 
   @ReactMethod
   @Synchronized
   fun resetMessagesStorage(promise: Promise) {
-    // Existing explicit destructive reset is the only operation allowed to
-    // discard the entire store and its retention ledger together.
+    // Existing explicit destructive reset only; no automatic reset on capacity.
     try {
-      check(preferences().edit().remove(MESSAGES_KEY).remove(MESSAGE_RETENTION_KEY).commit())
+      checkMessageStore()
+      commitMessageValues(preferences(), null, null)
       val store = keyStore()
       if (store.containsAlias(messageKeyAlias)) store.deleteEntry(messageKeyAlias)
       getOrCreateKey(messageKeyAlias)
@@ -508,6 +581,53 @@ class BushMeshPersistenceModule(
     val iv = Base64.encodeToString(cipher.iv, Base64.NO_WRAP)
     val payload = Base64.encodeToString(encrypted, Base64.NO_WRAP)
     return "$ENVELOPE_VERSION:$iv:$payload"
+  }
+
+  /** Same v1 envelope, nonce and AAD as the existing store. Encrypt bounded
+   * UTF-8 chunks and Base64 directly into one pre-sized envelope buffer.
+   * No full plaintext byte array, full payload String or concatenation copy.
+   * Provider-internal buffering and the final SharedPreferences value remain. */
+  private fun encryptMessageEnvelope(text: String, bytes: Int, aad: String): String {
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(messageKeyAlias))
+    cipher.updateAAD(aad.toByteArray(StandardCharsets.UTF_8))
+    check(cipher.iv.size == GCM_IV_BYTES)
+    val prefix = "$ENVELOPE_VERSION:" + Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":"
+    val encodedSize = 4 * ((bytes + GCM_TAG_BITS / 8 + 2) / 3)
+    val sink = FixedEnvelopeOutput(prefix, encodedSize)
+    val base64 = Base64OutputStream(sink, Base64.NO_WRAP or Base64.NO_CLOSE)
+    var offset = 0
+    while (offset < text.length) {
+      var end = minOf(offset + 8192, text.length)
+      // Never split a surrogate pair across chunks.
+      if (end < text.length && Character.isHighSurrogate(text[end - 1]) && Character.isLowSurrogate(text[end])) end--
+      val chunk = text.substring(offset, end).toByteArray(StandardCharsets.UTF_8)
+      try { cipher.update(chunk)?.let { base64.write(it) } }
+      finally { chunk.fill(0) }
+      offset = end
+    }
+    base64.write(cipher.doFinal())
+    base64.close()
+    return sink.finish()
+  }
+
+  private class FixedEnvelopeOutput(prefix: String, encodedSize: Int) : OutputStream() {
+    private val buffer = ByteArray(prefix.length + encodedSize)
+    private var offset = 0
+    init { write(prefix.toByteArray(StandardCharsets.US_ASCII)) }
+    override fun write(value: Int) {
+      check(offset < buffer.size)
+      buffer[offset++] = value.toByte()
+    }
+    override fun write(value: ByteArray, start: Int, length: Int) {
+      check(length <= buffer.size - offset)
+      value.copyInto(buffer, offset, start, start + length)
+      offset += length
+    }
+    fun finish(): String {
+      check(offset == buffer.size)
+      return String(buffer, StandardCharsets.US_ASCII)
+    }
   }
 
   private fun decrypt(
