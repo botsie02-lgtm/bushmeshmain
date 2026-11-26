@@ -1,10 +1,13 @@
 package com.bushmeshmain.radio
 
 import android.content.Context
+import android.content.Intent
 import android.os.Debug
 import android.os.SystemClock
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
+import com.bushmeshmain.MainActivity
+import com.bushmeshmain.MainApplication
 import com.facebook.react.bridge.Callback
 import com.facebook.react.bridge.PromiseImpl
 import com.facebook.react.bridge.ReactApplicationContext
@@ -29,14 +32,24 @@ class HistoryNativeStorageTest {
   }
 
   private fun withScratch(test: (BushMeshPersistenceModule, android.content.SharedPreferences) -> Unit) {
-    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val instrumentation = InstrumentationRegistry.getInstrumentation()
+    val context = instrumentation.targetContext
     check(context.packageName == "com.bushmeshmain.radioredesign")
     val suffix = UUID.randomUUID().toString()
     val name = "bushmesh_history_scratch_" + suffix
     val alias = "bushmesh_history_scratch_" + suffix
+    val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     try {
-      test(BushMeshPersistenceModule(ReactApplicationContext(context), name, alias), context.getSharedPreferences(name, Context.MODE_PRIVATE))
+      val host = (context.applicationContext as MainApplication).reactHost
+      val deadline = SystemClock.uptimeMillis() + 20_000
+      var reactContext: ReactApplicationContext? = null
+      while (reactContext == null && SystemClock.uptimeMillis() < deadline) {
+        reactContext = host.currentReactContext as? ReactApplicationContext
+        if (reactContext == null) SystemClock.sleep(100)
+      }
+      test(BushMeshPersistenceModule(checkNotNull(reactContext) { "Live React application context unavailable" }, name, alias), context.getSharedPreferences(name, Context.MODE_PRIVATE))
     } finally {
+      instrumentation.runOnMainSync { activity.finish() }
       context.deleteSharedPreferences(name)
       KeyStore.getInstance("AndroidKeyStore").apply { load(null); if (containsAlias(alias)) deleteEntry(alias) }
     }
