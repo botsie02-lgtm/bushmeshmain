@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Alert, BackHandler, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {Alert, AppState, BackHandler, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {ChatManagementDialog, type ChatManagementSelection} from '../radio/chatManagement/ChatManagementDialog';
 import {useChatManagement, type ChatManagementController} from '../radio/chatManagement/useChatManagement';
 import {chatPreferenceStore, DEFAULT_QUICK_MESSAGES, defaultChatPreferences, type ChatConfiguration} from '../radio/chatManagement/chatPreferences';
@@ -114,6 +114,13 @@ function RadioMessenger({
   useEffect(() => {if (!tabVisible || settingsVisible) {setManagementSelection(null); setShowNew(false);}}, [tabVisible, settingsVisible]);
   const [pendingChat, setPendingChat] = useState<ChatConfiguration | null>(null);
   const [readIds, setReadIds] = useState<ReadonlySet<string>>(new Set());
+  const [appState, setAppState] = useState(AppState.currentState);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', setAppState);
+    return () => subscription.remove();
+  }, []);
+  const readAttempt = useRef<string | null>(null);
+  const [unreadAnchor, setUnreadAnchor] = useState<{key: string; id: string} | null>(null);
 
   const [observedLabels, setObservedLabels] = useState<ChannelLabel[]>([]);
   const [sessionScopes, setSessionScopes] = useState<RadioConversationScope[]>([]);
@@ -326,7 +333,7 @@ function RadioMessenger({
     return {...c, verifiedNow: liveScopes.some(scope => equalScope(scope, c.scope)), pinned: prefs?.pinned ?? c.pinned,
       displayName: prefs?.displayName || c.channel.channelName,
       personalisation: prefs, manualUnread: prefs?.unread,
-      unreadCount: management ? (c.messages.length ? c.messages.filter(m =>
+      unreadCount: management ? (prefs && c.messages.length ? c.messages.filter(m =>
         m.message.direction === 'received' && !readIds.has(m.message.id) && !prefs?.readIds?.includes(m.message.id)).length : null) : c.unreadCount};
   }).filter(c => (!management || !!preferencesFor(c.scope)?.archived === archived) &&
     (filter === 'all' || (filter === 'pinned' ? c.pinned : !!c.manualUnread || !!c.unreadCount)) &&
@@ -370,18 +377,31 @@ function RadioMessenger({
       persistedOwnership, sessionOwnership) : [],
     [channelMessages, selectedScope, persistedOwnership, sessionOwnership]);
 
+  // A mounted room is not necessarily visible. Do not consume unread state
+  // behind settings, diagnostics, another tab or a backgrounded activity.
+  const roomVisible = appState === 'active' && tabVisible && !settingsVisible &&
+    !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew;
   useEffect(() => {
-    if (!management || !selectedScope || !selectedMessages.length || settingsVisible || managementSelection || !tabVisible) return;
-    const receivedIds = selectedMessages.filter(item => item.message.direction === 'received').map(item => item.message.id);
-    if (localId && localPreference && receivedIds.some(id => !readIds.has(id) && !localPreference.readIds?.includes(id))) {
-      management.updateLocal(localId, {readIds: [...new Set([...(localPreference.readIds ?? []), ...receivedIds])]}, localIncarnation).catch(() => undefined);
+    if (!management || !activeKey || !roomVisible || !localId || !localPreference) {
+      readAttempt.current = null;
+      return;
     }
-    setReadIds(previous => {
-      const next = new Set(previous);
-      for (const item of selectedMessages) next.add(item.message.id);
-      return next.size === previous.size ? previous : next;
+    const receivedIds = selectedMessages.filter(item => item.message.direction === 'received' &&
+      !readIds.has(item.message.id) && !localPreference.readIds?.includes(item.message.id)).map(item => item.message.id);
+    if (!receivedIds.length && !localPreference.unread) return;
+    if (receivedIds.length) setUnreadAnchor(previous => previous?.key === activeKey ? previous : {key: activeKey, id: receivedIds[0]});
+    const attempt = JSON.stringify([activeKey, receivedIds, !!localPreference.unread]);
+    if (readAttempt.current === attempt) return;
+    readAttempt.current = attempt;
+    management.updateLocal(localId, {readIds: receivedIds, unread: false}, localIncarnation).then(() => {
+      setReadIds(previous => new Set([...previous, ...receivedIds]));
+    }).catch(() => {
+      setNotices(previous => ({...previous, [activeKey]: 'Read state could not be saved. Reopen this chat to retry.'}));
     });
-  }, [selectedScope, selectedMessages, management, settingsVisible, managementSelection, tabVisible, localId, localPreference, localIncarnation, readIds]);
+  }, [activeKey, selectedMessages, management, roomVisible, localId, localPreference, localIncarnation, readIds]);
+  useEffect(() => {
+    setUnreadAnchor(previous => previous?.key === activeKey ? previous : null);
+  }, [activeKey]);
   const currentChannel = selectedScope && radioId === selectedScope.radioId && connected
     ? channels.find(c => c.channelIndex === selectedScope.channelIndex &&
       c.channelName === selectedScope.channelName) ?? null : null;
@@ -411,12 +431,9 @@ function RadioMessenger({
     setSelectedScope(scope);
     lastNavigation.current = scope.channelIndex;
     setViewedConversation({kind: 'meshcore-channel', channelIndex: scope.channelIndex});
-    const prefs = preferencesFor(scope);
-    const id = scope.channelGeneration.startsWith('config:') ? scope.channelGeneration.split(':').pop() : undefined;
-    if (id && prefs?.unread && management) management.updateLocal(id, {unread: false}, prefs.incarnation ?? 1).catch(() => undefined);
     const key = conversationKey(scope);
     const count = unreadCounts[key];
-    if (onConversationRead && Number.isSafeInteger(count) && count > 0) {
+    if (roomVisible && onConversationRead && Number.isSafeInteger(count) && count > 0) {
       const mostRecent = scopedMessages(channelMessages, scope,
         persistedOwnership, sessionOwnership).slice(-1)[0];
       if (mostRecent) onConversationRead(scope, mostRecent.message.id);
@@ -660,7 +677,8 @@ function RadioMessenger({
         <RadioChatRoom
           scope={selectedScope} messages={selectedMessages} initialSearch={searchRoom}
           connected={connected && radioId === selectedScope.radioId}
-          visible={tabVisible && !settingsVisible && !managementSelection}
+          visible={roomVisible}
+          firstUnreadId={unreadAnchor?.key === activeKey ? unreadAnchor?.id : undefined}
           quickMessages={localPreference?.quickMessages ?? globalTemplates}
           onSaveQuickMessages={management && localId && localPreference ? templates => management.updateLocal(localId, {quickMessages: templates}, localIncarnation) : undefined}
           starredIds={localPreference?.starredIds}
@@ -737,6 +755,13 @@ function RadioMessenger({
         connectionStatus={connection.status ?? connectionStatus} onConnection={onOpenRadioConnection}
         onArchive={management ? scope => localMenuUpdate(scope, {archived: !preferencesFor(scope)?.archived}) : undefined}
         onMarkUnread={management ? scope => localMenuUpdate(scope, {unread: true}) : undefined}
+        onMarkRead={management ? scope => {
+          const pref = preferencesFor(scope);
+          const id = scope.channelGeneration.startsWith('config:') ? scope.channelGeneration.split(':').pop() : undefined;
+          if (!id || !pref) return;
+          const ids = scopedMessages(channelMessages, scope, persistedOwnership, sessionOwnership).filter(m => m.message.direction === 'received').map(m => m.message.id);
+          management.updateLocal(id, {readIds: ids, unread: false}, pref.incarnation ?? 1).then(() => setReadIds(previous => new Set([...previous, ...ids]))).catch(() => Alert.alert('Could not save', 'Local read state was not saved.'));
+        } : undefined}
         onSearchRoom={scope => {openRoom(scope); setSearchRoom(true);}}
         onLeave={management ? scope => {
           const chat = chatFor(scope);

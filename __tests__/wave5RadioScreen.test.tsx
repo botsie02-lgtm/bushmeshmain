@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {FlatList, KeyboardAvoidingView, Modal, StyleSheet} from 'react-native';
+import {AppState, FlatList, KeyboardAvoidingView, Modal, StyleSheet} from 'react-native';
 import {RadioScreen} from '../src/screens/RadioScreen';
 import {RadioInbox} from '../src/screens/radioMessenger/RadioInbox';
 import {ViewedConversationProvider} from '../src/app/activeContext/ViewedConversationContext';
@@ -127,6 +127,7 @@ afterEach(async () => {
   jest.restoreAllMocks();
 });
 beforeEach(() => {
+  AppState.currentState = 'active';
   connected = true; addr = 'AA:BB:CC:DD'; activeChannelIndex = '0';
   ready = true; restore = 'ready'; messages = [];
   send.mockReset(); send.mockResolvedValue(undefined);
@@ -593,4 +594,22 @@ test('global template restoration pauses off-tab and leaves unmanaged messenger 
   expect(load).toHaveBeenCalledTimes(2);
   await rerender({enableChatManagement: false, tabVisible: true});
   expect(load).toHaveBeenCalledTimes(2);
+});
+
+
+test('durable associated receive stays unread behind a hidden room until visible', async () => {
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'recent'});
+  await mount({enableChatManagement: true});
+  await room('Private');
+  await rerender({enableChatManagement: true, tabVisible: false});
+  messages = [{id: 'offscreen-durable', channelIndex: '1', channelName: 'Private', direction: 'received', status: 'confirmed',
+    text: 'OFFSCREEN DURABLE RECEIVE', createdAt: new Date().toISOString(),
+    conversation: {radioId: chatRadio, channelGeneration: 'config:1:' + chatConfigs[1].id, channelIndex: '1', channelName: 'Private', provenance: 'local-observation'}}];
+  await rerender({enableChatManagement: true, tabVisible: false});
+  expect(chatPreferenceStore.update).not.toHaveBeenCalledWith(chatConfigs[1].id, expect.objectContaining({readIds: ['offscreen-durable']}), 1);
+  await rerender({enableChatManagement: true, tabVisible: true});
+  expect(chatPreferenceStore.update).toHaveBeenCalledWith(chatConfigs[1].id, {readIds: ['offscreen-durable'], unread: false}, 1);
+  expect(viewText()).toContain('OFFSCREEN DURABLE RECEIVE');
+  expect(viewText()).toContain('First unread message');
+  expect(verifiedSend).not.toHaveBeenCalled();
 });

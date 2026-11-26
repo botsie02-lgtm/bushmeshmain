@@ -17,6 +17,7 @@ export type RadioChatRoomProps = {
   scope: RadioConversationScope;
   initialSearch?: boolean;
   visible?: boolean;
+  firstUnreadId?: string;
   quickMessages?: readonly string[];
   onSaveQuickMessages?: (values: string[]) => Promise<void>;
   observedCount?: number;
@@ -97,7 +98,7 @@ export function RadioChatRoom({
   scope, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
   onTogglePinned, personalisation, displayName, persistentPin, visible = true,
-  starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false,
+  starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false, firstUnreadId,
 }: RadioChatRoomProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -120,6 +121,14 @@ export function RadioChatRoom({
     (messageFilter === 'all' || (messageFilter === 'starred' ? starredIds : pinnedIds)?.includes(m.message.id))).reverse(), [messages, query, messageFilter, starredIds, pinnedIds]);
   const page = useMemo(() => descending.slice(0, pageSize), [descending, pageSize]);
   useEffect(() => {setPageSize(100);}, [scope.radioId, scope.channelGeneration, query, messageFilter]);
+  const unreadIndex = descending.findIndex(m => m.message.id === firstUnreadId);
+  const [jumpUnread, setJumpUnread] = useState(false);
+  useEffect(() => {
+    if (!jumpUnread || unreadIndex < 0 || unreadIndex >= page.length) return;
+    nearBottom.current = false;
+    listRef.current?.scrollToIndex({index: unreadIndex, animated: true, viewPosition: 0.5});
+    setJumpUnread(false);
+  }, [jumpUnread, unreadIndex, page.length]);
   const validation = validateCarrierText(draft);
   const sendEnabled = canSubmit && validation.valid && !isSubmitting;
 
@@ -206,6 +215,7 @@ export function RadioChatRoom({
         onEndReachedThreshold={0.4}
         keyExtractor={entry => entry.message.id}
         onScroll={onListScroll}
+        onScrollToIndexFailed={({index, averageItemLength}) => listRef.current?.scrollToOffset({offset: index * averageItemLength, animated: true})}
         scrollEventThrottle={120}
         maintainVisibleContentPosition={{minIndexForVisible: 0}}
         onContentSizeChange={() => {
@@ -227,6 +237,7 @@ export function RadioChatRoom({
                   {text: 'Cancel', style: 'cancel'},
                 ]);
               }}><Bubble entry={item} />{starredIds?.includes(item.message.id) || pinnedIds?.includes(item.message.id) ? <Text style={styles.statusText}>{starredIds?.includes(item.message.id) ? '★ Starred ' : ''}{pinnedIds?.includes(item.message.id) ? '• Pinned' : ''}</Text> : null}</TouchableOpacity>
+              {item.message.id === firstUnreadId ? <View style={styles.dateWrap}><Text accessibilityLabel="First unread message" style={[styles.dateText, {color: colors.accent}]}>Unread messages</Text></View> : null}
               {firstInDay ? (
                 <View style={styles.dateWrap}>
                   <Text style={styles.dateText}>{dateLabel(item.message.createdAt)}</Text>
@@ -246,6 +257,7 @@ export function RadioChatRoom({
           </View>
         }
       />
+      {unreadIndex >= 0 ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to first unread message" onPress={() => {setPageSize(n => Math.max(n, unreadIndex + 1)); setJumpUnread(true);}} style={styles.menuButton}><Text style={styles.menuText}>↑ First unread</Text></TouchableOpacity> : null}
       <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => listRef.current?.scrollToOffset({offset: 0, animated: true})} style={styles.menuButton}><Text style={styles.menuText}>↓ Latest</Text></TouchableOpacity>
       <View style={styles.composerArea}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Quick messages" onPress={() => setQuickOpen(v => !v)} style={styles.menuButton}><Text style={styles.menuText}>Quick messages</Text></TouchableOpacity>

@@ -273,7 +273,7 @@ export class ChatPreferenceStore {
       unread: typeof patch.unread === 'boolean' ? patch.unread : current.unread,
       ...(typeof patch.draft === 'string' ? {draft: patch.draft.slice(0, 512)} : {}),
       ...(Array.isArray(patch.quickMessages) ? {quickMessages: [...new Set(patch.quickMessages.map(value => value.trim()))]} : {}),
-      ...Object.fromEntries((['readIds', 'starredIds', 'pinnedIds'] as const).flatMap(key => Array.isArray(patch[key]) ? [[key, [...new Set(patch[key]!.filter(v => typeof v === 'string' && v.length > 0 && v.length <= 256))]]] : [])),
+      ...Object.fromEntries((['readIds', 'starredIds', 'pinnedIds'] as const).flatMap(key => Array.isArray(patch[key]) ? [[key, [...new Set([...(key === 'readIds' ? current.readIds ?? [] : []), ...patch[key]!.filter(v => typeof v === 'string' && v.length > 0 && v.length <= 256)])]]] : [])),
     });});
   }
 

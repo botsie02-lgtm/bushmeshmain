@@ -45,6 +45,7 @@ export type RadioInboxProps = {
   connectionStatus?: string;
   onArchive?: (scope: RadioConversationScope) => void;
   onMarkUnread?: (scope: RadioConversationScope) => void;
+  onMarkRead?: (scope: RadioConversationScope) => void;
   onSearchRoom?: (scope: RadioConversationScope) => void;
   onLeave?: (scope: RadioConversationScope) => void;
   canLeave?: (scope: RadioConversationScope) => boolean;
@@ -62,7 +63,7 @@ export function RadioInbox({
   unknownHistoryCount, search, onSearch, onOpen, onPin, onNewChat,
   onSettings, onReviewUnattributed, onOpenRowMenu, onOpenChatSettings, managed,
   visible = true, filter = 'all', onFilter, onRefresh, refreshing = false,
-  onConnection, connectionStatus, onArchive, onMarkUnread, onSearchRoom, onLeave, canLeave,
+  onConnection, connectionStatus, onArchive, onMarkUnread, onMarkRead, onSearchRoom, onLeave, canLeave,
 }: RadioInboxProps): React.JSX.Element {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
@@ -225,7 +226,7 @@ export function RadioInbox({
             <ScrollView keyboardShouldPersistTaps="always" style={styles.sheetScroll}>
               <Action subtle label={selected.pinned ? 'Unpin chat' : 'Pin chat'} onPress={() => action(onPin)}/>
               {onArchive && <Action subtle label={filter === 'archived' ? 'Unarchive chat' : 'Archive chat'} onPress={() => action(onArchive)}/>}
-              {onMarkUnread && <Action subtle label="Mark unread" onPress={() => action(onMarkUnread)}/>}
+              {onMarkRead && (selected.manualUnread || !!selected.unreadCount) ? <Action subtle label="Mark read" onPress={() => action(onMarkRead)}/> : onMarkUnread && <Action subtle label="Mark unread" onPress={() => action(onMarkUnread)}/>}
               {onSearchRoom && <Action subtle label="Search conversation" onPress={() => action(onSearchRoom)}/>}
               <Action subtle label="Chat details" onPress={() => action(onOpenChatSettings ?? onOpen)}/>
               {onLeave && canLeave?.(selected.scope) && <Action subtle label="Leave chat" onPress={() => action(onLeave)}/>}
