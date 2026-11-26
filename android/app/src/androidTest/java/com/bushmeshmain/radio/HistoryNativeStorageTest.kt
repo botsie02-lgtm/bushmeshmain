@@ -5,6 +5,10 @@ import android.content.Intent
 import android.os.Debug
 import android.os.SystemClock
 import android.util.Log
+import android.util.Base64
+import javax.crypto.Cipher
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 import androidx.test.platform.app.InstrumentationRegistry
 import com.bushmeshmain.MainActivity
 import com.bushmeshmain.MainApplication
@@ -33,7 +37,7 @@ class HistoryNativeStorageTest {
     return Pair(!failure.get(), result.get())
   }
 
-  private fun withScratch(test: (BushMeshPersistenceModule, android.content.SharedPreferences) -> Unit) {
+  private fun withScratch(test: (BushMeshPersistenceModule, android.content.SharedPreferences, String) -> Unit) {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val context = instrumentation.targetContext
     check(context.packageName == "com.bushmeshmain.radioredesign")
@@ -49,7 +53,7 @@ class HistoryNativeStorageTest {
         reactContext = host.currentReactContext as? ReactApplicationContext
         if (reactContext == null) SystemClock.sleep(100)
       }
-      test(BushMeshPersistenceModule(checkNotNull(reactContext) { "Live React application context unavailable" }, name, alias), context.getSharedPreferences(name, Context.MODE_PRIVATE))
+      test(BushMeshPersistenceModule(checkNotNull(reactContext) { "Live React application context unavailable" }, name, alias), context.getSharedPreferences(name, Context.MODE_PRIVATE), alias)
     } finally {
       instrumentation.runOnMainSync { activity.finish() }
       context.deleteSharedPreferences(name)
@@ -57,7 +61,7 @@ class HistoryNativeStorageTest {
     }
   }
 
-  @Test fun retentionMarkerRejectsRegressionAndSingleSnapshotRollback() = withScratch { store, prefs ->
+  @Test fun retentionMarkerRejectsRegressionAndSingleSnapshotRollback() = withScratch { store, prefs, _ ->
     val old = """{"version":1,"savedAtMs":1,"messages":[]}"""
     assertTrue(nativeCall { store.saveMessages(old, it) }.first)
     val oldEnvelope = prefs.getString("encrypted_messages_snapshot", null)
@@ -100,13 +104,15 @@ class HistoryNativeStorageTest {
     return md.digest()
   }
 
-  private data class WriteResult(val bytes: Int, val digest: ByteArray, val elapsedMs: Long, val success: Boolean, val code: Any?)
+  private data class WriteResult(val bytes: Int, val digest: ByteArray, val elapsedMs: Long, val success: Boolean, val code: Any?, val heapBefore: Long, val heapAfter: Long)
   private fun write(store: BushMeshPersistenceModule, count: Int): WriteResult {
     val text = snapshot(count)
     val expected = digest(text)
+    val runtime = Runtime.getRuntime()
+    val before = runtime.totalMemory() - runtime.freeMemory()
     val start = SystemClock.elapsedRealtime()
     val result = nativeCall { store.saveMessages(text, it) }
-    return WriteResult(text.length, expected, SystemClock.elapsedRealtime() - start, result.first, result.second)
+    return WriteResult(text.length, expected, SystemClock.elapsedRealtime() - start, result.first, result.second, before, runtime.totalMemory() - runtime.freeMemory())
     // Only the small digest/metrics escape. No old plaintext held across saves.
   }
   private fun restore(store: BushMeshPersistenceModule, expected: ByteArray): Long {
@@ -121,13 +127,16 @@ class HistoryNativeStorageTest {
     Log.i("BushMeshHistoryScale", line)
     println(line)
   }
-  private fun measureSupported(count: Int) = withScratch { store, prefs ->
+  private fun measureSupported(count: Int) = withScratch { store, prefs, _ ->
     val runtime = Runtime.getRuntime()
     val before = runtime.totalMemory() - runtime.freeMemory()
     val initial = write(store, count)
+    report("RADIO_HISTORY_NATIVE_PHASE count=$count operation=initial success=${initial.success} bytes=${initial.bytes} ms=${initial.elapsedMs} heapBefore=${initial.heapBefore} heapAfter=${initial.heapAfter}")
     assertTrue("Initial write $count: ${initial.code}", initial.success)
     val restoreMs = restore(store, initial.digest)
+    report("RADIO_HISTORY_NATIVE_PHASE count=$count operation=restore success=true ms=$restoreMs")
     val incremental = write(store, count + 1)
+    report("RADIO_HISTORY_NATIVE_PHASE count=$count operation=incremental success=${incremental.success} bytes=${incremental.bytes} ms=${incremental.elapsedMs} heapBefore=${incremental.heapBefore} heapAfter=${incremental.heapAfter}")
     assertTrue("Incremental write $count: ${incremental.code}", incremental.success)
     val incrementalRestore = restore(store, incremental.digest)
     val heapDelta = runtime.totalMemory() - runtime.freeMemory() - before
@@ -144,7 +153,7 @@ class HistoryNativeStorageTest {
   @Test fun syntheticNativeSnapshotScaleAndCorruptEnvelopeRecovery() {
     measureSupported(1000)
     measureSupported(10000)
-    withScratch { store, prefs ->
+    withScratch { store, prefs, _ ->
       // The largest fixture is still built and offered to the production
       // storage boundary. Explicitly require a controlled capacity rejection,
       // not a mocked success or a weakened test. No 50k restore is possible
@@ -171,13 +180,70 @@ class HistoryNativeStorageTest {
       assertEquals(beforeEnvelope, prefs.getString("encrypted_messages_snapshot", null))
       assertNull(prefs.getString("encrypted_message_retention_guard_v1", null))
       restore(store, baseline.digest)
-      report("RADIO_HISTORY_NATIVE_SCALE count=50000 status=capacity_rejected bytes=${initial.bytes} initialRejectMs=${initial.elapsedMs} incrementalCandidateBytes=${incremental.bytes} incrementalRejectMs=${incremental.elapsedMs} restoreMs=not_committed preservedBaselineRestoreMs=$verifiedMs retentionRejected=true heapLimit=${Runtime.getRuntime().maxMemory()}")
+      report("RADIO_HISTORY_NATIVE_SCALE count=50000 status=capacity_rejected bytes=${initial.bytes} initialRejectMs=${initial.elapsedMs} incrementalCandidateBytes=${incremental.bytes} incrementalRejectMs=${incremental.elapsedMs} restoreMs=not_committed preservedBaselineRestoreMs=$verifiedMs retentionRejected=true initialHeapBefore=${initial.heapBefore} initialHeapAfter=${initial.heapAfter} incrementalHeapBefore=${incremental.heapBefore} incrementalHeapAfter=${incremental.heapAfter} pssKb=${Debug.getPss()} heapLimit=${Runtime.getRuntime().maxMemory()}")
     }
   }
 
-  @Test fun streamingEnvelopeRetainsUnicodeAndChunkBoundaryCompatibility() = withScratch { store, _ ->
-    val text = "a".repeat(8191) + "🙂日本é" + "z".repeat(8192)
+  @Test fun streamingEnvelopeRetainsUnicodeAndChunkBoundaryCompatibility() = withScratch { store, prefs, alias ->
+    val prefix = """{"version":1,"savedAtMs":1,"messages":[],"synthetic":""" + "\""
+    val text = prefix + "a".repeat(8191 - prefix.length) + "🙂日本é" + "z".repeat(8192) + "\"}"
+    // Use the scratch key, not operational history. Construct an envelope
+    // with the exact old one-shot algorithm and verify it with current load.
     assertTrue(nativeCall { store.saveMessages(text, it) }.first)
+    val key = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.getKey(alias, null) as SecretKey
+    val legacy = Cipher.getInstance("AES/GCM/NoPadding")
+    legacy.init(Cipher.ENCRYPT_MODE, key)
+    legacy.updateAAD("v1:messages".toByteArray(Charsets.UTF_8))
+    val oldEnvelope = "v1:" + Base64.encodeToString(legacy.iv, Base64.NO_WRAP) + ":" +
+      Base64.encodeToString(legacy.doFinal(text.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+    assertTrue(prefs.edit().putString("encrypted_messages_snapshot", oldEnvelope).commit())
     assertEquals(Pair(true, text), nativeCall { store.loadMessages(it) })
+    assertTrue(nativeCall { store.saveMessages(text, it) }.first)
+    // The new streamed envelope is also readable by the old one-shot decoder.
+    val parts = checkNotNull(prefs.getString("encrypted_messages_snapshot", null)).split(':', limit = 3)
+    assertEquals("v1", parts[0])
+    val decoder = Cipher.getInstance("AES/GCM/NoPadding")
+    decoder.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, Base64.decode(parts[1], Base64.NO_WRAP)))
+    decoder.updateAAD("v1:messages".toByteArray(Charsets.UTF_8))
+    assertEquals(text, String(decoder.doFinal(Base64.decode(parts[2], Base64.NO_WRAP)), Charsets.UTF_8))
+  }
+
+  @Test fun rejectedCommitRestoresBothValuesAndUncertainRollbackKeepsFence() = withScratch { store, prefs, _ ->
+    val retention = """{"version":1,"deletedIds":["removed"],"possibleReplayKeys":[]}"""
+    val snapshot = """{"version":1,"savedAtMs":2,"retention":$retention,"messages":[]}"""
+    assertTrue(nativeCall { store.saveMessagesWithRetention(snapshot, retention, it) }.first)
+    val old = prefs.getString("encrypted_messages_snapshot", null)
+    val oldMarker = prefs.getString("encrypted_message_retention_guard_v1", null)
+    var fenced = false
+    var calls = 0
+    // Simulate a commit returning failure *after* the real preference editor
+    // has changed its values, then perform a real synchronous rollback.
+    assertThrows(IllegalStateException::class.java) {
+      HistoryCommitTransaction.commit(prefs, "encrypted_messages_snapshot", "encrypted_message_retention_guard_v1",
+        "synthetic failed value", "synthetic failed guard", { fenced = it }) { editor ->
+        calls++
+        assertTrue(editor.commit())
+        calls != 1
+      }
+    }
+    assertEquals(2, calls)
+    assertFalse(fenced)
+    assertEquals(old, prefs.getString("encrypted_messages_snapshot", null))
+    assertEquals(oldMarker, prefs.getString("encrypted_message_retention_guard_v1", null))
+    assertEquals(Pair(true, snapshot), nativeCall { store.loadMessages(it) })
+    // Fault injection: even a rollback which cannot confirm its write must
+    // leave the transaction fence active. This is not a hardware I/O test.
+    calls = 0
+    assertThrows(IllegalStateException::class.java) {
+      HistoryCommitTransaction.commit(prefs, "encrypted_messages_snapshot", "encrypted_message_retention_guard_v1",
+        "synthetic failed value", "synthetic failed guard", { fenced = it }) { editor ->
+        calls++
+        assertTrue(editor.commit())
+        false
+      }
+    }
+    assertEquals(2, calls)
+    assertTrue(fenced)
+    assertEquals(Pair(true, snapshot), nativeCall { store.loadMessages(it) })
   }
 }

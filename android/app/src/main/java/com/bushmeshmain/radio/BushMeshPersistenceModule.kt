@@ -203,6 +203,9 @@ class BushMeshPersistenceModule(
           check(next.includes(guard))
         }
       }
+      // Reading the existing preferences and retention ledger can consume
+      // additional heap. Re-evaluate before creating the encrypted envelope.
+      HistorySnapshotBudget.requireWrite(snapshotBytes + retentionBytes)
       val snapshotEnvelope = encryptMessageEnvelope(snapshot, snapshotBytes.toInt(), MESSAGES_AAD)
       val markerEnvelope = retention?.let { encryptMessageEnvelope(it, retentionBytes.toInt(), MESSAGE_RETENTION_AAD) }
       commitMessageValues(prefs, snapshotEnvelope, markerEnvelope)
@@ -217,31 +220,15 @@ class BushMeshPersistenceModule(
         messageCapacity(promise)
       }
     } catch (_: Exception) {
-      promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", "Encrypted history and retention could not be committed. No save acknowledged.")
+      promise.reject("BUSHMESH_MESSAGES_SAVE_FAILED", if (storageName in uncertainMessageStores)
+        "History commit recovery is uncertain. Restart before retrying; no save acknowledged."
+        else "Encrypted history and retention could not be committed. No save acknowledged.")
     }
   }
 
-  /** SharedPreferences changes its in-process map before disk commit. Restore
-   * both previous values on a failed commit; fence the store if rollback is
-   * not confirmed. No later history save may acknowledge speculative data. */
-  private fun commitMessageValues(prefs: SharedPreferences, snapshot: String?, marker: String?) {
-    val beforeSnapshot = prefs.getString(MESSAGES_KEY, null)
-    val beforeMarker = prefs.getString(MESSAGE_RETENTION_KEY, null)
-    fun edit(value: String?, guard: String?): SharedPreferences.Editor =
-      prefs.edit().putString(MESSAGES_KEY, value).putString(MESSAGE_RETENTION_KEY, guard)
-    uncertainMessageStores.add(storageName)
-    try {
-      check(edit(snapshot, marker).commit())
-      uncertainMessageStores.remove(storageName)
-    } catch (failure: Exception) {
-      if (edit(beforeSnapshot, beforeMarker).commit()) uncertainMessageStores.remove(storageName)
-      throw failure
-    } catch (failure: OutOfMemoryError) {
-      // Rollback also may fail under pressure; keep the fence on failure.
-      if (edit(beforeSnapshot, beforeMarker).commit()) uncertainMessageStores.remove(storageName)
-      throw failure
-    }
-  }
+  private fun commitMessageValues(prefs: SharedPreferences, snapshot: String?, marker: String?) =
+    HistoryCommitTransaction.commit(prefs, MESSAGES_KEY, MESSAGE_RETENTION_KEY, snapshot, marker,
+      fence = { uncertain -> if (uncertain) uncertainMessageStores.add(storageName) else uncertainMessageStores.remove(storageName) })
 
   @ReactMethod
   @Synchronized

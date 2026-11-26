@@ -6,7 +6,7 @@ out="$3"
 pkg=com.bushmeshmain.radioredesign
 runner="$pkg.test/androidx.test.runner.AndroidJUnitRunner"
 mkdir -p "$out"
-trap 'adb logcat -d -b crash > "$out/smoke-crash-log.txt" || true; adb logcat -d -t 2000 > "$out/smoke-logcat.txt" || true' EXIT
+trap 'adb logcat -d -b crash > "$out/smoke-crash-log.txt" || true; adb logcat -d -t 2000 > "$out/smoke-logcat.txt" || true; if [ ! -s "$out/smoke-native-history-scale.txt" ]; then adb logcat -d -s BushMeshHistoryScale:I | tee "$out/smoke-native-history-scale.txt" || true; fi' EXIT
 adb shell getprop ro.build.version.sdk | tr -d '\r' | tee "$out/smoke-api.txt"
 grep -qx 36 "$out/smoke-api.txt"
 adb shell input keyevent 82
