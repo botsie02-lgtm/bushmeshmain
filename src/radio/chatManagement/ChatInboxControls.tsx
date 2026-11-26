@@ -1,22 +1,24 @@
 import React, {useState} from 'react';
 import {StyleSheet, Text, TextInput, TouchableOpacity, View} from 'react-native';
 import {colors} from '../../theme/colors';
-import {ChatConfiguration, ChatSort, defaultChatPreferences, selectChats} from './chatPreferences';
+import {CHAT_SORT_OPTIONS, ChatActivity, ChatConfiguration, ChatSort, defaultChatPreferences, selectChats} from './chatPreferences';
 import {ChatAvatar} from './ChatAvatar';
 import {ChatManagementSelection} from './ChatManagementDialog';
 import {ChatManagementController} from './useChatManagement';
 
 /** Optional inbox controls. Both the inbox and chat room use the same dialog. */
-export function ChatInboxControls({controller, onManage, onOpen}: {
+export function ChatInboxControls({controller, onManage, onOpen, activity}: {
   controller: ChatManagementController;
   onManage: (selection: ChatManagementSelection) => void;
   onOpen: (chat: ChatConfiguration) => void;
+  /** Latest safely attributed message time by configuration ID, if available. */
+  activity?: ChatActivity;
 }): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [archived, setArchived] = useState(false);
   const sort = controller.sort;
-  const visible = selectChats(controller.chats, controller.preferences, query, archived, sort);
-  const sortLabels: Record<ChatSort, string> = {name: 'Name', unread: 'Unread first', slot: 'Radio slot'};
+  const visible = selectChats(controller.chats, controller.preferences, query, archived, sort, activity);
+  const sortLabels: Record<ChatSort, string> = {recent: 'Most recent', name: 'Name', unread: 'Unread first', slot: 'Radio slot'};
   const radio = controller.radio;
   const disabled = !radio || controller.busy || controller.radioBusy;
   return (
@@ -42,7 +44,7 @@ export function ChatInboxControls({controller, onManage, onOpen}: {
         <Text style={styles.link}>{archived ? 'Show active chats' : 'Show archived chats'}</Text>
       </TouchableOpacity>
       <View style={styles.row}>
-        {(['name', 'unread', 'slot'] as const).map(option => (
+        {CHAT_SORT_OPTIONS.map(option => (
           <TouchableOpacity key={option} accessibilityRole="button"
             accessibilityState={{selected: option === sort, disabled: disabled || !controller.ready || controller.chats.length === 0}}
             disabled={disabled || !controller.ready || controller.chats.length === 0}
@@ -51,6 +53,7 @@ export function ChatInboxControls({controller, onManage, onOpen}: {
           </TouchableOpacity>
         ))}
       </View>
+      {sort === 'recent' && !activity && <Text style={styles.body}>Message activity unavailable; chats with unknown activity are sorted by name.</Text>}
       {controller.capacity && <Text style={styles.body}>{controller.capacity.used} of {controller.capacity.total} slots used</Text>}
       {!controller.ready && <Text style={styles.body}>Connect and sync your radio, then refresh chats.</Text>}
       {!!controller.error && <Text style={styles.body}>{controller.error}</Text>}

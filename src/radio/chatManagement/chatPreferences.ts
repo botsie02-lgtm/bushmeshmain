@@ -77,8 +77,10 @@ export async function configurationId(
 }
 
 export type ChatPreferenceSnapshot = Record<string, ChatPreferences>;
-export type ChatSort = 'name' | 'unread' | 'slot' | 'recent';
-const sorts: readonly ChatSort[] = ['name', 'unread', 'slot', 'recent'];
+export const CHAT_SORT_OPTIONS = ['recent', 'name', 'unread', 'slot'] as const;
+export type ChatSort = typeof CHAT_SORT_OPTIONS[number];
+const sorts: readonly ChatSort[] = CHAT_SORT_OPTIONS;
+export type ChatActivity = Readonly<Partial<Record<string, number | null>>>;
 
 export function decodeChatPreferences(serialized: string | null): ChatPreferenceSnapshot {
   if (serialized === null) return {};
@@ -268,8 +270,19 @@ export const chatPreferenceStore = new ChatPreferenceStore();
 
 export function selectChats(
   chats: readonly ChatConfiguration[], preferences: ChatPreferenceSnapshot,
-  query = '', archived = false, sort: ChatSort = 'name',
+  query = '', archived = false, sort: ChatSort = 'recent',
+  activity: ChatActivity = {},
 ): ChatConfiguration[] {
+  // Only callers with attributed history may supply activity. Unknown values
+  // remain unknown and fall back to deterministic name/slot ordering.
+  const activityMs = (id: string): number => {
+    const value = activity[id];
+    return typeof value === 'number' && Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+  };
+  const compareRecent = (a: string, b: string): number => {
+    const first = activityMs(a), second = activityMs(b);
+    return first === second ? 0 : first > second ? -1 : 1;
+  };
   const needle = query.trim().toLowerCase();
   return chats.filter(chat => {
     const p = preferences[chat.id] ?? defaultChatPreferences;
@@ -279,6 +292,7 @@ export function selectChats(
     Number(!!preferences[b.id]?.pinned) - Number(!!preferences[a.id]?.pinned) ||
     (sort === 'unread' ? Number(!!preferences[b.id]?.unread) - Number(!!preferences[a.id]?.unread) : 0) ||
     (sort === 'slot' ? a.slot - b.slot : 0) ||
+    (sort === 'recent' ? compareRecent(a.id, b.id) : 0) ||
     (preferences[a.id]?.displayName || a.name).localeCompare(preferences[b.id]?.displayName || b.name) ||
     a.slot - b.slot);
 }

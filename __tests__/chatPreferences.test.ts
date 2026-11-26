@@ -191,3 +191,25 @@ test('quick templates validate UTF-8 payload length before saving', async () => 
   await store.update(one, {quickMessages: ['🚙'.repeat(33)]});
   expect((await store.load())[one].quickMessages).toEqual(['🚙'.repeat(33)]);
 });
+
+test('recent is the default and survives protected preference restart', async () => {
+  const {store, native} = fixture();
+  expect(await store.loadSort()).toBe('recent');
+  await store.recordProvisioned(one, true);
+  await store.saveSort('slot');
+  await store.saveSort('recent');
+  const restored = new ChatPreferenceStore(() => native);
+  expect(await restored.loadSort()).toBe('recent');
+  expect((await restored.load())[one].localCreator).toBe(true);
+});
+
+test('recent sorting preserves pinned priority and orders only known activity before unknown', () => {
+  const chats = [
+    {id: one, radio: 'radio', slot: 0, name: 'Alpha', privateChannel: true},
+    {id: two, radio: 'radio', slot: 1, name: 'Zulu', privateChannel: true},
+    {id: three, radio: 'radio', slot: 2, name: 'Bravo', privateChannel: true},
+  ];
+  expect(selectChats(chats, {}, '', false, 'recent', {[one]: 100, [two]: 200, [three]: null}).map(c => c.id)).toEqual([two, one, three]);
+  expect(selectChats(chats, {[one]: {...defaultChatPreferences, pinned: true}}, '', false, 'recent', {[two]: 200}).map(c => c.id)).toEqual([one, two, three]);
+  expect(selectChats(chats, {}, '', false, 'recent', {[one]: NaN, [three]: Infinity}).map(c => c.id)).toEqual([one, three, two]);
+});

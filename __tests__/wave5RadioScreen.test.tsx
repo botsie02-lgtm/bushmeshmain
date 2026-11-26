@@ -2,6 +2,7 @@ import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
 import {FlatList, KeyboardAvoidingView, StyleSheet} from 'react-native';
 import {RadioScreen} from '../src/screens/RadioScreen';
+import {RadioInbox} from '../src/screens/radioMessenger/RadioInbox';
 import {ViewedConversationProvider} from '../src/app/activeContext/ViewedConversationContext';
 import {useBushMesh} from '../src/state/BushMeshContext';
 import {useRadioConnection} from '../src/state/RadioConnectionContext';
@@ -506,4 +507,24 @@ test('quick message fills composer without submitting', async () => {
   const input = tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' && typeof node.props.onChangeText === 'function')[0];
   expect(input.props.value).toBe('Ready to go.');
   expect(send).not.toHaveBeenCalled();
+});
+
+test('managed recent ordering uses attributed activity rather than channel name or ambiguous backlog', async () => {
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'recent'});
+  messages = [
+    ...chatConfigs.map((chat, index): BushMeshChannelMessage => ({
+      id: 'attributed-' + chat.id, channelIndex: String(chat.slot), channelName: chat.name,
+      text: 'Local submission', direction: 'sent', status: 'accepted',
+      createdAt: new Date(index === 0 ? 2000 : 1000).toISOString(),
+      conversation: {version: 1, provenance: 'local-submission', radioId: chat.radio,
+        channelGeneration: 'config:1:' + chat.id, channelIndex: String(chat.slot), channelName: chat.name},
+    })),
+    {id: 'unattributed-newer', channelIndex: '1', channelName: 'Private',
+      text: 'Ambiguous backlog', direction: 'received', status: 'confirmed', createdAt: new Date(3000).toISOString()},
+  ];
+  await mount({enableChatManagement: true});
+  expect(tree.root.findByType(RadioInbox).props.conversations).toMatchObject([
+    {channel: {channelName: 'Public'}, activityMs: 2000},
+    {channel: {channelName: 'Private'}, activityMs: 1000},
+  ]);
 });
