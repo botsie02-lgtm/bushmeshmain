@@ -39,6 +39,7 @@ export type RadioScreenProps = {
   onOpenChatSettings?: (scope: RadioConversationScope) => void;
   onOpenConversationMenu?: (scope: RadioConversationScope) => void;
   onOpenMessagingSettings?: () => void;
+  onOpenRadioConnection?: () => void;
   /**
    * Durable, non-secret radio ID and channel configuration generation from the
    * radio/history worker. Must be verified before use, not inferred from a
@@ -87,7 +88,7 @@ function ManagedRadioScreen(props: RadioScreenProps): React.JSX.Element {
 
 function RadioMessenger({
   onOpenCarrierDetails, onCreateChat, onJoinChat,
-  onOpenChatSettings, onOpenConversationMenu, onOpenMessagingSettings,
+  onOpenChatSettings, onOpenConversationMenu, onOpenMessagingSettings, onOpenRadioConnection,
   trustedScopes = [], verifiedMessageOwnership = NO_PROOF,
   unreadCounts = NO_UNREAD, onConversationRead, management, settingsVisible, tabVisible = true,
 }: RadioScreenProps & {management?: ChatManagementController}): React.JSX.Element {
@@ -127,6 +128,11 @@ function RadioMessenger({
   const [search, setSearch] = useState('');
   const [pinned, setPinned] = useState<ReadonlySet<string>>(new Set());
   const [selectedScope, setSelectedScope] = useState<RadioConversationScope | null>(null);
+  const [searchRoom, setSearchRoom] = useState(false);
+  const selectionRef = useRef(managementSelection);
+  selectionRef.current = managementSelection;
+  const selectedRef = useRef(selectedScope);
+  selectedRef.current = selectedScope;
   const lastNavigation = useRef<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [notices, setNotices] = useState<Record<string, string>>({});
@@ -392,6 +398,7 @@ function RadioMessenger({
           : presentation.explanation;
 
   const openRoom = (scope: RadioConversationScope) => {
+    setSearchRoom(false);
     setSelectedScope(scope);
     lastNavigation.current = scope.channelIndex;
     setViewedConversation({kind: 'meshcore-channel', channelIndex: scope.channelIndex});
@@ -407,6 +414,7 @@ function RadioMessenger({
     }
   };
   const closeRoom = () => {
+    setSearchRoom(false);
     setSelectedScope(null);
     lastNavigation.current = null;
     setViewedConversation(null);
@@ -430,6 +438,12 @@ function RadioMessenger({
     } else {
       Alert.alert('Chat unavailable', 'Connect the original radio and refresh chats before changing this configuration.');
     }
+  };
+  const localMenuUpdate = (scope: RadioConversationScope, patch: {archived?: boolean; unread?: boolean}) => {
+    const prefs = preferencesFor(scope);
+    const id = scope.channelGeneration.startsWith('config:') ? scope.channelGeneration.split(':').pop() : undefined;
+    if (management && id && prefs) management.updateLocal(id, patch, prefs.incarnation ?? 1).catch(() => Alert.alert('Could not save', 'Local chat preference was not saved.'));
+    else Alert.alert('Chat unavailable', 'This earlier conversation has no editable preferences.');
   };
   const togglePinned = (scope: RadioConversationScope) => {
     if (management) {
@@ -577,8 +591,10 @@ function RadioMessenger({
     selection={managementSelection} onClose={() => setManagementSelection(null)}
     onProvisioned={setPendingChat}
     onLeft={chat => {
-      if (selectedScope?.channelGeneration.endsWith(':' + chat.id) &&
-          selectedScope.radioId === chat.radio) closeRoom();
+      const scope = selectedRef.current;
+      if (scope?.channelGeneration.endsWith(':' + chat.id) && scope.radioId === chat.radio) closeRoom();
+      const current = selectionRef.current;
+      if (current?.kind === 'settings' && current.chat.id === chat.id && current.chat.radio === chat.radio) setManagementSelection(null);
     }} /> : null;
 
   if (showUnattributed) {
@@ -627,7 +643,7 @@ function RadioMessenger({
     return (
       <View style={styles.root}>
         <RadioChatRoom
-          scope={selectedScope} messages={selectedMessages}
+          scope={selectedScope} messages={selectedMessages} initialSearch={searchRoom}
           connected={connected && radioId === selectedScope.radioId}
           visible={tabVisible && !settingsVisible && !managementSelection}
           quickMessages={localPreference?.quickMessages}
@@ -701,6 +717,12 @@ function RadioMessenger({
         onRefresh={management?.radio && !management.radioBusy ? () => management.refresh().catch(() => undefined) : undefined}
         refreshing={management?.busy ?? false}
         online={connected} radioLabel={connectedDeviceName}
+        connectionStatus={connectionStatus} onConnection={onOpenRadioConnection}
+        onArchive={management ? scope => localMenuUpdate(scope, {archived: !preferencesFor(scope)?.archived}) : undefined}
+        onMarkUnread={management ? scope => localMenuUpdate(scope, {unread: true}) : undefined}
+        onSearchRoom={scope => {openRoom(scope); setSearchRoom(true);}}
+        onLeave={management ? openChatManagement : undefined}
+        canLeave={scope => !!chatFor(scope) && !management?.busy && !management?.radioBusy}
         restoring={isRestoring}
         historyIssue={messagePersistenceStatus === 'error'
           ? 'Encrypted history could not be restored; inspect device diagnostics.'

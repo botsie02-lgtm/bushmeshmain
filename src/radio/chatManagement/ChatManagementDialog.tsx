@@ -266,9 +266,8 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation
     [
       {text: 'Cancel', style: 'cancel'},
       {text: 'Leave chat', style: 'destructive', onPress: () => {
-        controller.leave(chat).then(() => {
+        controller.leave(chat, () => {
           onLeft?.(chat);
-          onClose();
         }).catch(() => undefined);
       }},
     ],
@@ -324,6 +323,7 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation
       </Section>
       <Section title="Leave chat">
         <Text style={styles.body}>Remove this channel from the connected radio only. Your encrypted Radio History is retained.</Text>
+        {controller.busy && <Text style={styles.body}>Radio operation in progress. You can go back; this does not cancel the operation.</Text>}
         <Action label="Leave and clear radio slot" disabled={disabled} danger onPress={leave}/>
       </Section>
     </>
@@ -335,10 +335,10 @@ export function ChatManagementDialog(props: ChatManagementDialogProps): React.JS
   if (!selection) return null;
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen"
-      onRequestClose={() => {if (!controller.busy) onClose();}}>
+      onRequestClose={onClose}>
       <SafeAreaView style={styles.screen}>
         <View style={styles.header}>
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back" disabled={controller.busy}
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back"
             onPress={onClose} style={styles.back}>
             <Text style={styles.backText}>‹ Back</Text>
           </TouchableOpacity>

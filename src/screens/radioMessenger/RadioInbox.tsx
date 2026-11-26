@@ -1,6 +1,6 @@
 import React, {useEffect, useState} from 'react';
 import {
-  BackHandler, FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View,
+  FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
 import {ChatAvatar} from '../../radio/chatManagement/ChatAvatar';
@@ -41,6 +41,13 @@ export type RadioInboxProps = {
   onReviewUnattributed: () => void;
   onOpenRowMenu?: (scope: RadioConversationScope) => void;
   onOpenChatSettings?: (scope: RadioConversationScope) => void;
+  onConnection?: () => void;
+  connectionStatus?: string;
+  onArchive?: (scope: RadioConversationScope) => void;
+  onMarkUnread?: (scope: RadioConversationScope) => void;
+  onSearchRoom?: (scope: RadioConversationScope) => void;
+  onLeave?: (scope: RadioConversationScope) => void;
+  canLeave?: (scope: RadioConversationScope) => boolean;
 };
 
 function clock(value: number | null) {
@@ -55,14 +62,26 @@ export function RadioInbox({
   unknownHistoryCount, search, onSearch, onOpen, onPin, onNewChat,
   onSettings, onReviewUnattributed, onOpenRowMenu, onOpenChatSettings, managed,
   visible = true, filter = 'all', onFilter, onRefresh, refreshing = false,
+  onConnection, connectionStatus, onArchive, onMarkUnread, onSearchRoom, onLeave, canLeave,
 }: RadioInboxProps): React.JSX.Element {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
+  const selected = conversations.find(item => conversationKey(item.scope) === menuFor);
   useEffect(() => {
-    if (!visible) {setMenuFor(null); return;}
-    if (!menuFor) return;
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {setMenuFor(null); return true;});
-    return () => subscription.remove();
+    if (!visible || (menuFor && !selected)) setMenuFor(null);
+  }, [visible, menuFor, selected]);
+  const closeMenu = () => setMenuFor(null);
+  const action = (callback: (scope: RadioConversationScope) => void) => {
+    if (!selected) return;
+    const scope = selected.scope;
+    closeMenu();
+    callback(scope);
+  };
+  const openMenu = (scope: RadioConversationScope) => {
+    onOpenRowMenu?.(scope);
+    setMenuFor(conversationKey(scope));
+  };
+  return () => subscription.remove();
   }, [visible, menuFor]);
   return (
     <View style={styles.root}>
@@ -84,16 +103,16 @@ export function RadioInbox({
           </TouchableOpacity>
         </View>
       </View>
-      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Explain radio status"
-        onPress={() => setShowInfo(v => !v)} style={styles.connectionStrip}>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={onConnection ? (online ? "Manage radio connection" : "Connect radio") : "Explain radio status"}
+        onPress={onConnection ?? (() => setShowInfo(v => !v))} style={styles.connectionStrip}>
         <View style={[styles.dot, {backgroundColor: online ? colors.success : colors.warning}]} />
         <Text style={styles.connectionLabel}>
-          {online ? 'Companion connected' : 'Radio disconnected'}
+          {online ? 'Companion connected' : connectionStatus && /scan|connect|request/i.test(connectionStatus) && connectionStatus !== 'Disconnected' ? connectionStatus : 'Radio disconnected'}
         </Text>
         <Text style={styles.connectionDetail} numberOfLines={1}>
           {online ? radioLabel ?? 'MeshCore' : 'Saved conversations only'}
         </Text>
-        <Text style={styles.chevron}>ⓘ</Text>
+        <Text style={styles.chevron}>{onConnection ? (online ? "Manage ›" : "Connect ›") : "ⓘ"}</Text>
       </TouchableOpacity>
       {showInfo ? <Text style={styles.notice}>
         A connected companion is not proof of peer availability or message
@@ -150,7 +169,7 @@ export function RadioInbox({
               <TouchableOpacity accessibilityRole="button"
                 accessibilityLabel={'Open chat ' + item.channel.channelName + distinction}
                 onPress={() => {setMenuFor(null); onOpen(item.scope);}}
-                onLongPress={() => setMenuFor(id)}
+                onLongPress={() => openMenu(item.scope)}
                 style={styles.row} activeOpacity={0.75}>
                 {item.personalisation ? <ChatAvatar name={item.displayName || item.channel.channelName}
                   {...item.personalisation}/> : <View style={styles.avatar}><Text style={styles.avatarText}>#</Text></View>}
@@ -162,10 +181,7 @@ export function RadioInbox({
                     <Text style={styles.when}>{clock(item.activityMs)}</Text>
                   </View>
                   <Text style={styles.preview} numberOfLines={2}>{item.preview}</Text>
-                  <Text style={styles.subline}>Channel {item.channel.channelIndex} · {' '}
-                    {managed ? (item.verifiedNow ? 'Verified configuration' : 'Saved · read-only') : item.scope.channelGeneration.startsWith('session-') ? 'This-session identity' : 'Saved conversation'}
-                    {item.unreadCount === null ? '' : managed ? ' · Session read state' : ' · Read state available'}
-                  </Text>
+                  {managed ? (!item.verifiedNow && <Text style={styles.subline}>Saved · read-only</Text>) : <Text style={styles.subline}>Channel {item.channel.channelIndex} · {item.scope.channelGeneration.startsWith('session-') ? 'This-session identity' : 'Saved conversation'}{item.unreadCount === null ? '' : ' · Read state available'}</Text>}
                 </View>
                 {item.manualUnread && !item.unreadCount ? <View style={styles.unread}
                   accessibilityLabel="Manually marked unread"><Text style={styles.unreadText}>•</Text></View> : null}
@@ -179,25 +195,12 @@ export function RadioInbox({
               <TouchableOpacity accessibilityRole="button"
                 accessibilityLabel={'Chat options ' + item.channel.channelName + distinction}
                 accessibilityState={{expanded: open}}
-                onPress={() => {
-                  if (onOpenRowMenu) onOpenRowMenu(item.scope);
-                  setMenuFor(current => current === id ? null : id);
-                }}
+                onPress={() => openMenu(item.scope)}
                 style={styles.rowMore}>
                 <Text style={styles.moreText}>⋮</Text>
               </TouchableOpacity>
               </View>
-              {open ? <View style={styles.menu}>
-                <Action subtle label={item.pinned ? 'Unpin chat' : 'Pin chat'}
-                  onPress={() => {onPin(item.scope); setMenuFor(null);}} />
-                <Action subtle label="Chat details" onPress={() => {
-                  setMenuFor(null);
-                  if (onOpenChatSettings) onOpenChatSettings(item.scope);
-                  else onOpen(item.scope);
-                }} />
-                <Action subtle label="Close chat options"
-                  onPress={() => setMenuFor(null)} />
-              </View> : null}
+
             </View>
           );
         }}
@@ -216,6 +219,23 @@ export function RadioInbox({
           </View>
         }
       />
+      {visible && selected ? <Modal transparent animationType="none" visible onRequestClose={closeMenu}>
+        <View style={styles.overlay}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Dismiss conversation options" style={StyleSheet.absoluteFill} onPress={closeMenu}/>
+          <View accessibilityViewIsModal style={styles.sheet}>
+            <Text style={styles.rowName}>{selected.displayName || selected.channel.channelName}</Text>
+            <ScrollView keyboardShouldPersistTaps="always" style={styles.sheetScroll}>
+              <Action subtle label={selected.pinned ? 'Unpin chat' : 'Pin chat'} onPress={() => action(onPin)}/>
+              {onArchive && <Action subtle label={filter === 'archived' ? 'Unarchive chat' : 'Archive chat'} onPress={() => action(onArchive)}/>}
+              {onMarkUnread && <Action subtle label="Mark unread" onPress={() => action(onMarkUnread)}/>}
+              {onSearchRoom && <Action subtle label="Search conversation" onPress={() => action(onSearchRoom)}/>}
+              <Action subtle label="Chat details" onPress={() => action(onOpenChatSettings ?? onOpen)}/>
+              {onLeave && canLeave?.(selected.scope) && <Action subtle label="Leave chat" onPress={() => action(onLeave)}/>}
+              <Action subtle label="Close chat options" onPress={closeMenu}/>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal> : null}
     </View>
   );
 }
@@ -270,7 +290,9 @@ const styles = StyleSheet.create({
   unread: {minWidth: 25, minHeight: 25, borderRadius: 13, backgroundColor: colors.accent,
     justifyContent: 'center', alignItems: 'center', marginRight: 4},
   unreadText: {fontSize: 12, fontWeight: '900', color: colors.background},
-  menu: {marginLeft: 75, marginRight: 16, paddingVertical: 5, gap: 6},
+  overlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end'},
+  sheet: {backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 32, maxHeight: '85%', gap: 12},
+  sheetScroll: {flexGrow: 0},
   action: {minHeight: 48, paddingHorizontal: 14, borderRadius: 11,
     backgroundColor: colors.accent, justifyContent: 'center'},
   subtle: {backgroundColor: colors.surfaceSoft},

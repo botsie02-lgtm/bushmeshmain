@@ -14,6 +14,7 @@ import {
 
 export type RadioChatRoomProps = {
   scope: RadioConversationScope;
+  initialSearch?: boolean;
   visible?: boolean;
   quickMessages?: readonly string[];
   onSaveQuickMessages?: (values: string[]) => void;
@@ -95,13 +96,13 @@ export function RadioChatRoom({
   scope, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
   onTogglePinned, personalisation, displayName, persistentPin, visible = true,
-  starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved,
+  starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false,
 }: RadioChatRoomProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [pageSize, setPageSize] = useState(100);
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(initialSearch);
   const [messageFilter, setMessageFilter] = useState<'all' | 'starred' | 'pinned'>('all');
   const [quickOpen, setQuickOpen] = useState(false);
   const [editingQuick, setEditingQuick] = useState(false);

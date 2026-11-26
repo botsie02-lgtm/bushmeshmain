@@ -188,7 +188,7 @@ export function RadioConnectionProvider({
       verifyChatConfiguration: expected => service.verifyChatConfiguration(expected),
       sendVerifiedChat: (expected, text, beforeSubmit) => service.sendVerifiedChat(expected, text, beforeSubmit),
       revealChatCredential: expected => service.revealChatCredential(expected),
-      leaveChat: expected => service.leaveChat(expected),
+      leaveChat: (expected, onPhase) => service.leaveChat(expected, onPhase),
       refreshChannels: () => service.refreshChannels(),
       createPrivateChannel: input => service.createPrivateChannel(input),
       joinPrivateChannel: input => service.joinPrivateChannel(input),

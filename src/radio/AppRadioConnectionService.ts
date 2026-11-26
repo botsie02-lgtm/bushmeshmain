@@ -1253,7 +1253,7 @@ export class AppRadioConnectionService {
     });
   }
 
-  async leaveChat(expected: ChatConfiguration): Promise<void> {
+  async leaveChat(expected: ChatConfiguration, onPhase?: (phase: 'removing' | 'verifying') => void): Promise<void> {
     this.chatObservationBinding = null;
     return this.withChatPort(expected.radio, async (port, assertCurrent) => {
       await this.requireChatConfiguration(port, expected);
@@ -1263,17 +1263,21 @@ export class AppRadioConnectionService {
         writeChannel: async (slot, name, secret) => {
           await this.requireChatConfiguration(port, expected);
           attemptedClear = true;
+          onPhase?.('removing');
           await port.writeChannel(slot, name, secret);
+          onPhase?.('verifying');
         },
       };
       try {
         await clearMeshCoreChannel(checked, expected.slot);
-        // Never touch the Radio History store.
-        const channels = await readAllMeshCoreChannels(port);
         assertCurrent();
-        this.patch({channels: channels.map(safeMeshCoreChannel)});
-        await chatPreferenceStore.forget(expected.id);
+        // Exact slot readback succeeded. Retire local binding before a separate full refresh.
+        this.patch({channels: this.snapshot.channels.filter(c => c.channelIndex !== String(expected.slot))});
+        try {await chatPreferenceStore.forget(expected.id);} catch {
+          throw new ChatOperationError('partial', 'Channel removal verified, but local retirement could not be saved. Refresh before retrying.');
+        }
       } catch (failure) {
+        if (failure instanceof ChatOperationError && failure.code === 'partial') throw failure;
         if (attemptedClear) {
           throw new ChatOperationError('partial', 'The radio slot may have been cleared. Refresh before retrying. Radio History has not been deleted.');
         }

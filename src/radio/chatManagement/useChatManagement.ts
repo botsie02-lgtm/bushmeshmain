@@ -134,14 +134,25 @@ export function useChatManagement() {
       }
     });
 
-  const leave = (chat: ChatConfiguration) => run(async () => {
+  const leave = (chat: ChatConfiguration, onRemoved?: () => void) => run(async () => {
     requireCurrent(chat);
+    setReady(false);
+    setError('Removing channel… You can navigate back.');
     try {
-      await live.current.leaveChat(chat);
-      await reload(chat.radio);
+      await live.current.leaveChat(chat, phase => setError(phase === 'removing' ? 'Removing channel…' : 'Verifying channel removal…'));
     } catch (failure) {
       setReady(false);
       throw failure;
+    }
+    setConfigs(current => current.filter(c => c.id !== chat.id));
+    setPreferences(current => current[chat.id] ? {...current, [chat.id]: {...current[chat.id], retired: true}} : current);
+    setError('Channel removed. Refreshing radio…');
+    onRemoved?.();
+    try {
+      await reload(chat.radio);
+      setError('Channel removed. Saved history retained.');
+    } catch {
+      setError('Channel removed successfully, but refresh failed. Refresh chats before sending.');
     }
   });
 
