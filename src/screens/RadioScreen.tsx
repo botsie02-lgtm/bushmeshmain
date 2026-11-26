@@ -222,7 +222,7 @@ function RadioMessenger({
       management.sessionEpoch === lastBinding.current.sessionEpoch))
       ? sessionScopes.filter(s => s.radioId === radioId && (!management ||
         management.chats.some(chat => chat.radio === s.radioId &&
-          s.channelGeneration.endsWith(':' + chat.id)))) : [],
+          s.channelGeneration === 'config:' + (management.preferences[chat.id]?.incarnation ?? 1) + ':' + chat.id))) : [],
   [connected, radioId, sessionScopes, management, configurationKey]);
   useEffect(() => {
     if (!management?.ready || !radioId || !connected) return;
@@ -425,7 +425,7 @@ function RadioMessenger({
     const live = chatFor(scope);
     const prefs = preferencesFor(scope);
     const chat = live ?? prefs?.configuration;
-    if (chat && management) {
+    if (chat && management && tabVisible) {
       setManagementSelection({kind: 'settings', chat, incarnation: prefs?.incarnation ?? 1});
     } else {
       Alert.alert('Chat unavailable', 'Connect the original radio and refresh chats before changing this configuration.');
@@ -523,7 +523,7 @@ function RadioMessenger({
         [capturedKey]: currentDrafts[capturedKey]?.trim() === submittedText
           ? '' : currentDrafts[capturedKey] ?? '',
       }));
-      if (verifiedChat && management) management.updateLocal(verifiedChat.id, {draft: ''}, Number(capturedScope.channelGeneration.split(':')[1])).catch(() => postNotice(capturedKey, 'Radio accepted; saved draft could not be cleared. Do not resend.'));
+      if (verifiedChat && management && recorded) management.updateLocal(verifiedChat.id, {draft: ''}, Number(capturedScope.channelGeneration.split(':')[1])).catch(() => postNotice(capturedKey, 'Radio accepted; saved draft could not be cleared. Do not resend.'));
       postNotice(capturedKey, recorded
         ? 'Radio accepted. No peer delivery confirmation.'
         : 'Radio accepted, but local history recording failed. Do not resend to repair history.');

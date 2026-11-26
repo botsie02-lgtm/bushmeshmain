@@ -100,6 +100,7 @@ export function RadioChatRoom({
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [pageSize, setPageSize] = useState(100);
   const [searching, setSearching] = useState(false);
   const [messageFilter, setMessageFilter] = useState<'all' | 'starred' | 'pinned'>('all');
   const [quickOpen, setQuickOpen] = useState(false);
@@ -116,6 +117,8 @@ export function RadioChatRoom({
   const nearBottom = useRef(true);
   const descending = useMemo(() => [...messages].filter(m => m.message.text.toLowerCase().includes(query.toLowerCase()) &&
     (messageFilter === 'all' || (messageFilter === 'starred' ? starredIds : pinnedIds)?.includes(m.message.id))).reverse(), [messages, query, messageFilter, starredIds, pinnedIds]);
+  const page = useMemo(() => descending.slice(0, pageSize), [descending, pageSize]);
+  useEffect(() => {setPageSize(100);}, [scope.radioId, scope.channelGeneration, query, messageFilter]);
   const validation = validateCarrierText(draft);
   const sendEnabled = canSubmit && validation.valid && !isSubmitting;
 
@@ -197,7 +200,9 @@ export function RadioChatRoom({
         contentContainerStyle={styles.messageContent}
         keyboardShouldPersistTaps="handled"
         inverted
-        data={descending}
+        data={page}
+        onEndReached={() => {if (pageSize < descending.length) setPageSize(current => current + 100);}}
+        onEndReachedThreshold={0.4}
         keyExtractor={entry => entry.message.id}
         onScroll={onListScroll}
         scrollEventThrottle={120}

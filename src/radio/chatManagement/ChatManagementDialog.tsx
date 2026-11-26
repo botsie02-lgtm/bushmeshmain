@@ -212,7 +212,7 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation
     const hide = () => {revealToken.current += 1; protectedChannelKey.hide();};
     const sub = AppState.addEventListener('change', state => {if (state !== 'active') hide();});
     return () => {hide(); sub.remove();};
-  }, [chat.id, controller.radio, controller.sessionEpoch, controller.ready]);
+  }, [chat.id, incarnation, controller.radio, controller.sessionEpoch, controller.ready]);
   const sameIncarnation = (p.incarnation ?? 1) === incarnation;
   const current = sameIncarnation && !p.retired && controller.ready && controller.radio === chat.radio &&
     controller.chats.some(c => c.id === chat.id);

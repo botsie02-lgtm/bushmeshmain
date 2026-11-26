@@ -1,4 +1,5 @@
 import {NativeModules, Platform} from 'react-native';
+import {Buffer} from 'buffer';
 
 export type ChatConfiguration = {
   id: string;
@@ -113,7 +114,7 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
     for (const ids of [p.readIds, p.starredIds, p.pinnedIds]) {
       if (ids !== undefined && (!Array.isArray(ids) || ids.some(value => typeof value !== 'string' || !value || value.length > 256))) throw new Error('Invalid chat message preferences.');
     }
-    if (p.quickMessages !== undefined && (!Array.isArray(p.quickMessages) || p.quickMessages.length > 24 || p.quickMessages.some(value => typeof value !== 'string' || !value.trim() || value.length > 133))) throw new Error('Invalid quick messages.');
+    if (p.quickMessages !== undefined && (!Array.isArray(p.quickMessages) || p.quickMessages.length > 24 || p.quickMessages.some(value => typeof value !== 'string' || !value.trim() || Buffer.byteLength(value, 'utf8') > 133))) throw new Error('Invalid quick messages.');
     entries[id] = {
       ...defaultChatPreferences,
       ...(parsed.version === 2 ? {
@@ -225,6 +226,7 @@ export class ChatPreferenceStore {
   update(id: string, patch: ChatPreferencePatch, incarnation?: number) {
     return this.mutate(id, current => {
       if (incarnation !== undefined && (current.incarnation ?? 1) !== incarnation) throw new Error('Local conversation changed.');
+      if (patch.quickMessages !== undefined && (!Array.isArray(patch.quickMessages) || !patch.quickMessages.length || patch.quickMessages.length > 24 || patch.quickMessages.some(value => typeof value !== 'string' || !value.trim() || Buffer.byteLength(value, 'utf8') > 133))) throw new Error('Invalid quick message payload.');
       return ({
       ...current,
       displayName: typeof patch.displayName === 'string'
@@ -234,7 +236,7 @@ export class ChatPreferenceStore {
       archived: typeof patch.archived === 'boolean' ? patch.archived : current.archived,
       unread: typeof patch.unread === 'boolean' ? patch.unread : current.unread,
       ...(typeof patch.draft === 'string' ? {draft: patch.draft.slice(0, 512)} : {}),
-      ...(Array.isArray(patch.quickMessages) ? {quickMessages: patch.quickMessages.slice(0, 24).filter(value => typeof value === 'string' && !!value.trim() && value.length <= 133)} : {}),
+      ...(Array.isArray(patch.quickMessages) ? {quickMessages: [...new Set(patch.quickMessages.map(value => value.trim()))]} : {}),
       ...Object.fromEntries((['readIds', 'starredIds', 'pinnedIds'] as const).flatMap(key => Array.isArray(patch[key]) ? [[key, [...new Set(patch[key]!.filter(v => typeof v === 'string' && v.length > 0 && v.length <= 256))]]] : [])),
     });});
   }

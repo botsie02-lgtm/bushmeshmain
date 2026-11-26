@@ -183,3 +183,11 @@ describe('protected chat preference model', () => {
   expect((await restarted.load())[one]).toMatchObject({incarnation: 2, draft: '', starredIds: [], readIds: []});
   await expect(restarted.update(one, {draft: 'old'}, 1)).rejects.toThrow('changed');
 });
+
+test('quick templates validate UTF-8 payload length before saving', async () => {
+  const {store, native} = fixture();
+  await expect(store.update(one, {quickMessages: ['🚙'.repeat(34)]})).rejects.toThrow('payload');
+  expect(native.saveChatPreferences).not.toHaveBeenCalled();
+  await store.update(one, {quickMessages: ['🚙'.repeat(33)]});
+  expect((await store.load())[one].quickMessages).toEqual(['🚙'.repeat(33)]);
+});

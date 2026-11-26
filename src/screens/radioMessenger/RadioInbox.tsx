@@ -143,7 +143,7 @@ export function RadioInbox({
           const repeatedSlot = conversations.filter(other =>
             other.channel.channelIndex === item.channel.channelIndex &&
             other.channel.channelName === item.channel.channelName).length > 1;
-          const distinction = repeatedSlot ? ' · ' + (item.verifiedNow ? 'current' : 'saved') + ' ' + (item.scope.channelGeneration.startsWith('config:') ? item.scope.channelGeneration.slice(7, 15) : item.scope.channelGeneration) : '';
+          const distinction = repeatedSlot ? ' · ' + (managed ? (item.verifiedNow ? 'current ' : 'saved ') + item.scope.channelGeneration.slice(-6) + ' #' + (item.scope.channelGeneration.split(':')[1] ?? '1') : item.scope.channelGeneration) : '';
           return (
             <View style={styles.rowWrap}>
               <View style={styles.rowLine}>
@@ -157,7 +157,7 @@ export function RadioInbox({
                 <View style={styles.rowBody}>
                   <View style={styles.rowTop}>
                     <Text style={styles.rowName} numberOfLines={1}>
-                      {item.displayName || item.channel.channelName}{item.pinned ? '  ★' : ''}
+                      {item.displayName || item.channel.channelName}{managed && repeatedSlot ? ' · ' + (item.verifiedNow ? 'current' : 'saved') : ''}{item.pinned ? '  ★' : ''}
                     </Text>
                     <Text style={styles.when}>{clock(item.activityMs)}</Text>
                   </View>

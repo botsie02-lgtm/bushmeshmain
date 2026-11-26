@@ -533,6 +533,8 @@ export function BushMeshProvider({
       const latest = channelMessagesRef.current.map(m => m.id === id ? {...m, ...outcome} : m);
       channelMessagesRef.current = latest;
       setChannelMessages(latest);
+      setMessagePersistenceStatus(androidMessagePersistence.isSupported() ? 'ready' : 'unsupported');
+      setMessagePersistenceError(null);
     });
     const reported = operation.catch(error => {setMessagePersistenceStatus('error'); setMessagePersistenceError('Submission outcome could not be saved. Do not resend automatically.'); throw error;});
     messageWriteChainRef.current = reported.catch(() => undefined);

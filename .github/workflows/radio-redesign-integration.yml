@@ -39,7 +39,8 @@ jobs:
         run: python -m unittest discover -s tools/maps -p 'test_*.py'
 
   android:
-    name: Android compilation, native tests and isolated standalone APK — no install
+    name: Android compilation, native tests, emulator smoke and isolated standalone APK
+    needs: application
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
