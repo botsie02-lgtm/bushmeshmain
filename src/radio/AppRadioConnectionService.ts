@@ -1269,10 +1269,11 @@ export class AppRadioConnectionService {
         },
       };
       try {
-        await clearMeshCoreChannel(checked, expected.slot);
+        const cleared = await clearMeshCoreChannel(checked, expected.slot);
         assertCurrent();
+        if (cleared.channelIndex !== expected.slot) throw new ChatOperationError('partial', 'Removal readback was for another slot. Refresh before retrying.');
         // Exact slot readback succeeded. Retire local binding before a separate full refresh.
-        this.patch({channels: this.snapshot.channels.filter(c => c.channelIndex !== String(expected.slot))});
+        this.patch({channels: this.snapshot.channels.map(c => c.channelIndex === String(expected.slot) ? safeMeshCoreChannel(cleared) : c)});
         try {await chatPreferenceStore.forget(expected.id);} catch {
           throw new ChatOperationError('partial', 'Channel removal verified, but local retirement could not be saved. Refresh before retrying.');
         }

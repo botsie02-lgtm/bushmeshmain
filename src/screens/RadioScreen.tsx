@@ -604,6 +604,10 @@ function RadioMessenger({
       if (current?.kind === 'settings' && current.chat.id === chat.id && current.chat.radio === chat.radio) setManagementSelection(null);
     }} /> : null;
 
+  // Settings is a real page inside the activity, not a React Native Dialog window.
+  // The secure native credential window therefore has a single activity owner.
+  if (managementSelection && dialog) return <View style={styles.root}>{dialog}</View>;
+
   if (showUnattributed) {
     return <RadioQuarantineReview
       messages={channelMessages.filter(message => !ownedIds.has(message.id))}
@@ -685,7 +689,6 @@ function RadioMessenger({
             <Text style={styles.actionText}>Refresh verified chats</Text>
           </TouchableOpacity>
         ) : null}
-        {dialog}
         {pendingInterrupted && !sending && management && finishDurableSubmission ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Resolve interrupted submission locally" style={styles.uncertainButton} onPress={() => {
           Alert.alert('Keep outcome unknown?', 'These messages may have transmitted. This only records the unknown outcome and unlocks the composer; it does not resend anything.', [
             {text: 'Cancel', style: 'cancel'}, {text: 'Keep unknown', onPress: () => {
@@ -766,7 +769,6 @@ function RadioMessenger({
           </Text>
         </View>
       ) : null}
-      {dialog}
     </View>
   );
 }

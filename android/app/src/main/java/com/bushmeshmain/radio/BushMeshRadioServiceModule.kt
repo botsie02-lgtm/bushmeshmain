@@ -1,15 +1,7 @@
 package com.bushmeshmain.radio
 
-import android.app.AlertDialog
-import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
-import android.content.ClipData
-import android.content.ClipDescription
-import android.content.ClipboardManager
-import android.content.Context
-import android.os.Build
-import android.os.PersistableBundle
 import android.util.Base64
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.LifecycleEventListener
@@ -26,12 +18,11 @@ class BushMeshRadioServiceModule(
   private val reactContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactContext), LifecycleEventListener {
   private val credentialHandler = Handler(Looper.getMainLooper())
-  private var credentialDialog: AlertDialog? = null
+  private val credentialWindow = ProtectedChannelKeyWindow()
   init { reactContext.addLifecycleEventListener(this) }
 
   private fun hideCredential() {
-    credentialDialog?.dismiss()
-    credentialDialog = null
+    credentialWindow.hide()
   }
 
   override fun onHostResume() = Unit
@@ -59,26 +50,8 @@ class BushMeshRadioServiceModule(
         require(secret.matches(Regex("[0-9a-fA-F]{32}")))
         val activity = reactContext.currentActivity
         check(activity != null && !activity.isFinishing && !activity.isDestroyed && reactContext.lifecycleState == com.facebook.react.common.LifecycleState.RESUMED)
-        val dialog = AlertDialog.Builder(activity)
-          .setTitle("Shared channel key (PSK)")
-          .setMessage(secret + "\n\nAnyone possessing this key may access this channel. This is not an identity private key.")
-          .setPositiveButton("Hide", null)
-          .setNeutralButton("Copy key") { _, _ ->
-            try { copySensitiveText(secret) } catch (_: Exception) {
-              android.widget.Toast.makeText(activity, "Sensitive copy failed.", android.widget.Toast.LENGTH_SHORT).show()
-            }
-          }
-          .create()
-        val window = checkNotNull(dialog.window)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        val timeout = Runnable { if (credentialDialog === dialog) hideCredential() }
-        dialog.setOnDismissListener {
-          credentialHandler.removeCallbacks(timeout)
-          if (credentialDialog === dialog) credentialDialog = null
-        }
-        credentialDialog = dialog
-        dialog.show()
-        credentialHandler.postDelayed(timeout, 30_000)
+        check(activity.hasWindowFocus()) { "Activity window is not focused." }
+        credentialWindow.show(activity, secret) { copySensitiveText(secret) }
         promise.resolve(true)
       } catch (_: Exception) {
         hideCredential()
@@ -163,14 +136,7 @@ class BushMeshRadioServiceModule(
   }
 
   private fun copySensitiveText(text: String) {
-    val clipboard = reactContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val clip = ClipData.newPlainText("BushMesh MeshCore carrier PSK", text)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      clip.description.extras = PersistableBundle().apply {
-        putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
-      }
-    }
-    clipboard.setPrimaryClip(clip)
+    ProtectedChannelClipboard.copy(reactContext, text)
   }
 
   @ReactMethod

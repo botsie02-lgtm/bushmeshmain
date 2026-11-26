@@ -1,5 +1,5 @@
-import React, {useEffect, useState} from 'react';
-import {Alert, BackHandler, KeyboardAvoidingView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View} from 'react-native';
+import React, {useState} from 'react';
+import {Alert, KeyboardAvoidingView, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {colors} from '../../theme/colors';
 import {validateCarrierText} from '../../screens/radioMessenger/messengerModel';
@@ -17,14 +17,10 @@ export function QuickMessageEditor({initial, defaults = DEFAULT_QUICK_MESSAGES, 
     if (!dirty) onClose();
     else Alert.alert('Discard changes?', 'Unsaved templates will be lost.', [{text: 'Keep editing', style: 'cancel'}, {text: 'Discard', style: 'destructive', onPress: onClose}]);
   };
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {cancel(); return true;});
-    return () => sub.remove();
-  });
   const action = (label: string, press: () => void, disabled = false) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={label} disabled={disabled || saving} onPress={press} style={[styles.action, disabled && styles.disabled]}><Text style={styles.link}>{label}</Text></TouchableOpacity>;
   const move = (index: number, offset: number) => setValues(previous => {const next = [...previous]; [next[index], next[index + offset]] = [next[index + offset], next[index]]; return next;});
   const valid = values.length > 0 && values.every(v => validateCarrierText(v).valid);
-  return <SafeAreaView style={styles.root}><KeyboardAvoidingView style={styles.root}>
+  return <Modal visible animationType="none" presentationStyle="fullScreen" onRequestClose={cancel}><SafeAreaView style={styles.root}><KeyboardAvoidingView style={styles.root}>
     <View style={styles.header}>{action('Cancel', cancel)}<Text style={styles.title}>Quick messages</Text>{action('Save', () => {
       setSaving(true); setError('');
       onSave(values.map(v => v.trim())).then(onClose).catch(() => setError('Save failed. Existing templates retained.')).finally(() => setSaving(false));
@@ -40,7 +36,7 @@ export function QuickMessageEditor({initial, defaults = DEFAULT_QUICK_MESSAGES, 
       {action('Restore defaults', () => Alert.alert('Restore defaults?', 'Replaces the current draft library when saved.', [{text: 'Cancel', style: 'cancel'}, {text: 'Restore', onPress: () => setValues([...defaults])}]))}
       {!!error && <Text accessibilityRole="alert" style={styles.body}>{error}</Text>}
     </ScrollView>
-  </KeyboardAvoidingView></SafeAreaView>;
+  </KeyboardAvoidingView></SafeAreaView></Modal>;
 }
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background}, header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6}, title: {color: colors.textPrimary, fontSize: 18, fontWeight: '800'}, content: {padding: 16, paddingBottom: 40, gap: 12}, item: {backgroundColor: colors.surface, borderRadius: 14, padding: 12}, input: {color: colors.textPrimary, minHeight: 68, backgroundColor: colors.surfaceSoft, padding: 12, borderRadius: 10}, body: {color: colors.textSecondary, marginVertical: 6}, action: {minHeight: 48, paddingHorizontal: 8, justifyContent: 'center'}, link: {color: colors.accent, fontWeight: '700'}, disabled: {opacity: 0.4},

@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
-  Alert, AppState, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, Share,
+  Alert, AppState, BackHandler, Keyboard, KeyboardAvoidingView, Platform, ScrollView, Share,
   StyleSheet, Switch, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
@@ -332,10 +332,13 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation
 
 export function ChatManagementDialog(props: ChatManagementDialogProps): React.JSX.Element | null {
   const {selection, controller, onClose} = props;
+  useEffect(() => {
+    if (!selection) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {onClose(); return true;});
+    return () => sub.remove();
+  }, [selection, onClose]);
   if (!selection) return null;
   return (
-    <Modal visible animationType="slide" presentationStyle="fullScreen"
-      onRequestClose={onClose}>
       <SafeAreaView style={styles.screen}>
         <View style={styles.header}>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back"
@@ -355,7 +358,6 @@ export function ChatManagementDialog(props: ChatManagementDialogProps): React.JS
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </Modal>
   );
 }
 

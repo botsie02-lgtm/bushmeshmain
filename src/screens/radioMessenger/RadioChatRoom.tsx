@@ -1,6 +1,6 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
-  Alert, BackHandler, FlatList, KeyboardAvoidingView, Modal, ScrollView, NativeScrollEvent, NativeSyntheticEvent,
+  Alert, BackHandler, FlatList, KeyboardAvoidingView, ScrollView, NativeScrollEvent, NativeSyntheticEvent,
   Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
@@ -251,7 +251,7 @@ export function RadioChatRoom({
       <View style={styles.composerArea}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Quick messages" onPress={() => setQuickOpen(v => !v)} style={styles.menuButton}><Text style={styles.menuText}>Quick messages</Text></TouchableOpacity>
         {quickOpen && <ScrollView style={{maxHeight: 180}} keyboardShouldPersistTaps="always"><View style={styles.quick}>{templates.map(text => <TouchableOpacity key={text} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}{onSaveQuickMessages && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit quick messages" style={styles.quickItem} onPress={() => {setQuickOpen(false); setEditingQuick(true);}}><Text style={styles.menuText}>Edit templates</Text></TouchableOpacity>}</View></ScrollView>}
-        {editingQuick && onSaveQuickMessages && <Modal visible animationType="none" onRequestClose={() => undefined}><QuickMessageEditor initial={templates} onSave={onSaveQuickMessages} onClose={() => setEditingQuick(false)}/></Modal>}
+        {editingQuick && onSaveQuickMessages && <QuickMessageEditor initial={templates} onSave={onSaveQuickMessages} onClose={() => setEditingQuick(false)}/>}
         {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
         <View style={styles.composerRow}>
           <TextInput

@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {FlatList, KeyboardAvoidingView, StyleSheet} from 'react-native';
+import {FlatList, KeyboardAvoidingView, Modal, StyleSheet} from 'react-native';
 import {RadioScreen} from '../src/screens/RadioScreen';
 import {RadioInbox} from '../src/screens/radioMessenger/RadioInbox';
 import {ViewedConversationProvider} from '../src/app/activeContext/ViewedConversationContext';
@@ -527,4 +527,28 @@ test('managed recent ordering uses attributed activity rather than channel name 
     {channel: {channelName: 'Public'}, activityMs: 2000},
     {channel: {channelName: 'Private'}, activityMs: 1000},
   ]);
+});
+
+test('conversation sheet dismisses by backdrop and Android Back and opens another identity', async () => {
+  await mount();
+  await press('Chat options Public');
+  expect(tree.root.findByType(Modal).props.visible).toBe(true);
+  await press('Dismiss conversation options');
+  expect(tree.root.findAllByType(Modal)).toHaveLength(0);
+  await press('Chat options Private');
+  await act(async () => tree.root.findByType(Modal).props.onRequestClose());
+  expect(tree.root.findAllByType(Modal)).toHaveLength(0);
+  await press('Chat options Public');
+  await press('Close chat options');
+  await press('Chat options Private');
+  expect(button('Pin chat')).toBeDefined();
+});
+
+test('connection strip opens existing setup navigation callback', async () => {
+  connected = false;
+  const open = jest.fn();
+  await mount({onOpenRadioConnection: open});
+  await press('Connect radio');
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(send).not.toHaveBeenCalled();
 });
