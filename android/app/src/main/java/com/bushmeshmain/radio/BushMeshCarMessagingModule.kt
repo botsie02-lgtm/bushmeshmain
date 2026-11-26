@@ -31,6 +31,21 @@ class BushMeshCarMessagingModule(
   override fun getName(): String = "BushMeshCarMessaging"
 
   @ReactMethod
+  fun getNotificationPreview(promise: Promise) {
+    promise.resolve(RadioNotificationPresentation(reactContext).showPreview())
+  }
+
+  @ReactMethod
+  fun setNotificationPreview(show: Boolean, promise: Promise) {
+    try {
+      check(RadioNotificationPresentation(reactContext).setPreview(show))
+      promise.resolve(true)
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_NOTIFICATION_PREFERENCE_FAILED", "Notification preference was not saved.")
+    }
+  }
+
+  @ReactMethod
   fun postIncomingChannelMessage(
     channelIndexValue: Double,
     channelName: String,

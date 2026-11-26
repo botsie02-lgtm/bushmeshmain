@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {Linking, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View} from 'react-native';
 
 import {CarMessagingStatusBanner} from '../components/CarMessagingStatusBanner';
 import {RadioSpeechStatusBanner} from '../components/RadioSpeechStatusBanner';
@@ -8,6 +8,7 @@ import {SpeechPttPanel} from '../components/SpeechPttPanel';
 import {SpeechStatusBanner} from '../components/SpeechStatusBanner';
 import {meshCoreInboundDiagnostics} from '../meshcore/meshcoreInboundDiagnostics';
 import {nativeOutboundDiagnostics} from '../meshcore/nativeOutboundDiagnostics';
+import {nativeCarMessaging} from '../native/NativeCarMessaging';
 import {useCarMessaging} from '../state/CarMessagingContext';
 import {useSpeech} from '../state/SpeechContext';
 import {colors} from '../theme/colors';
@@ -56,6 +57,16 @@ function GlobalQuickMessages({onBack}: {onBack: () => void}) {
   useEffect(() => {let active = true; chatPreferenceStore.loadGlobalQuickMessages().then(v => {if (active) setValues(v);}).catch(() => {if (active) setFailed(true);}); return () => {active = false;};}, []);
   return values ? <QuickMessageEditor initial={values} defaults={DEFAULT_QUICK_MESSAGES} onSave={v => chatPreferenceStore.saveGlobalQuickMessages(v)} onClose={onBack}/> : <Text style={styles.detail}>{failed ? 'Protected templates could not be loaded. Existing storage retained.' : 'Loading templates…'}</Text>;
 }
+function NotificationPreviewSetting() {
+  const [show, setShow] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  useEffect(() => {let alive = true; nativeCarMessaging.getNotificationPreview().then(value => {if (alive) setShow(value);}).catch(() => {if (alive) setError(true);}); return () => {alive = false;};}, []);
+  return <View><Text style={styles.detail}>Show message text in new Android and Android Auto notifications. Applies globally, including native background reception. Channel labels remain visible.</Text>
+    {show !== null && <Switch accessibilityLabel="Show notification message previews" value={show} disabled={busy} onValueChange={value => {setBusy(true); setError(false); nativeCarMessaging.setNotificationPreview(value).then(() => setShow(value)).catch(() => setError(true)).finally(() => setBusy(false));}}/>}
+    {error && <Text style={styles.warning}>Notification preview preference could not be loaded or saved.</Text>}
+  </View>;
+}
 function SettingsDetail({page}: {page: RadioSettingsPage}): React.JSX.Element {
   const {supported, runtimeState, languageTag, errorMessage} = useSpeech();
   const {supported: carSupported} = useCarMessaging();
@@ -95,6 +106,7 @@ function SettingsDetail({page}: {page: RadioSettingsPage}): React.JSX.Element {
         {carSupported ? <CarMessagingStatusBanner /> : (
           <Text style={styles.detail}>Android Auto messaging is unavailable in this build.</Text>
         )}
+        {nativeCarMessaging.previewSupported() && <NotificationPreviewSetting/>}
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel="Open system notification settings"

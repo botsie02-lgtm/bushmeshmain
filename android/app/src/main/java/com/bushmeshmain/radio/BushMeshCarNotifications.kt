@@ -25,6 +25,7 @@ class BushMeshCarNotifications(context: Context) {
   }
 
   private val appContext = context.applicationContext
+  private val presentation = RadioNotificationPresentation(appContext)
 
   fun postIncoming(
     channelIndex: Int,
@@ -41,6 +42,7 @@ class BushMeshCarNotifications(context: Context) {
     require(cleanText.isNotEmpty()) { "Android Auto message cannot be empty." }
     require(cleanText.length <= MAX_MESSAGE_CHARS) { "Android Auto message is too long." }
 
+    val visibleText = notificationPreview(cleanText, presentation.showPreview())
     val cleanChannelName = channelName.trim().ifBlank { "Channel $channelIndex" }
     val cleanSender = senderLabel?.trim()?.takeIf { it.isNotEmpty() }
       ?: cleanChannelName
@@ -60,7 +62,7 @@ class BushMeshCarNotifications(context: Context) {
     val style = NotificationCompat.MessagingStyle(localPerson)
       .setConversationTitle(cleanChannelName)
       .setGroupConversation(true)
-      .addMessage(cleanText, timestampMs.coerceAtLeast(0L), senderPerson)
+      .addMessage(visibleText, timestampMs.coerceAtLeast(0L), senderPerson)
 
     val remoteInput = RemoteInput.Builder(
       BushMeshCarMessagingService.REMOTE_INPUT_KEY,
@@ -122,7 +124,7 @@ class BushMeshCarNotifications(context: Context) {
     val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
       .setSmallIcon(R.mipmap.ic_launcher)
       .setContentTitle(cleanChannelName)
-      .setContentText(cleanText)
+      .setContentText(visibleText)
       .setContentIntent(contentIntent)
       .setCategory(NotificationCompat.CATEGORY_MESSAGE)
       .setPriority(NotificationCompat.PRIORITY_HIGH)

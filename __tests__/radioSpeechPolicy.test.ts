@@ -17,3 +17,10 @@ test('only an exact local association is muted for ordinary auto-read', () => {
   expect(permitsAssociatedRadioSpeech({...message, conversation: {...message.conversation!, channelGeneration: 'config:1:' + id}}, entries)).toBe(true);
   expect(permitsAssociatedRadioSpeech({...message, conversation: {...message.conversation!, provenance: 'local-submission'}}, entries)).toBe(true);
 });
+
+test('timed speech mute expires without changing other scopes', () => {
+  const timed = {[id]: {...entries[id], autoRead: true, speechMutedUntilMs: 2000}};
+  expect(permitsAssociatedRadioSpeech(message, timed, 1999)).toBe(false);
+  expect(permitsAssociatedRadioSpeech(message, timed, 2000)).toBe(true);
+  expect(permitsAssociatedRadioSpeech({...message, conversation: undefined}, timed, 1999)).toBe(true);
+});

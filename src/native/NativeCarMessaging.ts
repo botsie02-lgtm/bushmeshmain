@@ -21,6 +21,8 @@ export type NativeCarMessagingStatus = {
 };
 
 type NativeCarMessagingModule = {
+  getNotificationPreview?: () => Promise<boolean>;
+  setNotificationPreview?: (show: boolean) => Promise<boolean>;
   postIncomingChannelMessage: (
     channelIndex: number,
     channelName: string,
@@ -54,6 +56,14 @@ const unsupportedStatus: NativeCarMessagingStatus = {
 };
 
 export const nativeCarMessaging = {
+  previewSupported: () => Platform.OS === 'android' && typeof module?.getNotificationPreview === 'function' && typeof module?.setNotificationPreview === 'function',
+  async getNotificationPreview(): Promise<boolean> {
+    if (!module?.getNotificationPreview) throw new Error('Preview preference unavailable.');
+    return module.getNotificationPreview();
+  },
+  async setNotificationPreview(show: boolean): Promise<void> {
+    if (!module?.setNotificationPreview || !await module.setNotificationPreview(show)) throw new Error('Preview preference was not saved.');
+  },
   isSupported(): boolean {
     return Platform.OS === 'android' && module !== undefined;
   },

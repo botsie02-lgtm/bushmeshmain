@@ -355,6 +355,9 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, onExport, i
         <Toggle label="Mark unread" value={p.unread} disabled={localDisabled} onChange={unread => update({unread})}/>
       </Section>
       <Section title="Notifications">
+        {p.speechMutedUntilMs && p.speechMutedUntilMs > Date.now() ? <Text style={styles.body}>Ordinary speech muted until {new Date(p.speechMutedUntilMs).toLocaleString()}</Text> : null}
+        <Action label="Mute ordinary speech for 1 hour" disabled={localDisabled} onPress={() => update({speechMutedUntilMs: Date.now() + 3600000})}/>
+        <Action label="Clear timed speech mute" disabled={localDisabled || !p.speechMutedUntilMs} onPress={() => update({speechMutedUntilMs: 0})}/>
         <Toggle label="Auto-read associated messages" value={p.autoRead !== false} disabled={localDisabled} onChange={autoRead => update({autoRead})}/>
         <Text style={styles.body}>Controls ordinary app speech for messages locally associated with this exact conversation. Global radio speech must also be enabled. Unassociated traffic follows the global setting; Android and Android Auto notifications and critical safety alerts are separate.</Text>
       </Section>
