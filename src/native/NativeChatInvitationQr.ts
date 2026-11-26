@@ -6,10 +6,11 @@ export const nativeChatInvitationQr = {
   async show(value: string) {
     if (!module?.showChatInvitationQr || !await module.showChatInvitationQr(value)) throw new Error('QR unavailable.');
   },
-  async scan() {
+  async scan(isCurrent: () => boolean = () => true) {
     if (!module?.scanChatInvitationQr) throw new Error('Scanner unavailable.');
     const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
     if (result !== PermissionsAndroid.RESULTS.GRANTED) throw new Error('Camera permission not granted.');
+    if (!isCurrent()) return null;
     return module.scanChatInvitationQr();
   },
   hide: () => module?.hideSharedChannelKey?.(),

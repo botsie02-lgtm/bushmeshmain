@@ -7,6 +7,7 @@ export type NativeExportResult = {
 };
 
 type NativeExportModule = {
+  shareConversationExport?: (uri: string, format: 'txt' | 'json') => Promise<boolean>;
   saveConversationExport?: (content: string, format: 'txt' | 'json') => Promise<NativeExportResult>;
   saveGpx: (displayName: string, content: string) => Promise<NativeExportResult>;
   saveJson: (displayName: string, content: string) => Promise<NativeExportResult>;
@@ -19,6 +20,10 @@ export const nativeFileExport = {
     return Platform.OS === 'android' && module !== undefined;
   },
 
+  conversationShareSupported(): boolean { return Platform.OS === 'android' && typeof module?.shareConversationExport === 'function'; },
+  async shareConversation(uri: string, format: 'txt' | 'json'): Promise<void> {
+    if (!module?.shareConversationExport || !await module.shareConversationExport(uri, format)) throw new Error('Conversation share unavailable.');
+  },
   conversationSupported(): boolean { return Platform.OS === 'android' && typeof module?.saveConversationExport === 'function'; },
   async saveConversation(content: string, format: 'txt' | 'json'): Promise<NativeExportResult> {
     if (!module?.saveConversationExport) throw new Error('Conversation export unavailable.');

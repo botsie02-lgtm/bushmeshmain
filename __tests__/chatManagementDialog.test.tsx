@@ -6,6 +6,7 @@ import {ChatManagementController} from '../src/radio/chatManagement/useChatManag
 import {ChatConfiguration, defaultChatPreferences} from '../src/radio/chatManagement/chatPreferences';
 import {encodeChatInvite} from '../src/radio/chatManagement/chatInvitations';
 import {protectedChannelKey} from '../src/native/SensitiveClipboard';
+import {nativeChatInvitationQr} from '../src/native/NativeChatInvitationQr';
 
 jest.mock('react-native-safe-area-context', () => ({
   SafeAreaView: require('react-native').View,
@@ -148,4 +149,38 @@ test('leave closes the exact settings target only on confirmed removal', async (
     await ReactTestRenderer.act(() => confirmed?.());
     expect(left).toHaveBeenCalledWith(chat);
   } finally {if (renderer) await ReactTestRenderer.act(() => renderer.unmount()); alert.mockRestore();}
+});
+
+test('scanned QR requires explicit confirmation and does not render credentials in preview', async () => {
+  const {value, provision} = controller();
+  const invitation = encodeChatInvite({name: 'QR Camp', secretHex: '12'.repeat(16)});
+  jest.spyOn(nativeChatInvitationQr, 'supported').mockReturnValue(true);
+  jest.spyOn(nativeChatInvitationQr, 'scan').mockResolvedValue(invitation);
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  try {
+    await ReactTestRenderer.act(() => {renderer = ReactTestRenderer.create(<ChatManagementDialog selection={{kind:'join',radio:chat.radio}} controller={value} onClose={jest.fn()}/>);});
+    await ReactTestRenderer.act(async () => press(renderer, 'Scan QR invitation'));
+    expect(provision).not.toHaveBeenCalled();
+    expect(visibleText(renderer)).toContain('QR Camp');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain(invitation);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('12'.repeat(16));
+    await ReactTestRenderer.act(async () => press(renderer, 'Confirm and join'));
+    expect(provision).toHaveBeenCalledWith(chat.radio, expect.objectContaining({name:'QR Camp',secretHex:'12'.repeat(16)}));
+  } finally {if (renderer) await ReactTestRenderer.act(() => renderer.unmount()); jest.restoreAllMocks();}
+});
+
+test('duplicate or invalid QR never enters confirmation or provisions a radio', async () => {
+  const {value, provision} = controller();
+  jest.spyOn(nativeChatInvitationQr, 'supported').mockReturnValue(true);
+  const scan = jest.spyOn(nativeChatInvitationQr, 'scan').mockResolvedValueOnce(encodeChatInvite({name:chat.name,secretHex:'12'.repeat(16)})).mockResolvedValueOnce('not an invite');
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  try {
+    await ReactTestRenderer.act(() => {renderer = ReactTestRenderer.create(<ChatManagementDialog selection={{kind:'join',radio:chat.radio}} controller={value} onClose={jest.fn()}/>);});
+    await ReactTestRenderer.act(async () => press(renderer, 'Scan QR invitation'));
+    expect(visibleText(renderer)).toContain('already exists');
+    await ReactTestRenderer.act(async () => press(renderer, 'Scan QR invitation'));
+    expect(visibleText(renderer)).toContain('Could not scan a valid invitation');
+    expect(scan).toHaveBeenCalledTimes(2);
+    expect(provision).not.toHaveBeenCalled();
+  } finally {if (renderer) await ReactTestRenderer.act(() => renderer.unmount()); jest.restoreAllMocks();}
 });

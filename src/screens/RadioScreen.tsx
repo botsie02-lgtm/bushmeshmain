@@ -288,7 +288,11 @@ function RadioMessenger({
     lastNavigation.current = scope.channelIndex;
     setViewedConversation({kind: 'meshcore-channel', channelIndex: scope.channelIndex});
   }, [pendingChat, liveScopes, setViewedConversation]);
-  const durableScopes = management ? channelMessages.flatMap(m => m.conversation ? [m.conversation] : []) : [];
+  const durableScopes = useMemo(() => {
+    const unique = new Map<string, RadioConversationScope>();
+    for (const m of channelMessages) if (m.conversation) unique.set(conversationKey(m.conversation), m.conversation);
+    return [...unique.values()];
+  }, [channelMessages]);
   const persistedOwnership = useMemo(() => ({...verifiedMessageOwnership,
     ...Object.fromEntries(channelMessages.flatMap(m => m.conversation ? [[m.id, m.conversation]] : [])),
   }), [verifiedMessageOwnership, channelMessages]);
@@ -300,7 +304,7 @@ function RadioMessenger({
       channelIndex: String(c.slot), channelName: c.name};
     if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
   }
-  for (const scope of durableScopes) {
+  for (const scope of management ? durableScopes : []) {
     if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
   }
   for (const scope of trustedScopes) {
@@ -336,11 +340,12 @@ function RadioMessenger({
   const needle = search.trim().toLocaleLowerCase();
   const conversations = allConversations.map(c => {
     const prefs = preferencesFor(c.scope);
+    const savedReadIds = new Set(prefs?.readIds ?? []);
     return {...c, verifiedNow: liveScopes.some(scope => equalScope(scope, c.scope)), pinned: prefs?.pinned ?? c.pinned,
       displayName: prefs?.displayName || c.channel.channelName,
       personalisation: prefs, manualUnread: prefs?.unread,
       unreadCount: management ? (prefs && c.messages.length ? c.messages.filter(m =>
-        m.message.direction === 'received' && !readIds.has(m.message.id) && !prefs?.readIds?.includes(m.message.id)).length : null) : c.unreadCount};
+        m.message.direction === 'received' && !readIds.has(m.message.id) && !savedReadIds.has(m.message.id)).length : null) : c.unreadCount};
   }).filter(c => (!management || !!preferencesFor(c.scope)?.archived === archived) &&
     (filter === 'all' || (filter === 'pinned' ? c.pinned : !!c.manualUnread || !!c.unreadCount)) &&
     (!needle || c.displayName.toLocaleLowerCase().includes(needle) ||
@@ -392,8 +397,9 @@ function RadioMessenger({
       readAttempt.current = null;
       return;
     }
+    const savedReadIds = new Set(localPreference.readIds ?? []);
     const receivedIds = selectedMessages.filter(item => item.message.direction === 'received' &&
-      !readIds.has(item.message.id) && !localPreference.readIds?.includes(item.message.id)).map(item => item.message.id);
+      !readIds.has(item.message.id) && !savedReadIds.has(item.message.id)).map(item => item.message.id);
     if (!receivedIds.length && !localPreference.unread) return;
     if (receivedIds.length) setUnreadAnchor(previous => previous?.key === activeKey ? previous : {key: activeKey, id: receivedIds[0]});
     const attempt = JSON.stringify([activeKey, receivedIds, !!localPreference.unread]);
@@ -626,7 +632,7 @@ function RadioMessenger({
       const scope = {radioId: chat.radio, channelGeneration: 'config:' + incarnation + ':' + chat.id, channelIndex: String(chat.slot), channelName: chat.name};
       const result = buildConversationExport(exportState.current.channelMessages, scope, format);
       const saved = await nativeFileExport.saveConversation(result.content, format);
-      Alert.alert('History exported', result.count + ' records saved as plaintext in ' + saved.location + '/' + saved.displayName + '. You can share or delete this document from Android Files.');
+      Alert.alert('History exported', result.count + ' records saved as plaintext in ' + saved.location + '/' + saved.displayName + '. Delete the file in Android Files when no longer needed.', [{text: 'Done'}, ...(nativeFileExport.conversationShareSupported() ? [{text:'Share file', onPress: () => {nativeFileExport.shareConversation(saved.uri, format).catch(() => Alert.alert('Sharing unavailable', 'The saved document is still available in Android Files.'));}}] : [])]);
     } : undefined}
     onProvisioned={setPendingChat}
     onLeft={chat => {
@@ -692,7 +698,7 @@ function RadioMessenger({
             <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel="Dismiss forwarding" onPress={() => setForwardingMessage(null)}/>
             <View accessibilityViewIsModal style={{backgroundColor: colors.surface, padding: 18, borderTopLeftRadius: 20, borderTopRightRadius: 20}}>
               <Text style={{color: colors.textPrimary, fontSize: 18, fontWeight: 'bold'}}>Forward text to chat</Text>
-              <Text style={{color: colors.textSecondary, marginVertical: 8}}>Choose a verified destination. This only prepares a draft; nothing is transmitted.</Text>
+              <Text style={{color: colors.textSecondary, marginVertical: 8}}>Choose a verified destination. This only prepares a draft; nothing is transmitted. Forwarding may expose private text to another channel.</Text>
               <ScrollView style={{maxHeight: 320}}>
                 {liveScopes.map(scope => <TouchableOpacity key={conversationKey(scope)} accessibilityRole="button" accessibilityLabel={'Forward to ' + scope.channelName} style={{minHeight: 48, justifyContent: 'center'}} onPress={() => {
                   const key = conversationKey(scope);

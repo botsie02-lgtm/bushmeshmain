@@ -97,7 +97,19 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
   const [scanning, setScanning] = useState(false);
   const live = useRef(controller);
   live.current = controller;
-  useEffect(() => () => {scanToken.current += 1; nativeChatInvitationQr.hide();}, [selection.radio, controller.sessionEpoch]);
+  useEffect(() => {
+    setScanning(false); setSecret(''); setInvite(''); setReview(false);
+    return () => {scanToken.current += 1; nativeChatInvitationQr.hide();};
+  }, [selection.radio, controller.sessionEpoch]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'background') {
+        scanToken.current += 1; nativeChatInvitationQr.hide();
+        setScanning(false); setSecret(''); setInvite(''); setReview(false);
+      }
+    });
+    return () => sub.remove();
+  }, []);
   const current = controller.radio === selection.radio;
   const disabled = !current || controller.busy || controller.radioBusy;
   const full = !!controller.capacity && controller.capacity.used >= controller.capacity.total;
@@ -115,11 +127,15 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
     setInputError(null);
     Keyboard.dismiss();
     try {
-      const value = await nativeChatInvitationQr.scan();
+      const value = await nativeChatInvitationQr.scan(() => token === scanToken.current && live.current.sessionEpoch === epoch && live.current.isCurrentRadio(selection.radio));
       if (token !== scanToken.current || live.current.sessionEpoch !== epoch || !live.current.isCurrentRadio(selection.radio)) return;
       if (value === null) return;
       const parsed = decodeChatInvite(value);
       setMode('invite');
+      if (live.current.chats.some(c => c.name.toLowerCase() === parsed.name.toLowerCase())) {
+        setInputError('A channel with this name already exists. Refresh or choose another invitation.');
+        return;
+      }
       setName(parsed.name);
       setSecret(parsed.secretHex);
       setInvite('');
@@ -135,6 +151,7 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
     try {
       if (joining) {
         const parsed = mode === 'invite' ? decodeChatInvite(invite) : validateChatInvite({name, secretHex: secret});
+        if (controller.chats.some(c => c.name.toLowerCase() === parsed.name.toLowerCase())) {setInputError('A channel with this name already exists. Refresh or choose another invitation.'); return;}
         setName(parsed.name);
         setSecret(parsed.secretHex);
         setInvite('');
@@ -149,7 +166,7 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
     }
   };
   const submit = async () => {
-    if (submitting.current || disabled || !review || !controller.isCurrentRadio(selection.radio)) return;
+    if (submitting.current || disabled || full || !review || !controller.isCurrentRadio(selection.radio)) return;
     submitting.current = true;
     try {
       const chat = await controller.provision(selection.radio, {
@@ -203,7 +220,7 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
               </>
             )}
           </Section>
-          <Action primary label="Review chat" disabled={disabled || full} onPress={reviewInput}/>
+          <Action primary label="Review chat" disabled={disabled || full || scanning} onPress={reviewInput}/>
         </>
       ) : (
         <>

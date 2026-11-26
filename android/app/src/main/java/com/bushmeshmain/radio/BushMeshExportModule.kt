@@ -1,6 +1,8 @@
 package com.bushmeshmain.radio
 
 import android.content.ContentValues
+import android.content.ClipData
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -62,6 +64,35 @@ class BushMeshExportModule(
       "BushMesh_Chat." + format, "BUSHMESH_CHAT_EXPORT_FAILED", promise)
   }
 
+  @ReactMethod
+  fun shareConversationExport(uriString: String, format: String, promise: Promise) {
+    try {
+      require(format == "txt" || format == "json")
+      val uri = Uri.parse(uriString)
+      require(uri.scheme == "content" && uri.authority == "media")
+      val resolver = reactContext.contentResolver
+      val columns = arrayOf(MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.OWNER_PACKAGE_NAME)
+      val owned = resolver.query(uri, columns, null, null, null)?.use { cursor ->
+        cursor.moveToFirst() && cursor.getString(0).startsWith("BushMesh_Chat_") &&
+          cursor.getString(0).endsWith("." + format) && cursor.getString(1) == reactContext.packageName
+      } ?: false
+      check(owned)
+      val activity = checkNotNull(reactContext.currentActivity)
+      val intent = Intent(Intent.ACTION_SEND).apply {
+        type = if (format == "json") JSON_MIME else "text/plain"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newRawUri("BushMesh conversation export", uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      activity.runOnUiThread {
+        try { activity.startActivity(Intent.createChooser(intent, "Share plaintext conversation")); promise.resolve(true) }
+        catch (_: Exception) { promise.reject("BUSHMESH_CHAT_SHARE_FAILED", "Could not share the saved document.") }
+      }
+    } catch (_: Exception) {
+      promise.reject("BUSHMESH_CHAT_SHARE_FAILED", "Could not share the saved document.")
+    }
+  }
+
   private fun saveTextExport(
     displayName: String,
     content: String,
@@ -118,7 +149,7 @@ class BushMeshExportModule(
       val published = ContentValues().apply {
         put(MediaStore.MediaColumns.IS_PENDING, 0)
       }
-      resolver.update(uri, published, null, null)
+      check(resolver.update(uri, published, null, null) > 0) { "Android did not publish the export." }
       return Pair(uri, "Downloads/Bushmesh")
     } catch (error: Exception) {
       resolver.delete(uri, null, null)
