@@ -50,6 +50,18 @@ class BushMeshExportModule(
     )
   }
 
+  @ReactMethod
+  fun saveConversationExport(content: String, format: String, promise: Promise) {
+    if (format != "txt" && format != "json") {
+      promise.reject("BUSHMESH_CHAT_EXPORT_FAILED", "Unsupported format.")
+      return
+    }
+    // A deliberately saved user document, not a temporary plaintext cache.
+    saveTextExport("BushMesh_Chat_" + java.util.UUID.randomUUID().toString(),
+      content, "." + format, if (format == "json") JSON_MIME else "text/plain",
+      "BushMesh_Chat." + format, "BUSHMESH_CHAT_EXPORT_FAILED", promise)
+  }
+
   private fun saveTextExport(
     displayName: String,
     content: String,

@@ -7,6 +7,7 @@ export type NativeExportResult = {
 };
 
 type NativeExportModule = {
+  saveConversationExport?: (content: string, format: 'txt' | 'json') => Promise<NativeExportResult>;
   saveGpx: (displayName: string, content: string) => Promise<NativeExportResult>;
   saveJson: (displayName: string, content: string) => Promise<NativeExportResult>;
 };
@@ -18,6 +19,11 @@ export const nativeFileExport = {
     return Platform.OS === 'android' && module !== undefined;
   },
 
+  conversationSupported(): boolean { return Platform.OS === 'android' && typeof module?.saveConversationExport === 'function'; },
+  async saveConversation(content: string, format: 'txt' | 'json'): Promise<NativeExportResult> {
+    if (!module?.saveConversationExport) throw new Error('Conversation export unavailable.');
+    return module.saveConversationExport(content, format);
+  },
   async saveGpx(displayName: string, content: string): Promise<NativeExportResult> {
     if (!this.isSupported() || !module) {
       throw new Error('Native GPX export is unavailable on this platform.');

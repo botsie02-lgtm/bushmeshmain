@@ -24,6 +24,7 @@ export type ChatManagementDialogProps = {
   /** Navigation only: do not change the active BushMesh carrier. */
   onProvisioned?: (chat: ChatConfiguration) => void;
   onLeft?: (chat: ChatConfiguration) => void;
+  onExport?: (chat: ChatConfiguration, incarnation: number, format: 'txt' | 'json') => Promise<void>;
 };
 
 function Action({label, onPress, disabled, danger, primary}: {
@@ -196,14 +197,23 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
 }
 
 /** Full-page settings. Can also be mounted directly by the messenger router. */
-export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation = 1}: {
+export function ChatSettingsPage({chat, controller, onClose, onLeft, onExport, incarnation = 1}: {
   chat: ChatConfiguration; controller: ChatManagementController; incarnation?: number;
   onClose: () => void; onLeft?: (chat: ChatConfiguration) => void;
+  onExport?: ChatManagementDialogProps['onExport'];
 }) {
   const p = controller.preferences[chat.id] ?? defaultChatPreferences;
   const [name, setName] = useState(p.displayName);
   const [personalisation, setPersonalisation] = useState<ChatPersonalisation>(() => localPersonalisation(p));
   const [shareError, setShareError] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const exportHistory = (format: 'txt' | 'json') => Alert.alert('Export plaintext history?', 'The selected locally associated conversation will be saved as an unencrypted document. Other apps or people with access to that file may read it. Delete the exported file yourself when no longer needed. Message contents may contain sensitive information.', [
+    {text: 'Cancel', style: 'cancel'}, {text: 'Export', onPress: () => {
+      if (!onExport || exportBusy) return;
+      setExportBusy(true);
+      onExport(chat, incarnation, format).catch(() => Alert.alert('Export failed', 'The conversation export could not be saved.')).finally(() => setExportBusy(false));
+    }},
+  ]);
   const [revealError, setRevealError] = useState(false);
   const revealToken = useRef(0);
   const liveController = useRef(controller);
@@ -322,7 +332,8 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation
       </Section>
       <Section title="Privacy and history">
         <Text style={styles.body}>A MeshCore shared key allows channel access, not proof of who sent a message. Archive hides the chat locally; it does not erase messages or change the radio.</Text>
-        <Text style={styles.body}>Search safely associated messages in the conversation. Export and per-chat deletion are unavailable until history provenance and retention are fully validated.</Text>
+        <Text style={styles.body}>Export only locally associated records from this exact conversation. Clearing history remains unavailable while replay and recovery safety are under review.</Text>
+        {onExport && <><Action label="Export history as text" disabled={exportBusy} onPress={() => exportHistory('txt')}/><Action label="Export history as JSON" disabled={exportBusy} onPress={() => exportHistory('json')}/></>}
       </Section>
       <Section title="Leave chat">
         <Text style={styles.body}>Remove this channel from the connected radio only. Your encrypted Radio History is retained.</Text>
@@ -355,7 +366,7 @@ export function ChatManagementDialog(props: ChatManagementDialogProps): React.JS
             keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
             {selection.kind === 'settings'
               ? <ChatSettingsPage key={selection.chat.id} chat={selection.chat} controller={controller}
-                  onClose={onClose} onLeft={props.onLeft} incarnation={selection.incarnation}/>
+                  onClose={onClose} onLeft={props.onLeft} onExport={props.onExport} incarnation={selection.incarnation}/>
               : <ProvisionForm key={selection.kind + selection.radio} {...props} selection={selection}/>}
             {!!controller.error && <Text accessibilityRole="alert" style={styles.danger}>{controller.error}</Text>}
           </ScrollView>

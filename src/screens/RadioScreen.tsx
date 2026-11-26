@@ -25,6 +25,8 @@ import {
 import {RadioInbox} from './radioMessenger/RadioInbox';
 import {RadioChatRoom} from './radioMessenger/RadioChatRoom';
 import {RadioTechnicalDrawer} from './radioMessenger/RadioTechnicalDrawer';
+import {buildConversationExport} from '../radio/chatManagement/conversationExport';
+import {nativeFileExport} from '../native/NativeFileExport';
 import {RadioQuarantineReview} from './radioMessenger/RadioQuarantineReview';
 
 export type RadioScreenProps = {
@@ -97,6 +99,8 @@ function RadioMessenger({
     messagePersistenceStatus, messagePersistenceError,
     canSendChannelMessage, sendChannelMessage, addLocalChannelMessage, addDurableChannelMessage, finishDurableSubmission,
   } = useBushMesh();
+  const exportState = useRef({channelMessages, messagePersistenceStatus});
+  exportState.current = {channelMessages, messagePersistenceStatus};
   const {snapshot: radioSession} = useRadioSession();
   const radioConnection = useRadioConnection();
   const {snapshot: connection} = radioConnection;
@@ -617,6 +621,13 @@ function RadioMessenger({
   const isRestoring = messagePersistenceStatus === 'restoring';
   const dialog = management && tabVisible && !settingsVisible ? <ChatManagementDialog controller={management}
     selection={managementSelection} onClose={() => setManagementSelection(null)}
+    onExport={nativeFileExport.conversationSupported() && messagePersistenceStatus === 'ready' ? async (chat, incarnation, format) => {
+      if (exportState.current.messagePersistenceStatus !== 'ready') throw new Error('Encrypted history unavailable.');
+      const scope = {radioId: chat.radio, channelGeneration: 'config:' + incarnation + ':' + chat.id, channelIndex: String(chat.slot), channelName: chat.name};
+      const result = buildConversationExport(exportState.current.channelMessages, scope, format);
+      const saved = await nativeFileExport.saveConversation(result.content, format);
+      Alert.alert('History exported', result.count + ' records saved as plaintext in ' + saved.location + '/' + saved.displayName + '. You can share or delete this document from Android Files.');
+    } : undefined}
     onProvisioned={setPendingChat}
     onLeft={chat => {
       const incarnation = managementSelection?.kind === 'settings' ? managementSelection.incarnation ?? 1 : 1;
