@@ -11,6 +11,7 @@ import {chatPreferenceStore, defaultChatPreferences} from '../src/radio/chatMana
 import {ChatOperationError} from '../src/radio/chatManagement/chatInvitations';
 import {meshCoreInboundInbox} from '../src/meshcore/meshcoreInboundInbox';
 import {meshCoreInboundMessageId} from '../src/meshcore/meshcoreInboundIdentity';
+import type {ParsedChannelMessage} from '../src/meshcore/meshcoreParsers';
 
 jest.mock('../src/state/BushMeshContext', () => ({useBushMesh: jest.fn()}));
 jest.mock('../src/state/RadioConnectionContext', () => ({useRadioConnection: jest.fn()}));
@@ -450,9 +451,17 @@ test('managed inbox counts actual observed inbound, never a new history row alon
     direction: 'received', status: 'confirmed', text: 'DELAYED UNOWNED', createdAt: new Date().toISOString()}];
   await rerender({enableChatManagement: true});
   expect(viewText()).not.toContain('DELAYED UNOWNED');
-  const message = {channelIndex: '1', text: 'OBSERVED RADIO MESSAGE', timestamp: 100, textType: 0, snrDb: 0, pathLength: 0};
-  await act(async () => {meshCoreInboundInbox.publish(message as Parameters<typeof meshCoreInboundInbox.publish>[0]);});
-  messages = [...messages, {id: meshCoreInboundMessageId(message as Parameters<typeof meshCoreInboundInbox.publish>[0]),
+  const message: ParsedChannelMessage = {
+    packetType: 'channel',
+    channelIndex: '1',
+    text: 'OBSERVED RADIO MESSAGE',
+    timestamp: 100,
+    textType: 0,
+    snr: 0,
+    pathLength: 0,
+  };
+  await act(async () => {meshCoreInboundInbox.publish(message);});
+  messages = [...messages, {id: meshCoreInboundMessageId(message),
     channelIndex: '1', channelName: 'Private', direction: 'received', status: 'confirmed',
     text: message.text, createdAt: new Date().toISOString()}];
   await rerender({enableChatManagement: true});
