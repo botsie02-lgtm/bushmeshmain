@@ -53,7 +53,7 @@ export function decodeChatInvite(value: string): ChatInvite {
   }
 }
 
-export type ChatOperationFailureCode = 'duplicate' | 'full' | 'partial' | 'invalid' | 'storage' | 'stale';
+export type ChatOperationFailureCode = 'duplicate' | 'full' | 'partial' | 'invalid' | 'storage' | 'stale' | 'rejected';
 export class ChatOperationError extends Error {
   constructor(readonly code: ChatOperationFailureCode, message: string) {
     super(message);

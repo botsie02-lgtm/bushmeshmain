@@ -21,6 +21,8 @@ export function useChatManagement() {
   const [configs, setConfigs] = useState<ChatConfiguration[]>([]);
   const [preferences, setPreferences] = useState<ChatPreferenceSnapshot>({});
   const [ready, setReady] = useState(false);
+  const currentPreferences = useRef(preferences);
+  currentPreferences.current = preferences;
   const [sort, setSort] = useState<ChatSort>('recent');
   useEffect(() => {
     let active = true;
@@ -134,8 +136,9 @@ export function useChatManagement() {
       }
     });
 
-  const leave = (chat: ChatConfiguration, onRemoved?: () => void) => run(async () => {
+  const leave = (chat: ChatConfiguration, onRemoved?: () => void, incarnation?: number) => run(async () => {
     requireCurrent(chat);
+    if (incarnation !== undefined && ((currentPreferences.current[chat.id]?.incarnation ?? 1) !== incarnation || currentPreferences.current[chat.id]?.retired)) throw new ChatOperationError('stale', 'Chat configuration changed. Refresh before removing it.');
     setReady(false);
     setError('Removing channel… You can navigate back.');
     let removed = false;
@@ -156,7 +159,7 @@ export function useChatManagement() {
     } catch (failure) {
       setReady(false);
       if (!removed) {
-        if (failure instanceof ChatOperationError && failure.code === 'partial') throw failure;
+        if (failure instanceof ChatOperationError && (failure.code === 'partial' || failure.code === 'rejected')) throw failure;
         throw new ChatOperationError('stale', 'Channel removal rejected or not started. Refresh before retrying.');
       }
       setError('Channel removed, but protected retirement failed. Refresh before using this radio.');

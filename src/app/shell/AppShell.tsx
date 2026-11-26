@@ -254,7 +254,7 @@ export function AppShell(): React.JSX.Element {
       closeMessagingSettings();
       return;
     }
-    if (!radioSettingsOpen || radioPage === 'quick') {
+    if (!radioSettingsOpen) {
       return;
     }
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -262,7 +262,7 @@ export function AppShell(): React.JSX.Element {
       return true;
     });
     return () => subscription.remove();
-  }, [activeTab, radioSettingsOpen, radioPage, closeMessagingSettings, backRadioSettings]);
+  }, [activeTab, radioSettingsOpen, closeMessagingSettings, backRadioSettings]);
 
   const openConvoy = () => {
     setConvoyView('select');

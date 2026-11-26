@@ -495,11 +495,25 @@ describe('AppRadioConnectionService', () => {
       const first = await service.provisionChat(radio, {name: 'First'});
       const second = await service.provisionChat(radio, {name: 'Second'});
       expect(await service.revealChatCredential(first)).toBe('07'.repeat(16));
-      await service.leaveChat(first);
+      const phase = jest.fn();
+      await service.leaveChat(first, phase);
+      expect(phase.mock.calls.map(call => call[0])).toEqual(['removing', 'verifying', 'removed']);
       expect(channels[first.slot].empty).toBe(true);
       expect(channels[second.slot].channelName).toBe('Second');
       expect(forget).toHaveBeenCalledWith(first.id);
       await service.dispose();
+    });
+    it('distinguishes removal rejection from uncertain timeout without repeating the destructive command', async () => {
+      const {service, radio, client, forget} = await chatHarness();
+      try {
+        const chat = await service.provisionChat(radio, {name: 'Camp'});
+        client.writeChannel.mockRejectedValueOnce(new Error('PACKET_ERROR (2)'));
+        await expect(service.leaveChat(chat)).rejects.toMatchObject({code: 'rejected'});
+        client.writeChannel.mockRejectedValueOnce(new Error('timed out'));
+        await expect(service.leaveChat(chat)).rejects.toMatchObject({code: 'partial'});
+        expect(client.writeChannel).toHaveBeenCalledTimes(3);
+        expect(forget).not.toHaveBeenCalled();
+      } finally {await service.dispose();}
     });
   });
 });

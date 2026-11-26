@@ -607,7 +607,7 @@ function RadioMessenger({
 
   // Settings is a real page inside the activity, not a React Native Dialog window.
   // The secure native credential window therefore has a single activity owner.
-  if (managementSelection && dialog) return <View style={styles.root}>{dialog}</View>;
+  const coveredBySettings = !!managementSelection && !!dialog;
 
   if (showUnattributed) {
     return <RadioQuarantineReview
@@ -654,6 +654,7 @@ function RadioMessenger({
     const warned = !!activeKey && uncertain.has(activeKey);
     return (
       <View style={styles.root}>
+        <View style={[styles.root, coveredBySettings && styles.covered]} importantForAccessibility={coveredBySettings ? 'no-hide-descendants' : 'auto'} pointerEvents={coveredBySettings ? 'none' : 'auto'}>
         <RadioChatRoom
           scope={selectedScope} messages={selectedMessages} initialSearch={searchRoom}
           connected={connected && radioId === selectedScope.radioId}
@@ -712,27 +713,38 @@ function RadioMessenger({
             <Text style={styles.uncertainText}>I understand the duplicate-send risk</Text>
           </TouchableOpacity>
         ) : null}
+        </View>
+        {dialog}
       </View>
     );
   }
 
   return (
     <View style={styles.root}>
+      <View style={[styles.root, coveredBySettings && styles.covered]} importantForAccessibility={coveredBySettings ? 'no-hide-descendants' : 'auto'} pointerEvents={coveredBySettings ? 'none' : 'auto'}>
       {management?.error ? <Text style={styles.uncertainText}>{management.error}</Text> : null}
       <RadioInbox
         conversations={conversations}
         managed={!!management}
-        visible={tabVisible && !settingsVisible}
+        visible={tabVisible && !settingsVisible && !coveredBySettings}
         filter={archived ? 'archived' : filter}
         onFilter={next => {setArchived(next === 'archived'); setFilter(next === 'archived' ? 'all' : next);}}
         onRefresh={management?.radio && !management.radioBusy ? () => management.refresh().catch(() => undefined) : undefined}
         refreshing={management?.busy ?? false}
         online={connected} radioLabel={connectedDeviceName}
-        connectionStatus={connectionStatus} onConnection={onOpenRadioConnection}
+        connectionStatus={connection.status ?? connectionStatus} onConnection={onOpenRadioConnection}
         onArchive={management ? scope => localMenuUpdate(scope, {archived: !preferencesFor(scope)?.archived}) : undefined}
         onMarkUnread={management ? scope => localMenuUpdate(scope, {unread: true}) : undefined}
         onSearchRoom={scope => {openRoom(scope); setSearchRoom(true);}}
-        onLeave={management ? openChatManagement : undefined}
+        onLeave={management ? scope => {
+          const chat = chatFor(scope);
+          const incarnation = preferencesFor(scope)?.incarnation ?? 1;
+          if (!chat) return;
+          Alert.alert('Leave this chat?', 'Remove the verified radio channel? Encrypted local history is retained.', [
+            {text: 'Cancel', style: 'cancel'},
+            {text: 'Leave chat', style: 'destructive', onPress: () => {management.leave(chat, undefined, incarnation).catch(() => undefined);}},
+          ]);
+        } : undefined}
         canLeave={scope => !!chatFor(scope) && !management?.busy && !management?.radioBusy}
         restoring={isRestoring}
         historyIssue={messagePersistenceStatus === 'error'
@@ -770,12 +782,15 @@ function RadioMessenger({
           </Text>
         </View>
       ) : null}
+      </View>
+      {dialog}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
+  covered: {display: 'none'},
   managementBar: {flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16,
     paddingVertical: 8, backgroundColor: colors.surfaceSoft},
   panel: {flex: 1, backgroundColor: colors.background, padding: 18, gap: 14},

@@ -48,7 +48,7 @@ export function RadioMessagingSettingsScreen({page = 'hub', onNavigate, onBack}:
 }
 function HistoryPage({onBack}: {onBack: () => void}) {
   const {channelMessages} = useBushMesh();
-  return <RadioQuarantineReview messages={(channelMessages ?? []).filter(m => !m.conversation)} onBack={onBack}/>;
+  return <RadioQuarantineReview messages={channelMessages ?? []} allHistory onBack={onBack}/>;
 }
 function GlobalQuickMessages({onBack}: {onBack: () => void}) {
   const [values, setValues] = useState<string[] | null>(null);

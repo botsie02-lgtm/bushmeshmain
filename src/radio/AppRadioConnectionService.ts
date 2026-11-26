@@ -19,6 +19,7 @@ import {
   safeMeshCoreChannel,
 } from '../meshcore/meshcoreChannelInfo';
 import {MeshCoreClient, MeshCoreLogItem} from '../meshcore/MeshCoreClient';
+import {classifyChannelSubmissionFailure} from '../meshcore/channelSendDiagnostics';
 import {meshCoreInboundInbox} from '../meshcore/meshcoreInboundInbox';
 import {nativeOutboundDiagnostics} from '../meshcore/nativeOutboundDiagnostics';
 import {
@@ -1258,6 +1259,7 @@ export class AppRadioConnectionService {
     return this.withChatPort(expected.radio, async (port, assertCurrent) => {
       await this.requireChatConfiguration(port, expected);
       let attemptedClear = false;
+      let writeAccepted = false;
       const checked: MeshCoreChannelProvisioningPort = {
         ...port,
         writeChannel: async (slot, name, secret) => {
@@ -1265,6 +1267,7 @@ export class AppRadioConnectionService {
           attemptedClear = true;
           onPhase?.('removing');
           await port.writeChannel(slot, name, secret);
+          writeAccepted = true;
           onPhase?.('verifying');
         },
       };
@@ -1280,6 +1283,9 @@ export class AppRadioConnectionService {
         }
       } catch (failure) {
         if (failure instanceof ChatOperationError && failure.code === 'partial') throw failure;
+        if (attemptedClear && !writeAccepted && classifyChannelSubmissionFailure(failure).reason === 'firmware-error') {
+          throw new ChatOperationError('rejected', 'Radio rejected channel removal. Refresh before retrying.');
+        }
         if (attemptedClear) {
           throw new ChatOperationError('partial', 'The radio slot may have been cleared. Refresh before retrying. Radio History has not been deleted.');
         }
