@@ -22,6 +22,7 @@ test('distinct matched queue replies preserve identical messages; unmatched copi
   expect(id(saved[0])).not.toBe(id(saved[1]));
   expect(id(saved[2])).toBe(id(saved[3]));
   expect(id(saved[2])).not.toBe(id(saved[4]));
+  expect(meshCoreInboundMessageId(message)).not.toBe(id(saved[2]));
 });
 
 test('association confirmation happens once and survives a storage retry', async () => {

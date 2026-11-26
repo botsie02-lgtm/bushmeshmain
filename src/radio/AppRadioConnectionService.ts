@@ -267,7 +267,7 @@ export class AppRadioConnectionService {
     } catch {
       // Missing protected catalogue or session is not a radio transport failure.
       // The queue remains operational, but received records stay unassociated.
-      this.inboundBoundary.clear();
+      if (this.getChatRadio() === radio && this.chatSessionEpoch === epoch) this.inboundBoundary.clear();
     }
   }
 
@@ -279,7 +279,7 @@ export class AppRadioConnectionService {
       const configs = await Promise.all(channels.filter(c => !c.empty).map(c => this.chatConfiguration(radio, c)));
       await this.installInboundBinding(radio, epoch, configs);
     } catch {
-      this.inboundBoundary.clear();
+      if (this.getChatRadio() === radio && this.chatSessionEpoch === epoch) this.inboundBoundary.clear();
     }
   }
 

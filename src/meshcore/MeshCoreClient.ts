@@ -388,15 +388,19 @@ export class MeshCoreClient {
     const info = await this.getDeviceInfo();
     if (!info.maxChannels) throw new Error('MeshCore firmware did not advertise maxChannels.');
     validateMeshCoreChannelIndex(channelIndex, info.maxChannels);
-    await this.getChannel(channelIndex);
-    const channel = this.channelInfoByIndex.get(channelIndex);
-    if (!channel) {
-      throw new Error(`MeshCore channel ${channelIndex} response was malformed.`);
-    }
-    return {
-      ...channel,
-      secret: Uint8Array.from(channel.secret),
-    };
+    // Read and consume the raw response cache within the same serialized
+    // command. A malformed or wrong-slot response must not reuse older PSK
+    // metadata for an exact configuration verification.
+    return this.enqueueCommand(`CMD_GET_CHANNEL_${channelIndex}`, async () => {
+      this.channelInfoByIndex.delete(channelIndex);
+      await this.executeCommandAndWaitForPacket(
+        `CMD_GET_CHANNEL_${channelIndex}`, buildGetChannelCommand(channelIndex),
+        getChannelCommandHex(channelIndex), [0x12], 'PACKET_CHANNEL_INFO',
+      );
+      const channel = this.channelInfoByIndex.get(channelIndex);
+      if (!channel) throw new Error(`MeshCore channel ${channelIndex} response was malformed.`);
+      return {...channel, secret: Uint8Array.from(channel.secret)};
+    });
   }
 
   async writeChannel(

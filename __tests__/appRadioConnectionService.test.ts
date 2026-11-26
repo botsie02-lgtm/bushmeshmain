@@ -1,5 +1,7 @@
 import {Device} from 'react-native-ble-plx';
 import * as chatPreferences from '../src/radio/chatManagement/chatPreferences';
+import type {MeshCoreClientEvents} from '../src/meshcore/MeshCoreClient';
+import {meshCoreInboundInbox, type MeshCoreInboundEnvelope} from '../src/meshcore/meshcoreInboundInbox';
 
 import {AppRadioConnectionService} from '../src/radio/AppRadioConnectionService';
 import {releasedNativeOwnerStatus} from './testNativeOwnerStatus';
@@ -86,12 +88,10 @@ describe('AppRadioConnectionService', () => {
       getChannel: jest.fn().mockResolvedValue({}),
       stop: jest.fn().mockResolvedValue(undefined),
     };
-    let clientEvents: {
-      onConnectionState?: (state: string, detail: string) => void;
-    } | null = null;
+    let clientEvents: MeshCoreClientEvents | null = null;
     const createBleManager = jest.fn(() => manager as never);
     const createMeshCoreClient = jest.fn((...args: unknown[]) => {
-      clientEvents = args[2] as typeof clientEvents;
+      clientEvents = args[2] as MeshCoreClientEvents;
       return client as never;
     });
     const nativeCoordinator = {
@@ -331,6 +331,44 @@ describe('AppRadioConnectionService', () => {
     }
 
     afterEach(() => jest.restoreAllMocks());
+
+    it('uses a verified queue boundary and exact readback before persisting an incoming association, without any Radio screen', async () => {
+      const {service, radio, channels, getClientEvents} = await chatHarness();
+      const received: MeshCoreInboundEnvelope[] = [];
+      const unsubscribe = meshCoreInboundInbox.setConsumer(async envelope => {received.push(envelope);});
+      const waitForRecords = async (count: number) => {
+        const end = Date.now() + 1500;
+        while (received.length < count && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 5));
+        expect(received).toHaveLength(count);
+      };
+      try {
+        const chat = await service.provisionChat(radio, {name: 'Camp'});
+        jest.spyOn(chatPreferences.chatPreferenceStore, 'rememberConfigurations')
+          .mockImplementation(async (_radio, configs) => Object.fromEntries(configs.map(c => [c.id, {
+            ...chatPreferences.defaultChatPreferences, configuration: c, incarnation: 2, retired: false,
+          }])));
+        await service.listChatConfigurations(radio);
+        const events = getClientEvents()!;
+        const message = {packetType: 'channel' as const, channelIndex: String(chat.slot), text: 'same', timestamp: 100, pathLength: 1, snr: 1, textType: 0};
+        events.onQueueReadStart?.();
+        events.onQueuedChannelMessage?.(message);
+        await waitForRecords(1);
+        expect(received[0].observation?.association).toBeUndefined();
+        events.onQueueReadStart?.(); events.onQueueEmpty?.();
+        events.onQueueReadStart?.(); events.onQueuedChannelMessage?.(message);
+        await waitForRecords(2);
+        expect(received[1].observation?.association).toMatchObject({incarnation: 2});
+        expect(received[1].observation?.configurationId).toBe(chat.id);
+        // Same slot and name, externally changed PSK. The post-receive readback
+        // must not attach this message to the previous protected configuration.
+        channels[chat.slot].secret = new Uint8Array(16).fill(9);
+        const epoch = service.getChatSessionEpoch();
+        events.onQueueReadStart?.(); events.onQueuedChannelMessage?.(message);
+        await waitForRecords(3);
+        expect(received[2].observation?.association).toBeUndefined();
+        expect(service.getChatSessionEpoch()).toBeGreaterThan(epoch);
+      } finally {unsubscribe(); await service.dispose();}
+    });
 
     it('creates and joins verified empty slots, without exposing PSKs in list results', async () => {
       const {service, radio, provenance, client} = await chatHarness();

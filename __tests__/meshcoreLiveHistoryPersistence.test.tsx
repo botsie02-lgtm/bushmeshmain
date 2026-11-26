@@ -2,7 +2,7 @@ import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
 import {NativeChannelMessageBridge} from '../src/components/NativeChannelMessageBridge';
-import {meshCoreInboundInbox} from '../src/meshcore/meshcoreInboundInbox';
+import {meshCoreInboundInbox, type MeshCoreInboundObservation} from '../src/meshcore/meshcoreInboundInbox';
 import {meshCoreInboundDiagnostics} from '../src/meshcore/meshcoreInboundDiagnostics';
 import {androidMessagePersistence} from '../src/persistence/AndroidMessagePersistence';
 import {BushMeshMessageSnapshotV1} from '../src/persistence/messageSnapshot';
@@ -68,8 +68,9 @@ describe('MeshCore live Radio History durable bridge', () => {
         text: 'B TO A LIVE 304', timestamp: 304,
         pathLength: 255, textType: 0, snr: 2,
       };
+      const observation: MeshCoreInboundObservation = {version: 1, source: 'native-session', origin: 'queued-generation-unknown', radio: 'radio-a', configurationId: 'a'.repeat(64), configurationName: 'Existing private convoy', timestamp: 304, snr: 2, pathLength: 255};
       await ReactTestRenderer.act(async () => {
-        meshCoreInboundInbox.publish(incoming, {version: 1, source: 'native-session', origin: 'queued-generation-unknown', radio: 'radio-a', configurationId: 'a'.repeat(64), configurationName: 'Existing private convoy', timestamp: 304, snr: 2, pathLength: 255});
+        meshCoreInboundInbox.publish(incoming, observation);
         await until(() => meshCoreInboundDiagnostics.snapshot().counts['persistence-error']! >= 1, 'failed first write');
       });
       expect(meshCoreInboundInbox.pendingCount()).toBe(1);
@@ -87,7 +88,7 @@ describe('MeshCore live Radio History durable bridge', () => {
 
       await ReactTestRenderer.act(async () => {
         // A different link quality / path is still the same queued text.
-        meshCoreInboundInbox.publish({...incoming, snr: -1, pathLength: 2});
+        meshCoreInboundInbox.publish({...incoming, snr: -1, pathLength: 2}, {...observation, snr: -1, pathLength: 2});
         await until(() => meshCoreInboundDiagnostics.snapshot().counts.duplicate! >= 1, 'duplicate suppressed');
       });
       expect(currentContext()?.channelMessages).toHaveLength(1);
@@ -104,13 +105,22 @@ describe('MeshCore live Radio History durable bridge', () => {
         ]);
       });
       await ReactTestRenderer.act(async () => {
-        meshCoreInboundInbox.publish(incoming);
+        // Replay from the SAME observed physical radio, never infer identity
+        // from an otherwise identical frame with missing radio metadata.
+        meshCoreInboundInbox.publish(incoming, observation);
         await until(() => meshCoreInboundDiagnostics.snapshot().counts.duplicate! >= 2, 'restart duplicate');
       });
       expect(currentContext()?.channelMessages).toHaveLength(1);
       expect(storedSnapshot()?.messages).toHaveLength(1);
       expect(save).toHaveBeenCalled();
       expect(meshCoreInboundDiagnostics.snapshot().counts['history-visible']).toBe(1);
+      await ReactTestRenderer.act(async () => {
+        meshCoreInboundInbox.publish(incoming, {...observation, radio: 'radio-b'});
+        meshCoreInboundInbox.publish(incoming, {...observation, radio: null, configurationId: null, configurationName: null});
+        await until(() => (storedSnapshot()?.messages.length ?? 0) === 3, 'distinct or unknown radio records retained');
+      });
+      expect(currentContext()?.channelMessages).toHaveLength(3);
+      expect(currentContext()?.channelMessages.every(message => !message.conversation)).toBe(true);
     } finally {
       await ReactTestRenderer.act(async () => {renderer?.unmount();});
       jest.restoreAllMocks();
