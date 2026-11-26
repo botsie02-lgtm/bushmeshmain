@@ -1253,7 +1253,7 @@ export class AppRadioConnectionService {
     });
   }
 
-  async leaveChat(expected: ChatConfiguration, onPhase?: (phase: 'removing' | 'verifying') => void): Promise<void> {
+  async leaveChat(expected: ChatConfiguration, onPhase?: (phase: 'removing' | 'verifying' | 'removed') => void): Promise<void> {
     this.chatObservationBinding = null;
     return this.withChatPort(expected.radio, async (port, assertCurrent) => {
       await this.requireChatConfiguration(port, expected);
@@ -1274,6 +1274,7 @@ export class AppRadioConnectionService {
         if (cleared.channelIndex !== expected.slot) throw new ChatOperationError('partial', 'Removal readback was for another slot. Refresh before retrying.');
         // Exact slot readback succeeded. Retire local binding before a separate full refresh.
         this.patch({channels: this.snapshot.channels.map(c => c.channelIndex === String(expected.slot) ? safeMeshCoreChannel(cleared) : c)});
+        onPhase?.('removed');
         try {await chatPreferenceStore.forget(expected.id);} catch {
           throw new ChatOperationError('partial', 'Channel removal verified, but local retirement could not be saved. Refresh before retrying.');
         }

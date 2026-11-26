@@ -30,6 +30,7 @@ run_test() {
   if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$out/smoke-$class.txt"; then exit 1; fi
 }
 run_test RuntimeLifecycleDeniedTest
+run_test ConversationMenuUiTest
 # Grants are only test-environment setup, after the ungranted smoke.
 adb shell pm grant "$pkg" android.permission.BLUETOOTH_CONNECT
 adb shell pm grant "$pkg" android.permission.ACCESS_FINE_LOCATION

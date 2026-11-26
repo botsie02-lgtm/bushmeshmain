@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import {TextInput} from 'react-native';
+import {Alert, BackHandler, TextInput} from 'react-native';
 import {ChatManagementDialog, ChatSettingsPage} from '../src/radio/chatManagement/ChatManagementDialog';
 import {ChatManagementController} from '../src/radio/chatManagement/useChatManagement';
 import {ChatConfiguration, defaultChatPreferences} from '../src/radio/chatManagement/chatPreferences';
@@ -110,4 +110,38 @@ test('shared key reveal requires explicit action and clears protected display wh
     if (renderer) await ReactTestRenderer.act(() => renderer.unmount());
     jest.restoreAllMocks();
   }
+});
+
+test('busy management page always permits visible Back and Android Back', async () => {
+  const {value} = controller();
+  const close = jest.fn();
+  const back = jest.spyOn(BackHandler, 'addEventListener').mockReturnValue({remove: jest.fn()});
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  try {
+    await ReactTestRenderer.act(() => {renderer = ReactTestRenderer.create(<ChatManagementDialog selection={{kind: 'settings', chat}} controller={{...value, busy: true}} onClose={close}/>);});
+    const button = renderer.root.findAllByProps({accessibilityLabel: 'Back'}).find(n => typeof n.props.onPress === 'function');
+    expect(button?.props.disabled).not.toBe(true);
+    await ReactTestRenderer.act(() => press(renderer, 'Back'));
+    expect(close).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(() => {expect(back.mock.calls[back.mock.calls.length - 1][1]()).toBe(true);});
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(value.leave).not.toHaveBeenCalled();
+  } finally {if (renderer) await ReactTestRenderer.act(() => renderer.unmount()); back.mockRestore();}
+});
+
+test('leave closes the exact settings target only on confirmed removal', async () => {
+  const {value} = controller();
+  const left = jest.fn();
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {buttons?.find(b => b.text === 'Leave chat')?.onPress?.();});
+  let confirmed: (() => void) | undefined;
+  (value.leave as jest.Mock).mockImplementation(async (_chat, callback) => {confirmed = callback;});
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  try {
+    await ReactTestRenderer.act(() => {renderer = ReactTestRenderer.create(<ChatSettingsPage chat={chat} controller={value} onClose={jest.fn()} onLeft={left}/>);});
+    await ReactTestRenderer.act(() => press(renderer, 'Leave and clear radio slot'));
+    expect(left).not.toHaveBeenCalled();
+    expect(confirmed).toBeDefined();
+    await ReactTestRenderer.act(() => confirmed?.());
+    expect(left).toHaveBeenCalledWith(chat);
+  } finally {if (renderer) await ReactTestRenderer.act(() => renderer.unmount()); alert.mockRestore();}
 });

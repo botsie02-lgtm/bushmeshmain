@@ -111,7 +111,7 @@ function RadioMessenger({
   const [managementSelection, setManagementSelection] = useState<ChatManagementSelection | null>(null);
   const [archived, setArchived] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unread' | 'pinned'>('all');
-  useEffect(() => {if (!tabVisible) {setManagementSelection(null); setShowNew(false);}}, [tabVisible]);
+  useEffect(() => {if (!tabVisible || settingsVisible) {setManagementSelection(null); setShowNew(false);}}, [tabVisible, settingsVisible]);
   const [pendingChat, setPendingChat] = useState<ChatConfiguration | null>(null);
   const [readIds, setReadIds] = useState<ReadonlySet<string>>(new Set());
 
@@ -594,14 +594,15 @@ function RadioMessenger({
     else setSettingsOpen(true);
   };
   const isRestoring = messagePersistenceStatus === 'restoring';
-  const dialog = management && tabVisible ? <ChatManagementDialog controller={management}
+  const dialog = management && tabVisible && !settingsVisible ? <ChatManagementDialog controller={management}
     selection={managementSelection} onClose={() => setManagementSelection(null)}
     onProvisioned={setPendingChat}
     onLeft={chat => {
+      const incarnation = managementSelection?.kind === 'settings' ? managementSelection.incarnation ?? 1 : 1;
       const scope = selectedRef.current;
-      if (scope?.channelGeneration.endsWith(':' + chat.id) && scope.radioId === chat.radio) closeRoom();
+      if (scope?.channelGeneration === 'config:' + incarnation + ':' + chat.id && scope.radioId === chat.radio) closeRoom();
       const current = selectionRef.current;
-      if (current?.kind === 'settings' && current.chat.id === chat.id && current.chat.radio === chat.radio) setManagementSelection(null);
+      if (current?.kind === 'settings' && current.chat.id === chat.id && current.chat.radio === chat.radio && (current.incarnation ?? 1) === incarnation) setManagementSelection(null);
     }} /> : null;
 
   // Settings is a real page inside the activity, not a React Native Dialog window.

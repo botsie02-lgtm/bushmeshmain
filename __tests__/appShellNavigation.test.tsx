@@ -311,6 +311,10 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
     expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(0);
     expect(visibleText(renderer)).not.toContain('Conversation router not yet connected');
     expect(visibleText(renderer)).not.toContain('Radio traffic uses the selected');
+    await ReactTestRenderer.act(() => {messenger.props.onOpenRadioConnection();});
+    expect(renderer.root.findByType(RadioMessagingSettingsScreen).props.page).toBe('connection');
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
+    expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
     await ReactTestRenderer.act(() => {messenger.props.onOpenMessagingSettings();});
     expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
     expect(renderer.root.findByType(RadioMessagingSettingsScreen)).toBeDefined();

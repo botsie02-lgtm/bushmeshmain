@@ -231,6 +231,7 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation
     const token = ++revealToken.current;
     const epoch = controller.sessionEpoch;
     setRevealError(false);
+    Keyboard.dismiss();
     try {
       const secret = await controller.credential(chat);
       if (token !== revealToken.current || AppState.currentState === 'background' ||

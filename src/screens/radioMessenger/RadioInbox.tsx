@@ -81,8 +81,6 @@ export function RadioInbox({
     onOpenRowMenu?.(scope);
     setMenuFor(conversationKey(scope));
   };
-  return () => subscription.remove();
-  }, [visible, menuFor]);
   return (
     <View style={styles.root}>
       <View style={styles.header}>

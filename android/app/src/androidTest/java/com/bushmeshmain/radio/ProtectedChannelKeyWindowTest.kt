@@ -65,6 +65,9 @@ class ProtectedChannelKeyWindowTest {
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
       waitFor { owner.dialog == null }
       show()
+      SystemClock.sleep(31_000)
+      waitFor { owner.dialog == null && owner.keyView == null }
+      show()
       instrumentation.runOnMainSync { activity.moveTaskToBack(true) }
       waitFor { owner.dialog == null }
     } finally {

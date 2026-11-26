@@ -138,16 +138,30 @@ export function useChatManagement() {
     requireCurrent(chat);
     setReady(false);
     setError('Removing channel… You can navigate back.');
+    let removed = false;
+    const confirmed = () => {
+      if (removed) return;
+      removed = true;
+      setConfigs(current => current.filter(c => c.id !== chat.id));
+      setPreferences(current => current[chat.id] ? {...current, [chat.id]: {...current[chat.id], retired: true}} : current);
+      setError('Channel removed. Refreshing radio…');
+      onRemoved?.();
+    };
     try {
-      await live.current.leaveChat(chat, phase => setError(phase === 'removing' ? 'Removing channel…' : 'Verifying channel removal…'));
+      await live.current.leaveChat(chat, phase => {
+        if (phase === 'removed') confirmed();
+        else setError(phase === 'removing' ? 'Removing channel…' : 'Verifying channel removal…');
+      });
+      confirmed();
     } catch (failure) {
       setReady(false);
-      throw failure;
+      if (!removed) {
+        if (failure instanceof ChatOperationError && failure.code === 'partial') throw failure;
+        throw new ChatOperationError('stale', 'Channel removal rejected or not started. Refresh before retrying.');
+      }
+      setError('Channel removed, but protected retirement failed. Refresh before using this radio.');
+      return;
     }
-    setConfigs(current => current.filter(c => c.id !== chat.id));
-    setPreferences(current => current[chat.id] ? {...current, [chat.id]: {...current[chat.id], retired: true}} : current);
-    setError('Channel removed. Refreshing radio…');
-    onRemoved?.();
     try {
       await reload(chat.radio);
       setError('Channel removed. Saved history retained.');
