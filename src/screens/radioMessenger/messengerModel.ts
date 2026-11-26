@@ -25,7 +25,7 @@ export type MessageOwnershipProof = {
 export type ScopedMessage = {
   message: BushMeshChannelMessage;
   /** Origin: live observed in this mounted radio session, or trusted external proof. */
-  provenance: 'session' | 'verified-history';
+  provenance: 'session' | 'verified-history' | 'local-observation';
 };
 
 export type MessengerConversation = {
@@ -77,7 +77,7 @@ export function scopedMessages(
       if (seen.has(message.id)) return [];
       seen.add(message.id);
       if (equalProof(scope, trustedOwnership[message.id])) {
-        return [{message, provenance: 'verified-history' as const}];
+        return [{message, provenance: message.conversation?.provenance === 'local-observation' ? 'local-observation' as const : 'verified-history' as const}];
       }
       if (equalScope(scope, observedSession[message.id])) {
         return [{message, provenance: 'session' as const}];
@@ -115,7 +115,7 @@ export function validateCarrierText(value: string): {
 }
 
 export function deliveryText(message: BushMeshChannelMessage): string {
-  if (message.direction === 'received') return 'Received · peer identity unverified';
+  if (message.direction === 'received') return message.conversation?.provenance === 'local-observation' ? 'Locally associated · original key and peer unverified' : 'Received · peer identity unverified';
   if (message.submissionNotAttempted) return 'Not submitted · configuration or storage changed';
   switch (message.status) {
     case 'pending': return message.conversation ? 'Submission journal · outcome unconfirmed' : 'Pending radio response';

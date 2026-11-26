@@ -27,6 +27,12 @@ export function NativeChannelMessageBridge(): null {
     const stored = channelsRef.current.find(
       channel => channel.channelIndex === message.channelIndex,
     );
+    const observation = envelope.observation;
+    const association = observation?.association;
+    const conversation = association && observation.radio && observation.configurationId && observation.configurationName
+      ? {version: 1 as const, provenance: 'local-observation' as const, radioId: observation.radio,
+        channelGeneration: 'config:' + association.incarnation + ':' + observation.configurationId,
+        channelIndex: message.channelIndex, channelName: observation.configurationName} : undefined;
     const inserted = await addDurableChannelMessage({
       id: meshCoreInboundMessageId(message),
       channelIndex: message.channelIndex,
@@ -36,6 +42,7 @@ export function NativeChannelMessageBridge(): null {
       status: 'confirmed',
       createdAt: new Date(envelope.receivedAtMs).toISOString(),
       ...(envelope.observation ? {observation: envelope.observation} : {}),
+      ...(conversation ? {conversation} : {}),
     });
     if (inserted) {
       if (androidMessagePersistence.isSupported()) {

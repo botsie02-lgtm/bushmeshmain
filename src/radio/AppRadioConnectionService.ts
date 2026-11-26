@@ -21,6 +21,7 @@ import {
 import {MeshCoreClient, MeshCoreLogItem} from '../meshcore/MeshCoreClient';
 import {classifyChannelSubmissionFailure} from '../meshcore/channelSendDiagnostics';
 import {meshCoreInboundInbox} from '../meshcore/meshcoreInboundInbox';
+import {InboundConversationBoundary} from './chatManagement/InboundConversationBoundary';
 import {nativeOutboundDiagnostics} from '../meshcore/nativeOutboundDiagnostics';
 import {
   MeshCoreBleDiscovery,
@@ -215,16 +216,43 @@ export class AppRadioConnectionService {
   private scanGeneration = 0;
   private chatOperationActive = false;
   private chatSessionEpoch = 0;
-  private chatObservationBinding: {radio: string; epoch: number; configs: ChatConfiguration[]} | null = null;
+  private readonly inboundBoundary = new InboundConversationBoundary();
 
-  private publishChannelObservation(message: import('../meshcore/meshcoreParsers').ParsedChannelMessage, source: 'js-gatt' | 'native-session') {
-    const binding = this.chatObservationBinding;
+  private publishChannelObservation(message: import('../meshcore/meshcoreParsers').ParsedChannelMessage, source: 'js-gatt' | 'native-session', matched = false) {
     const radio = this.getChatRadio();
-    const config = binding && radio && binding.radio === radio && this.isChatObservationCurrent(radio, binding.epoch)
-      ? binding.configs.find(c => String(c.slot) === message.channelIndex) : undefined;
+    const observed = this.inboundBoundary.observe(radio, this.chatSessionEpoch, message.channelIndex, matched,
+      !!radio && this.isChatObservationCurrent(radio, this.chatSessionEpoch));
+    const config = observed?.config;
     meshCoreInboundInbox.publish(message, {version: 1, source, origin: 'queued-generation-unknown',
       radio, configurationId: config?.id ?? null, configurationName: config?.name ?? null,
-      timestamp: message.timestamp, snr: message.snr, pathLength: message.pathLength});
+      timestamp: message.timestamp, snr: message.snr, pathLength: message.pathLength,
+      ...(observed?.incarnation !== undefined ? {association: {version: 1 as const, evidence: 'post-empty-local-observation' as const, incarnation: observed.incarnation}} : {})});
+  }
+
+  private async installInboundBinding(radio: string, epoch: number, configs: ChatConfiguration[]): Promise<void> {
+    try {
+      if (this.getChatRadio() !== radio || this.chatSessionEpoch !== epoch) return;
+      const entries = await chatPreferenceStore.rememberConfigurations(radio, configs);
+      if (this.getChatRadio() !== radio || this.chatSessionEpoch !== epoch) return;
+      this.inboundBoundary.install(radio, epoch, configs, entries);
+      this.requireManagementSession().requestInboundDrain?.();
+    } catch {
+      // Missing protected catalogue or session is not a radio transport failure.
+      // The queue remains operational, but received records stay unassociated.
+      this.inboundBoundary.clear();
+    }
+  }
+
+  private async bindStartupChannels(channels: MeshCoreChannelInfo[]): Promise<void> {
+    const radio = this.getChatRadio();
+    const epoch = this.chatSessionEpoch;
+    if (!radio) return;
+    try {
+      const configs = await Promise.all(channels.filter(c => !c.empty).map(c => this.chatConfiguration(radio, c)));
+      await this.installInboundBinding(radio, epoch, configs);
+    } catch {
+      this.inboundBoundary.clear();
+    }
   }
 
   constructor(deps: Partial<Dependencies> = {}) {
@@ -567,6 +595,10 @@ export class AppRadioConnectionService {
         onTxChunk: log => this.addChunk(log),
         onTxFrame: log => this.addFrame(log),
         onChannelMessage: message => this.publishChannelObservation(message, 'js-gatt'),
+      onQueuedChannelMessage: message => this.publishChannelObservation(message, 'js-gatt', true),
+      onQueueReadStart: () => this.inboundBoundary.startRead(this.getChatRadio(), this.chatSessionEpoch),
+      onQueueEmpty: () => this.inboundBoundary.emptyReply(this.getChatRadio(), this.chatSessionEpoch),
+      onQueueEvidenceLost: () => this.inboundBoundary.loseEvidence(),
         onMessagesWaiting: () => {
           // JS-GATT session schedules its own bounded inbound drain.
         },
@@ -1114,7 +1146,8 @@ export class AppRadioConnectionService {
         .map(c => this.chatConfiguration(radio, c)));
       assertCurrent();
       this.patch({channels: channels.map(safeMeshCoreChannel)});
-      this.chatObservationBinding = {radio, epoch: this.chatSessionEpoch, configs};
+      await this.installInboundBinding(radio, this.chatSessionEpoch, configs);
+      assertCurrent();
       return configs;
     });
   }
@@ -1124,7 +1157,7 @@ export class AppRadioConnectionService {
   async provisionChat(radio: string, input: {
     name: string; secretHex?: string; personalisation?: Partial<ChatPersonalisation>;
   }): Promise<ChatConfiguration> {
-    this.chatObservationBinding = null;
+    this.inboundBoundary.clear();
     const name = validateChatName(input.name);
     if (input.secretHex !== undefined) validateChatInvite({name, secretHex: input.secretHex});
     // Do not modify firmware if protected preferences cannot be loaded.
@@ -1255,7 +1288,7 @@ export class AppRadioConnectionService {
   }
 
   async leaveChat(expected: ChatConfiguration, onPhase?: (phase: 'removing' | 'verifying' | 'removed') => void): Promise<void> {
-    this.chatObservationBinding = null;
+    this.inboundBoundary.clear();
     return this.withChatPort(expected.radio, async (port, assertCurrent) => {
       await this.requireChatConfiguration(port, expected);
       let attemptedClear = false;
@@ -1606,6 +1639,10 @@ export class AppRadioConnectionService {
         statusDetail: `Native frame warning (${this.nativeFailureReason(new Error(message))}).`,
       }),
       onChannelMessage: message => this.publishChannelObservation(message, 'native-session'),
+      onQueuedChannelMessage: message => this.publishChannelObservation(message, 'native-session', true),
+      onQueueReadStart: () => this.inboundBoundary.startRead(this.getChatRadio(), this.chatSessionEpoch),
+      onQueueEmpty: () => this.inboundBoundary.emptyReply(this.getChatRadio(), this.chatSessionEpoch),
+      onQueueEvidenceLost: () => this.inboundBoundary.loseEvidence(),
       onMessagesWaiting: () => {
         // Native session owns the queued read commands; never open JS GATT.
       },
@@ -1641,6 +1678,7 @@ export class AppRadioConnectionService {
         channels: safe,
         statusDetail: `Startup sync complete. Loaded ${named.length} named channel(s) from ${safe.length} slot(s).`,
       });
+      await this.bindStartupChannels(channels);
     } finally {
       this.patch({isWriting: false});
     }
@@ -1665,6 +1703,7 @@ export class AppRadioConnectionService {
         channels: safe,
         statusDetail: `Android owns the radio. Loaded ${named.length} named channel(s) from ${safe.length} slot(s).`,
       });
+      await this.bindStartupChannels(channels);
     } finally {
       this.patch({isWriting: false});
     }
@@ -1854,6 +1893,7 @@ export class AppRadioConnectionService {
         next.connectionOwner !== this.snapshot.connectionOwner ||
         next.selfInfo?.publicKeyHex !== this.snapshot.selfInfo?.publicKeyHex) {
       this.chatSessionEpoch += 1;
+      this.inboundBoundary.clear();
     }
     this.snapshot = next;
     this.emit();

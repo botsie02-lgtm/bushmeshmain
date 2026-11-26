@@ -164,6 +164,7 @@ export class NativeMeshCoreSessionCoordinator {
     const transport = new NativeMeshCoreFrameTransport(address, deviceLabel, {
       onNativeStatus: status => {
         const nativeState = status.nativeBleState ?? 'unknown';
+        if (nativeState !== 'ready') this.events.onQueueEvidenceLost?.();
         this.updateStatus(`Android BLE ${nativeState}.`);
       },
     });
@@ -187,6 +188,13 @@ export class NativeMeshCoreSessionCoordinator {
       },
       onMessagesWaiting: () => this.events.onMessagesWaiting?.(),
       onChannelMessage: message => this.events.onChannelMessage?.(message),
+      onQueuedChannelMessage: message => {
+        if (this.events.onQueuedChannelMessage) this.events.onQueuedChannelMessage(message);
+        else this.events.onChannelMessage?.(message);
+      },
+      onQueueReadStart: () => this.events.onQueueReadStart?.(),
+      onQueueEmpty: () => this.events.onQueueEmpty?.(),
+      onQueueEvidenceLost: () => this.events.onQueueEvidenceLost?.(),
       onReceivedDatagram: datagram => {
         this.events.onReceivedDatagram?.(datagram);
       },

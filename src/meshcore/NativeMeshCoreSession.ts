@@ -89,6 +89,10 @@ export type NativeMeshCoreSessionEvents = {
   onFrame?: (response: NativeMeshCoreResponse) => void;
   onMessagesWaiting?: () => void;
   onChannelMessage?: (message: ParsedChannelMessage) => void;
+  onQueuedChannelMessage?: (message: ParsedChannelMessage) => void;
+  onQueueReadStart?: () => void;
+  onQueueEmpty?: () => void;
+  onQueueEvidenceLost?: () => void;
   onReceivedDatagram?: (datagram: ReceivedDatagram) => void;
 };
 
@@ -130,6 +134,7 @@ export class NativeMeshCoreSession {
     (stage, reason) => {
       meshCoreInboundDiagnostics.record(stage, reason ? {reason} : {});
       if (stage === 'drain-error') {
+        this.events.onQueueEvidenceLost?.();
         this.events.onStatus?.(`MeshCore inbound queue drain deferred: ${reason ?? 'unknown'}.`);
       }
     },
@@ -426,14 +431,25 @@ export class NativeMeshCoreSession {
     );
   }
 
+  requestInboundDrain(): void {
+    this.liveDrain.requestDrain();
+  }
+
   async syncNextMessage(): Promise<NativeMeshCoreResponse> {
-    return this.enqueueCommand('CMD_SYNC_NEXT_MESSAGE', () =>
-      this.executeCommand(
-        'CMD_SYNC_NEXT_MESSAGE',
-        buildGetMessageCommand(),
-        [0x07, 0x08, 0x0a, 0x10, 0x11, 0x1b],
-      ),
-    );
+    return this.enqueueCommand('CMD_SYNC_NEXT_MESSAGE', async () => {
+      this.events.onQueueReadStart?.();
+      try {
+        const reply = await this.executeCommand(
+          'CMD_SYNC_NEXT_MESSAGE', buildGetMessageCommand(),
+          [0x07, 0x08, 0x0a, 0x10, 0x11, 0x1b],
+        );
+        if (reply.packetType === 0x0a) this.events.onQueueEmpty?.();
+        return reply;
+      } catch (error) {
+        this.events.onQueueEvidenceLost?.();
+        throw error;
+      }
+    });
   }
 
   async syncQueuedMessages(maxMessages = 20): Promise<NativeMeshCoreResponse[]> {
@@ -645,7 +661,11 @@ export class NativeMeshCoreSession {
       meshCoreInboundDiagnostics.record(
         decoded.packetType === 0x11 ? 'received-0x11' : 'received-0x08',
       );
-      this.events.onChannelMessage?.(parsed.channelMessage);
+      if (this.pendingCommand?.label === 'CMD_SYNC_NEXT_MESSAGE' && this.events.onQueuedChannelMessage) {
+        this.events.onQueuedChannelMessage(parsed.channelMessage);
+      } else {
+        this.events.onChannelMessage?.(parsed.channelMessage);
+      }
     }
 
     const activeLabel = this.pendingCommand?.label;

@@ -133,6 +133,10 @@ export type MeshCoreClientEvents = {
   onConnectionState?: (state: MeshCoreConnectionState, detail: string) => void;
   onMessagesWaiting?: () => void;
   onChannelMessage?: (message: ParsedChannelMessage) => void;
+  onQueuedChannelMessage?: (message: ParsedChannelMessage) => void;
+  onQueueReadStart?: () => void;
+  onQueueEmpty?: () => void;
+  onQueueEvidenceLost?: () => void;
   onContactMessage?: (message: ParsedContactMessage) => void;
   onChannelData?: (frame: MeshCoreChannelDataFrame) => void;
   onReceivedDatagram?: (datagram: ReceivedDatagram) => void;
@@ -190,6 +194,7 @@ export class MeshCoreClient {
     (stage, reason) => {
       meshCoreInboundDiagnostics.record(stage, reason ? {reason} : {});
       if (stage === 'drain-error') {
+        this.events.onQueueEvidenceLost?.();
         this.events.onStatus(`MeshCore inbound queue drain deferred: ${reason ?? 'unknown'}.`);
       }
     },
@@ -586,16 +591,25 @@ export class MeshCoreClient {
     );
   }
 
+  requestInboundDrain(): void {
+    this.liveDrain.requestDrain();
+  }
+
   async syncNextMessage(): Promise<MeshCoreLogItem> {
-    return this.enqueueCommand('CMD_SYNC_NEXT_MESSAGE', () =>
-      this.executeCommandAndWaitForPacket(
-        'CMD_SYNC_NEXT_MESSAGE',
-        buildGetMessageCommand(),
-        getMessageCommandHex(),
-        [0x07, 0x08, 0x0a, 0x10, 0x11, 0x1b],
-        'PACKET_MESSAGE_OR_DATA_OR_NO_MORE_MSGS',
-      ),
-    );
+    return this.enqueueCommand('CMD_SYNC_NEXT_MESSAGE', async () => {
+      this.events.onQueueReadStart?.();
+      try {
+        const reply = await this.executeCommandAndWaitForPacket(
+          'CMD_SYNC_NEXT_MESSAGE', buildGetMessageCommand(), getMessageCommandHex(),
+          [0x07, 0x08, 0x0a, 0x10, 0x11, 0x1b], 'PACKET_MESSAGE_OR_DATA_OR_NO_MORE_MSGS',
+        );
+        if (reply.label === 'PACKET_NO_MORE_MSGS') this.events.onQueueEmpty?.();
+        return reply;
+      } catch (error) {
+        this.events.onQueueEvidenceLost?.();
+        throw error;
+      }
+    });
   }
 
   async syncQueuedMessages(maxMessages = 20): Promise<MeshCoreSyncedMessage[]> {
@@ -1136,7 +1150,11 @@ export class MeshCoreClient {
       meshCoreInboundDiagnostics.record(
         decoded.packetType === 0x11 ? 'received-0x11' : 'received-0x08',
       );
-      this.events.onChannelMessage?.(parsed.channelMessage);
+      if (this.pendingCommand?.label === 'CMD_SYNC_NEXT_MESSAGE' && this.events.onQueuedChannelMessage) {
+        this.events.onQueuedChannelMessage(parsed.channelMessage);
+      } else {
+        this.events.onChannelMessage?.(parsed.channelMessage);
+      }
     }
 
     if (parsed?.contactMessage) {

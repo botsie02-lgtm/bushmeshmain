@@ -65,11 +65,21 @@ function validatePersistedMessage(
         (o.configurationName !== null && typeof o.configurationName !== 'string') ||
         [o.timestamp, o.snr, o.pathLength].some(v => v !== null && !Number.isFinite(v))) throw new Error('Invalid persisted radio observation.');
   }
+  if (candidate.observation?.association !== undefined && candidate.conversation?.provenance !== 'local-observation') throw new Error('Local observation association has no matching conversation.');
   if (candidate.submissionNotAttempted !== undefined && (candidate.submissionNotAttempted !== true || candidate.direction !== 'sent' || candidate.status !== 'failed')) throw new Error('Invalid submission outcome.');
   if (candidate.conversation !== undefined) {
     const c = candidate.conversation;
-    if (!c || c.version !== 1 || c.provenance !== 'local-submission' ||
-        candidate.direction !== 'sent' || typeof c.radioId !== 'string' || !c.radioId ||
+    const o = candidate.observation;
+    const association = o?.association;
+    const sent = c?.provenance === 'local-submission' && candidate.direction === 'sent';
+    const observed = c?.provenance === 'local-observation' && candidate.direction === 'received' &&
+      association?.version === 1 && association.evidence === 'post-empty-local-observation' &&
+      Number.isSafeInteger(association.incarnation) && association.incarnation > 0 &&
+      !!o?.radio && !!o.configurationId && c.radioId === o.radio &&
+      c.channelName === o.configurationName &&
+      c.channelGeneration === 'config:' + association.incarnation + ':' + o.configurationId;
+    if (!c || c.version !== 1 || (!sent && !observed) ||
+        typeof c.radioId !== 'string' || !c.radioId ||
         !/^config:(?:[1-9][0-9]*:)?[a-f0-9]{64}$/.test(c.channelGeneration) ||
         c.channelIndex !== candidate.channelIndex || c.channelName !== candidate.channelName) {
       throw new Error('Invalid persisted conversation attribution.');

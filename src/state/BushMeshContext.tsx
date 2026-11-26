@@ -42,7 +42,7 @@ export type BushMeshChannelMessage = {
   submissionFailure?: ChannelSubmissionFailure;
   createdAt: string;
   /** Protected configuration observed by a guarded local submission, not peer identity. */
-  conversation?: import('../screens/radioMessenger/messengerModel').MessageOwnershipProof & {version: 1; provenance: 'local-submission'};
+  conversation?: import('../screens/radioMessenger/messengerModel').MessageOwnershipProof & {version: 1; provenance: 'local-submission' | 'local-observation'};
   observation?: import('../meshcore/meshcoreInboundInbox').MeshCoreInboundObservation;
   submissionNotAttempted?: boolean;
 };

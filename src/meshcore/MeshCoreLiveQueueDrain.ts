@@ -49,6 +49,10 @@ export class MeshCoreLiveQueueDrain {
     this.scheduled = null;
   }
 
+  requestDrain(): void {
+    this.trigger();
+  }
+
   notifyWaiting(): void {
     this.stage('push-0x83');
     this.trigger();

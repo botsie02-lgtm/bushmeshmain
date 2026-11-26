@@ -13,6 +13,8 @@ export type MeshCoreInboundObservation = {
   timestamp: number | null;
   snr: number | null;
   pathLength: number | null;
+  /** Local receive association, never original PSK or authenticated sender evidence. */
+  association?: {version: 1; evidence: 'post-empty-local-observation'; incarnation: number};
 };
 
 export type MeshCoreInboundEnvelope = {

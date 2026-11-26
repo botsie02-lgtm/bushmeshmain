@@ -65,7 +65,7 @@ function Bubble({entry}: {entry: ScopedMessage}) {
     <View style={[styles.bubbleWrap, outgoing && styles.outgoingWrap]}>
       <View style={[styles.bubble, outgoing ? styles.outgoingBubble : styles.incomingBubble]}>
         {!outgoing ? <Text style={styles.sender}>
-          Channel message · sender unavailable
+          {entry.provenance === 'local-observation' ? 'Locally associated · sender unverified' : 'Channel message · sender unavailable'}
         </Text> : null}
         <Text selectable style={[styles.message, outgoing && styles.outgoingMessage]}>
           {message.text}
@@ -240,9 +240,8 @@ export function RadioChatRoom({
             <Text style={styles.emptyIcon}>◌</Text>
             <Text style={styles.emptyTitle}>No attributed messages yet</Text>
             <Text style={styles.emptyBody}>
-              Only messages with a proven radio/channel scope, or messages
-              observed in this mounted session, appear here. Older unscoped
-              messages remain protected in Radio History.
+              Local submissions and supported local receive observations appear here.
+              Unassociated messages remain protected in Radio History.
             </Text>
           </View>
         }
