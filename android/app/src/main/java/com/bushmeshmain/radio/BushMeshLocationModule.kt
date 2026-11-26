@@ -1,9 +1,6 @@
 package com.bushmeshmain.radio
 
-import android.Manifest
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -36,65 +33,42 @@ class BushMeshLocationModule(
 
   @ReactMethod
   fun start(minTimeMs: Double, minDistanceMeters: Double, promise: Promise) {
-    try {
-      if (
-        reactContext.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
-          PackageManager.PERMISSION_GRANTED
-      ) {
-        promise.reject(
-          "BUSHMESH_LOCATION_PERMISSION_REQUIRED",
-          "Precise location permission is required for offline GPS tracking.",
-        )
-        return
+    BushMeshRadioService.dispatch(reactContext, BushMeshRadioService.ACTION_REQUEST_LOCATION) { error ->
+      if (error != null) {
+        promise.reject("BUSHMESH_LOCATION_START_FAILED", error.message, error)
+      } else {
+        try {
+          if (tracking) locationManager.removeUpdates(this)
+          val resolvedTimeMs = minTimeMs.toLong().coerceAtLeast(250L)
+          val resolvedDistanceMeters = minDistanceMeters.toFloat().coerceAtLeast(0f)
+          callbackStats.begin(resolvedTimeMs, resolvedDistanceMeters)
+          locationManager.requestLocationUpdates(
+            LocationManager.GPS_PROVIDER, resolvedTimeMs, resolvedDistanceMeters,
+            this, Looper.getMainLooper(),
+          )
+          tracking = true
+          promise.resolve(true)
+        } catch (failure: Exception) {
+          stopTracking()
+          promise.reject("BUSHMESH_LOCATION_START_FAILED", failure.message, failure)
+        }
       }
-
-      if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-        promise.reject(
-          "BUSHMESH_GPS_DISABLED",
-          "Android GPS provider is disabled.",
-        )
-        return
-      }
-
-      if (tracking) {
-        locationManager.removeUpdates(this)
-      }
-
-      requestForegroundRuntime()
-
-      val resolvedTimeMs = minTimeMs.toLong().coerceAtLeast(250L)
-      val resolvedDistanceMeters = minDistanceMeters.toFloat().coerceAtLeast(0f)
-      callbackStats.begin(resolvedTimeMs, resolvedDistanceMeters)
-      locationManager.requestLocationUpdates(
-        LocationManager.GPS_PROVIDER,
-        resolvedTimeMs,
-        resolvedDistanceMeters,
-        this,
-        Looper.getMainLooper(),
-      )
-      tracking = true
-      promise.resolve(true)
-    } catch (error: Exception) {
-      tracking = false
-      releaseForegroundRuntime()
-      promise.reject("BUSHMESH_LOCATION_START_FAILED", error.message, error)
     }
   }
 
   @ReactMethod
   fun stop(promise: Promise) {
-    try {
-      stopTracking()
-      promise.resolve(true)
-    } catch (error: Exception) {
-      promise.reject("BUSHMESH_LOCATION_STOP_FAILED", error.message, error)
+    stopTracking { error ->
+      if (error == null) promise.resolve(true)
+      else promise.reject("BUSHMESH_LOCATION_STOP_FAILED", error.message, error)
     }
   }
 
   @ReactMethod
   fun getStatus(promise: Promise) {
     val result = Arguments.createMap().apply {
-      putBoolean("tracking", tracking)
+      putBoolean("tracking", tracking && BushMeshRadioServiceState.locationRequested &&
+        BushMeshRadioService.permissionAllows(reactContext, false))
       putBoolean(
         "gpsEnabled",
         locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER),
@@ -148,6 +122,11 @@ class BushMeshLocationModule(
   }
 
   override fun onLocationChanged(location: Location) {
+    if (!BushMeshRadioServiceState.locationRequested || !BushMeshRadioService.permissionAllows(reactContext, false)) {
+      stopTracking()
+      emitError("GPS foreground permission or session is no longer available.")
+      return
+    }
     val nowElapsedMs = SystemClock.elapsedRealtime()
     val fixElapsedMs = location.elapsedRealtimeNanos / 1_000_000L
     callbackStats.record(
@@ -213,29 +192,17 @@ class BushMeshLocationModule(
     super.invalidate()
   }
 
-  private fun stopTracking() {
-    locationManager.removeUpdates(this)
-    tracking = false
-    releaseForegroundRuntime()
-  }
-
-  private fun requestForegroundRuntime() {
-    dispatchRuntimeAction(BushMeshRadioService.ACTION_REQUEST_LOCATION)
-  }
-
-  private fun releaseForegroundRuntime() {
-    dispatchRuntimeAction(BushMeshRadioService.ACTION_RELEASE_LOCATION)
-  }
-
-  private fun dispatchRuntimeAction(action: String) {
-    val intent = Intent(reactContext, BushMeshRadioService::class.java).apply {
-      this.action = action
-    }
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      reactContext.startForegroundService(intent)
-    } else {
-      reactContext.startService(intent)
+  private fun stopTracking(completion: (Exception?) -> Unit = {}) {
+    // removeUpdates may fail after permission revocation. Always release the
+    // foreground location request, and never disturb the independent radio.
+    try {
+      locationManager.removeUpdates(this)
+    } catch (_: SecurityException) {
+      // Android has already withdrawn access.
+    } finally {
+      tracking = false
+      BushMeshRadioService.dispatch(reactContext, BushMeshRadioService.ACTION_RELEASE_LOCATION,
+        completion = completion)
     }
   }
 

@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.os.Build
 import android.os.PersistableBundle
 import android.util.Base64
@@ -42,38 +41,19 @@ class BushMeshRadioServiceModule(
 
   @ReactMethod
   fun start(deviceLabel: String?, promise: Promise) {
-    try {
-      outboxLease.claimForeground()
-      dispatch(BushMeshRadioService.ACTION_START, deviceLabel, null)
-      promise.resolve(true)
-    } catch (error: Exception) {
-      promise.reject("BUSHMESH_RADIO_SERVICE_START_FAILED", error.message, error)
-    }
+    dispatch(BushMeshRadioService.ACTION_START, deviceLabel, null, "BUSHMESH_RADIO_SERVICE_START_FAILED", promise)
   }
 
   @ReactMethod
   fun startNativeBle(deviceAddress: String, deviceLabel: String?, promise: Promise) {
-    try {
-      outboxLease.claimForeground()
-      dispatch(BushMeshRadioService.ACTION_START, deviceLabel, deviceAddress)
-      promise.resolve(true)
-    } catch (error: Exception) {
-      promise.reject("BUSHMESH_NATIVE_BLE_START_FAILED", error.message, error)
-    }
+    dispatch(BushMeshRadioService.ACTION_START, deviceLabel, deviceAddress, "BUSHMESH_NATIVE_BLE_START_FAILED", promise)
   }
 
   @ReactMethod
   fun stop(promise: Promise) {
-    try {
-      outboxLease.claimForeground()
-      // This promise acknowledges command dispatch only. JavaScript waits on
-      // getStatus() until the service state, BLE target and persisted target all
-      // confirm release before treating Background Radio as stopped.
-      dispatch(BushMeshRadioService.ACTION_STOP, null, null)
-      promise.resolve(true)
-    } catch (error: Exception) {
-      promise.reject("BUSHMESH_RADIO_SERVICE_STOP_FAILED", error.message, error)
-    }
+    // Completion includes local cleanup; JS still independently confirms
+    // service, BLE and durable-target release through getStatus().
+    dispatch(BushMeshRadioService.ACTION_STOP, null, null, "BUSHMESH_RADIO_SERVICE_STOP_FAILED", promise)
   }
 
   @ReactMethod
@@ -237,21 +217,10 @@ class BushMeshRadioServiceModule(
     promise.resolve(status)
   }
 
-  private fun dispatch(action: String, deviceLabel: String?, deviceAddress: String?) {
-    val intent = Intent(reactContext, BushMeshRadioService::class.java).apply {
-      this.action = action
-      if (action == BushMeshRadioService.ACTION_START) {
-        putExtra(BushMeshRadioService.EXTRA_DEVICE_LABEL, deviceLabel)
-        if (!deviceAddress.isNullOrBlank()) {
-          putExtra(BushMeshRadioService.EXTRA_DEVICE_ADDRESS, deviceAddress)
-        }
-      }
-    }
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      reactContext.startForegroundService(intent)
-    } else {
-      reactContext.startService(intent)
+  private fun dispatch(action: String, deviceLabel: String?, deviceAddress: String?, code: String, promise: Promise) {
+    BushMeshRadioService.dispatch(reactContext, action, deviceLabel, deviceAddress) { error ->
+      if (error == null) promise.resolve(true)
+      else promise.reject(code, error.message, error)
     }
   }
 }

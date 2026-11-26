@@ -355,9 +355,13 @@ class MeshCoreNativeBleRuntime private constructor(
     if (current != null) {
       try {
         current.disconnect()
-        current.close()
       } catch (_: SecurityException) {
         // Connection teardown should still complete locally if permission changed.
+      }
+      try {
+        current.close()
+      } catch (_: SecurityException) {
+        // Attempt close independently even if disconnect was rejected.
       }
     }
     state = "disconnected"
@@ -439,7 +443,14 @@ class MeshCoreNativeBleRuntime private constructor(
 
     val manager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
     val adapter = manager?.adapter
-    if (adapter == null || !adapter.isEnabled) {
+    val enabled = try {
+      adapter?.isEnabled == true
+    } catch (_: SecurityException) {
+      state = "error"
+      lastError = "Bluetooth permission was revoked before connection."
+      return false
+    }
+    if (adapter == null || !enabled) {
       state = "reconnecting"
       lastError = "Bluetooth is unavailable or disabled."
       scheduleReconnect()

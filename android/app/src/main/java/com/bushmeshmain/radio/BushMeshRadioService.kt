@@ -1,5 +1,6 @@
 package com.bushmeshmain.radio
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,7 +8,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.location.LocationManager
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import android.os.Build
 import android.os.IBinder
 import com.bushmeshmain.MainActivity
@@ -29,9 +35,115 @@ class BushMeshRadioService : Service() {
     private const val PREF_NATIVE_ADDRESS = "native_device_address"
     private const val PREF_NATIVE_LABEL = "native_device_label"
 
+    private const val EXTRA_COMMAND_ID = "commandId"
+    private val main = Handler(Looper.getMainLooper())
+    private val pending = RuntimeStartQueue<(Exception?) -> Unit>()
+    private var instance: BushMeshRadioService? = null
+    @Volatile private var targetCleanupFailed = false
+
+    // Only activations start a service. A normal startService from the visible
+    // app (or an already active FGS) avoids a foreground-promotion deadline on
+    // a command which may be cancelled or lose permission before delivery.
+    // Android still enforces background-start and while-in-use restrictions.
+    fun dispatch(
+      context: Context, action: String, label: String? = null, address: String? = null,
+      completion: (Exception?) -> Unit,
+    ) {
+      val app = context.applicationContext
+      main.post {
+        try {
+          when (action) {
+            ACTION_STOP, ACTION_RELEASE_LOCATION -> {
+              val radio = action == ACTION_STOP
+              val cancelled = pending.cancel(radio)
+              val failure = try {
+                if (radio) {
+                  val service = instance
+                  if (service != null) service.releaseRadio(clearPersisted = true)
+                  else releaseInactiveRadio(app)
+                } else {
+                  BushMeshRadioServiceState.releaseLocation()
+                }
+                null
+              } catch (error: Exception) {
+                error
+              } finally {
+                instance?.reconcileForeground()
+              }
+              cancelled.forEach { it(IllegalStateException("Runtime start cancelled by release.")) }
+              completion(failure)
+            }
+            ACTION_START, ACTION_REQUEST_LOCATION -> {
+              val radio = action == ACTION_START
+              requirePermission(app, radio)
+              if (radio && !address.isNullOrBlank()) {
+                require(android.bluetooth.BluetoothAdapter.checkBluetoothAddress(address.trim().uppercase())) {
+                  "Invalid Bluetooth device address."
+                }
+              }
+              val id = pending.add(radio, completion)
+              try {
+                val intent = Intent(app, BushMeshRadioService::class.java).apply {
+                  this.action = action
+                  putExtra(EXTRA_COMMAND_ID, id)
+                  putExtra(EXTRA_DEVICE_LABEL, label)
+                  putExtra(EXTRA_DEVICE_ADDRESS, address)
+                }
+                checkNotNull(app.startService(intent)) { "Android did not accept the runtime service start." }
+              } catch (error: Exception) {
+                pending.take(id)
+                throw error
+              }
+            }
+            else -> error("Unknown runtime action.")
+          }
+        } catch (error: Exception) {
+          completion(error)
+        }
+      }
+    }
+
+    private fun granted(context: Context, permission: String): Boolean =
+      context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    internal fun permissionAllows(context: Context, radio: Boolean): Boolean {
+      if (Build.VERSION.SDK_INT >= 28 && !granted(context, Manifest.permission.FOREGROUND_SERVICE)) return false
+      if (Build.VERSION.SDK_INT >= 34 && !granted(context, if (radio)
+          Manifest.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE else Manifest.permission.FOREGROUND_SERVICE_LOCATION)) return false
+      return if (radio) {
+        Build.VERSION.SDK_INT < 31 || granted(context, Manifest.permission.BLUETOOTH_CONNECT)
+      } else {
+        // BushMesh GPS requires precise location, not merely approximate access.
+        granted(context, Manifest.permission.ACCESS_FINE_LOCATION) &&
+          (context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager)
+            ?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
+      }
+    }
+
+    private fun requirePermission(context: Context, radio: Boolean) {
+      if (!permissionAllows(context, radio)) throw SecurityException(
+        if (radio) "Bluetooth connect permission is required for radio foreground operation."
+        else "Precise location permission and enabled GPS are required for location foreground operation.",
+      )
+    }
+
+    private fun releaseInactiveRadio(context: Context) {
+      BushMeshRadioServiceState.releaseRadio()
+      MeshCoreNativeBleRuntime.get(context).disconnect()
+      clearPersistedNativeTarget(context)
+      BushMeshOutboxLease(context).claimForeground()
+    }
+
+    private fun clearPersistedNativeTarget(context: Context) {
+      val committed = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit().remove(PREF_NATIVE_ADDRESS).remove(PREF_NATIVE_LABEL).commit()
+      targetCleanupFailed = !committed
+      check(committed) { "Native radio target removal was not committed." }
+    }
+
     fun hasPersistedNativeTarget(context: Context): Boolean {
       val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-      return !prefs.getString(PREF_NATIVE_ADDRESS, null).isNullOrBlank() ||
+      return targetCleanupFailed || !prefs.getString(PREF_NATIVE_ADDRESS, null).isNullOrBlank() ||
         !prefs.getString(PREF_NATIVE_LABEL, null).isNullOrBlank()
     }
   }
@@ -44,117 +156,174 @@ class BushMeshRadioService : Service() {
     BushMeshOutboxLease(applicationContext)
   }
 
-  private val backgroundWorker: MeshCoreNativeBackgroundWorker by lazy {
+  private val backgroundWorkerDelegate = lazy {
     MeshCoreNativeBackgroundWorker(applicationContext, nativeBle)
   }
 
-  private val inboxCapture: BushMeshNativeInboxCapture by lazy {
+  private val backgroundWorker by backgroundWorkerDelegate
+
+  private val inboxCaptureDelegate = lazy {
     BushMeshNativeInboxCapture(applicationContext, nativeBle)
   }
 
-  private val carInboxNotifier: BushMeshCarInboxNotifier by lazy {
+  private val inboxCapture by inboxCaptureDelegate
+
+  private val carInboxNotifierDelegate = lazy {
     BushMeshCarInboxNotifier(applicationContext, nativeBle)
+  }
+
+  private val carInboxNotifier by carInboxNotifierDelegate
+  private var foregroundTypes = 0
+  private val permissionWatch = object : Runnable {
+    override fun run() {
+      reconcileForeground()
+    }
   }
 
   override fun onCreate() {
     super.onCreate()
+    instance = this
     ensureNotificationChannel()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    val action = intent?.action
-
     if (intent == null) {
-      restoreNativeTargetAfterProcessRestart()
+      try {
+        restoreNativeTargetAfterProcessRestart()
+      } catch (error: Exception) {
+        Log.w(CHANNEL_ID, "Native radio recovery deferred", error)
+        releaseRadioSafely(clearPersisted = false)
+      }
     } else {
-      // Any explicit command means a foreground/React process is interacting
-      // with the service again. Yield background protocol + inbox writers before
-      // processing it so they cannot race the returning foreground session.
-      // The Auto notifier is read-only and may remain attached to native BLE.
-      inboxCapture.stop()
-      backgroundWorker.stop()
-
-      when (action) {
-        ACTION_START -> {
-          val requestedLabel = intent.getStringExtra(EXTRA_DEVICE_LABEL)
-          val requestedAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
-
-          if (!requestedAddress.isNullOrBlank()) {
-            BushMeshRadioServiceState.requestRadio(requestedLabel, requestedAddress)
-            persistNativeTarget(requestedAddress, requestedLabel)
-            nativeBle.connect(requestedAddress, requestedLabel)
-            carInboxNotifier.start()
-          } else {
-            // Runtime keepalive calls from the React provider must not silently
-            // steal ownership from a native BLE session. If a native target was
-            // already persisted, preserve it and keep Android responsible for
-            // reconnect. Returning to RN ownership requires ACTION_STOP first.
-            val persisted = readPersistedNativeTarget()
-            val existingAddress =
-              BushMeshRadioServiceState.deviceAddress ?: persisted?.first
-            val existingLabel =
-              BushMeshRadioServiceState.deviceLabel ?: persisted?.second
-
-            if (existingAddress != null) {
-              BushMeshRadioServiceState.requestRadio(existingLabel, existingAddress)
-              nativeBle.connect(existingAddress, existingLabel)
-              carInboxNotifier.start()
-            } else {
-              BushMeshRadioServiceState.requestRadio(requestedLabel, null)
-              carInboxNotifier.stop()
-            }
+      val completion = pending.take(intent.getLongExtra(EXTRA_COMMAND_ID, -1L))
+      // A release can cancel a queued activation before Android delivers it.
+      if (completion != null) {
+        val failure = try {
+          when (intent.action) {
+            ACTION_START -> activateRadio(
+              intent.getStringExtra(EXTRA_DEVICE_LABEL),
+              intent.getStringExtra(EXTRA_DEVICE_ADDRESS),
+            )
+            ACTION_REQUEST_LOCATION -> activateLocation()
+            else -> error("Invalid runtime activation.")
           }
+          null
+        } catch (error: Exception) {
+          Log.w(CHANNEL_ID, "Runtime activation rejected", error)
+          error
         }
-
-        ACTION_STOP -> {
-          carInboxNotifier.stop()
-          BushMeshRadioServiceState.releaseRadio()
-          // Cancel reconnect work and clear the in-memory desired target before
-          // touching disk. A reconnect callback racing this command will then see
-          // no desired address and cannot re-establish the just-stopped radio.
-          nativeBle.disconnect()
-          // Stop acknowledgement in JS checks this persisted bit, so commit the
-          // tiny preference removal synchronously before shutdown can be observed
-          // as complete. A later sticky service restart must not recover this target.
-          clearPersistedNativeTarget()
-        }
-
-        ACTION_REQUEST_LOCATION -> BushMeshRadioServiceState.requestLocation()
-        ACTION_RELEASE_LOCATION -> BushMeshRadioServiceState.releaseLocation()
+        completion(failure)
       }
     }
+    reconcileForeground()
+    return if (BushMeshRadioServiceState.deviceAddress != null) START_STICKY else START_NOT_STICKY
+  }
 
-    if (!BushMeshRadioServiceState.shouldRun()) {
-      carInboxNotifier.stop()
-      // Release commands are dispatched through startForegroundService on modern
-      // Android. Promote immediately using only the type being released, then
-      // stop. This satisfies the foreground-service contract without forcing a
-      // radio-only session to also meet location prerequisites (or vice versa).
-      BushMeshRadioServiceState.markRunning()
-      startForegroundForCurrentState(action)
-      stopForeground(STOP_FOREGROUND_REMOVE)
-      BushMeshRadioServiceState.markStopped()
-      stopSelf(startId)
-      return START_NOT_STICKY
+  private fun activateRadio(label: String?, address: String?) {
+    requirePermission(this, true)
+    val persisted = readPersistedNativeTarget()
+    val target = address?.takeIf { it.isNotBlank() } ?: BushMeshRadioServiceState.deviceAddress ?: persisted?.first
+    val targetLabel = if (!address.isNullOrBlank()) label else
+      BushMeshRadioServiceState.deviceLabel ?: persisted?.second ?: label
+    val oldRequested = BushMeshRadioServiceState.radioRequested
+    val oldLabel = BushMeshRadioServiceState.deviceLabel
+    val oldAddress = BushMeshRadioServiceState.deviceAddress
+    BushMeshRadioServiceState.requestRadio(targetLabel, target)
+    try {
+      // Promote before disk, GATT, or recovery workers. No Bluetooth work
+      // is initiated if Android rejects the requested service type.
+      promote()
+    } catch (error: Exception) {
+      if (oldRequested) BushMeshRadioServiceState.requestRadio(oldLabel, oldAddress)
+      else BushMeshRadioServiceState.releaseRadio()
+      throw error
     }
-
-    BushMeshRadioServiceState.markRunning()
-    startForegroundForCurrentState(action)
-
-    // A native BLE target is persisted by device address, so Android can
-    // recreate the service and reconnect even when the React Native process was
-    // killed. Legacy RN-owned sessions remain non-sticky until migration ends.
-    return if (BushMeshRadioServiceState.deviceAddress != null) {
-      START_STICKY
-    } else {
-      START_NOT_STICKY
+    try {
+      stopRadioWriters()
+      outboxLease.claimForeground()
+      if (target != null) {
+        if (!address.isNullOrBlank()) persistNativeTarget(target, targetLabel)
+        nativeBle.connect(target, targetLabel)
+        carInboxNotifier.start()
+      } else if (carInboxNotifierDelegate.isInitialized()) carInboxNotifier.stop()
+    } catch (error: Exception) {
+      releaseRadioSafely(clearPersisted = false)
+      throw error
     }
   }
 
+  private fun activateLocation() {
+    requirePermission(this, false)
+    val alreadyRequested = BushMeshRadioServiceState.locationRequested
+    BushMeshRadioServiceState.requestLocation()
+    try {
+      promote()
+    } catch (error: Exception) {
+      if (!alreadyRequested) BushMeshRadioServiceState.releaseLocation()
+      throw error
+    }
+  }
+
+  private fun stopRadioWriters() {
+    if (inboxCaptureDelegate.isInitialized()) inboxCapture.stop()
+    if (backgroundWorkerDelegate.isInitialized()) backgroundWorker.stop()
+  }
+
+  private fun releaseRadio(clearPersisted: Boolean) {
+    stopRadioWriters()
+    if (carInboxNotifierDelegate.isInitialized()) carInboxNotifier.stop()
+    BushMeshRadioServiceState.releaseRadio()
+    nativeBle.disconnect()
+    if (clearPersisted) {
+      clearPersistedNativeTarget(this)
+      outboxLease.claimForeground()
+    }
+  }
+
+  private fun releaseRadioSafely(clearPersisted: Boolean) {
+    try {
+      releaseRadio(clearPersisted)
+    } catch (error: Exception) {
+      Log.w(CHANNEL_ID, "Radio cleanup failed", error)
+    }
+  }
+
+  private fun reconcileForeground() {
+    // Recheck on every command and periodically while running. Android may
+    // kill the process on revocation; sticky recovery performs the same check.
+    if (BushMeshRadioServiceState.radioRequested && !permissionAllows(this, true)) {
+      releaseRadioSafely(clearPersisted = false)
+    }
+    if (BushMeshRadioServiceState.locationRequested && !permissionAllows(this, false)) {
+      BushMeshRadioServiceState.releaseLocation()
+    }
+    if (BushMeshRadioServiceState.shouldRun()) {
+      try {
+        if (foregroundTypes != requestedTypes()) promote()
+        main.removeCallbacks(permissionWatch)
+        main.postDelayed(permissionWatch, 2_000)
+        return
+      } catch (error: Exception) {
+        // OS can reject a type even after a local permission check (e.g.
+        // while-in-use restriction). Never leave a falsely active owner.
+        Log.w(CHANNEL_ID, "Foreground runtime no longer eligible", error)
+        releaseRadioSafely(clearPersisted = false)
+        BushMeshRadioServiceState.releaseLocation()
+      }
+    }
+    main.removeCallbacks(permissionWatch)
+    if (foregroundTypes != 0) stopForeground(STOP_FOREGROUND_REMOVE)
+    foregroundTypes = 0
+    BushMeshRadioServiceState.markStopped()
+    // A different capability can have a queued activation. Do not cancel it.
+    if (pending.isEmpty()) stopSelf()
+  }
+
   override fun onDestroy() {
-    carInboxNotifier.stop()
-    inboxCapture.stop()
-    backgroundWorker.stop()
+    main.removeCallbacks(permissionWatch)
+    if (instance === this) instance = null
+    if (carInboxNotifierDelegate.isInitialized()) carInboxNotifier.stop()
+    stopRadioWriters()
     nativeBle.disconnect(clearTarget = false)
     BushMeshRadioServiceState.markStopped()
     super.onDestroy()
@@ -175,7 +344,9 @@ class BushMeshRadioService : Service() {
 
   private fun restoreNativeTargetAfterProcessRestart() {
     val target = readPersistedNativeTarget() ?: return
+    requirePermission(this, true)
     BushMeshRadioServiceState.requestRadio(target.second, target.first)
+    promote()
     nativeBle.connect(target.first, target.second)
     carInboxNotifier.start()
 
@@ -187,7 +358,7 @@ class BushMeshRadioService : Service() {
   }
 
   private fun persistNativeTarget(address: String, label: String?) {
-    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val committed = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       .edit()
       .putString(PREF_NATIVE_ADDRESS, address)
       .apply {
@@ -197,41 +368,30 @@ class BushMeshRadioService : Service() {
           putString(PREF_NATIVE_LABEL, label)
         }
       }
-      .apply()
-  }
-
-  private fun clearPersistedNativeTarget() {
-    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-      .edit()
-      .remove(PREF_NATIVE_ADDRESS)
-      .remove(PREF_NATIVE_LABEL)
       .commit()
+    check(committed) { "Native radio target persistence failed." }
   }
 
-  private fun startForegroundForCurrentState(action: String?) {
+  private fun requestedTypes(): Int {
+    var types = 0
+    if (BushMeshRadioServiceState.radioRequested) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+    if (BushMeshRadioServiceState.locationRequested) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+    return types
+  }
+
+  private fun promote() {
+    val types = requestedTypes()
+    check(types != 0) { "Cannot promote an inactive runtime." }
+    if (BushMeshRadioServiceState.radioRequested) requirePermission(this, true)
+    if (BushMeshRadioServiceState.locationRequested) requirePermission(this, false)
     val notification = buildNotification()
-
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      startForeground(NOTIFICATION_ID, notification, types)
+    } else {
       startForeground(NOTIFICATION_ID, notification)
-      return
     }
-
-    var serviceType = 0
-    if (BushMeshRadioServiceState.radioRequested) {
-      serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-    }
-    if (BushMeshRadioServiceState.locationRequested) {
-      serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-    }
-
-    if (serviceType == 0) {
-      serviceType = when (action) {
-        ACTION_RELEASE_LOCATION -> ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-        else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-      }
-    }
-
-    startForeground(NOTIFICATION_ID, notification, serviceType)
+    foregroundTypes = types
+    BushMeshRadioServiceState.markRunning()
   }
 
   private fun ensureNotificationChannel() {
@@ -267,12 +427,12 @@ class BushMeshRadioService : Service() {
     val deviceLabel = BushMeshRadioServiceState.deviceLabel
     val deviceAddress = BushMeshRadioServiceState.deviceAddress
     val nativeState = if (deviceAddress != null) nativeBle.status().state else null
-    val recovery = backgroundWorker.status()
+    val recovery = if (backgroundWorkerDelegate.isInitialized()) backgroundWorker.status() else null
 
     val detail = when {
-      recovery.running && recovery.identityRef != null ->
+      recovery?.running == true && recovery.identityRef != null ->
         "Background radio recovery · ${recovery.phase} · ${recovery.identityRef}"
-      recovery.running ->
+      recovery?.running == true ->
         "Background radio recovery · ${recovery.phase}"
       radioRequested && deviceAddress != null && !deviceLabel.isNullOrBlank() ->
         "Native radio $deviceLabel · ${nativeState ?: "starting"}"
