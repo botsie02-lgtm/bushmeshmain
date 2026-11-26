@@ -134,8 +134,10 @@ class BushMeshPersistenceModule(
     check(storageName !in uncertainMessageStores) { "History commit recovery is uncertain. Restart before retrying." }
   }
 
-  private fun messageCapacity(promise: Promise) {
-    promise.reject("BUSHMESH_HISTORY_CAPACITY", "Encrypted history exceeds the safe snapshot memory budget. Existing history retained; export or clear selected local history to free capacity. New messages are not confirmed saved.")
+  private fun messageCapacity(promise: Promise, restoring: Boolean = false) {
+    promise.reject("BUSHMESH_HISTORY_CAPACITY", if (restoring)
+      "Encrypted history is too large to restore with current memory headroom. Existing storage retained; restart or use a compatible recovery build. Do not reset merely to recover capacity."
+      else "Encrypted history exceeds the safe snapshot memory budget. Existing history retained; export or clear selected local history to free capacity. New messages are not confirmed saved.")
   }
 
   @ReactMethod
@@ -161,9 +163,9 @@ class BushMeshPersistenceModule(
       }
       promise.resolve(snapshot)
     } catch (_: HistoryCapacityException) {
-      messageCapacity(promise)
+      messageCapacity(promise, restoring = true)
     } catch (_: OutOfMemoryError) {
-      messageCapacity(promise)
+      messageCapacity(promise, restoring = true)
     } catch (_: Exception) {
       promise.reject("BUSHMESH_MESSAGES_LOAD_FAILED", "Encrypted history could not be verified. Existing storage retained.")
     }
@@ -497,6 +499,7 @@ class BushMeshPersistenceModule(
     }
   }
 
+  @Synchronized
   private fun saveSecureValue(
     preferenceKey: String,
     keyAlias: String,
@@ -507,6 +510,7 @@ class BushMeshPersistenceModule(
     promise: Promise,
   ) {
     try {
+      checkMessageStore()
       val envelope = encrypt(serializedSnapshot, keyAlias, aad)
       val committed = preferences().edit().putString(preferenceKey, envelope).commit()
       if (!committed) {
@@ -519,6 +523,7 @@ class BushMeshPersistenceModule(
     }
   }
 
+  @Synchronized
   private fun clearSecureValue(
     preferenceKey: String,
     label: String,
@@ -526,6 +531,7 @@ class BushMeshPersistenceModule(
     promise: Promise,
   ) {
     try {
+      checkMessageStore()
       val committed = preferences().edit().remove(preferenceKey).commit()
       if (!committed) {
         promise.reject(errorCode, "Android secure $label storage did not clear the snapshot.")
@@ -658,6 +664,7 @@ class BushMeshPersistenceModule(
     return String(plainText, StandardCharsets.UTF_8)
   }
 
+  @Synchronized
   private fun resetStorage(
     preferenceKey: String,
     keyAlias: String,
@@ -666,6 +673,7 @@ class BushMeshPersistenceModule(
     promise: Promise,
   ) {
     try {
+      checkMessageStore()
       val cleared = preferences().edit().remove(preferenceKey).commit()
       if (!cleared) {
         promise.reject(errorCode, "Android secure $label storage did not clear the unreadable snapshot.")
