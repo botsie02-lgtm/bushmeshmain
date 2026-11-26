@@ -23,6 +23,7 @@ jest.mock('../src/meshcore/nativeOutboundDiagnostics', () => ({
 }));
 jest.mock('../src/meshcore/meshcoreInboundDiagnostics', () => ({
   meshCoreInboundDiagnostics: {
+    record: jest.fn(),
     snapshot: () => ({events: [], counts: {}}),
     subscribe: () => () => undefined,
   },
@@ -47,7 +48,7 @@ const chatConfigs = [
   {id: 'b'.repeat(64), radio: chatRadio, slot: 1, name: 'Private', privateChannel: true},
 ];
 const listChats = jest.fn(async () => chatConfigs);
-const verifiedSend = jest.fn(async () => undefined);
+const verifiedSend = jest.fn(async (_chat: typeof chatConfigs[number], _text: string) => undefined);
 const verifyChat = jest.fn(async () => undefined);
 
 function configure() {

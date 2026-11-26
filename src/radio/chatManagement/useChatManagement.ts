@@ -69,7 +69,7 @@ export function useChatManagement() {
     setConfigs([]);
     setPreferences({});
     setError(null);
-    // Explicit refresh avoids an automatic provisioning scan racing startup sync.
+    // The host may request a refresh after the radio is idle; no write occurs here.
   }, [radio, sessionEpoch]);
 
   const requireCurrent = (chat: ChatConfiguration) => {

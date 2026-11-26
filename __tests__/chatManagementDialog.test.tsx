@@ -17,7 +17,7 @@ const chat: ChatConfiguration = {
 function controller() {
   const provision = jest.fn().mockResolvedValue(chat);
   const value: ChatManagementController = {
-    radio: chat.radio, busy: false, radioBusy: false, error: null, ready: true,
+    radio: chat.radio, sessionEpoch: 1, busy: false, radioBusy: false, error: null, ready: true,
     capacity: {used: 1, total: 4}, chats: [chat],
     preferences: {[chat.id]: {...defaultChatPreferences, localCreator: true, origin: 'created'}},
     refresh: jest.fn().mockResolvedValue(undefined),
@@ -25,7 +25,7 @@ function controller() {
     provision, leave: jest.fn().mockResolvedValue(undefined),
     credential: jest.fn().mockResolvedValue('ab'.repeat(16)),
     isCurrentRadio: jest.fn(radio => radio === chat.radio),
-    sort: 'name', changeSort: jest.fn().mockResolvedValue(undefined),
+    sort: 'name', changeSort: jest.fn().mockResolvedValue(undefined), invalidate: jest.fn(),
   };
   return {value, provision};
 }

@@ -309,13 +309,15 @@ function RadioMessenger({
     const navigation = viewedConversation?.kind === 'meshcore-channel'
       ? viewedConversation.channelIndex : null;
     if (navigation === lastNavigation.current) return;
-    lastNavigation.current = navigation;
     if (navigation === null) {
+      lastNavigation.current = null;
       setSelectedScope(null);
       return;
     }
     const scope = liveScopes.find(s => s.channelIndex === navigation) ??
       trustedScopes.find(s => s.channelIndex === navigation) ?? null;
+    if (!scope) return;
+    lastNavigation.current = navigation;
     setSelectedScope(scope);
   }, [viewedConversation, liveScopes, trustedScopes]);
 

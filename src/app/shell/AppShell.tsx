@@ -290,7 +290,7 @@ export function AppShell(): React.JSX.Element {
             <Text style={styles.radioHeaderTitle}>Messaging settings</Text>
           </View>
         </View>
-      ) : null      ) : (
+      ) : null) : (
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View>

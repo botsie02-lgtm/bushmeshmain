@@ -364,7 +364,7 @@ describe('AppRadioConnectionService', () => {
     it('submits only to the verified slot and rejects same-slot key replacement without sending', async () => {
       const {service, radio, client, channels} = await chatHarness();
       const first = await service.provisionChat(radio, {name: 'First'});
-      const second = await service.provisionChat(radio, {name: 'Second'});
+      const second = await service.provisionChat(radio, {name: 'Second', secretHex: 'ab'.repeat(16)});
       await service.sendVerifiedChat(second, 'second only');
       expect(client.sendChannelMessage).toHaveBeenCalledTimes(1);
       expect(client.sendChannelMessage).toHaveBeenCalledWith(second.slot, 'second only');
