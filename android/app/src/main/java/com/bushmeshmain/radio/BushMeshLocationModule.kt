@@ -26,7 +26,8 @@ class BushMeshLocationModule(
 
   private val locationManager =
     reactContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-  private var tracking = false
+  @Volatile private var tracking = false
+  @Volatile private var invalidated = false
   private val callbackStats = BushMeshGpsCallbackStats()
 
   override fun getName(): String = "BushMeshLocation"
@@ -36,6 +37,9 @@ class BushMeshLocationModule(
     BushMeshRadioService.dispatch(reactContext, BushMeshRadioService.ACTION_REQUEST_LOCATION) { error ->
       if (error != null) {
         promise.reject("BUSHMESH_LOCATION_START_FAILED", error.message, error)
+      } else if (invalidated) {
+        stopTracking()
+        promise.reject("BUSHMESH_LOCATION_START_FAILED", "Location module was invalidated.")
       } else {
         try {
           if (tracking) locationManager.removeUpdates(this)
@@ -47,6 +51,7 @@ class BushMeshLocationModule(
             this, Looper.getMainLooper(),
           )
           tracking = true
+          BushMeshRadioService.onLocationRelease { removeLocationListener() }
           promise.resolve(true)
         } catch (failure: Exception) {
           stopTracking()
@@ -182,27 +187,31 @@ class BushMeshLocationModule(
   }
 
   override fun invalidate() {
-    if (tracking) {
-      try {
-        stopTracking()
-      } catch (_: Exception) {
-        // React Native is tearing down; do not surface teardown failures.
-      }
-    }
+    invalidated = true
+    stopTracking()
     super.invalidate()
   }
 
-  private fun stopTracking(completion: (Exception?) -> Unit = {}) {
-    // removeUpdates may fail after permission revocation. Always release the
-    // foreground location request, and never disturb the independent radio.
+  private fun removeLocationListener() {
     try {
       locationManager.removeUpdates(this)
     } catch (_: SecurityException) {
       // Android has already withdrawn access.
     } finally {
       tracking = false
-      BushMeshRadioService.dispatch(reactContext, BushMeshRadioService.ACTION_RELEASE_LOCATION,
-        completion = completion)
+    }
+  }
+
+  private fun stopTracking(completion: (Exception?) -> Unit = {}) {
+    // The shared dispatcher serializes the release with pending STARTs on
+    // the main thread. Its release observer removes any registered listener.
+    BushMeshRadioService.dispatch(reactContext, BushMeshRadioService.ACTION_RELEASE_LOCATION) { error ->
+      try {
+        removeLocationListener()
+        completion(error)
+      } catch (failure: Exception) {
+        completion(failure)
+      }
     }
   }
 

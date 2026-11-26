@@ -41,7 +41,7 @@ jobs:
   android:
     name: Android compilation, native tests and isolated standalone APK — no install
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,7 +67,7 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest --no-daemon
       - name: Build isolated standalone release APK with embedded JavaScript
         working-directory: android
-        run: ./gradlew :app:assembleRelease -PradioRedesignFieldTest --no-daemon
+        run: ./gradlew :app:assembleRelease :app:assembleReleaseAndroidTest -PradioRedesignFieldTest --no-daemon
       - name: Verify field APK and record provenance
         run: |
           set -eu
@@ -85,7 +85,38 @@ jobs:
           git rev-parse HEAD > field-test/SOURCE-COMMIT.txt
           git show -s --format=%P HEAD > field-test/SOURCE-PARENTS.txt
           printf '%s\n' 'base 261a12ce05f8ab7c70ae6c37cba03d32cf2c1361' 'messenger 93461551cf4879f2cd453a102276ccc9335421d6' 'management 75c1cc89b65541d94489f79a65488ece605790d6' 'settings 30bb176c4f52ae20b8b7ccb9d4dc47857d3ee029' > field-test/WORKER-SOURCES.txt
-          (cd field-test && sha256sum bushmesh-radio-redesign.apk > SHA256SUMS)
+          (cd field-test && sha256sum bushmesh-radio-redesign.apk | tee SHA256SUMS)
+          test "$(cat field-test/SOURCE-COMMIT.txt)" = "$GITHUB_SHA"
+          unzip -p field-test/bushmesh-radio-redesign.apk assets/index.android.bundle | sha256sum | tee field-test/EMBEDDED-JS-SHA256.txt
+      - name: Prepare isolated instrumentation APK
+        run: |
+          test_apk="$(find android/app/build/outputs/apk/androidTest -name '*.apk' -type f -print -quit)"
+          test -n "$test_apk"
+          cp "$test_apk" "$RUNNER_TEMP/runtime-tests.apk"
+      - name: Enable KVM for Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android 16 fresh-install startup and runtime lifecycle instrumentation
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash tools/radio/verify_runtime_startup.sh field-test/bushmesh-radio-redesign.apk "$RUNNER_TEMP/runtime-tests.apk" field-test
+      - name: Upload emulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radio-runtime-smoke-diagnostics-${{ github.sha }}
+          path: field-test/smoke-*.txt
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload standalone field-test APK and provenance
         uses: actions/upload-artifact@v4
         with:

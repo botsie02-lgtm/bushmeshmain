@@ -54,6 +54,9 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace "com.bushmeshmain"
+    if (project.hasProperty("radioRedesignFieldTest")) {
+        testBuildType "release"
+    }
     defaultConfig {
         applicationId "com.bushmeshmain"
         manifestPlaceholders = [bushMeshAppLabel: "@string/app_name"]
@@ -64,6 +67,7 @@ android {
         }
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         versionCode 1
         versionName "1.0"
     }
@@ -97,6 +101,8 @@ dependencies {
     // MessagingStyle, Person and RemoteInput from AndroidX Core.
     implementation("androidx.core:core-ktx:1.17.0")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("junit:junit:4.13.2")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

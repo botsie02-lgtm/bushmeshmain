@@ -99,6 +99,16 @@ describe('native radio shutdown acknowledgement', () => {
     expect(result.persistedNativeTargetPresent).toBe(false);
   });
 
+  it('confirms radio shutdown without requiring an independent GPS runtime to stop', async () => {
+    const gpsOnly = releasedStatus({running: true, locationRequested: true, startedAtMs: 1});
+    const result = await waitForNativeRadioShutdown(
+      deterministicWait([activeStatus({locationRequested: true}), gpsOnly]),
+    );
+    expect(isNativeRadioShutdownConfirmed(result)).toBe(true);
+    expect(result.locationRequested).toBe(true);
+    expect(result.running).toBe(true);
+  });
+
   it('does not confirm shutdown while native ownership or persisted target remains', () => {
     expect(
       isNativeRadioShutdownConfirmed(

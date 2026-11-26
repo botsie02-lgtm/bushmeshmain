@@ -1,7 +1,7 @@
 package com.bushmeshmain.radio
 
 /** Main-thread command ledger. Release invalidates only its own pending activations. */
-internal class RuntimeStartQueue<T> {
+internal class RuntimeStartQueue<T : Any> {
   private data class Entry<T>(val radio: Boolean, val value: T)
   private val entries = linkedMapOf<Long, Entry<T>>()
   private var next = 0L

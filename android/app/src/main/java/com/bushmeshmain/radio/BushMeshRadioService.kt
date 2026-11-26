@@ -39,6 +39,19 @@ class BushMeshRadioService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private val pending = RuntimeStartQueue<(Exception?) -> Unit>()
     private var instance: BushMeshRadioService? = null
+    private var locationReleaseListener: (() -> Unit)? = null
+
+    // Location module registers this only after a successful Android listener request.
+    internal fun onLocationRelease(listener: () -> Unit) {
+      locationReleaseListener = listener
+    }
+
+    private fun releaseLocation() {
+      BushMeshRadioServiceState.releaseLocation()
+      val listener = locationReleaseListener
+      locationReleaseListener = null
+      listener?.invoke()
+    }
     @Volatile private var targetCleanupFailed = false
 
     // Only activations start a service. A normal startService from the visible
@@ -62,7 +75,7 @@ class BushMeshRadioService : Service() {
                   if (service != null) service.releaseRadio(clearPersisted = true)
                   else releaseInactiveRadio(app)
                 } else {
-                  BushMeshRadioServiceState.releaseLocation()
+                  releaseLocation()
                 }
                 null
               } catch (error: Exception) {
@@ -90,6 +103,10 @@ class BushMeshRadioService : Service() {
                   putExtra(EXTRA_DEVICE_ADDRESS, address)
                 }
                 checkNotNull(app.startService(intent)) { "Android did not accept the runtime service start." }
+                main.postDelayed({
+                  pending.take(id)?.invoke(IllegalStateException("Runtime activation was not delivered by Android."))
+                  instance?.reconcileForeground()
+                }, 15_000)
               } catch (error: Exception) {
                 pending.take(id)
                 throw error
@@ -106,7 +123,13 @@ class BushMeshRadioService : Service() {
     private fun granted(context: Context, permission: String): Boolean =
       context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
-    internal fun permissionAllows(context: Context, radio: Boolean): Boolean {
+    internal fun permissionAllows(context: Context, radio: Boolean): Boolean = try {
+      checkPermission(context, radio)
+    } catch (_: SecurityException) {
+      false
+    }
+
+    private fun checkPermission(context: Context, radio: Boolean): Boolean {
       if (Build.VERSION.SDK_INT >= 28 && !granted(context, Manifest.permission.FOREGROUND_SERVICE)) return false
       if (Build.VERSION.SDK_INT >= 34 && !granted(context, if (radio)
           Manifest.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE else Manifest.permission.FOREGROUND_SERVICE_LOCATION)) return false
@@ -199,6 +222,7 @@ class BushMeshRadioService : Service() {
       // A release can cancel a queued activation before Android delivers it.
       if (completion != null) {
         val failure = try {
+          dropIneligibleRequests()
           when (intent.action) {
             ACTION_START -> activateRadio(
               intent.getStringExtra(EXTRA_DEVICE_LABEL),
@@ -259,7 +283,7 @@ class BushMeshRadioService : Service() {
     try {
       promote()
     } catch (error: Exception) {
-      if (!alreadyRequested) BushMeshRadioServiceState.releaseLocation()
+      if (!alreadyRequested) releaseLocation()
       throw error
     }
   }
@@ -288,15 +312,19 @@ class BushMeshRadioService : Service() {
     }
   }
 
-  private fun reconcileForeground() {
+  private fun dropIneligibleRequests() {
     // Recheck on every command and periodically while running. Android may
     // kill the process on revocation; sticky recovery performs the same check.
     if (BushMeshRadioServiceState.radioRequested && !permissionAllows(this, true)) {
       releaseRadioSafely(clearPersisted = false)
     }
     if (BushMeshRadioServiceState.locationRequested && !permissionAllows(this, false)) {
-      BushMeshRadioServiceState.releaseLocation()
+      releaseLocation()
     }
+  }
+
+  private fun reconcileForeground() {
+    dropIneligibleRequests()
     if (BushMeshRadioServiceState.shouldRun()) {
       try {
         if (foregroundTypes != requestedTypes()) promote()
@@ -308,7 +336,7 @@ class BushMeshRadioService : Service() {
         // while-in-use restriction). Never leave a falsely active owner.
         Log.w(CHANNEL_ID, "Foreground runtime no longer eligible", error)
         releaseRadioSafely(clearPersisted = false)
-        BushMeshRadioServiceState.releaseLocation()
+        releaseLocation()
       }
     }
     main.removeCallbacks(permissionWatch)
@@ -325,6 +353,7 @@ class BushMeshRadioService : Service() {
     if (carInboxNotifierDelegate.isInitialized()) carInboxNotifier.stop()
     stopRadioWriters()
     nativeBle.disconnect(clearTarget = false)
+    releaseLocation()
     BushMeshRadioServiceState.markStopped()
     super.onDestroy()
   }
@@ -370,6 +399,7 @@ class BushMeshRadioService : Service() {
       }
       .commit()
     check(committed) { "Native radio target persistence failed." }
+    targetCleanupFailed = false
   }
 
   private fun requestedTypes(): Int {
