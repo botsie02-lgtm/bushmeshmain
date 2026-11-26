@@ -15,7 +15,7 @@ import {protectedChannelKey} from '../../native/SensitiveClipboard';
 
 export type ChatManagementSelection =
   | {kind: 'create' | 'join'; radio: string}
-  | {kind: 'settings'; chat: ChatConfiguration};
+  | {kind: 'settings'; chat: ChatConfiguration; incarnation?: number};
 
 export type ChatManagementDialogProps = {
   selection: ChatManagementSelection | null;
@@ -196,8 +196,8 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
 }
 
 /** Full-page settings. Can also be mounted directly by the messenger router. */
-export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
-  chat: ChatConfiguration; controller: ChatManagementController;
+export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation = 1}: {
+  chat: ChatConfiguration; controller: ChatManagementController; incarnation?: number;
   onClose: () => void; onLeft?: (chat: ChatConfiguration) => void;
 }) {
   const p = controller.preferences[chat.id] ?? defaultChatPreferences;
@@ -213,17 +213,19 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
     const sub = AppState.addEventListener('change', state => {if (state !== 'active') hide();});
     return () => {hide(); sub.remove();};
   }, [chat.id, controller.radio, controller.sessionEpoch, controller.ready]);
-  const current = controller.ready && controller.radio === chat.radio &&
+  const sameIncarnation = (p.incarnation ?? 1) === incarnation;
+  const current = sameIncarnation && !p.retired && controller.ready && controller.radio === chat.radio &&
     controller.chats.some(c => c.id === chat.id);
   const disabled = !current || controller.busy || controller.radioBusy;
+  const localDisabled = !sameIncarnation;
   useEffect(() => {
-    if (current) {
+    if (sameIncarnation) {
       setName(p.displayName);
       setPersonalisation({description: p.description, avatarColor: p.avatarColor, avatarIcon: p.avatarIcon});
     }
-  }, [current, p.displayName, p.description, p.avatarColor, p.avatarIcon]);
+  }, [sameIncarnation, p.displayName, p.description, p.avatarColor, p.avatarIcon]);
   const update = (patch: Parameters<ChatManagementController['update']>[1]) => {
-    controller.update(chat, patch).catch(() => undefined);
+    controller.updateLocal(chat.id, patch, incarnation).catch(() => Alert.alert('Could not save', 'Local chat preferences were not saved.'));
   };
   const reveal = async () => {
     const token = ++revealToken.current;
@@ -233,7 +235,7 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
       const secret = await controller.credential(chat);
       if (token !== revealToken.current || AppState.currentState === 'background' ||
           liveController.current.sessionEpoch !== epoch || !liveController.current.isCurrentRadio(chat.radio) ||
-          !liveController.current.ready) return;
+          !liveController.current.ready || (liveController.current.preferences[chat.id]?.incarnation ?? 1) !== incarnation) return;
       await protectedChannelKey.reveal(secret);
     } catch {if (token === revealToken.current) setRevealError(true);}
   };
@@ -246,8 +248,10 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
         (async () => {
           try {
             setShareError(false);
+            const epoch = controller.sessionEpoch;
+            const token = revealToken.current;
             const secret = await controller.credential(chat);
-            if (!controller.isCurrentRadio(chat.radio)) return;
+            if (token !== revealToken.current || liveController.current.sessionEpoch !== epoch || !liveController.current.isCurrentRadio(chat.radio) || (liveController.current.preferences[chat.id]?.incarnation ?? 1) !== incarnation) return;
             await Share.share({message: encodeChatInvite({name: chat.name, secretHex: secret})});
           } catch {
             setShareError(true);
@@ -277,7 +281,7 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
         <Text style={styles.body}>{chat.privateChannel ? 'Private channel' : 'Public channel'} · {current ? 'Radio connected' : 'Not currently verified'}</Text>
         {current && <Text style={styles.label}>{chatRole(p)}</Text>}
       </View>
-      {!current && <Text style={styles.danger}>Connect to the original radio and refresh this chat before changing settings.</Text>}
+      {!current && <Text style={styles.danger}>Cached conversation. Local settings remain available; radio actions require current verification.</Text>}
       {!current && controller.radio === chat.radio && <Action label="Refresh chat" disabled={controller.busy || controller.radioBusy}
         onPress={() => controller.refresh().catch(() => undefined)}/>}
       <Section title="Conversation information">
@@ -289,14 +293,14 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft}: {
       <Section title="Personalisation">
         <Text style={styles.label}>Nickname · local only</Text>
         <TextInput accessibilityLabel="Local display name" style={styles.input}
-          value={name} onChangeText={setName} maxLength={80} editable={!disabled}
+          value={name} onChangeText={setName} maxLength={80} editable={!localDisabled}
           placeholder={chat.name} placeholderTextColor={colors.textMuted}/>
-        <Personalise name={name || chat.name} value={personalisation} onChange={setPersonalisation} disabled={disabled}/>
-        <Action primary label="Save personalisation" disabled={disabled}
+        <Personalise name={name || chat.name} value={personalisation} onChange={setPersonalisation} disabled={localDisabled}/>
+        <Action primary label="Save personalisation" disabled={localDisabled}
           onPress={() => update({...localPersonalisation(personalisation), displayName: name})}/>
-        <Toggle label="Pin chat" value={p.pinned} disabled={disabled} onChange={pinned => update({pinned})}/>
-        <Toggle label="Archive chat locally" value={p.archived} disabled={disabled} onChange={archived => update({archived})}/>
-        <Toggle label="Mark unread" value={p.unread} disabled={disabled} onChange={unread => update({unread})}/>
+        <Toggle label="Pin chat" value={p.pinned} disabled={localDisabled} onChange={pinned => update({pinned})}/>
+        <Toggle label="Archive chat locally" value={p.archived} disabled={localDisabled} onChange={archived => update({archived})}/>
+        <Toggle label="Mark unread" value={p.unread} disabled={localDisabled} onChange={unread => update({unread})}/>
       </Section>
       <Section title="Notifications">
         <Text style={styles.body}>Individual chat mute and auto-read are not available. Global radio speech settings are separate. Critical safety alerts remain independent.</Text>
@@ -345,7 +349,7 @@ export function ChatManagementDialog(props: ChatManagementDialogProps): React.JS
             keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
             {selection.kind === 'settings'
               ? <ChatSettingsPage key={selection.chat.id} chat={selection.chat} controller={controller}
-                  onClose={onClose} onLeft={props.onLeft}/>
+                  onClose={onClose} onLeft={props.onLeft} incarnation={selection.incarnation}/>
               : <ProvisionForm key={selection.kind + selection.radio} {...props} selection={selection}/>}
             {!!controller.error && <Text accessibilityRole="alert" style={styles.danger}>{controller.error}</Text>}
           </ScrollView>

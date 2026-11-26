@@ -5,6 +5,7 @@ import {ChatManagementDialog, ChatSettingsPage} from '../src/radio/chatManagemen
 import {ChatManagementController} from '../src/radio/chatManagement/useChatManagement';
 import {ChatConfiguration, defaultChatPreferences} from '../src/radio/chatManagement/chatPreferences';
 import {encodeChatInvite} from '../src/radio/chatManagement/chatInvitations';
+import {protectedChannelKey} from '../src/native/SensitiveClipboard';
 
 jest.mock('react-native-safe-area-context', () => ({
   SafeAreaView: require('react-native').View,
@@ -87,4 +88,26 @@ test('settings distinguish local creator from network authority and expose no au
   expect(value.credential).not.toHaveBeenCalled();
   expect(value.leave).not.toHaveBeenCalled();
   await ReactTestRenderer.act(() => renderer.unmount());
+});
+
+test('shared key reveal requires explicit action and clears protected display when radio changes', async () => {
+  const {value} = controller();
+  const reveal = jest.spyOn(protectedChannelKey, 'reveal').mockResolvedValue(undefined);
+  const hide = jest.spyOn(protectedChannelKey, 'hide').mockImplementation(() => undefined);
+  jest.spyOn(protectedChannelKey, 'supported').mockReturnValue(true);
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  const close = jest.fn();
+  try {
+    await ReactTestRenderer.act(() => {renderer = ReactTestRenderer.create(<ChatSettingsPage chat={chat} controller={value} onClose={close}/>);});
+    expect(value.credential).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => press(renderer, 'Reveal shared channel key'));
+    expect(value.credential).toHaveBeenCalledWith(chat);
+    expect(reveal).toHaveBeenCalledWith('ab'.repeat(16));
+    expect(visibleText(renderer)).not.toContain('ab'.repeat(16));
+    await ReactTestRenderer.act(() => {renderer.update(<ChatSettingsPage chat={chat} controller={{...value, radio: 'other', sessionEpoch: 2, ready: false}} onClose={close}/>);});
+    expect(hide).toHaveBeenCalled();
+  } finally {
+    if (renderer) await ReactTestRenderer.act(() => renderer.unmount());
+    jest.restoreAllMocks();
+  }
 });

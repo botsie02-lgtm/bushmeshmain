@@ -1,5 +1,5 @@
-import React from 'react';
-import {FlatList, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import React, {useState} from 'react';
+import {FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View} from 'react-native';
 import {colors} from '../../theme/colors';
 import type {BushMeshChannelMessage} from '../../state/BushMeshContext';
 import {deliveryText} from './messengerModel';
@@ -11,7 +11,8 @@ import {deliveryText} from './messengerModel';
 export function RadioQuarantineReview({
   messages, onBack,
 }: {messages: readonly BushMeshChannelMessage[]; onBack: () => void}): React.JSX.Element {
-  const ordered = [...messages].sort((a, b) =>
+  const [search, setSearch] = useState('');
+  const ordered = [...messages].filter(m => [m.channelName, m.text].some(value => value.toLowerCase().includes(search.toLowerCase()))).sort((a, b) =>
     Date.parse(b.createdAt) - Date.parse(a.createdAt));
   return (
     <View style={styles.root}>
@@ -30,6 +31,7 @@ export function RadioQuarantineReview({
           They are preserved as separate read-only records, not merged into chats.
         </Text>
       </View>
+      <TextInput accessibilityLabel="Search saved records" value={search} onChangeText={setSearch} placeholder="Search saved records" placeholderTextColor={colors.textSecondary} style={styles.search}/>
       <FlatList
         accessibilityLabel="Unattributed saved radio messages"
         data={ordered}
@@ -70,6 +72,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSoft, borderRadius: 12, gap: 6},
   warningTitle: {color: colors.warning, fontSize: 12, fontWeight: '900'},
   warningText: {color: colors.textSecondary, fontSize: 13, lineHeight: 20},
+  search: {minHeight: 48, margin: 12, paddingHorizontal: 12, color: colors.textPrimary, backgroundColor: colors.surfaceSoft, borderRadius: 10},
   list: {padding: 12, gap: 8, paddingBottom: 25},
   card: {padding: 13, borderRadius: 14, backgroundColor: colors.surface,
     borderWidth: 1, borderColor: colors.border, gap: 6},

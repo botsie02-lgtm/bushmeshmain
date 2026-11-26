@@ -15,6 +15,10 @@ import {
 export type RadioChatRoomProps = {
   scope: RadioConversationScope;
   visible?: boolean;
+  quickMessages?: readonly string[];
+  onSaveQuickMessages?: (values: string[]) => void;
+  observedCount?: number;
+  onReviewObserved?: () => void;
   starredIds?: readonly string[];
   pinnedIds?: readonly string[];
   onMessagePreference?: (id: string, kind: 'starredIds' | 'pinnedIds') => void;
@@ -61,7 +65,7 @@ function Bubble({entry}: {entry: ScopedMessage}) {
         {!outgoing ? <Text style={styles.sender}>
           Channel message · sender unavailable
         </Text> : null}
-        <Text style={[styles.message, outgoing && styles.outgoingMessage]}>
+        <Text selectable style={[styles.message, outgoing && styles.outgoingMessage]}>
           {message.text}
         </Text>
         <View style={styles.bubbleFooter}>
@@ -91,7 +95,7 @@ export function RadioChatRoom({
   scope, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
   onTogglePinned, personalisation, displayName, persistentPin, visible = true,
-  starredIds, pinnedIds, onMessagePreference,
+  starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved,
 }: RadioChatRoomProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -99,8 +103,11 @@ export function RadioChatRoom({
   const [searching, setSearching] = useState(false);
   const [messageFilter, setMessageFilter] = useState<'all' | 'starred' | 'pinned'>('all');
   const [quickOpen, setQuickOpen] = useState(false);
+  const [editingQuick, setEditingQuick] = useState(false);
+  const [quickDraft, setQuickDraft] = useState('');
+  const templates = quickMessages ?? ['Ready to go.', 'All clear.', 'Stopping shortly.', 'Need assistance.', 'Vehicle issue.', 'Radio check.', 'Regroup ahead.', 'Convoy accounted for.'];
   useEffect(() => {
-    if (!visible) {setMenuOpen(false); setQuickOpen(false); return;}
+    if (!visible) {setMenuOpen(false); setQuickOpen(false); setEditingQuick(false); return;}
     if (!menuOpen && !searching) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {setMenuOpen(false); setSearching(false); setQuery(''); return true;});
     return () => sub.remove();
@@ -181,6 +188,7 @@ export function RadioChatRoom({
           <Text style={styles.statusText}>{reason}</Text>
         </View>
       ) : null}
+      {observedCount > 0 && onReviewObserved ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Review separate received records" onPress={onReviewObserved} style={styles.menuButton}><Text style={styles.statusText}>{observedCount} received records need origin verification · Review</Text></TouchableOpacity> : null}
       {searching ? <TextInput accessibilityLabel="Search chat messages" value={query} onChangeText={setQuery} placeholder="Search messages" placeholderTextColor={colors.textSecondary} style={styles.input}/> : null}
       <FlatList
         ref={listRef}
@@ -236,7 +244,8 @@ export function RadioChatRoom({
       <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => listRef.current?.scrollToOffset({offset: 0, animated: true})} style={styles.menuButton}><Text style={styles.menuText}>↓ Latest</Text></TouchableOpacity>
       <View style={styles.composerArea}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Quick messages" onPress={() => setQuickOpen(v => !v)} style={styles.menuButton}><Text style={styles.menuText}>Quick messages</Text></TouchableOpacity>
-        {quickOpen && <View style={styles.quick}>{['Ready to go.', 'All clear.', 'Stopping shortly.', 'Need assistance.', 'Vehicle issue.', 'Radio check.', 'Regroup ahead.', 'Convoy accounted for.'].map(text => <TouchableOpacity key={text} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}<Text style={styles.statusText}>Fills draft only. Assistance is not emergency dispatch.</Text></View>}
+        {quickOpen && <View style={styles.quick}>{templates.map(text => <TouchableOpacity key={text} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}<Text style={styles.statusText}>Fills draft only. Assistance is not emergency dispatch.</Text>{onSaveQuickMessages && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit quick messages" style={styles.quickItem} onPress={() => {setQuickDraft(templates.join('\n')); setEditingQuick(true);}}><Text style={styles.menuText}>Edit templates</Text></TouchableOpacity>}</View>}
+        {editingQuick && <View style={styles.details}><Text style={styles.detailsText}>One template per line, up to 24. Each must fit 133 UTF-8 bytes.</Text><TextInput multiline accessibilityLabel="Quick message templates" value={quickDraft} onChangeText={setQuickDraft} style={styles.input}/><TouchableOpacity accessibilityRole="button" accessibilityLabel="Save quick message templates" style={styles.menuButton} onPress={() => {const values = [...new Set(quickDraft.split('\n').map(t => t.trim()).filter(Boolean))]; if (!values.length || values.length > 24 || values.some(t => !validateCarrierText(t).valid)) {Alert.alert('Check templates', 'Use 1–24 messages, each within 133 UTF-8 bytes.'); return;} onSaveQuickMessages?.(values); setEditingQuick(false);}}><Text style={styles.menuText}>Save templates</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel template editing" onPress={() => setEditingQuick(false)} style={styles.menuButton}><Text style={styles.menuText}>Cancel</Text></TouchableOpacity></View>}
         {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
         <View style={styles.composerRow}>
           <TextInput

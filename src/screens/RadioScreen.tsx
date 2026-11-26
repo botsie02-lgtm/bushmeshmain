@@ -308,7 +308,7 @@ function RadioMessenger({
   const needle = search.trim().toLocaleLowerCase();
   const conversations = allConversations.map(c => {
     const prefs = preferencesFor(c.scope);
-    return {...c, pinned: prefs?.pinned ?? c.pinned,
+    return {...c, verifiedNow: liveScopes.some(scope => equalScope(scope, c.scope)), pinned: prefs?.pinned ?? c.pinned,
       displayName: prefs?.displayName || c.channel.channelName,
       personalisation: prefs, manualUnread: prefs?.unread,
       unreadCount: management ? (c.messages.length ? c.messages.filter(m =>
@@ -395,10 +395,9 @@ function RadioMessenger({
     setSelectedScope(scope);
     lastNavigation.current = scope.channelIndex;
     setViewedConversation({kind: 'meshcore-channel', channelIndex: scope.channelIndex});
-    const chat = chatFor(scope);
-    if (chat && management?.preferences[chat.id]?.unread) {
-      management.update(chat, {unread: false}).catch(() => undefined);
-    }
+    const prefs = preferencesFor(scope);
+    const id = scope.channelGeneration.startsWith('config:') ? scope.channelGeneration.split(':').pop() : undefined;
+    if (id && prefs?.unread && management) management.updateLocal(id, {unread: false}, prefs.incarnation ?? 1).catch(() => undefined);
     const key = conversationKey(scope);
     const count = unreadCounts[key];
     if (onConversationRead && Number.isSafeInteger(count) && count > 0) {
@@ -423,18 +422,21 @@ function RadioMessenger({
     return () => subscription.remove();
   }, [tabVisible, settingsVisible, managementSelection, selectedScope, setViewedConversation]);
   const openChatManagement = (scope: RadioConversationScope) => {
-    const chat = chatFor(scope);
+    const live = chatFor(scope);
+    const prefs = preferencesFor(scope);
+    const chat = live ?? prefs?.configuration;
     if (chat && management) {
-      setManagementSelection({kind: 'settings', chat});
+      setManagementSelection({kind: 'settings', chat, incarnation: prefs?.incarnation ?? 1});
     } else {
       Alert.alert('Chat unavailable', 'Connect the original radio and refresh chats before changing this configuration.');
     }
   };
   const togglePinned = (scope: RadioConversationScope) => {
     if (management) {
-      const chat = chatFor(scope);
-      if (chat) management.update(chat, {pinned: !management.preferences[chat.id]?.pinned}).catch(() => undefined);
-      else Alert.alert('Chat unavailable', 'Refresh the original radio first.');
+      const prefs = preferencesFor(scope);
+      const id = scope.channelGeneration.startsWith('config:') ? scope.channelGeneration.split(':').pop() : undefined;
+      if (id && prefs) management.updateLocal(id, {pinned: !prefs.pinned}, prefs.incarnation ?? 1).catch(() => Alert.alert('Could not save', 'Local pin preference was not saved.'));
+      else Alert.alert('Chat unavailable', 'This earlier conversation incarnation does not have editable preferences.');
       return;
     }
     const key = conversationKey(scope);
@@ -521,7 +523,7 @@ function RadioMessenger({
         [capturedKey]: currentDrafts[capturedKey]?.trim() === submittedText
           ? '' : currentDrafts[capturedKey] ?? '',
       }));
-      if (verifiedChat && management) management.updateLocal(verifiedChat.id, {draft: ''}, Number(capturedScope.channelGeneration.split(':')[1])).catch(() => undefined);
+      if (verifiedChat && management) management.updateLocal(verifiedChat.id, {draft: ''}, Number(capturedScope.channelGeneration.split(':')[1])).catch(() => postNotice(capturedKey, 'Radio accepted; saved draft could not be cleared. Do not resend.'));
       postNotice(capturedKey, recorded
         ? 'Radio accepted. No peer delivery confirmation.'
         : 'Radio accepted, but local history recording failed. Do not resend to repair history.');
@@ -628,6 +630,8 @@ function RadioMessenger({
           scope={selectedScope} messages={selectedMessages}
           connected={connected && radioId === selectedScope.radioId}
           visible={tabVisible && !settingsVisible && !managementSelection}
+          quickMessages={localPreference?.quickMessages}
+          onSaveQuickMessages={management && localId && localPreference ? templates => management.updateLocal(localId, {quickMessages: templates}, localIncarnation).catch(() => Alert.alert('Could not save', 'Quick messages were not saved.')) : undefined}
           starredIds={localPreference?.starredIds}
           pinnedIds={localPreference?.pinnedIds}
           onMessagePreference={management && localId && localPreference ? (id, kind) => {
@@ -646,6 +650,8 @@ function RadioMessenger({
           displayName={preferencesFor(selectedScope)?.displayName}
           pinned={preferencesFor(selectedScope)?.pinned ?? (!!activeKey && pinned.has(activeKey))}
           onTogglePinned={() => togglePinned(selectedScope)}
+          observedCount={localId ? channelMessages.filter(m => m.observation?.configurationId === localId && m.observation?.radio === selectedScope.radioId && !m.conversation).length : 0}
+          onReviewObserved={() => setShowUnattributed(true)}
         />
         {management && (messagePersistenceStatus === 'error' || messagePersistenceError) ?
           <Text style={styles.uncertainText}>Radio History storage needs attention. Check Messaging Settings.</Text> : null}
@@ -657,6 +663,13 @@ function RadioMessenger({
           </TouchableOpacity>
         ) : null}
         {dialog}
+        {pendingInterrupted && !sending && management && finishDurableSubmission ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Resolve interrupted submission locally" style={styles.uncertainButton} onPress={() => {
+          Alert.alert('Keep outcome unknown?', 'These messages may have transmitted. This only records the unknown outcome and unlocks the composer; it does not resend anything.', [
+            {text: 'Cancel', style: 'cancel'}, {text: 'Keep unknown', onPress: () => {
+              Promise.all(selectedMessages.filter(m => m.message.direction === 'sent' && m.message.status === 'pending').map(m => finishDurableSubmission(m.message.id, {status: 'failed', submissionFailure: {reason: 'unknown'}}))).catch(() => Alert.alert('Storage error', 'The unresolved submission remains in history.'));
+            }},
+          ]);
+        }}><Text style={styles.uncertainText}>Review interrupted submission</Text></TouchableOpacity> : null}
         {warned ? (
           <TouchableOpacity accessibilityRole="button"
             accessibilityLabel="Acknowledge uncertain radio submission"

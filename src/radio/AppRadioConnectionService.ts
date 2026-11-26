@@ -1231,6 +1231,8 @@ export class AppRadioConnectionService {
         assertCurrent();
         if (beforeSubmit) await beforeSubmit();
         assertCurrent();
+        // Local encrypted commit may take time: re-read exact configuration immediately before RF submission.
+        if (beforeSubmit) {await this.requireChatConfiguration(port, expected); assertCurrent();}
         submitted = true;
         await this.sendChannelMessage(expected.slot, text);
       });

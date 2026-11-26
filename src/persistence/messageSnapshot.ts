@@ -2,6 +2,7 @@ import {CHANNEL_SUBMISSION_FAILURE_REASONS} from '../meshcore/channelSendDiagnos
 import type {BushMeshChannelMessage} from '../state/BushMeshContext';
 
 export const BUSHMESH_MESSAGE_SNAPSHOT_VERSION = 1 as const;
+/** Legacy limit retained as a migration reference; new snapshots do not evict. */
 export const BUSHMESH_MAX_PERSISTED_MESSAGES = 500;
 
 export type BushMeshMessageSnapshotV1 = {

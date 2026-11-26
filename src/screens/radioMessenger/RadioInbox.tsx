@@ -143,7 +143,7 @@ export function RadioInbox({
           const repeatedSlot = conversations.filter(other =>
             other.channel.channelIndex === item.channel.channelIndex &&
             other.channel.channelName === item.channel.channelName).length > 1;
-          const distinction = repeatedSlot ? ' · ' + item.scope.channelGeneration : '';
+          const distinction = repeatedSlot ? ' · ' + (item.verifiedNow ? 'current' : 'saved') + ' ' + (item.scope.channelGeneration.startsWith('config:') ? item.scope.channelGeneration.slice(7, 15) : item.scope.channelGeneration) : '';
           return (
             <View style={styles.rowWrap}>
               <View style={styles.rowLine}>
@@ -163,8 +163,7 @@ export function RadioInbox({
                   </View>
                   <Text style={styles.preview} numberOfLines={2}>{item.preview}</Text>
                   <Text style={styles.subline}>Channel {item.channel.channelIndex} · {' '}
-                    {item.scope.channelGeneration.startsWith('session-')
-                      ? 'This-session identity' : 'Saved conversation'}
+                    {managed ? (item.verifiedNow ? 'Verified configuration' : 'Saved · read-only') : item.scope.channelGeneration.startsWith('session-') ? 'This-session identity' : 'Saved conversation'}
                     {item.unreadCount === null ? '' : managed ? ' · Session read state' : ' · Read state available'}
                   </Text>
                 </View>

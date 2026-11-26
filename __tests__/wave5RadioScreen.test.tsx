@@ -478,3 +478,32 @@ test('managed inbox counts actual observed inbound, never a new history row alon
   await press('Back to chats');
   expect(viewText()).not.toContain('1 unread messages');
 });
+
+test('managed inbox menu stays open across refresh and tab return retains the same draft', async () => {
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'recent'});
+  await mount({enableChatManagement: true});
+  await press('Chat options Private');
+  expect(button('Chat details')).toBeDefined();
+  await rerender({enableChatManagement: true});
+  expect(button('Chat details')).toBeDefined();
+  await press('Close chat options');
+  await press('Chat options Private');
+  await press('Close chat options');
+  await room('Private');
+  await draft('Saved while navigating');
+  await rerender({enableChatManagement: true, tabVisible: false, settingsVisible: true});
+  await rerender({enableChatManagement: true, tabVisible: true, settingsVisible: false});
+  const input = tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' && typeof node.props.onChangeText === 'function')[0];
+  expect(input.props.value).toBe('Saved while navigating');
+  expect(listChats).toHaveBeenCalledTimes(1);
+});
+
+test('quick message fills composer without submitting', async () => {
+  await mount();
+  await room('Private');
+  await press('Quick messages');
+  await press('Ready to go.');
+  const input = tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' && typeof node.props.onChangeText === 'function')[0];
+  expect(input.props.value).toBe('Ready to go.');
+  expect(send).not.toHaveBeenCalled();
+});

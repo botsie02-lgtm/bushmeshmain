@@ -35,6 +35,7 @@ export type MessengerConversation = {
   preview: string;
   activityMs: number | null;
   pinned: boolean;
+  verifiedNow?: boolean;
   displayName?: string;
   personalisation?: import('../../radio/chatManagement/chatPreferences').ChatPersonalisation;
   manualUnread?: boolean;

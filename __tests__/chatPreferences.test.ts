@@ -174,9 +174,9 @@ describe('protected chat preference model', () => {
   const {store, native} = fixture();
   const c = {id: one, radio: 'radio-a', slot: 1, name: 'Camp', privateChannel: true};
   await store.rememberConfigurations(c.radio, [c]);
-  await store.update(one, {draft: 'Ready', starredIds: ['m1'], readIds: ['m2']}, 1);
+  await store.update(one, {draft: 'Ready', starredIds: ['m1'], readIds: ['m2'], quickMessages: ['Ready to go.']}, 1);
   const restarted = new ChatPreferenceStore(() => native);
-  expect((await restarted.load())[one]).toMatchObject({configuration: c, incarnation: 1, draft: 'Ready', starredIds: ['m1']});
+  expect((await restarted.load())[one]).toMatchObject({configuration: c, incarnation: 1, draft: 'Ready', starredIds: ['m1'], quickMessages: ['Ready to go.']});
   await restarted.rememberConfigurations(c.radio, []);
   expect((await restarted.load())[one].retired).toBe(true);
   await restarted.rememberConfigurations(c.radio, [c]);

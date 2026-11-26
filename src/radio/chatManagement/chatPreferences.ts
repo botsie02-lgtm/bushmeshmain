@@ -33,6 +33,7 @@ export type ChatPreferences = ChatPersonalisation & {
   readIds?: string[];
   starredIds?: string[];
   pinnedIds?: string[];
+  quickMessages?: string[];
 };
 
 export const defaultChatPreferences: ChatPreferences = {
@@ -112,6 +113,7 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
     for (const ids of [p.readIds, p.starredIds, p.pinnedIds]) {
       if (ids !== undefined && (!Array.isArray(ids) || ids.some(value => typeof value !== 'string' || !value || value.length > 256))) throw new Error('Invalid chat message preferences.');
     }
+    if (p.quickMessages !== undefined && (!Array.isArray(p.quickMessages) || p.quickMessages.length > 24 || p.quickMessages.some(value => typeof value !== 'string' || !value.trim() || value.length > 133))) throw new Error('Invalid quick messages.');
     entries[id] = {
       ...defaultChatPreferences,
       ...(parsed.version === 2 ? {
@@ -125,6 +127,7 @@ export function decodeChatPreferences(serialized: string | null): ChatPreference
       ...(p.readIds ? {readIds: [...new Set(p.readIds)]} : {}),
       ...(p.starredIds ? {starredIds: [...new Set(p.starredIds)]} : {}),
       ...(p.pinnedIds ? {pinnedIds: [...new Set(p.pinnedIds)]} : {}),
+      ...(p.quickMessages ? {quickMessages: [...p.quickMessages]} : {}),
     };
   }
   return entries;
@@ -231,6 +234,7 @@ export class ChatPreferenceStore {
       archived: typeof patch.archived === 'boolean' ? patch.archived : current.archived,
       unread: typeof patch.unread === 'boolean' ? patch.unread : current.unread,
       ...(typeof patch.draft === 'string' ? {draft: patch.draft.slice(0, 512)} : {}),
+      ...(Array.isArray(patch.quickMessages) ? {quickMessages: patch.quickMessages.slice(0, 24).filter(value => typeof value === 'string' && !!value.trim() && value.length <= 133)} : {}),
       ...Object.fromEntries((['readIds', 'starredIds', 'pinnedIds'] as const).flatMap(key => Array.isArray(patch[key]) ? [[key, [...new Set(patch[key]!.filter(v => typeof v === 'string' && v.length > 0 && v.length <= 256))]]] : [])),
     });});
   }
