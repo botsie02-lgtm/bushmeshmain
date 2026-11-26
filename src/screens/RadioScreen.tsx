@@ -627,7 +627,7 @@ function RadioMessenger({
   const isRestoring = messagePersistenceStatus === 'restoring';
   const dialog = management && tabVisible && !settingsVisible ? <ChatManagementDialog controller={management}
     selection={managementSelection} onClose={() => setManagementSelection(null)}
-    onClearHistory={clearConversationHistory && messagePersistenceStatus === 'ready' ? async (chat, incarnation) => {
+    onClearHistory={typeof clearConversationHistory === 'function' && messagePersistenceStatus === 'ready' ? async (chat, incarnation) => {
       const scope = {radioId: chat.radio, channelGeneration: 'config:' + incarnation + ':' + chat.id, channelIndex: String(chat.slot), channelName: chat.name};
       const removed = await clearConversationHistory(scope);
       setReadIds(previous => {const next = new Set(previous); for (const id of removed) next.delete(id); return next;});

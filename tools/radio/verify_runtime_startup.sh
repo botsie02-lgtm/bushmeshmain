@@ -41,6 +41,8 @@ run_test RuntimeLifecycleGrantedTest
 run_test ProtectedChannelKeyWindowTest
 run_test ProtectedInvitationWindowTest
 run_test HistoryNativeStorageTest
+adb logcat -d -s BushMeshHistoryScale:I | tee "$out/smoke-native-history-scale.txt"
+for count in 1000 10000 50000; do grep -Fq "RADIO_HISTORY_NATIVE_SCALE count=$count " "$out/smoke-native-history-scale.txt"; done
 # Revocation can kill the app process on Android. Check the actual relaunch
 # and denied release paths rather than assuming an in-process callback.
 adb shell pm revoke "$pkg" android.permission.BLUETOOTH_CONNECT
