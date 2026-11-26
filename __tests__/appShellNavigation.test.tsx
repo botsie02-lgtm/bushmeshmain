@@ -303,12 +303,14 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
     await ReactTestRenderer.act(() => {renderer = ReactTestRenderer.create(<AppShell />);});
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio');});
     const messenger = renderer.root.findByType(RadioScreen);
+    expect(messenger.props.enableChatManagement).toBe(true);
+    expect(messenger.props.settingsVisible).toBe(false);
     expect(renderer.root.findAllByType(CarMessagingStatusBanner)).toHaveLength(0);
     expect(renderer.root.findAllByType(RadioSpeechStatusBanner)).toHaveLength(0);
     expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(0);
     expect(visibleText(renderer)).not.toContain('Conversation router not yet connected');
     expect(visibleText(renderer)).not.toContain('Radio traffic uses the selected');
-    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio messaging settings');});
+    await ReactTestRenderer.act(() => {messenger.props.onOpenMessagingSettings();});
     expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
     expect(renderer.root.findByType(RadioMessagingSettingsScreen)).toBeDefined();
     expect(renderer.root.findAllByType(CarMessagingStatusBanner)).toHaveLength(1);
@@ -330,10 +332,10 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
     expect(renderer.root.findAllByType(RadioMessagingSettingsScreen)).toHaveLength(0);
     expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
 
-    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio messaging settings');});
+    await ReactTestRenderer.act(() => {messenger.props.onOpenMessagingSettings();});
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
     expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
-    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Radio messaging settings');});
+    await ReactTestRenderer.act(() => {messenger.props.onOpenMessagingSettings();});
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Contacts');});
     expect(renderer.root.findAllByType(RadioScreen)).toHaveLength(0);
     expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(0);

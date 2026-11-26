@@ -37,6 +37,8 @@ type RadioConnectionContextValue = {
   exportContact: AppRadioConnectionService['exportContact'];
   importContact: AppRadioConnectionService['importContact'];
   getChatRadio: AppRadioConnectionService['getChatRadio'];
+  getChatSessionEpoch: AppRadioConnectionService['getChatSessionEpoch'];
+  isChatObservationCurrent: AppRadioConnectionService['isChatObservationCurrent'];
   listChatConfigurations: AppRadioConnectionService['listChatConfigurations'];
   provisionChat: AppRadioConnectionService['provisionChat'];
   verifyChatConfiguration: AppRadioConnectionService['verifyChatConfiguration'];
@@ -179,6 +181,8 @@ export function RadioConnectionProvider({
       exportContact: valueToExport => service.exportContact(valueToExport),
       importContact: exported => service.importContact(exported),
       getChatRadio: () => service.getChatRadio(),
+      getChatSessionEpoch: () => service.getChatSessionEpoch(),
+      isChatObservationCurrent: (radio, epoch) => service.isChatObservationCurrent(radio, epoch),
       listChatConfigurations: radio => service.listChatConfigurations(radio),
       provisionChat: (radio, input) => service.provisionChat(radio, input),
       verifyChatConfiguration: expected => service.verifyChatConfiguration(expected),

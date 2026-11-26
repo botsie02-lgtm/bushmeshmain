@@ -28,6 +28,7 @@ export type RadioChatRoomProps = {
   onOpenMenu?: (scope: RadioConversationScope) => void;
   personalisation?: ChatPersonalisation;
   displayName?: string;
+  persistentPin?: boolean;
   pinned: boolean;
   onTogglePinned: () => void;
 };
@@ -85,7 +86,7 @@ function Bubble({entry}: {entry: ScopedMessage}) {
 export function RadioChatRoom({
   scope, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
-  onTogglePinned, personalisation, displayName,
+  onTogglePinned, personalisation, displayName, persistentPin,
 }: RadioChatRoomProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -140,7 +141,7 @@ export function RadioChatRoom({
             accessibilityLabel={pinned ? 'Unpin chat' : 'Pin chat'}
             onPress={() => {onTogglePinned(); setMenuOpen(false);}}
             style={styles.menuButton}>
-            <Text style={styles.menuText}>{pinned ? 'Unpin' : 'Pin'} for this session</Text>
+            <Text style={styles.menuText}>{pinned ? 'Unpin' : 'Pin'}{persistentPin ? ' chat' : ' for this session'}</Text>
           </TouchableOpacity>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close room options"
             onPress={() => setMenuOpen(false)} style={styles.menuButton}>

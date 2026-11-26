@@ -112,7 +112,7 @@ type BushMeshContextValue = {
   setSyncContactsHandler: (handler: SyncContactsHandler | null) => void;
   sendChannelMessage: (channelIndex: number, message: string) => Promise<void>;
   syncContacts: () => Promise<BushMeshContact[]>;
-  addLocalChannelMessage: (message: BushMeshChannelMessageInput) => string;
+  addLocalChannelMessage: (message: BushMeshChannelMessageInput) => string | void;
   addDurableChannelMessage: (
     message: BushMeshDurableChannelMessageInput,
   ) => Promise<boolean>;

@@ -361,6 +361,35 @@ describe('AppRadioConnectionService', () => {
       await service.dispose();
     });
 
+    it('submits only to the verified slot and rejects same-slot key replacement without sending', async () => {
+      const {service, radio, client, channels} = await chatHarness();
+      const first = await service.provisionChat(radio, {name: 'First'});
+      const second = await service.provisionChat(radio, {name: 'Second'});
+      await service.sendVerifiedChat(second, 'second only');
+      expect(client.sendChannelMessage).toHaveBeenCalledTimes(1);
+      expect(client.sendChannelMessage).toHaveBeenCalledWith(second.slot, 'second only');
+      channels[first.slot].secret = new Uint8Array(16).fill(9);
+      await expect(service.sendVerifiedChat(first, 'must not transmit')).rejects.toMatchObject({code: 'stale'});
+      await expect(service.verifyChatConfiguration(first)).rejects.toThrow('changed');
+      expect(client.sendChannelMessage).toHaveBeenCalledTimes(1);
+      await service.dispose();
+    });
+
+    it('invalidates live observation during a disconnect, and never auto-retries a failed send', async () => {
+      const {service, radio, client} = await chatHarness();
+      const chat = await service.provisionChat(radio, {name: 'Camp'});
+      const epoch = service.getChatSessionEpoch();
+      expect(service.isChatObservationCurrent(radio, epoch)).toBe(true);
+      client.sendChannelMessage.mockRejectedValueOnce(new Error('timeout'));
+      await expect(service.sendVerifiedChat(chat, 'one attempt')).rejects.toThrow('timeout');
+      expect(client.sendChannelMessage).toHaveBeenCalledTimes(1);
+      await service.disconnect();
+      expect(service.isChatObservationCurrent(radio, epoch)).toBe(false);
+      await expect(service.sendVerifiedChat(chat, 'offline')).rejects.toMatchObject({code: 'stale'});
+      expect(client.sendChannelMessage).toHaveBeenCalledTimes(1);
+      await service.dispose();
+    });
+
     it('refuses stale same-name slots for leave and credential sharing', async () => {
       const {service, radio, channels, client, forget} = await chatHarness();
       const chat = await service.provisionChat(radio, {name: 'Chat'});

@@ -9,12 +9,14 @@ import {ChatOperationError} from './chatInvitations';
 export function useChatManagement() {
   const connection = useRadioConnection();
   const radio = connection.getChatRadio();
+  const sessionEpoch = connection.getChatSessionEpoch();
   const live = useRef(connection);
   live.current = connection;
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadedRadio, setLoadedRadio] = useState<string | null>(null);
+  const [loadedEpoch, setLoadedEpoch] = useState<number | null>(null);
   const [configs, setConfigs] = useState<ChatConfiguration[]>([]);
   const [preferences, setPreferences] = useState<ChatPreferenceSnapshot>({});
   const [ready, setReady] = useState(false);
@@ -41,13 +43,16 @@ export function useChatManagement() {
 
   const reload = useCallback(async (expected: string) => {
     setReady(false);
+    const expectedEpoch = live.current.getChatSessionEpoch();
     const {entries, sort: savedSort} = await chatPreferenceStore.loadState();
     const next = await live.current.listChatConfigurations(expected);
-    if (live.current.getChatRadio() !== expected) throw new Error('Radio changed.');
+    if (live.current.getChatRadio() !== expected ||
+        live.current.getChatSessionEpoch() !== expectedEpoch) throw new Error('Radio changed.');
     setPreferences(entries);
     setSort(savedSort);
     setConfigs(next);
     setLoadedRadio(expected);
+    setLoadedEpoch(expectedEpoch);
     setReady(true);
   }, []);
 
@@ -60,14 +65,15 @@ export function useChatManagement() {
   useEffect(() => {
     setReady(false);
     setLoadedRadio(null);
+    setLoadedEpoch(null);
     setConfigs([]);
     setPreferences({});
     setError(null);
     // Explicit refresh avoids an automatic provisioning scan racing startup sync.
-  }, [radio]);
+  }, [radio, sessionEpoch]);
 
   const requireCurrent = (chat: ChatConfiguration) => {
-    if (!ready || loadedRadio !== chat.radio ||
+    if (!ready || loadedEpoch !== live.current.getChatSessionEpoch() || loadedRadio !== chat.radio ||
         live.current.getChatRadio() !== chat.radio ||
         !configs.some(c => c.id === chat.id)) {
       throw new Error('Chat changed. Refresh chats.');
@@ -91,7 +97,7 @@ export function useChatManagement() {
 
   const changeSort = (next: ChatSort) => run(async () => {
     const expected = live.current.getChatRadio();
-    if (!ready || !expected || loadedRadio !== expected || configs.length === 0) {
+    if (!ready || loadedEpoch !== live.current.getChatSessionEpoch() || !expected || loadedRadio !== expected || configs.length === 0) {
       throw new Error('Refresh a configured radio before changing sort.');
     }
     await chatPreferenceStore.saveSort(next);
@@ -138,13 +144,14 @@ export function useChatManagement() {
     }
   });
 
+  const current = ready && radio === loadedRadio && loadedEpoch === sessionEpoch;
   return {
-    radio, busy, error,
-    capacity: radio && ready && radio === loadedRadio
+    radio, sessionEpoch, busy, error,
+    capacity: radio && current
       ? {used: configs.length, total: connection.snapshot.channels.length} : null,
-    ready: ready && radio === loadedRadio,
-    chats: ready && radio === loadedRadio ? configs : [],
-    preferences: ready && radio === loadedRadio ? preferences : {},
+    ready: current,
+    chats: current ? configs : [],
+    preferences: current ? preferences : {},
     refresh, update, provision, leave, credential, sort, changeSort,
     invalidate: () => setReady(false),
     isCurrentRadio: (expected: string) => live.current.getChatRadio() === expected,

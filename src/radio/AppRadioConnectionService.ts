@@ -1022,6 +1022,17 @@ export class AppRadioConnectionService {
       ? JSON.stringify([address.toUpperCase(), key.toUpperCase()]) : null;
   }
 
+  getChatSessionEpoch(): number {
+    return this.chatSessionEpoch;
+  }
+
+  /** A queue observation is only a local session observation, never proof of
+   * historical key ownership. Do not attach one during any command mutation. */
+  isChatObservationCurrent(radio: string, epoch: number): boolean {
+    return this.getChatRadio() === radio && this.chatSessionEpoch === epoch &&
+      !this.chatOperationActive && !this.snapshot.isWriting;
+  }
+
   private async withChatPort<T>(
     expectedRadio: string,
     task: (port: MeshCoreChannelProvisioningPort, assertCurrent: () => void) => Promise<T>,
@@ -1200,11 +1211,20 @@ export class AppRadioConnectionService {
 
   /** Check and submit within the same guarded radio command ownership scope. */
   async sendVerifiedChat(expected: ChatConfiguration, text: string): Promise<void> {
-    await this.withChatPort(expected.radio, async (port, assertCurrent) => {
-      await this.requireChatConfiguration(port, expected);
-      assertCurrent();
-      await this.sendChannelMessage(expected.slot, text);
-    });
+    let submitted = false;
+    try {
+      await this.withChatPort(expected.radio, async (port, assertCurrent) => {
+        await this.requireChatConfiguration(port, expected);
+        assertCurrent();
+        submitted = true;
+        await this.sendChannelMessage(expected.slot, text);
+      });
+    } catch (failure) {
+      if (!submitted) {
+        throw new ChatOperationError('stale', 'Chat configuration could not be verified. No message was submitted. Refresh chats.');
+      }
+      throw failure;
+    }
   }
 
   /** Explicitly confirmed credential sharing only; no snapshot or log receives the key. */
@@ -1265,6 +1285,7 @@ export class AppRadioConnectionService {
     channelIndex?: number | null;
   }): Promise<AppProvisionedChannel> {
     if (this.chatOperationActive) throw new Error('Chat management is in progress.');
+    this.chatSessionEpoch += 1; // Invalidate any cached messenger binding before a legacy write.
     this.patch({isWriting: true});
     try {
       const provisioned = await provisionMeshCoreChannel(
@@ -1295,6 +1316,7 @@ export class AppRadioConnectionService {
     channelIndex?: number | null;
   }): Promise<AppProvisionedChannel> {
     if (this.chatOperationActive) throw new Error('Chat management is in progress.');
+    this.chatSessionEpoch += 1; // Invalidate any cached messenger binding before a legacy write.
     this.patch({isWriting: true});
     try {
       const provisioned = await provisionMeshCoreChannel(
@@ -1321,6 +1343,7 @@ export class AppRadioConnectionService {
 
   async clearChannel(channelIndex: number): Promise<void> {
     if (this.chatOperationActive) throw new Error('Chat management is in progress.');
+    this.chatSessionEpoch += 1; // Invalidate any cached messenger binding before a legacy write.
     this.patch({isWriting: true});
     try {
       await clearMeshCoreChannel(this.requireProvisioningPort(), channelIndex);
@@ -1351,6 +1374,7 @@ export class AppRadioConnectionService {
     channelIndex?: number | null;
   }): Promise<BushMeshConvoyEnrollment> {
     if (this.chatOperationActive) throw new Error('Chat management is in progress.');
+    this.chatSessionEpoch += 1; // Invalidate any cached messenger binding before a legacy write.
     this.patch({isWriting: true});
     try {
       const enrollment = await createBushMeshConvoy(
@@ -1372,6 +1396,7 @@ export class AppRadioConnectionService {
     channelIndex?: number | null;
   }): Promise<BushMeshConvoyEnrollment> {
     if (this.chatOperationActive) throw new Error('Chat management is in progress.');
+    this.chatSessionEpoch += 1; // Invalidate any cached messenger binding before a legacy write.
     this.patch({isWriting: true});
     try {
       const enrollment = await joinBushMeshConvoy(

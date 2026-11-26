@@ -46,7 +46,6 @@ import {LocationScreen} from '../../screens/LocationScreen';
 import {MapScreen} from '../../screens/MapScreen';
 import {RadioScreen} from '../../screens/RadioScreen';
 import {RadioMessagingSettingsScreen} from '../../screens/RadioMessagingSettingsScreen';
-import {useBushMesh} from '../../state/BushMeshContext';
 import {colors} from '../../theme/colors';
 
 export type MainTab = 'drive' | 'radio' | 'convoy' | 'contacts' | 'device';
@@ -229,7 +228,6 @@ export function AppShell(): React.JSX.Element {
   const [carrierProfile, setCarrierProfile] =
     useState<ActiveConvoyCarrierProfile | null>(null);
   const {activeConvoy, status: convoyRestoreStatus} = useActiveOperationalConvoy();
-  const {messagePersistenceStatus, messagePersistenceError} = useBushMesh();
   const [radioSettingsOpen, setRadioSettingsOpen] = useState(false);
   const openMessagingSettings = useCallback(() => {
     Keyboard.dismiss();
@@ -282,40 +280,17 @@ export function AppShell(): React.JSX.Element {
 
   return (
     <View style={styles.shell}>
-      {activeTab === 'radio' ? (
+      {activeTab === 'radio' ? (radioSettingsOpen ? (
         <View style={styles.radioHeader}>
-          {radioSettingsOpen ? (
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Back to Radio"
-              style={styles.radioHeaderButton}
-              onPress={closeMessagingSettings}>
-              <Text style={styles.radioHeaderAction}>‹ Back</Text>
-            </TouchableOpacity>
-          ) : null}
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to Radio"
+            style={styles.radioHeaderButton} onPress={closeMessagingSettings}>
+            <Text style={styles.radioHeaderAction}>‹ Back</Text>
+          </TouchableOpacity>
           <View style={styles.radioHeaderCopy}>
-            <Text style={styles.radioHeaderTitle}>
-              {radioSettingsOpen ? 'Messaging settings' : 'Radio'}
-            </Text>
-            {!radioSettingsOpen && (messagePersistenceError || messagePersistenceStatus !== 'ready') ? (
-              <Text numberOfLines={1} style={styles.warningText}>
-                {messagePersistenceStatus === 'restoring' ? 'Restoring radio history' :
-                  messagePersistenceStatus === 'unsupported' ? 'History is memory only' :
-                  'Check radio history in settings'}
-              </Text>
-            ) : null}
+            <Text style={styles.radioHeaderTitle}>Messaging settings</Text>
           </View>
-          {!radioSettingsOpen ? (
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Radio messaging settings"
-              style={styles.radioHeaderButton}
-              onPress={openMessagingSettings}>
-              <Text style={styles.radioHeaderAction}>⚙ Settings</Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
-      ) : (
+      ) : null      ) : (
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View>

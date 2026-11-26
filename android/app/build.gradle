@@ -56,9 +56,11 @@ android {
     namespace "com.bushmeshmain"
     defaultConfig {
         applicationId "com.bushmeshmain"
+        manifestPlaceholders = [bushMeshAppLabel: "@string/app_name"]
         if (project.hasProperty("radioRedesignFieldTest")) {
             applicationIdSuffix ".radioredesign"
             resValue "string", "field_test_label", "BushMesh Radio Test"
+            manifestPlaceholders = [bushMeshAppLabel: "@string/field_test_label"]
         }
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion

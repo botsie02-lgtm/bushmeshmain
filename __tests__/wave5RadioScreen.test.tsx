@@ -7,6 +7,10 @@ import {useBushMesh} from '../src/state/BushMeshContext';
 import {useRadioConnection} from '../src/state/RadioConnectionContext';
 import {useRadioSession} from '../src/state/RadioSessionContext';
 import type {BushMeshChannelMessage} from '../src/state/BushMeshContext';
+import {chatPreferenceStore, defaultChatPreferences} from '../src/radio/chatManagement/chatPreferences';
+import {ChatOperationError} from '../src/radio/chatManagement/chatInvitations';
+import {meshCoreInboundInbox} from '../src/meshcore/meshcoreInboundInbox';
+import {meshCoreInboundMessageId} from '../src/meshcore/meshcoreInboundIdentity';
 
 jest.mock('../src/state/BushMeshContext', () => ({useBushMesh: jest.fn()}));
 jest.mock('../src/state/RadioConnectionContext', () => ({useRadioConnection: jest.fn()}));
@@ -37,6 +41,14 @@ let messages: BushMeshChannelMessage[] = [];
 const send = jest.fn(async (_index: number, _text: string) => undefined);
 const addLocal = jest.fn();
 const carrierSwitch = jest.fn();
+const chatRadio = 'verified-radio';
+const chatConfigs = [
+  {id: 'a'.repeat(64), radio: chatRadio, slot: 0, name: 'Public', privateChannel: false},
+  {id: 'b'.repeat(64), radio: chatRadio, slot: 1, name: 'Private', privateChannel: true},
+];
+const listChats = jest.fn(async () => chatConfigs);
+const verifiedSend = jest.fn(async () => undefined);
+const verifyChat = jest.fn(async () => undefined);
 
 function configure() {
   (useBushMesh as jest.Mock).mockImplementation(() => ({
@@ -51,7 +63,13 @@ function configure() {
     messagePersistenceStatus: restore, messagePersistenceError: null,
   }));
   (useRadioConnection as jest.Mock).mockImplementation(() => ({
-    snapshot: {connectedDeviceAddress: addr},
+    snapshot: {connectedDeviceAddress: addr, channels, isWriting: false},
+    getChatRadio: () => connected ? chatRadio : null,
+    getChatSessionEpoch: () => 1,
+    isChatObservationCurrent: () => connected,
+    listChatConfigurations: listChats,
+    verifyChatConfiguration: verifyChat,
+    sendVerifiedChat: verifiedSend,
   }));
   (useRadioSession as jest.Mock).mockReturnValue({
     snapshot: {radioProfile: null, transportReady: false},
@@ -103,12 +121,16 @@ function viewText(): string {
 async function room(label: string) {await press('Open chat ' + label);}
 afterEach(async () => {
   if (tree) await act(async () => {tree.unmount();});
+  jest.restoreAllMocks();
 });
 beforeEach(() => {
   connected = true; addr = 'AA:BB:CC:DD'; activeChannelIndex = '0';
   ready = true; restore = 'ready'; messages = [];
   send.mockReset(); send.mockResolvedValue(undefined);
   addLocal.mockClear(); carrierSwitch.mockClear();
+  listChats.mockReset(); listChats.mockResolvedValue(chatConfigs);
+  verifiedSend.mockReset(); verifiedSend.mockResolvedValue(undefined);
+  verifyChat.mockClear();
 });
 
 test('compact inbox has accessible search, real connection indicator and row menus', async () => {
@@ -387,4 +409,55 @@ test('a proven archived chat survives another radio reusing the slot with a new 
   expect(viewText()).toContain('DO NOT MERGE');
   expect(button('Submit channel text to radio').props.disabled).toBe(true);
   expect(carrierSwitch).not.toHaveBeenCalled();
+});
+
+
+test('managed messenger binds preference and send to verified configuration, not a slot callback', async () => {
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({
+    entries: {[chatConfigs[1].id]: {...defaultChatPreferences, displayName: 'Private camp'}},
+    sort: 'name',
+  });
+  await mount({enableChatManagement: true});
+  expect(viewText()).toContain('Private camp');
+  await room('Private');
+  await draft('verified room message');
+  await press('Submit channel text to radio');
+  expect(verifiedSend).toHaveBeenCalledWith(chatConfigs[1], 'verified room message');
+  expect(send).not.toHaveBeenCalled();
+  expect(carrierSwitch).not.toHaveBeenCalled();
+});
+
+test('managed stale preflight preserves draft and does not claim a submission', async () => {
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'name'});
+  verifiedSend.mockRejectedValueOnce(new ChatOperationError('stale', 'No message was submitted. Refresh chats.'));
+  await mount({enableChatManagement: true});
+  await room('Private');
+  await draft('keep this text');
+  await press('Submit channel text to radio');
+  expect(verifiedSend).toHaveBeenCalledTimes(1);
+  expect(addLocal).not.toHaveBeenCalled();
+  expect(viewText()).toContain('No message was submitted');
+  const input = tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' &&
+    typeof node.props.onChangeText === 'function')[0];
+  expect(input.props.value).toBe('keep this text');
+});
+
+test('managed inbox counts actual observed inbound, never a new history row alone', async () => {
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'name'});
+  await mount({enableChatManagement: true});
+  messages = [{id: 'delayed-row', channelIndex: '1', channelName: 'Private',
+    direction: 'received', status: 'confirmed', text: 'DELAYED UNOWNED', createdAt: new Date().toISOString()}];
+  await rerender({enableChatManagement: true});
+  expect(viewText()).not.toContain('DELAYED UNOWNED');
+  const message = {channelIndex: '1', text: 'OBSERVED RADIO MESSAGE', timestamp: 100, textType: 0, snrDb: 0, pathLength: 0};
+  await act(async () => {meshCoreInboundInbox.publish(message as Parameters<typeof meshCoreInboundInbox.publish>[0]);});
+  messages = [...messages, {id: meshCoreInboundMessageId(message as Parameters<typeof meshCoreInboundInbox.publish>[0]),
+    channelIndex: '1', channelName: 'Private', direction: 'received', status: 'confirmed',
+    text: message.text, createdAt: new Date().toISOString()}];
+  await rerender({enableChatManagement: true});
+  expect(viewText()).toContain('OBSERVED RADIO MESSAGE');
+  expect(viewText()).toContain('1 unread messages');
+  await room('Private');
+  await press('Back to chats');
+  expect(viewText()).not.toContain('1 unread messages');
 });

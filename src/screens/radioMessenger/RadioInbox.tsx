@@ -21,6 +21,7 @@ function Action({label, onPress, subtle = false}: ActionProps) {
 
 export type RadioInboxProps = {
   conversations: readonly MessengerConversation[];
+  managed?: boolean;
   online: boolean;
   radioLabel: string | null;
   restoring: boolean;
@@ -47,7 +48,7 @@ function clock(value: number | null) {
 export function RadioInbox({
   conversations, online, radioLabel, restoring, historyIssue,
   unknownHistoryCount, search, onSearch, onOpen, onPin, onNewChat,
-  onSettings, onReviewUnattributed, onOpenRowMenu, onOpenChatSettings,
+  onSettings, onReviewUnattributed, onOpenRowMenu, onOpenChatSettings, managed,
 }: RadioInboxProps): React.JSX.Element {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
@@ -78,7 +79,7 @@ export function RadioInbox({
           {online ? 'Companion connected' : 'Radio disconnected'}
         </Text>
         <Text style={styles.connectionDetail} numberOfLines={1}>
-          {online ? radioLabel ?? 'MeshCore' : 'Saved conversations only'}
+          {online ? radioLabel ?? 'MeshCore' : managed ? 'This-session history only' : 'Saved conversations only'}
         </Text>
         <Text style={styles.chevron}>ⓘ</Text>
       </TouchableOpacity>
@@ -157,7 +158,7 @@ export function RadioInbox({
                   <Text style={styles.subline}>Channel {item.channel.channelIndex} · {' '}
                     {item.scope.channelGeneration.startsWith('session-')
                       ? 'This-session identity' : 'Proven archive identity'}
-                    {item.unreadCount === null ? '' : ' · Read state available'}
+                    {item.unreadCount === null ? '' : managed ? ' · Session read state' : ' · Read state available'}
                   </Text>
                 </View>
                 {item.manualUnread && !item.unreadCount ? <View style={styles.unread}
@@ -202,7 +203,8 @@ export function RadioInbox({
             </Text>
             <Text style={styles.emptyBody}>
               {search ? 'Try a channel name or a safely attributed message preview.'
-                : 'Create or join a MeshCore channel through your existing carrier tools. Radio History without ownership proof stays quarantined.'}
+                : managed ? 'Refresh the connected radio or use + to create or join. Unattributed history stays separate.'
+                  : 'Create or join a MeshCore channel through your existing carrier tools. Radio History without ownership proof stays quarantined.'}
             </Text>
           </View>
         }
