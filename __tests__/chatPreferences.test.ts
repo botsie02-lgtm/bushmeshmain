@@ -226,3 +226,13 @@ test('global quick library preserves existing per-chat overrides across all pref
   await expect(restored.saveGlobalQuickMessages(['🚙'.repeat(34)])).rejects.toThrow();
   expect(await restored.loadGlobalQuickMessages()).toEqual(['Second', 'First']);
 });
+
+test('clearing history reconciles only the selected message IDs under serialized preferences', async () => {
+  const {store} = fixture();
+  await store.update(one, {readIds:['old','keep'], starredIds:['old','keep'], pinnedIds:['old']});
+  await store.update(two, {readIds:['old']});
+  await Promise.all([store.update(one,{readIds:['new']}),store.update(one,{removedMessageIds:['old']})]);
+  const restored = await store.load();
+  expect(restored[one]).toMatchObject({readIds:['keep','new'],starredIds:['keep'],pinnedIds:[]});
+  expect(restored[two].readIds).toEqual(['old']);
+});

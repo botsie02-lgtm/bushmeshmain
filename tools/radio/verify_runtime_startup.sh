@@ -39,6 +39,7 @@ adb shell cmd location set-location-enabled true
 sleep 3
 run_test RuntimeLifecycleGrantedTest
 run_test ProtectedChannelKeyWindowTest
+run_test ProtectedInvitationWindowTest
 # Revocation can kill the app process on Android. Check the actual relaunch
 # and denied release paths rather than assuming an in-process callback.
 adb shell pm revoke "$pkg" android.permission.BLUETOOTH_CONNECT

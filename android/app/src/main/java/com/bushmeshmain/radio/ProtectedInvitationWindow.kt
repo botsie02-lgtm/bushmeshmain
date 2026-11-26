@@ -3,6 +3,8 @@ package com.bushmeshmain.radio
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Application
+import android.os.Bundle
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -22,7 +24,22 @@ import com.journeyapps.barcodescanner.DefaultDecoderFactory
 /** Activity-owned protected dialogs. No files, external camera intents or network. */
 internal class ProtectedInvitationWindow {
   private val handler = Handler(Looper.getMainLooper())
-  private var dialog: AlertDialog? = null
+  internal var dialog: AlertDialog? = null
+    private set
+
+  private fun dismissOnPause(activity: Activity, window: AlertDialog): Application.ActivityLifecycleCallbacks {
+    val callbacks = object : Application.ActivityLifecycleCallbacks {
+      override fun onActivityCreated(a: Activity, state: Bundle?) = Unit
+      override fun onActivityStarted(a: Activity) = Unit
+      override fun onActivityResumed(a: Activity) = Unit
+      override fun onActivityPaused(a: Activity) { if (a === activity && dialog === window) hide() }
+      override fun onActivityStopped(a: Activity) = Unit
+      override fun onActivitySaveInstanceState(a: Activity, state: Bundle) = Unit
+      override fun onActivityDestroyed(a: Activity) { if (a === activity && dialog === window) hide() }
+    }
+    activity.application.registerActivityLifecycleCallbacks(callbacks)
+    return callbacks
+  }
 
   fun hide() {
     dialog?.dismiss()
@@ -37,8 +54,10 @@ internal class ProtectedInvitationWindow {
     val pixels = IntArray(matrix.width * matrix.height) { i ->
       if (matrix.get(i % matrix.width, i / matrix.width)) Color.BLACK else Color.WHITE
     }
-    val bitmap = Bitmap.createBitmap(pixels, matrix.width, matrix.height, Bitmap.Config.ARGB_8888)
+    val bitmap = Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.ARGB_8888)
+    bitmap.setPixels(pixels, 0, matrix.width, 0, 0, matrix.width, matrix.height)
     pixels.fill(0)
+    matrix.clear()
     val image = ImageView(activity).apply {
       setImageBitmap(bitmap)
       adjustViewBounds = true
@@ -51,8 +70,10 @@ internal class ProtectedInvitationWindow {
       .setMessage("Anyone scanning this code can access the shared channel. Show only to trusted people. Not authenticated convoy membership.")
       .setView(image).setPositiveButton("Hide", null).create()
     val timeout = Runnable { if (dialog === window) hide() }
+    val lifecycle = dismissOnPause(activity, window)
     window.setOnDismissListener {
       handler.removeCallbacks(timeout)
+      activity.application.unregisterActivityLifecycleCallbacks(lifecycle)
       image.setImageDrawable(null)
       bitmap.eraseColor(Color.BLACK)
       if (dialog === window) dialog = null
@@ -85,8 +106,10 @@ internal class ProtectedInvitationWindow {
     var value: String? = null
     var torch = false
     val timeout = Runnable { if (dialog === window) hide() }
+    val lifecycle = dismissOnPause(activity, window)
     window.setOnDismissListener {
       handler.removeCallbacks(timeout)
+      activity.application.unregisterActivityLifecycleCallbacks(lifecycle)
       scanner.pause()
       if (dialog === window) dialog = null
       val result = value
