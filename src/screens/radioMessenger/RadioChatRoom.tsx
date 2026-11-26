@@ -4,6 +4,8 @@ import {
   Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
+import {ChatAvatar} from '../../radio/chatManagement/ChatAvatar';
+import type {ChatPersonalisation} from '../../radio/chatManagement/chatPreferences';
 import type {BushMeshChannelMessage} from '../../state/BushMeshContext';
 import {
   deliveryText, type RadioConversationScope, type ScopedMessage,
@@ -24,6 +26,8 @@ export type RadioChatRoomProps = {
   onBack: () => void;
   onOpenSettings?: (scope: RadioConversationScope) => void;
   onOpenMenu?: (scope: RadioConversationScope) => void;
+  personalisation?: ChatPersonalisation;
+  displayName?: string;
   pinned: boolean;
   onTogglePinned: () => void;
 };
@@ -81,7 +85,7 @@ function Bubble({entry}: {entry: ScopedMessage}) {
 export function RadioChatRoom({
   scope, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
-  onTogglePinned,
+  onTogglePinned, personalisation, displayName,
 }: RadioChatRoomProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -105,9 +109,10 @@ export function RadioChatRoom({
           onPress={onBack} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </TouchableOpacity>
-        <View style={styles.avatar}><Text style={styles.avatarText}>#</Text></View>
+        {personalisation ? <ChatAvatar name={displayName || scope.channelName} {...personalisation}/> :
+          <View style={styles.avatar}><Text style={styles.avatarText}>#</Text></View>}
         <View style={styles.headerCopy}>
-          <Text style={styles.title} numberOfLines={1}>{scope.channelName}</Text>
+          <Text style={styles.title} numberOfLines={1}>{displayName || scope.channelName}</Text>
           <Text style={[styles.subtitle, !connected && styles.offline]}>
             {connected ? (canSubmit ? 'Carrier ready · delivery unconfirmed' : 'Radio linked · unavailable')
               : 'Offline · read-only'}

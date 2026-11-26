@@ -1,5 +1,8 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {Alert, BackHandler, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {ChatManagementDialog, type ChatManagementSelection} from '../radio/chatManagement/ChatManagementDialog';
+import {useChatManagement, type ChatManagementController} from '../radio/chatManagement/useChatManagement';
+import {defaultChatPreferences, type ChatConfiguration} from '../radio/chatManagement/chatPreferences';
 import {
   classifyChannelSubmissionFailure, formatChannelSubmissionFailure,
 } from '../meshcore/channelSendDiagnostics';
@@ -22,6 +25,8 @@ import {RadioTechnicalDrawer} from './radioMessenger/RadioTechnicalDrawer';
 import {RadioQuarantineReview} from './radioMessenger/RadioQuarantineReview';
 
 export type RadioScreenProps = {
+  enableChatManagement?: boolean;
+  settingsVisible?: boolean;
   /** Existing carrier/legacy channel tools; no provisioning is performed here. */
   onOpenCarrierDetails?: () => void;
   /** Owned by the channel-management worker. If absent, fall back to carrier tools. */
@@ -53,24 +58,55 @@ function eligible(channel: ChannelLabel): boolean {
     !!channel.channelName.trim() && channel.channelName !== 'Empty';
 }
 
-export function RadioScreen({
+export function RadioScreen(props: RadioScreenProps = {}): React.JSX.Element {
+  return props.enableChatManagement
+    ? <ManagedRadioScreen {...props} />
+    : <RadioMessenger {...props} />;
+}
+
+function ManagedRadioScreen(props: RadioScreenProps): React.JSX.Element {
+  const management = useChatManagement();
+  const attempted = useRef<string | null>(null);
+  const {radio, radioBusy, busy, refresh} = management;
+  useEffect(() => {
+    if (!radio) {
+      attempted.current = null;
+      return;
+    }
+    if (busy || radioBusy || attempted.current === radio) return;
+    attempted.current = radio;
+    refresh().catch(() => undefined);
+  }, [radio, radioBusy, busy, refresh]);
+  return <RadioMessenger {...props} management={management} />;
+}
+
+function RadioMessenger({
   onOpenCarrierDetails, onCreateChat, onJoinChat,
   onOpenChatSettings, onOpenConversationMenu, onOpenMessagingSettings,
   trustedScopes = [], verifiedMessageOwnership = NO_PROOF,
-  unreadCounts = NO_UNREAD, onConversationRead,
-}: RadioScreenProps = {}): React.JSX.Element {
+  unreadCounts = NO_UNREAD, onConversationRead, management, settingsVisible,
+}: RadioScreenProps & {management?: ChatManagementController}): React.JSX.Element {
   const {
     connectionStatus, connectedDeviceName, channels, channelMessages,
     messagePersistenceStatus, messagePersistenceError,
     canSendChannelMessage, sendChannelMessage, addLocalChannelMessage,
   } = useBushMesh();
   const {snapshot: radioSession} = useRadioSession();
-  const {snapshot: connection} = useRadioConnection();
+  const radioConnection = useRadioConnection();
+  const {snapshot: connection} = radioConnection;
   const {viewedConversation, setViewedConversation} = useViewedConversation();
 
   const connected = connectionStatus === 'Connected';
-  const radioId = connected && connection.connectedDeviceAddress?.trim()
-    ? connection.connectedDeviceAddress.trim() : null;
+  const radioId = management ? (connected ? management.radio : null)
+    : connected && connection.connectedDeviceAddress?.trim()
+      ? connection.connectedDeviceAddress.trim() : null;
+  const configurationKey = management?.ready
+    ? JSON.stringify(management.chats.map(chat => chat.id).sort()) : null;
+  const [managementSelection, setManagementSelection] = useState<ChatManagementSelection | null>(null);
+  const [archived, setArchived] = useState(false);
+  const [pendingChat, setPendingChat] = useState<ChatConfiguration | null>(null);
+  const [readIds, setReadIds] = useState<ReadonlySet<string>>(new Set());
+  const observationBinding = useRef<string | null>(null);
   const [observedLabels, setObservedLabels] = useState<ChannelLabel[]>([]);
   const [sessionScopes, setSessionScopes] = useState<RadioConversationScope[]>([]);
   const [sessionOwnership, setSessionOwnership] = useState<
@@ -79,8 +115,8 @@ export function RadioScreen({
   const generation = useRef(0);
   const lastBinding = useRef<{
     radioId: string | null; channels: readonly BushMeshChannel[] | null;
-    connected: boolean;
-  }>({radioId: null, channels: null, connected: false});
+    connected: boolean; configurationKey: string | null;
+  }>({radioId: null, channels: null, connected: false, configurationKey: null});
   const [search, setSearch] = useState('');
   const [pinned, setPinned] = useState<ReadonlySet<string>>(new Set());
   const [selectedScope, setSelectedScope] = useState<RadioConversationScope | null>(null);
@@ -101,22 +137,29 @@ export function RadioScreen({
   // Do not store keys, derive a stable channel identity from names or slots,
   // or mutate the carrier selected for background location sharing.
   useEffect(() => {
+    // A redacted snapshot cannot detect same-name key replacement. Only a
+    // verified configuration set may bind integrated live rooms.
+    if (management && connected && configurationKey === null) return;
     const changed = lastBinding.current.radioId !== radioId ||
-      lastBinding.current.channels !== channels ||
+      (management ? lastBinding.current.configurationKey !== configurationKey :
+        lastBinding.current.channels !== channels) ||
       lastBinding.current.connected !== connected;
     if (!changed) return;
-    lastBinding.current = {radioId, channels, connected};
+    lastBinding.current = {radioId, channels, connected, configurationKey};
     if (!radioId || !connected) return; // Retain this-session read-only rooms offline.
     generation.current += 1;
     const revision = 'session-' + generation.current;
-    const labels = channels.filter(eligible).map(channel => ({
-      channelIndex: channel.channelIndex, channelName: channel.channelName,
-    }));
+    const labels = management
+      ? management.chats.map(chat => ({channelIndex: String(chat.slot), channelName: chat.name}))
+      : channels.filter(eligible).map(channel => ({
+        channelIndex: channel.channelIndex, channelName: channel.channelName,
+      }));
     setObservedLabels(labels);
-    setSessionScopes(labels.map(channel => ({
-      ...channel, radioId, channelGeneration: revision,
-    })));
-  }, [radioId, connected, channels]);
+    setSessionScopes(labels.map(channel => {
+      const chat = management?.chats.find(c => String(c.slot) === channel.channelIndex);
+      return {...channel, radioId, channelGeneration: chat ? revision + ':' + chat.id : revision};
+    }));
+  }, [radioId, connected, channels, configurationKey, management]);
 
   // The legacy encrypted snapshot has no durable radio/channel incarnation.
   // Baseline loaded IDs are always quarantined. Only later arrivals that
@@ -139,9 +182,19 @@ export function RadioScreen({
     const old = baseline.current;
     baseline.current = ids;
     if (!connected || !radioId) return;
+    if (management) {
+      // Never attribute a batch crossing a verification or radio-generation
+      // boundary. Only session observations are eligible, not restored history.
+      const key = management.ready && lastBinding.current.configurationKey === configurationKey
+        ? JSON.stringify(sessionScopes.map(conversationKey)) : null;
+      if (key === null || observationBinding.current !== key) {
+        observationBinding.current = key;
+        return;
+      }
+    }
     const observed: Record<string, RadioConversationScope> = {};
     for (const message of channelMessages) {
-      if (old.has(message.id)) continue;
+      if (old.has(message.id) || (management && message.direction === 'sent')) continue;
       const scope = sessionScopes.find(s =>
         s.radioId === radioId &&
         s.channelIndex === message.channelIndex &&
@@ -154,11 +207,33 @@ export function RadioScreen({
     if (Object.keys(observed).length > 0) {
       setSessionOwnership(existing => ({...existing, ...observed}));
     }
-  }, [channelMessages, connected, radioId, messagePersistenceStatus, sessionScopes]);
+  }, [channelMessages, connected, radioId, messagePersistenceStatus, sessionScopes, management, configurationKey]);
 
   const liveScopes = useMemo(() =>
-    connected && radioId ? sessionScopes.filter(s => s.radioId === radioId) : [],
-  [connected, radioId, sessionScopes]);
+    connected && radioId && (!management || (management.ready &&
+      configurationKey === lastBinding.current.configurationKey))
+      ? sessionScopes.filter(s => s.radioId === radioId && (!management ||
+        management.chats.some(chat => chat.radio === s.radioId &&
+          s.channelGeneration.endsWith(':' + chat.id)))) : [],
+  [connected, radioId, sessionScopes, management, configurationKey]);
+  const chatFor = (scope: RadioConversationScope) => management?.chats.find(chat =>
+    liveScopes.some(live => equalScope(live, scope)) && chat.radio === scope.radioId &&
+    String(chat.slot) === scope.channelIndex && chat.name === scope.channelName &&
+    scope.channelGeneration.endsWith(':' + chat.id));
+  const preferencesFor = (scope: RadioConversationScope) => {
+    const chat = chatFor(scope);
+    return chat ? management?.preferences[chat.id] ?? defaultChatPreferences : undefined;
+  };
+  useEffect(() => {
+    if (!pendingChat) return;
+    const scope = liveScopes.find(s => s.radioId === pendingChat.radio &&
+      s.channelGeneration.endsWith(':' + pendingChat.id));
+    if (!scope) return;
+    setPendingChat(null);
+    setSelectedScope(scope);
+    lastNavigation.current = scope.channelIndex;
+    setViewedConversation({kind: 'meshcore-channel', channelIndex: scope.channelIndex});
+  }, [pendingChat, liveScopes, setViewedConversation]);
   const knownScopes = [...liveScopes];
   for (const scope of trustedScopes) {
     if (!knownScopes.some(s => equalScope(scope, s))) knownScopes.push(scope);
@@ -185,16 +260,27 @@ export function RadioScreen({
     ...c, secret: '',
   }));
 
-  const conversations = buildMessengerConversations({
-    channels: inboxChannels, scopes: knownScopes, messages: channelMessages,
-    verifiedOwnership: verifiedMessageOwnership,
-    sessionOwnership, pinned, unread: unreadCounts, search,
-  });
   const allConversations = buildMessengerConversations({
     channels: inboxChannels, scopes: knownScopes, messages: channelMessages,
     verifiedOwnership: verifiedMessageOwnership,
     sessionOwnership, pinned, unread: unreadCounts,
   });
+  const needle = search.trim().toLocaleLowerCase();
+  const conversations = allConversations.map(c => {
+    const prefs = preferencesFor(c.scope);
+    return {...c, pinned: prefs?.pinned ?? c.pinned,
+      displayName: prefs?.displayName || c.channel.channelName,
+      personalisation: prefs, manualUnread: prefs?.unread,
+      unreadCount: management ? (c.messages.length ? c.messages.filter(m =>
+        m.message.direction === 'received' && !readIds.has(m.message.id)).length : null) : c.unreadCount};
+  }).filter(c => (!management || !!preferencesFor(c.scope)?.archived === archived) &&
+    (!needle || c.displayName.toLocaleLowerCase().includes(needle) ||
+      c.channel.channelName.toLocaleLowerCase().includes(needle) ||
+      c.preview.toLocaleLowerCase().includes(needle)))
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) ||
+      (management?.sort === 'slot' ? Number(a.channel.channelIndex) - Number(b.channel.channelIndex) :
+        management?.sort === 'unread' ? Number(!!b.manualUnread || !!b.unreadCount) - Number(!!a.manualUnread || !!a.unreadCount) :
+        0) || (b.activityMs ?? -1) - (a.activityMs ?? -1));
   const ownedIds = new Set(allConversations.flatMap(c => c.messages.map(m => m.message.id)));
   const unknownCount = quarantineCount(channelMessages, ownedIds);
 
@@ -222,6 +308,14 @@ export function RadioScreen({
       verifiedMessageOwnership, sessionOwnership) : [],
     [channelMessages, selectedScope, verifiedMessageOwnership, sessionOwnership]);
 
+  useEffect(() => {
+    if (!management || !selectedScope || !selectedMessages.length) return;
+    setReadIds(previous => {
+      const next = new Set(previous);
+      for (const item of selectedMessages) next.add(item.message.id);
+      return next.size === previous.size ? previous : next;
+    });
+  }, [selectedScope, selectedMessages, management]);
   const currentChannel = selectedScope && radioId === selectedScope.radioId && connected
     ? channels.find(c => c.channelIndex === selectedScope.channelIndex &&
       c.channelName === selectedScope.channelName) ?? null : null;
@@ -233,7 +327,8 @@ export function RadioScreen({
     channelName: boundNow ? selectedScope?.channelName ?? null : null,
     protocolTransportReady: radioSession.transportReady,
   });
-  const canSubmit = boundNow && presentation.maySubmitCarrierText &&
+  const canSubmit = boundNow && (!management || (!!selectedScope && !!chatFor(selectedScope) &&
+    !management.busy && !management.radioBusy)) && presentation.maySubmitCarrierText &&
     !sending && (activeKey === null || !uncertain.has(activeKey));
   const unavailableReason = !connected
     ? 'Radio disconnected. Proven history is readable; sending is unavailable.'
@@ -247,6 +342,10 @@ export function RadioScreen({
     setSelectedScope(scope);
     lastNavigation.current = scope.channelIndex;
     setViewedConversation({kind: 'meshcore-channel', channelIndex: scope.channelIndex});
+    const chat = chatFor(scope);
+    if (chat && management?.preferences[chat.id]?.unread) {
+      management.update(chat, {unread: false}).catch(() => undefined);
+    }
     const key = conversationKey(scope);
     const count = unreadCounts[key];
     if (onConversationRead && Number.isSafeInteger(count) && count > 0) {
@@ -260,7 +359,31 @@ export function RadioScreen({
     lastNavigation.current = null;
     setViewedConversation(null);
   };
+  useEffect(() => {
+    if (settingsVisible || managementSelection || !selectedScope) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setSelectedScope(null);
+      lastNavigation.current = null;
+      setViewedConversation(null);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [settingsVisible, managementSelection, selectedScope, setViewedConversation]);
+  const openChatManagement = (scope: RadioConversationScope) => {
+    const chat = chatFor(scope);
+    if (chat && management) {
+      setManagementSelection({kind: 'settings', chat});
+    } else {
+      Alert.alert('Chat unavailable', 'Connect the original radio and refresh chats before changing this configuration.');
+    }
+  };
   const togglePinned = (scope: RadioConversationScope) => {
+    if (management) {
+      const chat = chatFor(scope);
+      if (chat) management.update(chat, {pinned: !management.preferences[chat.id]?.pinned}).catch(() => undefined);
+      else Alert.alert('Chat unavailable', 'Refresh the original radio first.');
+      return;
+    }
     const key = conversationKey(scope);
     setPinned(current => {
       const next = new Set(current);
@@ -294,6 +417,11 @@ export function RadioScreen({
       return;
     }
     const capturedScope = selectedScope;
+    const verifiedChat = chatFor(capturedScope);
+    if (management && !verifiedChat) {
+      postNotice(activeKey, 'Refresh the verified chat before sending.');
+      return;
+    }
     const capturedKey = activeKey;
     const submittedText = validation.text;
     sendingRef.current = true;
@@ -302,16 +430,18 @@ export function RadioScreen({
     try {
       // Only the owning service issues the command. A resolved promise proves
       // PACKET_OK acceptance, never a peer acknowledgement.
-      await sendChannelMessage(Number(capturedScope.channelIndex), submittedText);
+      if (verifiedChat) await radioConnection.sendVerifiedChat(verifiedChat, submittedText);
+      else await sendChannelMessage(Number(capturedScope.channelIndex), submittedText);
       // Radio accepted; a separate local history failure must not turn this
       // into a fabricated radio rejection or trigger another transmission.
       let recorded = true;
       try {
-        addLocalChannelMessage({
+        const id = addLocalChannelMessage({
           channelIndex: capturedScope.channelIndex,
           channelName: capturedScope.channelName,
           text: submittedText, direction: 'sent', status: 'accepted',
         });
+        if (management && id) setSessionOwnership(current => ({...current, [id]: capturedScope}));
       } catch {
         recorded = false;
       }
@@ -325,14 +455,16 @@ export function RadioScreen({
         : 'Radio accepted, but local history recording failed. Do not resend to repair history.');
     } catch (error) {
       const failure = classifyChannelSubmissionFailure(error);
+      if (management) management.invalidate();
       let recorded = true;
       try {
-        addLocalChannelMessage({
+        const id = addLocalChannelMessage({
           channelIndex: capturedScope.channelIndex,
           channelName: capturedScope.channelName,
           text: submittedText, direction: 'sent', status: 'failed',
           submissionFailure: failure,
         });
+        if (management && id) setSessionOwnership(current => ({...current, [id]: capturedScope}));
       } catch {
         recorded = false;
       }
@@ -353,11 +485,25 @@ export function RadioScreen({
   const provision = (action: 'create' | 'join') => {
     setShowNew(false);
     const callback = action === 'create' ? onCreateChat : onJoinChat;
-    if (callback) callback();
+    if (management) {
+      if (!management.radio) {
+        Alert.alert('Connect a radio', 'Connect and sync your MeshCore companion before creating or joining a chat.');
+        return;
+      }
+      setManagementSelection({kind: action, radio: management.radio});
+      if (!management.ready && !management.busy && !management.radioBusy) management.refresh().catch(() => undefined);
+    } else if (callback) callback();
     else if (onOpenCarrierDetails) onOpenCarrierDetails();
     else setSettingsOpen(true);
   };
   const isRestoring = messagePersistenceStatus === 'restoring';
+  const dialog = management ? <ChatManagementDialog controller={management}
+    selection={managementSelection} onClose={() => setManagementSelection(null)}
+    onProvisioned={setPendingChat}
+    onLeft={chat => {
+      if (selectedScope?.channelGeneration.endsWith(':' + chat.id) &&
+          selectedScope.radioId === chat.radio) closeRoom();
+    }} /> : null;
 
   if (showUnattributed) {
     return <RadioQuarantineReview
@@ -412,11 +558,21 @@ export function RadioScreen({
           isSubmitting={sending} onDraft={updateDraft}
           onSend={() => {submit().catch(() => undefined);}}
           onBack={closeRoom}
-          onOpenSettings={onOpenChatSettings}
-          onOpenMenu={onOpenConversationMenu}
-          pinned={!!activeKey && pinned.has(activeKey)}
+          onOpenSettings={management ? openChatManagement : onOpenChatSettings}
+          onOpenMenu={management ? undefined : onOpenConversationMenu}
+          personalisation={preferencesFor(selectedScope)}
+          displayName={preferencesFor(selectedScope)?.displayName}
+          pinned={preferencesFor(selectedScope)?.pinned ?? (!!activeKey && pinned.has(activeKey))}
           onTogglePinned={() => togglePinned(selectedScope)}
         />
+        {management && !management.ready && management.radio ? (
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Refresh verified chats"
+            style={styles.panelAction} disabled={management.busy || management.radioBusy}
+            onPress={() => management.refresh().catch(() => undefined)}>
+            <Text style={styles.actionText}>Refresh verified chats</Text>
+          </TouchableOpacity>
+        ) : null}
+        {dialog}
         {warned ? (
           <TouchableOpacity accessibilityRole="button"
             accessibilityLabel="Acknowledge uncertain radio submission"
@@ -438,6 +594,24 @@ export function RadioScreen({
 
   return (
     <View style={styles.root}>
+      {management ? <View style={styles.managementBar}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Refresh verified chats"
+          disabled={!management.radio || management.busy || management.radioBusy}
+          onPress={() => management.refresh().catch(() => undefined)}>
+          <Text style={styles.actionText}>{management.busy ? 'Checking chats…' : 'Refresh'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={archived ? 'Show active chats' : 'Show archived chats'}
+          onPress={() => setArchived(v => !v)}>
+          <Text style={styles.actionText}>{archived ? 'Active chats' : 'Archived'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Change conversation sorting"
+          disabled={!management.ready || management.busy || management.radioBusy}
+          onPress={() => management.changeSort(management.sort === 'name' ? 'unread' :
+            management.sort === 'unread' ? 'slot' : 'name').catch(() => undefined)}>
+          <Text style={styles.actionText}>Sort: {management.sort}</Text>
+        </TouchableOpacity>
+      </View> : null}
+      {management?.error ? <Text style={styles.uncertainText}>{management.error}</Text> : null}
       <RadioInbox
         conversations={conversations}
         online={connected} radioLabel={connectedDeviceName}
@@ -453,8 +627,8 @@ export function RadioScreen({
         onNewChat={() => setShowNew(v => !v)}
         onSettings={openSettings}
         onReviewUnattributed={() => setShowUnattributed(true)}
-        onOpenRowMenu={onOpenConversationMenu}
-        onOpenChatSettings={onOpenChatSettings}
+        onOpenRowMenu={management ? undefined : onOpenConversationMenu}
+        onOpenChatSettings={management ? openChatManagement : onOpenChatSettings}
       />
       {showNew ? (
         <View style={styles.newMenu}>
@@ -472,17 +646,20 @@ export function RadioScreen({
             <Text style={styles.actionText}>Cancel</Text>
           </TouchableOpacity>
           <Text style={styles.panelCopy}>
-            Channel creation and joining are managed by the existing carrier
-            setup tools, not by this messenger.
+            {management ? 'Create or join a private channel using verified radio provisioning.' :
+              'Channel creation and joining are managed by the existing carrier setup tools.'}
           </Text>
         </View>
       ) : null}
+      {dialog}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
+  managementBar: {flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16,
+    paddingVertical: 8, backgroundColor: colors.surfaceSoft},
   panel: {flex: 1, backgroundColor: colors.background, padding: 18, gap: 14},
   panelHead: {minHeight: 64, flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between'},

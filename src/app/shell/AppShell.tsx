@@ -438,6 +438,9 @@ export function AppShell(): React.JSX.Element {
               importantForAccessibility={radioSettingsOpen ? 'no-hide-descendants' : 'auto'}
               pointerEvents={radioSettingsOpen ? 'none' : 'auto'}>
               <RadioScreen
+                enableChatManagement
+                settingsVisible={radioSettingsOpen}
+                onOpenMessagingSettings={openMessagingSettings}
                 onOpenCarrierDetails={() => {
                   setConvoyView('tools');
                   setActiveTab('convoy');

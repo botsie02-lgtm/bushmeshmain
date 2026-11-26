@@ -77,6 +77,13 @@ export function useChatManagement() {
   const update = (chat: ChatConfiguration, patch: ChatPreferencePatch) =>
     run(async () => {
       requireCurrent(chat);
+      // Even local preferences must not be edited through a stale live row.
+      try {
+        await live.current.verifyChatConfiguration(chat);
+      } catch (failure) {
+        setReady(false);
+        throw failure;
+      }
       // Purely local changes are keyed to the selected configuration, not a slot.
       const entries = await chatPreferenceStore.update(chat.id, patch);
       if (live.current.getChatRadio() === chat.radio) setPreferences(entries);
@@ -139,6 +146,7 @@ export function useChatManagement() {
     chats: ready && radio === loadedRadio ? configs : [],
     preferences: ready && radio === loadedRadio ? preferences : {},
     refresh, update, provision, leave, credential, sort, changeSort,
+    invalidate: () => setReady(false),
     isCurrentRadio: (expected: string) => live.current.getChatRadio() === expected,
     radioBusy: connection.snapshot.isWriting,
   };

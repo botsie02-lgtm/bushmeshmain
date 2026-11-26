@@ -1191,6 +1191,22 @@ export class AppRadioConnectionService {
     return current;
   }
 
+  /** Recheck the exact protected identity against firmware, not a redacted slot. */
+  async verifyChatConfiguration(expected: ChatConfiguration): Promise<void> {
+    await this.withChatPort(expected.radio, async port => {
+      await this.requireChatConfiguration(port, expected);
+    });
+  }
+
+  /** Check and submit within the same guarded radio command ownership scope. */
+  async sendVerifiedChat(expected: ChatConfiguration, text: string): Promise<void> {
+    await this.withChatPort(expected.radio, async (port, assertCurrent) => {
+      await this.requireChatConfiguration(port, expected);
+      assertCurrent();
+      await this.sendChannelMessage(expected.slot, text);
+    });
+  }
+
   /** Explicitly confirmed credential sharing only; no snapshot or log receives the key. */
   async revealChatCredential(expected: ChatConfiguration): Promise<string> {
     return this.withChatPort(expected.radio, async port => {

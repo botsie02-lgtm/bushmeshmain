@@ -39,6 +39,8 @@ type RadioConnectionContextValue = {
   getChatRadio: AppRadioConnectionService['getChatRadio'];
   listChatConfigurations: AppRadioConnectionService['listChatConfigurations'];
   provisionChat: AppRadioConnectionService['provisionChat'];
+  verifyChatConfiguration: AppRadioConnectionService['verifyChatConfiguration'];
+  sendVerifiedChat: AppRadioConnectionService['sendVerifiedChat'];
   revealChatCredential: AppRadioConnectionService['revealChatCredential'];
   leaveChat: AppRadioConnectionService['leaveChat'];
   refreshChannels: AppRadioConnectionService['refreshChannels'];
@@ -179,6 +181,8 @@ export function RadioConnectionProvider({
       getChatRadio: () => service.getChatRadio(),
       listChatConfigurations: radio => service.listChatConfigurations(radio),
       provisionChat: (radio, input) => service.provisionChat(radio, input),
+      verifyChatConfiguration: expected => service.verifyChatConfiguration(expected),
+      sendVerifiedChat: (expected, text) => service.sendVerifiedChat(expected, text),
       revealChatCredential: expected => service.revealChatCredential(expected),
       leaveChat: expected => service.leaveChat(expected),
       refreshChannels: () => service.refreshChannels(),

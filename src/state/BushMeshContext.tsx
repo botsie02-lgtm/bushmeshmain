@@ -112,7 +112,7 @@ type BushMeshContextValue = {
   setSyncContactsHandler: (handler: SyncContactsHandler | null) => void;
   sendChannelMessage: (channelIndex: number, message: string) => Promise<void>;
   syncContacts: () => Promise<BushMeshContact[]>;
-  addLocalChannelMessage: (message: BushMeshChannelMessageInput) => void;
+  addLocalChannelMessage: (message: BushMeshChannelMessageInput) => string;
   addDurableChannelMessage: (
     message: BushMeshDurableChannelMessageInput,
   ) => Promise<boolean>;
@@ -437,12 +437,13 @@ export function BushMeshProvider({
       const normalizedStatus: BushMeshMessageDeliveryStatus =
         message.status === 'sent' ? 'accepted' : message.status;
       const nowMs = Date.now();
+      const id = `${nowMs}-${Math.random().toString(16).slice(2)}`;
       const next = createMessageSnapshot(
         [
           {
             ...message,
             status: normalizedStatus,
-            id: `${nowMs}-${Math.random().toString(16).slice(2)}`,
+            id,
             createdAt: new Date(nowMs).toISOString(),
           },
           ...channelMessagesRef.current,
@@ -451,6 +452,7 @@ export function BushMeshProvider({
       ).messages;
       channelMessagesRef.current = next;
       setChannelMessages(next);
+      return id;
     },
     [],
   );

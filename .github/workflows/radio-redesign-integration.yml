@@ -1,0 +1,89 @@
+name: Radio redesign integration — full validation
+
+on:
+  push:
+    branches:
+      - integration/bushmesh-radio-redesign-v1
+  workflow_dispatch:
+
+concurrency:
+  group: radio-redesign-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application:
+    name: Jest, TypeScript, ESLint, simulator, map fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Full Jest regression suite
+        run: npm test -- --runInBand
+      - name: Full TypeScript check
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npm run lint
+      - name: Deterministic simulator compile
+        run: npx tsc -p tsconfig.network-simulator-v1.json --noEmit
+      - name: Install raster fixture dependencies
+        run: python -m pip install "Pillow>=11,<14"
+      - name: Map raster fixture unit tests
+        run: python -m unittest discover -s tools/maps -p 'test_*.py'
+
+  android:
+    name: Android assembleDebug and native unit tests — no install
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Install dependencies
+        run: npm ci
+      - name: Compile Android debug APK (no adb install)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - name: Native JVM unit tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+      - name: Build isolated standalone release APK with embedded JavaScript
+        working-directory: android
+        run: ./gradlew :app:assembleRelease -PradioRedesignFieldTest --no-daemon
+      - name: Verify field APK and record provenance
+        run: |
+          set -eu
+          mkdir -p field-test
+          cp android/app/build/outputs/apk/release/app-release.apk field-test/bushmesh-radio-redesign.apk
+          unzip -l field-test/bushmesh-radio-redesign.apk | grep -F assets/index.android.bundle
+          SDK_TOOLS="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          "$SDK_TOOLS" dump badging field-test/bushmesh-radio-redesign.apk | tee field-test/APK-BADGING.txt
+          grep -F "package: name='com.bushmeshmain.radioredesign'" field-test/APK-BADGING.txt
+          git rev-parse HEAD > field-test/SOURCE-COMMIT.txt
+          git show -s --format=%P HEAD > field-test/SOURCE-PARENTS.txt
+          printf '%s\n' 'base 261a12ce05f8ab7c70ae6c37cba03d32cf2c1361' 'messenger 93461551cf4879f2cd453a102276ccc9335421d6' 'management 75c1cc89b65541d94489f79a65488ece605790d6' 'settings 30bb176c4f52ae20b8b7ccb9d4dc47857d3ee029' > field-test/WORKER-SOURCES.txt
+          (cd field-test && sha256sum bushmesh-radio-redesign.apk > SHA256SUMS)
+      - name: Record artifact hash
+        working-directory: android/app/build/outputs/apk/debug
+        run: sha256sum app-debug.apk | tee SHA256SUMS
+      - name: Upload standalone field-test APK and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushmesh-radio-redesign-field-test-${{ github.sha }}
+          path: field-test/
+          if-no-files-found: error
+          retention-days: 14

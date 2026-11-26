@@ -35,6 +35,9 @@ export type MessengerConversation = {
   preview: string;
   activityMs: number | null;
   pinned: boolean;
+  displayName?: string;
+  personalisation?: import('../../radio/chatManagement/chatPreferences').ChatPersonalisation;
+  manualUnread?: boolean;
   unreadCount: number | null;
 };
 
@@ -65,10 +68,13 @@ export function scopedMessages(
   trustedOwnership: Readonly<Record<string, MessageOwnershipProof>> = {},
   observedSession: Readonly<Record<string, RadioConversationScope>> = {},
 ): ScopedMessage[] {
+  const seen = new Set<string>();
   return messages
     .filter(message => message.channelIndex === scope.channelIndex &&
       message.channelName === scope.channelName)
     .flatMap<ScopedMessage>(message => {
+      if (seen.has(message.id)) return [];
+      seen.add(message.id);
       if (equalProof(scope, trustedOwnership[message.id])) {
         return [{message, provenance: 'verified-history' as const}];
       }

@@ -3,6 +3,7 @@ import {
   FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
+import {ChatAvatar} from '../../radio/chatManagement/ChatAvatar';
 import type {MessengerConversation, RadioConversationScope} from './messengerModel';
 import {conversationKey} from './messengerModel';
 
@@ -143,11 +144,12 @@ export function RadioInbox({
                 accessibilityLabel={'Open chat ' + item.channel.channelName + distinction}
                 onPress={() => {setMenuFor(null); onOpen(item.scope);}}
                 style={styles.row} activeOpacity={0.75}>
-                <View style={styles.avatar}><Text style={styles.avatarText}>#</Text></View>
+                {item.personalisation ? <ChatAvatar name={item.displayName || item.channel.channelName}
+                  {...item.personalisation}/> : <View style={styles.avatar}><Text style={styles.avatarText}>#</Text></View>}
                 <View style={styles.rowBody}>
                   <View style={styles.rowTop}>
                     <Text style={styles.rowName} numberOfLines={1}>
-                      {item.channel.channelName}{item.pinned ? '  ★' : ''}
+                      {item.displayName || item.channel.channelName}{item.pinned ? '  ★' : ''}
                     </Text>
                     <Text style={styles.when}>{clock(item.activityMs)}</Text>
                   </View>
@@ -158,6 +160,8 @@ export function RadioInbox({
                     {item.unreadCount === null ? '' : ' · Read state available'}
                   </Text>
                 </View>
+                {item.manualUnread && !item.unreadCount ? <View style={styles.unread}
+                  accessibilityLabel="Manually marked unread"><Text style={styles.unreadText}>•</Text></View> : null}
                 {item.unreadCount !== null && item.unreadCount > 0 ? (
                   <View style={styles.unread}
                     accessibilityLabel={item.unreadCount + ' unread messages'}>
