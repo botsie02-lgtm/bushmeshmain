@@ -268,7 +268,8 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, incarnation
       {text: 'Cancel', style: 'cancel'},
       {text: 'Leave chat', style: 'destructive', onPress: () => {
         controller.leave(chat, () => {
-          onLeft?.(chat);
+          if (onLeft) onLeft(chat);
+          else onClose();
         }, incarnation).catch(() => undefined);
       }},
     ],
