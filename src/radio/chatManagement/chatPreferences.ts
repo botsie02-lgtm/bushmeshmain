@@ -161,7 +161,7 @@ function decodeSort(serialized: string | null): ChatSort {
   return parsed.version === 2 && sorts.includes(parsed.sort) ? parsed.sort : 'recent';
 }
 
-export type ChatPreferencePatch = Partial<Omit<ChatPreferences, 'localCreator' | 'origin' | 'configuration' | 'incarnation' | 'retired'>>;
+export type ChatPreferencePatch = Partial<Omit<ChatPreferences, 'localCreator' | 'origin' | 'configuration' | 'incarnation' | 'retired'>> & {removedMessageIds?: readonly string[]};
 
 export class ChatPreferenceStore {
   private queue: Promise<unknown> = Promise.resolve();
@@ -270,6 +270,7 @@ export class ChatPreferenceStore {
     return this.mutate(id, current => {
       if (incarnation !== undefined && (current.incarnation ?? 1) !== incarnation) throw new Error('Local conversation changed.');
       if (patch.quickMessages !== undefined && (!Array.isArray(patch.quickMessages) || !patch.quickMessages.length || patch.quickMessages.length > 24 || patch.quickMessages.some(value => typeof value !== 'string' || !value.trim() || Buffer.byteLength(value, 'utf8') > 133))) throw new Error('Invalid quick message payload.');
+      const removed = new Set(patch.removedMessageIds ?? []);
       return ({
       ...current,
       displayName: typeof patch.displayName === 'string'
@@ -282,7 +283,12 @@ export class ChatPreferenceStore {
       ...(typeof patch.speechMutedUntilMs === 'number' && Number.isSafeInteger(patch.speechMutedUntilMs) && patch.speechMutedUntilMs >= 0 ? {speechMutedUntilMs: patch.speechMutedUntilMs} : {}),
       ...(typeof patch.draft === 'string' ? {draft: patch.draft.slice(0, 512)} : {}),
       ...(Array.isArray(patch.quickMessages) ? {quickMessages: [...new Set(patch.quickMessages.map(value => value.trim()))]} : {}),
-      ...Object.fromEntries((['readIds', 'starredIds', 'pinnedIds'] as const).flatMap(key => Array.isArray(patch[key]) ? [[key, [...new Set([...(key === 'readIds' ? current.readIds ?? [] : []), ...patch[key]!.filter(v => typeof v === 'string' && v.length > 0 && v.length <= 256)])]]] : [])),
+       ...Object.fromEntries((['readIds', 'starredIds', 'pinnedIds'] as const).flatMap(key => {
+         if (!Array.isArray(patch[key]) && !removed.size) return [];
+         const previous = current[key] ?? [];
+         const next = Array.isArray(patch[key]) ? [...(key === 'readIds' ? previous : []), ...patch[key]!] : previous;
+         return [[key, [...new Set(next.filter(v => typeof v === 'string' && v.length > 0 && v.length <= 256 && !removed.has(v)))]]];
+       })),
     });});
   }
 

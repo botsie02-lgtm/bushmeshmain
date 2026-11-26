@@ -17,6 +17,7 @@ export type MeshCoreInboundObservation = {
   association?: {version: 1; evidence: 'post-empty-local-observation'; incarnation: number};
   /** One locally observed serialized queue reply, not a firmware packet ID. */
   queueOccurrenceId?: string;
+  retentionReason?: 'possible-cleared-record-replay';
 };
 
 export type MeshCoreInboundEnvelope = {

@@ -46,6 +46,7 @@ export function RadioQuarantineReview({
               {item.direction === 'received'
                 ? 'Incoming · sender not recorded' : 'Outgoing · local record'}
             </Text>
+            {item.observation?.retentionReason === 'possible-cleared-record-replay' && <Text style={styles.direction}>Possible replay of cleared conversation history · retained separately, not assigned</Text>}
             {item.observation && <Text style={styles.direction}>Observed via {item.observation.source === 'native-session' ? 'Android radio' : 'Bluetooth session'}{item.observation.configurationName ? ' · locally configured ' + item.observation.configurationName : ''} · original queue key unknown{item.observation.snr !== null ? ' · SNR ' + item.observation.snr : ''}{item.observation.pathLength !== null ? ' · path ' + item.observation.pathLength : ''}</Text>}
             <Text style={styles.message}>{item.text}</Text>
             <Text style={styles.time}>

@@ -1,5 +1,6 @@
 import {CHANNEL_SUBMISSION_FAILURE_REASONS} from '../meshcore/channelSendDiagnostics';
 import type {BushMeshChannelMessage} from '../state/BushMeshContext';
+import {applyHistoryRetention, validateHistoryRetention, type HistoryRetention} from './historyRetention';
 
 export const BUSHMESH_MESSAGE_SNAPSHOT_VERSION = 1 as const;
 /** Legacy limit retained as a migration reference; new snapshots do not evict. */
@@ -9,6 +10,7 @@ export type BushMeshMessageSnapshotV1 = {
   version: typeof BUSHMESH_MESSAGE_SNAPSHOT_VERSION;
   savedAtMs: number;
   messages: BushMeshChannelMessage[];
+  retention?: HistoryRetention;
 };
 
 type PersistedMessageV1 = Omit<BushMeshChannelMessage, 'status'> & {
@@ -63,6 +65,7 @@ function validatePersistedMessage(
         candidate.direction !== 'received' || (o.radio !== null && (typeof o.radio !== 'string' || !o.radio)) ||
         (o.configurationId !== null && (typeof o.configurationId !== 'string' || !/^[a-f0-9]{64}$/.test(o.configurationId))) ||
         (o.configurationName !== null && typeof o.configurationName !== 'string') ||
+        (o.retentionReason !== undefined && (o.retentionReason !== 'possible-cleared-record-replay' || o.association !== undefined || candidate.conversation !== undefined)) ||
         (o.queueOccurrenceId !== undefined && (!o.radio || typeof o.queueOccurrenceId !== 'string' || !/^[a-z0-9-]{1,128}$/.test(o.queueOccurrenceId))) ||
         [o.timestamp, o.snr, o.pathLength].some(v => v !== null && !Number.isFinite(v))) throw new Error('Invalid persisted radio observation.');
   }
@@ -119,6 +122,7 @@ function normalizePersistedMessage(
 export function createMessageSnapshot(
   messages: BushMeshChannelMessage[],
   savedAtMs = Date.now(),
+  retention?: HistoryRetention,
 ): BushMeshMessageSnapshotV1 {
   if (!Number.isFinite(savedAtMs) || savedAtMs < 0) {
     throw new Error('Message snapshot savedAtMs is invalid.');
@@ -132,13 +136,14 @@ export function createMessageSnapshot(
     }
   });
 
-  const bounded = Array.from(deduped.values())
+  const bounded = applyHistoryRetention(Array.from(deduped.values()), retention)
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
   return {
     version: BUSHMESH_MESSAGE_SNAPSHOT_VERSION,
     savedAtMs,
     messages: bounded,
+    ...(retention ? {retention} : {}),
   };
 }
 
@@ -164,6 +169,7 @@ export function decodeMessageSnapshot(
   return createMessageSnapshot(
     snapshot.messages.map(normalizePersistedMessage),
     snapshot.savedAtMs,
+    snapshot.retention,
   );
 }
 
@@ -191,5 +197,6 @@ export function validateMessageSnapshot(
     throw new Error('Message snapshot messages are invalid.');
   }
 
+  if (candidate.retention !== undefined) validateHistoryRetention(candidate.retention);
   candidate.messages.forEach(validatePersistedMessage);
 }

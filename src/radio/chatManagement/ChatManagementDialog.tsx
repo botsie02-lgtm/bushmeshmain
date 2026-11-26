@@ -25,6 +25,7 @@ export type ChatManagementDialogProps = {
   /** Navigation only: do not change the active BushMesh carrier. */
   onProvisioned?: (chat: ChatConfiguration) => void;
   onLeft?: (chat: ChatConfiguration) => void;
+  onClearHistory?: (chat: ChatConfiguration, incarnation: number) => Promise<void>;
   onExport?: (chat: ChatConfiguration, incarnation: number, format: 'txt' | 'json') => Promise<void>;
 };
 
@@ -243,16 +244,25 @@ function ProvisionForm({selection, controller, onClose, onProvisioned}: Omit<Cha
 }
 
 /** Full-page settings. Can also be mounted directly by the messenger router. */
-export function ChatSettingsPage({chat, controller, onClose, onLeft, onExport, incarnation = 1}: {
+export function ChatSettingsPage({chat, controller, onClose, onLeft, onExport, onClearHistory, incarnation = 1}: {
   chat: ChatConfiguration; controller: ChatManagementController; incarnation?: number;
   onClose: () => void; onLeft?: (chat: ChatConfiguration) => void;
   onExport?: ChatManagementDialogProps['onExport'];
+  onClearHistory?: ChatManagementDialogProps['onClearHistory'];
 }) {
   const p = controller.preferences[chat.id] ?? defaultChatPreferences;
   const [name, setName] = useState(p.displayName);
   const [personalisation, setPersonalisation] = useState<ChatPersonalisation>(() => localPersonalisation(p));
   const [shareError, setShareError] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
+  const clearHistory = () => Alert.alert('Clear local conversation history?', 'Permanently remove the selected locally associated records from this phone. This does not leave the radio channel or delete anything remotely. Ambiguous records are retained. A possible firmware replay may appear separately in Radio History; this is not forensic erasure.', [
+    {text:'Cancel', style:'cancel'}, {text:'Clear local history', style:'destructive', onPress: () => {
+      if (!onClearHistory || clearBusy) return;
+      setClearBusy(true);
+      onClearHistory(chat, incarnation).catch(() => Alert.alert('History clearing not confirmed', 'Encrypted storage could not confirm clearing, or a pending submission must be resolved first.')).finally(() => setClearBusy(false));
+    }},
+  ]);
   const exportHistory = (format: 'txt' | 'json') => Alert.alert('Export plaintext history?', 'The selected locally associated conversation will be saved as an unencrypted document. Other apps or people with access to that file may read it. Delete the exported file yourself when no longer needed. Message contents may contain sensitive information.', [
     {text: 'Cancel', style: 'cancel'}, {text: 'Export', onPress: () => {
       if (!onExport || exportBusy) return;
@@ -394,7 +404,8 @@ export function ChatSettingsPage({chat, controller, onClose, onLeft, onExport, i
       </Section>
       <Section title="Privacy and history">
         <Text style={styles.body}>A MeshCore shared key allows channel access, not proof of who sent a message. Archive hides the chat locally; it does not erase messages or change the radio.</Text>
-        <Text style={styles.body}>Export only locally associated records from this exact conversation. Clearing history remains unavailable while replay and recovery safety are under review.</Text>
+        <Text style={styles.body}>Export or clear only locally associated records from this exact conversation. Clearing does not alter the radio configuration.</Text>
+        {onClearHistory && <Action label="Clear local history" danger disabled={clearBusy || exportBusy} onPress={clearHistory}/>}
         {onExport && <><Action label="Export history as text" disabled={exportBusy} onPress={() => exportHistory('txt')}/><Action label="Export history as JSON" disabled={exportBusy} onPress={() => exportHistory('json')}/></>}
       </Section>
       <Section title="Leave chat">
@@ -428,7 +439,7 @@ export function ChatManagementDialog(props: ChatManagementDialogProps): React.JS
             keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
             {selection.kind === 'settings'
               ? <ChatSettingsPage key={selection.chat.id} chat={selection.chat} controller={controller}
-                  onClose={onClose} onLeft={props.onLeft} onExport={props.onExport} incarnation={selection.incarnation}/>
+                  onClose={onClose} onLeft={props.onLeft} onExport={props.onExport} onClearHistory={props.onClearHistory} incarnation={selection.incarnation}/>
               : <ProvisionForm key={selection.kind + selection.radio} {...props} selection={selection}/>}
             {!!controller.error && <Text accessibilityRole="alert" style={styles.danger}>{controller.error}</Text>}
           </ScrollView>

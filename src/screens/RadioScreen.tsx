@@ -97,7 +97,7 @@ function RadioMessenger({
   const {
     connectionStatus, connectedDeviceName, channels, channelMessages,
     messagePersistenceStatus, messagePersistenceError,
-    canSendChannelMessage, sendChannelMessage, addLocalChannelMessage, addDurableChannelMessage, finishDurableSubmission,
+    canSendChannelMessage, sendChannelMessage, addLocalChannelMessage, addDurableChannelMessage, finishDurableSubmission, clearConversationHistory,
   } = useBushMesh();
   const exportState = useRef({channelMessages, messagePersistenceStatus});
   exportState.current = {channelMessages, messagePersistenceStatus};
@@ -627,6 +627,18 @@ function RadioMessenger({
   const isRestoring = messagePersistenceStatus === 'restoring';
   const dialog = management && tabVisible && !settingsVisible ? <ChatManagementDialog controller={management}
     selection={managementSelection} onClose={() => setManagementSelection(null)}
+    onClearHistory={clearConversationHistory && messagePersistenceStatus === 'ready' ? async (chat, incarnation) => {
+      const scope = {radioId: chat.radio, channelGeneration: 'config:' + incarnation + ':' + chat.id, channelIndex: String(chat.slot), channelName: chat.name};
+      const removed = await clearConversationHistory(scope);
+      setReadIds(previous => {const next = new Set(previous); for (const id of removed) next.delete(id); return next;});
+      try {
+        if (removed.length && (management.preferences[chat.id]?.incarnation ?? 1) === incarnation) await management.updateLocal(chat.id, {removedMessageIds: removed, unread: false}, incarnation);
+      } catch {
+        Alert.alert('History cleared', 'Records were removed from encrypted history. Local read/star/pin metadata cleanup could not be saved; removed IDs cannot appear in chats.');
+        return;
+      }
+      Alert.alert('Local history cleared', removed.length + ' records removed. Radio configuration and other conversations are unchanged.');
+    } : undefined}
     onExport={nativeFileExport.conversationSupported() && messagePersistenceStatus === 'ready' ? async (chat, incarnation, format) => {
       if (exportState.current.messagePersistenceStatus !== 'ready') throw new Error('Encrypted history unavailable.');
       const scope = {radioId: chat.radio, channelGeneration: 'config:' + incarnation + ':' + chat.id, channelIndex: String(chat.slot), channelName: chat.name};
