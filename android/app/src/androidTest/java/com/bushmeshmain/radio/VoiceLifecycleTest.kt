@@ -51,6 +51,21 @@ class VoicePermissionDeniedTest : VoiceLifecycleFixture() {
       assertEquals(Pair(false,"BUSHMESH_STT_PERMISSION"),call { module.recognizeOnce("en-AU",it) })
       assertFalse((call { module.getStatus(it) }.second as ReadableMap).getBoolean("listening"))
       assertEquals(Pair(true,true),call { module.cancel(it) })
+      assertEquals(Pair(false,"BUSHMESH_STT_PERMISSION"),call { module.recognizeHeld("en-AU","denied-held",it) })
+      assertEquals(Pair(true,false),call { module.finishHeld("denied-held",false,it) })
+      val status = call { module.getStatus(it) }.second as ReadableMap
+      assertFalse(status.getBoolean("listening"))
+      assertTrue(status.isNull("microphoneOwner"))
+      assertFalse(status.getBoolean("permissionGranted"))
+      val wake = call { module.getHandsFreeStatus(it) }.second as ReadableMap
+      assertFalse(wake.getBoolean("available"))
+      assertFalse(wake.getBoolean("active"))
+      assertFalse(wake.getBoolean("offlineModelReady"))
+      assertFalse(wake.getBoolean("backgroundCaptureSupported"))
+      assertEquals("offline-wake-engine-not-provisioned", wake.getString("reason"))
+      assertEquals(Pair(false,"BUSHMESH_WAKE_UNAVAILABLE"),call { module.activateHandsFree(it) })
+      assertEquals(Pair(true,false),call { module.deactivateHandsFree(it) })
+      assertFalse((call { module.getStatus(it) }.second as ReadableMap).getBoolean("listening"))
     }
   }
 }
@@ -61,7 +76,13 @@ class VoiceSuspendedRecognitionTest : VoiceLifecycleFixture() {
       // Invoke the actual native lifecycle callback; no fake microphone audio.
       module.onHostPause()
       assertEquals(Pair(false,"BUSHMESH_STT_PERMISSION"),call { module.recognizeOnce("en-AU",it) })
-      assertFalse((call { module.getStatus(it) }.second as ReadableMap).getBoolean("listening"))
+      repeat(3) { attempt ->
+        assertEquals(Pair(false,"BUSHMESH_STT_PERMISSION"),call { module.recognizeHeld("en-AU","suspended-$attempt",it) })
+      }
+      val status = call { module.getStatus(it) }.second as ReadableMap
+      assertFalse(status.getBoolean("listening"))
+      assertFalse(status.getBoolean("foreground"))
+      assertTrue(status.isNull("microphoneOwner"))
     }
   }
 }
