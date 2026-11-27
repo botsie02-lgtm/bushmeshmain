@@ -1,0 +1,7 @@
+__pycache__/
+.venv/
+corpus/
+candidate*/
+*.onnx
+*.wav
+*.pt
