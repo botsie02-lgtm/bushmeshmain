@@ -396,7 +396,10 @@ export class VoiceOperationalSessionController {
         : selection.kind === 'convoy' && validOpaque(selection.convoyId)
     ) ? copySelection(selection) : null;
     if (selection && !checked) return unavailable('invalid-destination');
-    if (!sameSelection(this.selection, checked)) {
+    // Explicitly reselecting after invalidation must re-authorise from the
+    // current source. Mere reappearance of an old radio/link cannot resume.
+    if (!sameSelection(this.selection, checked) ||
+      this.session?.status === 'invalidated') {
       if (this.session && this.session.status !== 'invalidated') {
         this.invalidate('cancelled', false);
       }
@@ -417,8 +420,9 @@ export class VoiceOperationalSessionController {
       this.notify();
       return resolved;
     }
-    if (this.session?.status === 'active') {
-      // An automatic call cannot silently overwrite an active session.
+    if (this.session) {
+      // A suspended/invalidated session requires an explicit fresh intent or
+      // a separate resume operation. Never reuse an old session identity.
       return unavailable('session-inactive');
     }
     this.sequence += 1;
@@ -436,6 +440,18 @@ export class VoiceOperationalSessionController {
     });
     this.notify();
     return resolved;
+  }
+
+  /** A manual resume creates a NEW identity. Old native events and dialogue
+   * callbacks remain stale. An invalidated session must be reselected.
+   */
+  resumeExplicit(): VoiceResolution {
+    if (!this.session || this.session.status !== 'suspended') {
+      return unavailable('session-inactive');
+    }
+    this.session = null;
+    this.seenNativeEvents.clear();
+    return this.activateExplicit();
   }
 
   /** Separate explicit user choice. This does not assert a detector exists:
@@ -494,15 +510,14 @@ export class VoiceOperationalSessionController {
   }
 
   conversationRemoved(scope: RadioConversationScope): void {
-    if (this.selection?.kind !== 'radio' ||
-      !equalScope(this.selection.scope, scope)) {
-      if (this.session?.destination.convoy &&
-        equalScope(this.session.destination.scope, scope)) {
-        this.invalidate('conversation-removed');
-      }
-      return;
-    }
-    this.invalidate('conversation-removed');
+    const selectedRadio = this.selection?.kind === 'radio' &&
+      equalScope(this.selection.scope, scope);
+    const activeConvoyLink = !!this.session?.destination.convoy &&
+      equalScope(this.session.destination.scope, scope);
+    if (!selectedRadio && !activeConvoyLink) return;
+    this.invalidate('conversation-removed', false);
+    this.selection = null;
+    this.notify();
   }
 
   /** Cancelling never resurrects an earlier destination. Fresh activation
