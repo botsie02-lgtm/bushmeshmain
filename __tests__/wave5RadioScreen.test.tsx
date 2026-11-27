@@ -638,6 +638,7 @@ test('message reply and forwarding prepare drafts without transmitting', async (
 
 
 test('composer microphone appends recognized text to current draft and does not transmit',async()=>{
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'recent'});
   const os=Platform.OS;
   try {
     Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});

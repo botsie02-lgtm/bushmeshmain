@@ -3,7 +3,9 @@ import {Text,View,TouchableOpacity,StyleSheet,Linking} from 'react-native';
 import {nativeSpeechRecognition} from '../native/NativeSpeechRecognition';
 import {nativeSpeech,type VoicePreferences} from '../native/NativeSpeech';
 import {colors} from '../theme/colors';
+import {useSpeech} from '../state/SpeechContext';
 export function VoiceReadinessPanel(){
+ const speech=useSpeech();
  const [status,setStatus]=useState('Checking local speech…');
  const [prefs,setPrefs]=useState<VoicePreferences|null>(null);
  const [busy,setBusy]=useState(false);
@@ -11,6 +13,7 @@ export function VoiceReadinessPanel(){
  const refresh=async()=>{try{
   const [r,s,p]=await Promise.all([nativeSpeechRecognition.getStatus(),nativeSpeech.getStatus(),nativeSpeech.getVoicePreferences()]);
   setPrefs(p);
+  await speech.refresh();
   const locale=p?.locale??'en-AU';
   const model=r.supported?await nativeSpeechRecognition.checkLanguage(locale):'unknown';
   setStatus((r.supported?'On-device recognizer available. '+locale+' model: '+(model==='installed'?'reported installed':model==='download-required'?'download required':'readiness unknown; test locally')+'.':r.reason??'Recognition unavailable.')+' '+(s.offlineVoice?'Offline voice: '+s.languageTag:'Offline English voice unavailable.')+' Wake phrase and screen-off listening unavailable.');

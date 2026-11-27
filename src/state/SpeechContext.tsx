@@ -77,6 +77,14 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
   useEffect(() => {
     refresh().catch(() => undefined);
   }, [refresh]);
+  // Do not leave critical alerts permanently unavailable if native TTS is
+  // still initializing when the provider first mounts.
+  useEffect(() => {
+    if(runtimeState!=='initializing')return;
+    let attempts=0;
+    const timer=setInterval(()=>{if(++attempts>=10)clearInterval(timer);refresh().catch(()=>undefined);},500);
+    return ()=>clearInterval(timer);
+  },[runtimeState,refresh]);
 
   const setCriticalAlertsEnabled = useCallback(
     async (enabled: boolean) => {

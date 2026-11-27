@@ -326,7 +326,7 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Speech and auto-read');});
     expect(renderer.root.findAllByType(RadioSpeechStatusBanner)).toHaveLength(1);
-    expect(visibleText(renderer)).toContain('not a per-conversation mute');
+    expect(visibleText(renderer)).toContain('Each verified chat also has its own auto-read preference and timed speech mute');
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Privacy and storage');});
     expect(visibleText(renderer)).toContain('does not prove verified membership');

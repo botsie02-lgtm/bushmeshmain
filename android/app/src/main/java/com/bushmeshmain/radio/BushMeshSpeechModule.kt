@@ -141,6 +141,10 @@ class BushMeshSpeechModule(
     mainHandler.post {
     val generation = ordinaryGeneration
     withReady(promise) { tts ->
+      val currentVoice = tts.voice
+      if (currentVoice == null || currentVoice.isNetworkConnectionRequired || currentVoice.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) {
+        promise.reject("BUSHMESH_TTS_UNAVAILABLE", "Installed offline voice unavailable."); return@withReady
+      }
       if (!critical && generation != ordinaryGeneration) { promise.reject("BUSHMESH_TTS_INTERRUPTED", "Speech was cancelled."); return@withReady }
       if (!critical && (VoiceAudioOwnership.cancelRecognition != null || VoiceAudioOwnership.critical)) {
         promise.reject("BUSHMESH_TTS_BUSY", "Microphone or critical speech is active."); return@withReady
@@ -198,7 +202,7 @@ class BushMeshSpeechModule(
         promise.resolve(Arguments.createMap().apply {
           putString("locale", recognitionLocale())
           putDouble("rate", speechRate().toDouble())
-          putString("voice", tts?.voice?.name)
+          putString("voice", if (selectedLanguage != null) tts?.voice?.name else null)
           putArray("voices", Arguments.createArray().apply {
             if (initComplete && tts != null) installedVoices(tts).forEach { voice ->
               pushMap(Arguments.createMap().apply { putString("name",voice.name);putString("locale",voice.locale.toLanguageTag()) })

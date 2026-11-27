@@ -3,13 +3,17 @@ import {nativeSpeechRecognition} from '../native/NativeSpeechRecognition';
 import {nativeSpeech} from '../native/NativeSpeech';
 import {VoiceAssistant} from './VoiceAssistant';
 
+let recognitionLocale='en-AU';
 export const applicationVoice=new VoiceAssistant({
  permission:async()=>{
   if(Platform.OS!=='android'||!nativeSpeechRecognition.isSupported()||!(await nativeSpeechRecognition.getStatus()).supported)return false;
+  // Finish all asynchronous settings work before the controller rechecks
+  // its token and issues the synchronous native recognition request.
+  recognitionLocale=(await nativeSpeech.getStatus()).recognitionLocale??'en-AU';
   const p=PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
   return await PermissionsAndroid.check(p)||await PermissionsAndroid.request(p)===PermissionsAndroid.RESULTS.GRANTED;
  },
- recognize:async()=>{const status=await nativeSpeech.getStatus();return nativeSpeechRecognition.recognizeOnce(status.recognitionLocale??'en-AU');},
+ recognize:()=>nativeSpeechRecognition.recognizeOnce(recognitionLocale),
  cancel:()=>nativeSpeechRecognition.cancel(),
  stopListening:()=>nativeSpeechRecognition.stopListening(),
  speak:async text=>{if(!await nativeSpeech.speakOrdinaryAndWait(text))throw new Error('Offline speech unavailable.');},
