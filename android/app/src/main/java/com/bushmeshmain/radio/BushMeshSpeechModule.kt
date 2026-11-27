@@ -36,16 +36,10 @@ class BushMeshSpeechModule(
     .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
     .build()
-  private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { change ->
-    if (
-      change == AudioManager.AUDIOFOCUS_LOSS ||
-      change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-    ) {
-      mainHandler.post {
-        clearSpeech()
-      }
-    }
-  }
+  private var focusGeneration = 0L
+  private var legacyFocusListener: AudioManager.OnAudioFocusChangeListener? = null
+  private var playbackLease: VoicePlaybackOwnership.Lease? = null
+  @Volatile private var invalidated = false
 
   private var engine: TextToSpeech? = null
   private var initComplete = false
@@ -56,6 +50,7 @@ class BushMeshSpeechModule(
   private val deadlines = mutableMapOf<String,Runnable>()
   private var utteranceSequence = 0L
   private var ordinaryGeneration = 0L
+  private var allSpeechGeneration = 0L
   private fun installedVoices(tts: TextToSpeech): List<Voice> = tts.voices.orEmpty().filter { !it.isNetworkConnectionRequired && !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) && it.locale.language == "en" }.sortedWith(compareBy({ it.locale.toLanguageTag() != "en-AU" }, { it.locale != Locale.getDefault() }, { it.name }))
   private fun preferredVoice(tts: TextToSpeech, name: String?): Voice? = installedVoices(tts).let { voices -> if (name.isNullOrEmpty()) voices.firstOrNull() else voices.find { it.name == name } }
   private fun recognitionLocale(): String = preferences().getString("recognition_locale", "en-AU")?.takeIf { it in listOf("en-AU", "en-GB", "en-US") } ?: "en-AU"
@@ -65,19 +60,25 @@ class BushMeshSpeechModule(
     deadlines.remove(id)?.let { mainHandler.removeCallbacks(it) }
     val p = utterances.remove(id)
     if (success) p?.resolve(true) else p?.reject("BUSHMESH_TTS_INTERRUPTED", "Speech did not finish.")
-    if (utterances.isEmpty()) { VoiceAudioOwnership.speaking = false; VoiceAudioOwnership.critical = false; abandonSpeechFocus() }
+    if (utterances.isEmpty()) releasePlayback()
   }
+
+  private fun releasePlayback() {
+    VoiceAudioOwnership.playback.release(playbackLease)
+    playbackLease = null
+    abandonSpeechFocus()
+  }
+
   private fun clearSpeech() {
     ordinaryGeneration++
-    engine?.stop()
+    runCatching { engine?.stop() }
     for (id in utterances.keys.toList()) finish(id, false)
-    VoiceAudioOwnership.speaking = false; VoiceAudioOwnership.critical = false
-    abandonSpeechFocus()
+    releasePlayback()
   }
 
   init {
     mainHandler.post {
-      engine = TextToSpeech(reactApplicationContext.applicationContext, this)
+      if (!invalidated) engine = TextToSpeech(reactApplicationContext.applicationContext, this)
     }
   }
 
@@ -86,6 +87,7 @@ class BushMeshSpeechModule(
   override fun onInit(status: Int) { mainHandler.post { initializeSpeech(status) } }
 
   private fun initializeSpeech(status: Int) {
+    if (invalidated) return
     if (status != TextToSpeech.SUCCESS) {
       initFailed = true
       initComplete = true
@@ -140,7 +142,11 @@ class BushMeshSpeechModule(
     if (text.isBlank()) { promise.reject("BUSHMESH_TTS_EMPTY", "Speech text cannot be empty."); return }
     mainHandler.post {
     val generation = ordinaryGeneration
+    val allGeneration = allSpeechGeneration
     withReady(promise) { tts ->
+      if (invalidated || allGeneration != allSpeechGeneration) {
+        promise.reject("BUSHMESH_TTS_INTERRUPTED", "Speech was cancelled."); return@withReady
+      }
       val currentVoice = tts.voice
       if (currentVoice == null || currentVoice.isNetworkConnectionRequired || currentVoice.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) {
         promise.reject("BUSHMESH_TTS_UNAVAILABLE", "Installed offline voice unavailable."); return@withReady
@@ -154,14 +160,29 @@ class BushMeshSpeechModule(
         if (VoiceAudioOwnership.microphoneBusy) {
           promise.reject("BUSHMESH_TTS_BUSY", "Microphone ownership has not been released."); return@withReady
         }
+        // Cancel the owning engine, including a previous React bridge.
+        VoiceAudioOwnership.playback.interrupt()
         clearSpeech()
       }
-      if (utterances.isEmpty() && !requestSpeechFocus()) { abandonSpeechFocus(); promise.reject("BUSHMESH_TTS_FOCUS", "Speech audio focus unavailable."); return@withReady }
+      if (utterances.isEmpty()) {
+        playbackLease = VoiceAudioOwnership.playback.claim(critical, VoiceAudioOwnership.microphoneBusy) {
+          clearSpeech()
+        }
+        if (playbackLease == null) {
+          promise.reject("BUSHMESH_TTS_BUSY", "Another playback engine owns audio."); return@withReady
+        }
+        if (!runCatching { requestSpeechFocus() }.getOrDefault(false)) {
+          releasePlayback()
+          promise.reject("BUSHMESH_TTS_FOCUS", "Speech audio focus unavailable."); return@withReady
+        }
+      } else if (!VoiceAudioOwnership.playback.owns(playbackLease)) {
+        promise.reject("BUSHMESH_TTS_BUSY", "Playback ownership changed."); return@withReady
+      }
       val id = "bushmesh-" + (++utteranceSequence)
-      VoiceAudioOwnership.speaking = true
-      VoiceAudioOwnership.critical = critical
       utterances[id] = if (wait) promise else null
-      if (tts.speak(text.trim(), TextToSpeech.QUEUE_ADD, null, id) == TextToSpeech.ERROR) {
+      val queued = runCatching { tts.speak(text.trim(), TextToSpeech.QUEUE_ADD, null, id) }
+        .getOrDefault(TextToSpeech.ERROR)
+      if (queued == TextToSpeech.ERROR) {
         finish(id, false)
         if (!wait) promise.reject("BUSHMESH_TTS_SPEAK_FAILED", "Android TTS rejected the utterance.")
       } else {
@@ -179,7 +200,7 @@ class BushMeshSpeechModule(
   }
   @ReactMethod
   fun stop(promise: Promise) {
-    mainHandler.post { clearSpeech(); promise.resolve(true) }
+    mainHandler.post { allSpeechGeneration++; clearSpeech(); promise.resolve(true) }
   }
 
   @ReactMethod
@@ -297,8 +318,10 @@ class BushMeshSpeechModule(
   }
 
   override fun invalidate() {
+    invalidated = true
     mainHandler.post {
       try {
+        allSpeechGeneration++
         clearSpeech()
         engine?.shutdown()
         abandonSpeechFocus()
@@ -322,19 +345,32 @@ class BushMeshSpeechModule(
     preferences().getBoolean(PREF_RADIO_MESSAGES_ENABLED, false)
 
   private fun requestSpeechFocus(): Boolean {
+    // One listener per focus request; a delayed loss from abandoned focus
+    // cannot stop a newer utterance or engine.
+    val turn = ++focusGeneration
+    val listener = AudioManager.OnAudioFocusChangeListener { change ->
+      if (change == AudioManager.AUDIOFOCUS_LOSS ||
+          change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+        mainHandler.post {
+          if (turn == focusGeneration && VoiceAudioOwnership.playback.owns(playbackLease)) {
+            clearSpeech()
+          }
+        }
+      }
+    }
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
         .setAudioAttributes(speechAudioAttributes)
-        .setOnAudioFocusChangeListener(focusChangeListener, mainHandler)
+        .setOnAudioFocusChangeListener(listener, mainHandler)
         .setWillPauseWhenDucked(false)
         .build()
-      activeFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
       activeFocusRequest = request
       audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
     } else {
+      legacyFocusListener = listener
       @Suppress("DEPRECATION")
       audioManager.requestAudioFocus(
-        focusChangeListener,
+        listener,
         AudioManager.STREAM_MUSIC,
         AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
       ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
@@ -342,12 +378,16 @@ class BushMeshSpeechModule(
   }
 
   private fun abandonSpeechFocus() {
+    focusGeneration++
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      activeFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+      activeFocusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
       activeFocusRequest = null
     } else {
-      @Suppress("DEPRECATION")
-      audioManager.abandonAudioFocus(focusChangeListener)
+      legacyFocusListener?.let {
+        @Suppress("DEPRECATION")
+        runCatching { audioManager.abandonAudioFocus(it) }
+      }
+      legacyFocusListener = null
     }
   }
 
@@ -357,6 +397,10 @@ class BushMeshSpeechModule(
     action: (TextToSpeech) -> Unit,
   ) {
     mainHandler.post {
+      if (invalidated) {
+        promise.reject("BUSHMESH_TTS_INTERRUPTED", "Speech module was closed.")
+        return@post
+      }
       if (initFailed) {
         promise.reject(
           "BUSHMESH_TTS_UNAVAILABLE",
