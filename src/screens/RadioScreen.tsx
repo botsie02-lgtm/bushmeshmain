@@ -622,13 +622,13 @@ function RadioMessenger({
   const gpsRef=useRef(gps);gpsRef.current=gps;
   const voiceQuick=useRef(localPreference?.quickMessages??globalTemplates);
   voiceQuick.current=localPreference?.quickMessages??globalTemplates;
-  const voiceLive = useRef({key: activeKey, epoch: management?.sessionEpoch, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft});
-  voiceLive.current = {key: activeKey, epoch: management?.sessionEpoch, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft};
+  const voiceLive = useRef({key: activeKey, epoch: management?.sessionEpoch, radioId, connected, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft});
+  voiceLive.current = {key: activeKey, epoch: management?.sessionEpoch, radioId, connected, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft};
   const voiceDestination: VoiceDestination | undefined = selectedScope && activeKey && management ? (() => {
     const key = activeKey; const epoch = management.sessionEpoch;
-    const current = () => voiceLive.current.key === key && voiceLive.current.epoch === epoch && voiceLive.current.ready && radioConnection.getChatSessionEpoch() === epoch;
+    const current = () => voiceLive.current.key === key && voiceLive.current.epoch === epoch && voiceLive.current.radioId === radioId && voiceLive.current.connected === connected && voiceLive.current.ready && radioConnection.getChatSessionEpoch() === epoch;
     const incoming = selectedMessages.filter(m => m.message.direction === 'received');
-    return {key: JSON.stringify([key,epoch]), label: selectedScope.channelName, isCurrent: current,
+    return {key: JSON.stringify([key,epoch,radioId,connected]), label: selectedScope.channelName, isCurrent: current,
       draft: () => voiceLive.current.draft, editDraft: value => {if(current()) voiceLive.current.updateDraft(value);},
       send: chatFor(selectedScope) && canSubmit ? (text,guard) => voiceLive.current.submit(text,()=>current()&&AppState.currentState==='active'&&guard()) : undefined,
       latest: () => incoming[incoming.length-1]?.message.text ?? null,

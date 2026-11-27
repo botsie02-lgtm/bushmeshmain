@@ -1,7 +1,7 @@
 import {validateCarrierText} from '../screens/radioMessenger/messengerModel';
 
 export type Recognition = {text:string;confidence:number;alternatives?:readonly string[]};
-export type VoiceState = {phase:'idle'|'permission'|'listening'|'interpreting'|'dictating'|'confirming'|'speaking'|'executing'|'error'|'suspended'; detail:string; transcript?:string};
+export type VoiceState = {phase:'idle'|'permission'|'listening'|'interpreting'|'dictating'|'confirming'|'speaking'|'executing'|'error'|'suspended'|'held'|'held-finishing'; detail:string; transcript?:string};
 export type VoiceCommand = 'send'|'quick'|'last'|'unread'|'repeat'|'stop'|'cancel'|'radio'|'location'|'speed'|'heading';
 const normalize=(text:string)=>text.toLowerCase().trim().replace(/[.!?]+$/,'').replace(/\s+/g,' ').replace(/^hey bushmesh,? /,'');
 const commands:Record<string,VoiceCommand>={
@@ -31,6 +31,11 @@ export type VoiceDestination={
  radio:()=>string; localReading?:(command:'speed'|'heading')=>Promise<string>;
 };
 export type VoiceAdapter={permission:()=>Promise<boolean>;recognize:()=>Promise<Recognition>;cancel:()=>Promise<unknown>;stopListening:()=>Promise<unknown>;speak:(text:string)=>Promise<unknown>;stopSpeech:()=>Promise<unknown>};
+export type HeldVoiceAdapter = {
+ press: (partial: (text: string) => void, phase: (phase: 'listening' | 'finishing') => void) => Promise<Recognition | null>;
+ release: () => Promise<boolean>;
+ cancel: () => Promise<boolean>;
+};
 /** Application-owned, single finite dialogue. Received text only reaches speak,
  * never the command parser. No automatic or background activation. */
 export class VoiceAssistant {
@@ -41,6 +46,7 @@ export class VoiceAssistant {
  private last:{key:string;text:string}|null=null;
  private cancelling=false;
  private transmitting=false;
+ private holding=false;
  private quickGrant:{key:string;text:string}|null=null;
  armQuickMessage(d:VoiceDestination,text:string):boolean {
   if(this.active||!d.isCurrent()||!d.send||!validateCarrierText(text).valid||matchQuickMessage(text,d.quick())!==text)return false;
@@ -48,7 +54,7 @@ export class VoiceAssistant {
  }
  disarmQuickMessage(){this.quickGrant=null;}
  isQuickArmed(key:string){return this.quickGrant?.key===key;}
- constructor(private readonly adapter:VoiceAdapter){}
+ constructor(private readonly adapter:VoiceAdapter, private readonly held?:HeldVoiceAdapter){}
  snapshot=()=>this.state;
  subscribe=(listener:()=>void)=>{this.listeners.add(listener);return()=>{this.listeners.delete(listener);};};
  private set(state:VoiceState){this.state=state;this.listeners.forEach(f=>f());}
@@ -60,11 +66,46 @@ export class VoiceAssistant {
   this.cancelling=true;
   ++this.sequence; this.set({phase:suspended?'suspended':'idle',detail:this.transmitting?'Further voice turns cancelled. Check the submission outcome in history.':suspended?'Voice session suspended.':'Cancelled.'});
   // Keep ownership until the native cancellation has completed.
-  await Promise.allSettled([this.adapter.cancel(),this.adapter.stopSpeech()]);
+  await Promise.allSettled(this.holding && this.held ? [this.held.cancel()] : [this.adapter.cancel(),this.adapter.stopSpeech()]);
   this.cancelling=false;
-  if(!this.transmitting)this.active=false;
+  if(!this.transmitting&&!this.holding)this.active=false;
  }
- stopListening=()=>this.adapter.stopListening();
+ stopListening=()=>this.holding?this.releaseHeld():this.adapter.stopListening();
+ async releaseHeld(){
+  if(!this.holding||!this.held||this.cancelling||this.state.phase==='held-finishing')return false;
+  const token=this.sequence;
+  this.set({...this.state,phase:'held-finishing',detail:'Finishing recognition…'});
+  try{return await this.held.release();}
+  catch{
+   if(token===this.sequence)this.set({phase:'error',detail:'Could not finish recognition. Nothing sent.'});
+   return false;
+  }
+ }
+ async runHeld(d:VoiceDestination){
+  if(this.active||!this.held||!d.isCurrent())return;
+  this.active=true;this.holding=true;const token=++this.sequence;
+  this.disarmQuickMessage();
+  try{
+   this.set({phase:'held',detail:'Starting microphone… Keep holding.'});
+   const result=await this.held.press(text=>{
+    if(this.valid(token,d)&&this.state.phase==='held')this.set({...this.state,detail:'Listening… Release to finish.',transcript:text});
+   },phase=>{
+    if(!this.valid(token,d)||this.state.phase!=='held')return;
+    this.set({...this.state,detail:phase==='listening'?'Listening… Release to finish.':'Recognizing speech…'});
+   });
+   if(!this.valid(token,d))return;
+   if(result?.text.trim()){
+    d.editDraft(appendDictation(d.draft(),result.text));
+    this.set({phase:'idle',detail:'Dictation added. Review before sending.'});
+   }else this.set({phase:'idle',detail:'No dictation added.'});
+  }catch(error){
+   if(this.valid(token,d))this.set({phase:'error',detail:error instanceof Error?error.message:'Held recognition failed.'});
+  }finally{
+   this.holding=false;
+   if(!this.cancelling)this.active=false;
+   if(token===this.sequence&&!d.isCurrent())this.set({phase:'suspended',detail:'Voice destination changed.'});
+  }
+ }
  async run(mode:'dictation'|'command',d:VoiceDestination){
   if(this.active||!d.isCurrent())return;
   this.active=true;const token=++this.sequence;

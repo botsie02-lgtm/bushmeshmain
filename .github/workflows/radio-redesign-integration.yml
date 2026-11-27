@@ -83,9 +83,10 @@ jobs:
           for source in 261a12ce05f8ab7c70ae6c37cba03d32cf2c1361 93461551cf4879f2cd453a102276ccc9335421d6 75c1cc89b65541d94489f79a65488ece605790d6 30bb176c4f52ae20b8b7ccb9d4dc47857d3ee029; do
             git merge-base --is-ancestor "$source" HEAD
           done
+          git merge-base --is-ancestor 993b194142f37aaf261ffad1ecfa8fbb8ff39f1d HEAD
           git rev-parse HEAD > field-test/SOURCE-COMMIT.txt
           git show -s --format=%P HEAD > field-test/SOURCE-PARENTS.txt
-          printf '%s\n' 'base 261a12ce05f8ab7c70ae6c37cba03d32cf2c1361' 'messenger 93461551cf4879f2cd453a102276ccc9335421d6' 'management 75c1cc89b65541d94489f79a65488ece605790d6' 'settings 30bb176c4f52ae20b8b7ccb9d4dc47857d3ee029' > field-test/WORKER-SOURCES.txt
+          printf '%s\n' 'base 261a12ce05f8ab7c70ae6c37cba03d32cf2c1361' 'messenger 93461551cf4879f2cd453a102276ccc9335421d6' 'management 75c1cc89b65541d94489f79a65488ece605790d6' 'settings 30bb176c4f52ae20b8b7ccb9d4dc47857d3ee029' 'native-voice 993b194142f37aaf261ffad1ecfa8fbb8ff39f1d' > field-test/WORKER-SOURCES.txt
           (cd field-test && sha256sum bushmesh-radio-redesign.apk | tee SHA256SUMS)
           test "$(cat field-test/SOURCE-COMMIT.txt)" = "$GITHUB_SHA"
           unzip -p field-test/bushmesh-radio-redesign.apk assets/index.android.bundle | sha256sum | tee field-test/EMBEDDED-JS-SHA256.txt

@@ -37,7 +37,7 @@ export class HoldToTalk {
   }
 
   async press(
-    locale = 'en-AU',
+    locale: string | (() => Promise<string>) = 'en-AU',
     onPartial?: (text: string) => void,
   ): Promise<NativeSpeechRecognitionResult | null> {
     if (this.current) {
@@ -52,6 +52,8 @@ export class HoldToTalk {
     this.current = turn;
     let unsubscribe: (() => void) | undefined;
     try {
+      const selectedLocale = typeof locale === 'string' ? locale : await locale();
+      if (turn.cancelled || turn.released || this.current !== turn) return null;
       const permitted = await this.adapter.permission(() =>
         this.current === turn && !turn.cancelled && !turn.released,
       );
@@ -67,7 +69,7 @@ export class HoldToTalk {
         }
       });
       turn.started = true;
-      const result = await this.adapter.recognize(locale, turn.id);
+      const result = await this.adapter.recognize(selectedLocale, turn.id);
       return turn.cancelled || this.current !== turn ? null : result;
     } catch (error) {
       // Native startup may not have reached onReadyForSpeech when released.
