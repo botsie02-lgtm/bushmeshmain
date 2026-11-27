@@ -82,6 +82,13 @@ jobs:
             --adapter-command 'python -m tools.voice.qualification.example_adapter' \
             --conditions clean --seed 0x5101 \
             --report voice-acoustic-results/external-wire-smoke.json
+      - name: One-hour continuous repeated-audio no-op stability SMOKE (not independent exposure)
+        run: |
+          python -m tools.voice.qualification.cli evaluate \
+            --manifest "$RUNNER_TEMP/voice-development/manifest.json" \
+            --adapter noop --conditions clean --seed 0x5101 \
+            --negative-loop-hours 1 \
+            --report voice-acoustic-results/noop-one-hour-repeated-synthetic.json
       - name: Provision publisher-pinned Vosk model from existing qualification script
         run: python tools/voice/qualify_wake_audio.py provision "$RUNNER_TEMP/pinned-model"
       - name: Real streaming Vosk unconstrained DEV baseline (not qualification)
