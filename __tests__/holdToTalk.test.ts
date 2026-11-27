@@ -18,9 +18,9 @@ function fixture() {
   let listener: ((partial: HeldSpeechPartial) => void) | undefined;
   const unsubscribe = jest.fn(() => {listener = undefined;});
   const adapter: jest.Mocked<HeldRecognitionAdapter> = {
-    permission: jest.fn(() => permission.promise),
-    recognize: jest.fn(() => recognition.promise),
-    finish: jest.fn(async () => true),
+    permission: jest.fn((_stillHeld: () => boolean) => permission.promise),
+    recognize: jest.fn((_locale: string, _requestId: string) => recognition.promise),
+    finish: jest.fn(async (_requestId: string, _cancel: boolean) => true),
     subscribePartial: jest.fn(callback => {listener = callback; return unsubscribe;}),
   };
   return {adapter, permission, recognition, unsubscribe, emit: (partial: HeldSpeechPartial) => listener?.(partial), held: new HoldToTalk(adapter)};
@@ -112,4 +112,30 @@ test('one explicit press at a time, including pending permission', async () => {
   f.permission.resolve(true);
   expect(await turn).toBeNull();
   expect(f.adapter.recognize).not.toHaveBeenCalled();
+});
+
+test('permission adapter can check whether a delayed prompt is still authorised', async () => {
+  const f = fixture();
+  const turn = f.held.press();
+  const stillHeld = f.adapter.permission.mock.calls[0][0];
+  expect(stillHeld()).toBe(true);
+  expect(f.held.isActive()).toBe(true);
+  await f.held.release();
+  expect(stillHeld()).toBe(false);
+  f.permission.resolve(false);
+  expect(await turn).toBeNull();
+  expect(f.held.isActive()).toBe(false);
+});
+
+test('release bridge failure attempts one scoped cancel and discards late text', async () => {
+  const f = fixture();
+  const turn = f.held.press();
+  f.permission.resolve(true);
+  await Promise.resolve();
+  const id = f.adapter.recognize.mock.calls[0][1];
+  f.adapter.finish.mockRejectedValueOnce(new Error('Bridge unavailable'));
+  await expect(f.held.release()).rejects.toThrow('Bridge unavailable');
+  expect(f.adapter.finish.mock.calls).toEqual([[id, false], [id, true]]);
+  f.recognition.resolve(result);
+  expect(await turn).toBeNull();
 });
