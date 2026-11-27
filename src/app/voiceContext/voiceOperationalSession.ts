@@ -353,8 +353,8 @@ export class VoiceOperationalSessionController {
       viewedConversation: this.inputs.viewedConversation
         ? Object.freeze({...this.inputs.viewedConversation}) : null,
       selectedVoiceConversation: this.selection,
-      activeConvoy: this.inputs.activeConvoy
-        ? Object.freeze({...this.inputs.activeConvoy}) : null,
+      activeConvoy: validatedMembership(this.inputs)
+        ? Object.freeze({...validatedMembership(this.inputs)!}) : null,
       selectedTab: this.inputs.selectedTab,
       lifecycle: this.inputs.lifecycle,
       resolution,
@@ -381,6 +381,10 @@ export class VoiceOperationalSessionController {
       if (!fresh.ready || !sameDestination(previous.destination, fresh.destination)) {
         this.invalidate(fresh.ready
           ? 'security-invalidated' : fresh.reason, false);
+      } else if (previous.handsFreeAuthorised &&
+        (!next.nativeWake.supported ||
+          next.nativeWake.detectorOwnerRef !== previous.authorisedDetectorOwnerRef)) {
+        this.suspend('wake-detector-unavailable', false);
       } else if (old.selectedTab !== next.selectedTab && !previous.handsFreeAuthorised) {
         this.suspend('tab-changed', false);
       }
