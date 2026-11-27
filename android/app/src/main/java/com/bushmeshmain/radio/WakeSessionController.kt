@@ -154,6 +154,9 @@ internal class WakeSessionController(
       capture = next
       starts++
       transition(WakePhase.STARTING, WakeReason.NONE)
+      // A notification failure or synchronous observer can invalidate this
+      // session during publication. Never open capture after that stop.
+      if (terminal || generation != turn || !microphone.owns(lease)) return
       next.start { event -> accept(turn, event) }
     } catch (_: Exception) { stop(WakeReason.CAPTURE_FAILED) }
   }

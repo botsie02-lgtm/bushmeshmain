@@ -39,6 +39,8 @@ internal object HandsFreeRuntime {
   private val gate = WakeStartGate<WakeActivation> { SystemClock.elapsedRealtime() }
   private var service: BushMeshHandsFreeService? = null
   private var active: WakeActivation? = null
+  private val main = Handler(Looper.getMainLooper())
+  private var pendingTimeout: Runnable? = null
 
   fun permission(context: Context) =
     context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -75,18 +77,34 @@ internal object HandsFreeRuntime {
     val grant = WakeActivation(id, owner, WeakReference(activity), activity.voiceForegroundEpoch,
       foreground, modelReady, capture, fixture, changed)
     if (!gate.issue(id, grant)) return false
+    pendingTimeout?.let { main.removeCallbacks(it) }
+    val deadline = object : Runnable {
+      override fun run() {
+        if (pendingTimeout !== this) return
+        pendingTimeout = null
+        gate.clear()
+        runCatching { grant.changed(WakeSnapshot(id, WakePhase.STOPPED, WakeReason.START_TIMEOUT, 0, false, null, false, 0, 0)) }
+      }
+    }
+    pendingTimeout = deadline
+    main.postDelayed(deadline, 5000L)
     return try {
       activity.startForegroundService(Intent(activity, BushMeshHandsFreeService::class.java)
         .setAction(BushMeshHandsFreeService.START).putExtra(BushMeshHandsFreeService.EXTRA_ID, id))
       true
     } catch (_: Exception) {
-      gate.clear(); false
+      gate.clear(); clearTimeout(); false
     }
+  }
+
+  private fun clearTimeout() {
+    pendingTimeout?.let { main.removeCallbacks(it) }; pendingTimeout = null
   }
 
   fun consume(id: String): WakeActivation? {
     if (service != null) return null
     val grant = gate.consume(id) ?: return null
+    clearTimeout()
     val activity = grant.activity.get()
     val admitted = activity != null && activity.voiceForegroundResumed && activity.voiceForegroundEpoch == grant.epoch &&
       !activity.isFinishing && !activity.isDestroyed && grant.foreground() && permission(activity) &&
@@ -111,7 +129,7 @@ internal object HandsFreeRuntime {
     var stopped = false
     val pending = gate.peek()
     if (pending?.owner === owner) {
-      gate.clear(); stopped = true
+      gate.clear(); clearTimeout(); stopped = true
       runCatching { pending.changed(WakeSnapshot(pending.id, WakePhase.STOPPED, reason, 0, false, null, false, 0, 0)) }
     }
     if (active?.owner === owner) { service?.stopSession(reason); stopped = true }

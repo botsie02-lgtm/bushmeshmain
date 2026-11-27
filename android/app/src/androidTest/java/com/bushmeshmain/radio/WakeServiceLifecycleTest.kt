@@ -37,7 +37,7 @@ class WakeServiceLifecycleTest : VoiceLifecycleFixture() {
   @Test fun realForegroundServiceNotificationStopAndStaleAction() {
     assertEquals(PackageManager.PERMISSION_GRANTED, context.checkSelfPermission(Manifest.permission.RECORD_AUDIO))
     assertEquals(PackageManager.PERMISSION_GRANTED, context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS))
-    withRecognition { activity, _, module ->
+    withRecognition { activity, react, module ->
       // Operational bridge remains unavailable even with all permissions.
       assertEquals(Pair(false,"BUSHMESH_WAKE_UNAVAILABLE"), call { module.activateHandsFree(it) })
       val owner = Any()
@@ -53,6 +53,19 @@ class WakeServiceLifecycleTest : VoiceLifecycleFixture() {
         assertTrue(note.flags and android.app.Notification.FLAG_ONGOING_EVENT != 0)
         assertTrue(note.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString().contains("test"))
         val stop = note.actions.single().actionIntent
+        // Real activity background/resume while the independently promoted
+        // FGS stays active. Existing finite engine is foreground-only.
+        instrumentation.runOnMainSync { assertTrue(activity.moveTaskToBack(true)) }
+        awaitHostState(activity, react, false)
+        await("background capture suspended") { first.get()?.phase == WakePhase.SUSPENDED }
+        assertEquals(WakeReason.FOREGROUND_REQUIRED, first.get().reason)
+        assertFalse(first.get().captureActive)
+        assertTrue(manager.activeNotifications.any { it.id == BushMeshHandsFreeService.NOTIFICATION_ID })
+        instrumentation.runOnMainSync { assertFalse(VoiceAudioOwnership.microphoneBusy) }
+        context.startActivity(Intent(context, MainActivity::class.java)
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        awaitHostState(activity, react, true)
+        await("original session rearmed") { first.get()?.phase == WakePhase.LISTENING && first.get().captureStarts == 2L }
         // Wake fixture exercises native handover; no app dialogue or send.
         instrumentation.runOnMainSync { fixture.syntheticWake() }
         await("scoped handover") { first.get()?.phase == WakePhase.HANDOVER }
@@ -86,6 +99,7 @@ class WakeServiceLifecycleTest : VoiceLifecycleFixture() {
         }
         await("second fixture ready") { second.get()?.phase == WakePhase.LISTENING }
         stop.send() // immutable, session-scoped action cannot stop the new session
+        SystemClock.sleep(750)
         instrumentation.waitForIdleSync()
         assertEquals(WakePhase.LISTENING, second.get().phase)
         instrumentation.runOnMainSync { assertTrue(HandsFreeRuntime.stop(owner, WakeReason.INVALIDATED)) }
@@ -117,6 +131,40 @@ class WakeServiceColdStartTest : VoiceLifecycleFixture() {
       assertFalse(status.getBoolean("captureActive"))
       assertTrue(manager.activeNotifications.none { it.id == BushMeshHandsFreeService.NOTIFICATION_ID })
       instrumentation.runOnMainSync { assertFalse(VoiceAudioOwnership.microphoneBusy) }
+    }
+  }
+}
+
+/** Dedicated shell harness intentionally kills/revokes the live fixture process.
+ * This is service lifecycle evidence only. No microphone or real model.
+ */
+class WakeServiceInterruptedProcessTest : VoiceLifecycleFixture() {
+  @Test fun activeFixtureUntilExternalTermination() {
+    withRecognition { activity, _, _ ->
+      val owner = Any()
+      val state = AtomicReference<WakeSnapshot>()
+      try {
+        instrumentation.runOnMainSync {
+          assertTrue(HandsFreeRuntime.requestFixture(activity, owner, { FixtureWakeCapture() }, { state.set(it) }))
+        }
+        val deadline = SystemClock.uptimeMillis() + 15000
+        while (state.get()?.phase != WakePhase.LISTENING && SystemClock.uptimeMillis() < deadline) {
+          SystemClock.sleep(50)
+        }
+        assertEquals(WakePhase.LISTENING, state.get()?.phase)
+        android.util.Log.i("BushMeshWakeLifecycle", "FIXTURE_READY_NO_MICROPHONE")
+        val end = SystemClock.uptimeMillis() + 60000
+        while (state.get()?.phase != WakePhase.STOPPED && SystemClock.uptimeMillis() < end) {
+          SystemClock.sleep(50)
+        }
+        // Android may kill the process on revocation; if it does not,
+        // the real service eligibility watchdog must stop it.
+        assertEquals(WakePhase.STOPPED, state.get()?.phase)
+        assertEquals(WakeReason.PERMISSION_LOST, state.get()?.reason)
+        android.util.Log.i("BushMeshWakeLifecycle", "FIXTURE_STOPPED_PERMISSION_LOST")
+      } finally {
+        instrumentation.runOnMainSync { HandsFreeRuntime.stop(owner, WakeReason.INVALIDATED) }
+      }
     }
   }
 }

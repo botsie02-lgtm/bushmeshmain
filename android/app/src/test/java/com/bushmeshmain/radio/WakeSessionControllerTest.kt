@@ -165,4 +165,18 @@ class WakeSessionControllerTest {
     assertNull(f.mic.claim(VoiceMicrophoneOwnership.Kind.COMMAND, false) {})
     assertNull(f.playback.claim(true, f.mic.busy) {})
   }
+
+  @Test fun synchronousStopDuringStartingPublicationCannotOpenMicrophone() {
+    val mic = VoiceMicrophoneOwnership()
+    val playback = VoicePlaybackOwnership()
+    val capture = Capture()
+    lateinit var session: WakeSessionController
+    session = WakeSessionController("session", mic, playback, { 1000L },
+      { WakeEligibility(true, true, true, false, true) }, { capture },
+      { if (it.phase == WakePhase.STARTING) session.stop(WakeReason.NOTIFICATION_UNAVAILABLE) })
+    assertFalse(session.activate())
+    assertEquals(0, capture.starts)
+    assertFalse(mic.busy)
+    assertEquals(WakePhase.STOPPED, session.snapshot().phase)
+  }
 }

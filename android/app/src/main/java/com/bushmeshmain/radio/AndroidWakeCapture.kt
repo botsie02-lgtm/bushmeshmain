@@ -28,6 +28,7 @@ internal class AndroidWakeCapture(
   }
   private val lock = Any()
   private val detector = AtomicReference<WakeDetector?>()
+  private val detectorLock = Any()
   @Volatile private var running = false
   @Volatile private var workerDone = true
   override val drained: Boolean get() = workerDone
@@ -81,8 +82,8 @@ internal class AndroidWakeCapture(
           if (!running) return@Thread
           val opened = provider.open()
           engine = opened
-          detector.set(opened)
-          if (!running) { opened.cancel(); return@Thread }
+          synchronized(detectorLock) { detector.set(opened) }
+          if (!running) { synchronized(detectorLock) { opened.cancel() }; return@Thread }
           event(WakeCaptureEvent.Ready)
           while (running) {
             // No inference inside this lock. Nonblocking bounded read permits
@@ -108,7 +109,9 @@ internal class AndroidWakeCapture(
           if (running) event(WakeCaptureEvent.Failed(WakeReason.DETECTOR_FAILED))
         } finally {
           frame.fill(0)
-          detector.set(null)
+          // Remove the cancellation reference under lock before closing;
+          // an in-progress cancel must have returned before native close.
+          synchronized(detectorLock) { detector.set(null) }
           val closed = runCatching { engine?.close() }.isSuccess
           // If close fails, fail closed: do not permit another detector worker.
           if (closed) workerReserved.set(false)
@@ -124,7 +127,7 @@ internal class AndroidWakeCapture(
 
   override fun stop(): Boolean {
     running = false
-    runCatching { detector.get()?.cancel() }
+    synchronized(detectorLock) { runCatching { detector.get()?.cancel() } }
     val released = synchronized(lock) {
       val input = record
       if (input == null) true

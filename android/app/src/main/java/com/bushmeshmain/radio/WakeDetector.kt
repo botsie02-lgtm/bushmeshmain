@@ -31,3 +31,20 @@ internal interface WakeDetector : AutoCloseable {
 internal object QualifiedWakeDetector {
   val provider: WakeDetectorProvider? get() = null
 }
+
+/** Future separately qualified background finite engine boundary. Not
+ * instantiated by this build. Same exclusive PCM lease and finite result
+ * semantics as the existing recognizer; never a command interpreter.
+ * Text is transient and may only enter the existing VoiceAssistant policy.
+ */
+internal data class OfflineFiniteText(val text: String, val confidence: Double)
+internal interface OfflineFiniteCommandProvider {
+  fun isModelReady(localeTag: String): Boolean
+  fun open(localeTag: String): OfflineFiniteCommandTurn
+}
+internal interface OfflineFiniteCommandTurn : AutoCloseable {
+  fun acceptPcm(samples: ShortArray, count: Int): OfflineFiniteText?
+  fun finish(): OfflineFiniteText?
+  fun cancel()
+  override fun close()
+}
