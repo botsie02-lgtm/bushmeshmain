@@ -56,10 +56,11 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
   const lifecycle = useRef({generation: 0, mounted: false});
   const pending = useRef<Promise<NativeSpeechStatus | null> | null>(null);
   useLayoutEffect(() => {
-    lifecycle.current.mounted = true;
+    const owner = lifecycle.current;
+    owner.mounted = true;
     return () => {
-      lifecycle.current.mounted = false;
-      lifecycle.current.generation++;
+      owner.mounted = false;
+      owner.generation++;
       pending.current = null;
     };
   }, [supported]);
