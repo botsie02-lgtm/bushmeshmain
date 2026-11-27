@@ -10,6 +10,7 @@ export type NativeSpeechRecognitionStatus = {
   microphoneOwner?: 'command' | 'hold-to-talk' | 'wake-detector' | null;
   playbackActive?: boolean;
   lastFailure?: string | null;
+  phase?: 'idle' | 'starting' | 'listening' | 'finishing';
 };
 
 export type NativeHandsFreeStatus = {
@@ -98,6 +99,15 @@ export const nativeSpeechRecognition = {
       return () => undefined;
     }
     const subscription = DeviceEventEmitter.addListener('BushMeshHeldSpeechPartial', listener);
+    return () => subscription.remove();
+  },
+
+  /** Metadata-only finite recognition transitions; no transcripts or wake events. */
+  subscribeSessionState(listener: (status: NativeSpeechRecognitionStatus) => void): () => void {
+    if (!this.supportsHeldRecognition()) {
+      return () => undefined;
+    }
+    const subscription = DeviceEventEmitter.addListener('BushMeshSpeechSessionState', listener);
     return () => subscription.remove();
   },
 
