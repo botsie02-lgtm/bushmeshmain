@@ -52,7 +52,7 @@ class ConversationMenuUiTest {
     var fixtureSaved = false
     val automation = instrumentation.uiAutomation
     automation.serviceInfo = automation.serviceInfo.apply {
-      flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+      flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
     }
     val directory = checkNotNull(context.getExternalFilesDir(null))
     var stage = "startup"
@@ -83,6 +83,60 @@ class ConversationMenuUiTest {
       for (i in 0 until node.childCount) find(node.getChild(i), label, selected, within)?.let { return it }
       return null
     }
+    // The inbox and modal share the selected conversation's text. Only
+    // the dedicated heading in a new, active and focused modal window
+    // can satisfy the heading geometry assertions.
+    var menuWindowId: Int? = null
+    fun modalRoot(windowId: Int): AccessibilityNodeInfo? {
+      val window = automation.windows.firstOrNull {
+        it.id == windowId && it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive && it.isFocused
+      } ?: return null
+      val root = window.root ?: return null
+      if (root.packageName?.toString() != context.packageName || root.windowId != windowId) return null
+      return root
+    }
+    fun dedicatedHeading(node: AccessibilityNodeInfo?, name: String): Rect? {
+      if (node == null) return null
+      val id = node.viewIdResourceName
+      val exactIdentity = id == "conversation-options-heading" ||
+        id?.endsWith(":id/conversation-options-heading") == true
+      if ((exactIdentity || node.isHeading) && node.text?.toString() == name) {
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (node.isVisibleToUser && !bounds.isEmpty) return bounds
+      }
+      for (i in 0 until node.childCount) dedicatedHeading(node.getChild(i), name)?.let { return it }
+      return null
+    }
+    data class MenuGeometry(val windowId: Int, val heading: Rect, val firstAction: Rect)
+    fun awaitMenuGeometry(inboxWindowId: Int, name: String): MenuGeometry {
+      val deadline = SystemClock.uptimeMillis() + 20_000
+      var previous: MenuGeometry? = null
+      while (SystemClock.uptimeMillis() < deadline) {
+        val active = automation.windows.firstOrNull {
+          it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive && it.isFocused && it.id != inboxWindowId
+        }
+        val root = active?.let { modalRoot(it.id) }
+        val heading = dedicatedHeading(root, name)
+        val action = find(root, "Pin chat")
+        val backdrop = find(root, "Dismiss conversation options")
+        val current = if (root != null && heading != null && action != null && backdrop != null)
+          MenuGeometry(root.windowId, heading, action) else null
+        if (current != null && current == previous) return current
+        previous = current
+        SystemClock.sleep(200)
+      }
+      error("Stable active modal heading and actions unavailable at $stage: $name")
+    }
+    fun awaitMenuAction(label: String): Rect {
+      val windowId = checkNotNull(menuWindowId) { "No qualified menu window" }
+      val deadline = SystemClock.uptimeMillis() + 20_000
+      while (SystemClock.uptimeMillis() < deadline) {
+        find(modalRoot(windowId), label)?.let { return it }
+        SystemClock.sleep(200)
+      }
+      error("Modal action unavailable at $stage: $label (window=$windowId)")
+    }
     fun navigationBounds(): Rect? {
       val value = AtomicReference<Rect?>()
       instrumentation.runOnMainSync {
@@ -110,7 +164,7 @@ class ConversationMenuUiTest {
         if (node == null || depth > 40 || lines.size > 3000) return
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
-        lines.add("  ".repeat(depth) + "class=${node.className} text=${JSONObject.quote(node.text?.toString() ?: "")} desc=${JSONObject.quote(node.contentDescription?.toString() ?: "")} visible=${node.isVisibleToUser} selected=${node.isSelected} focused=${node.isFocused} clickable=${node.isClickable} bounds=$bounds")
+        lines.add("  ".repeat(depth) + "class=${node.className} resourceId=${node.viewIdResourceName} heading=${node.isHeading} text=${JSONObject.quote(node.text?.toString() ?: "")} desc=${JSONObject.quote(node.contentDescription?.toString() ?: "")} visible=${node.isVisibleToUser} selected=${node.isSelected} focused=${node.isFocused} clickable=${node.isClickable} bounds=$bounds")
         for (i in 0 until node.childCount) dump(node.getChild(i), depth + 1)
       }
       for (window in roots) {
@@ -156,6 +210,7 @@ class ConversationMenuUiTest {
       evidence(name, screenshot)
     }
     fun inbox() {
+      menuWindowId = null
       await("Radio", true, tab = true)
       await("Conversation inbox")
       await("Chat options Smoke Alpha")
@@ -168,9 +223,10 @@ class ConversationMenuUiTest {
       return null
     }
     fun awaitCloseAction(): Rect {
+      val windowId = checkNotNull(menuWindowId)
       val deadline = SystemClock.uptimeMillis() + 20_000
       while (SystemClock.uptimeMillis() < deadline) {
-        val root = activeRoot()
+        val root = modalRoot(windowId)
         val close = find(root, "Close chat options")
         // An accessibility node can be partially clipped. Require a
         // usable full 48dp target before the existing real-touch dismissal.
@@ -182,16 +238,30 @@ class ConversationMenuUiTest {
     }
     fun openOptions(name: String) {
       stage = "open-" + name.substringAfter(" ").lowercase()
-      tap("Chat options $name")
+      val row = await("Chat options $name")
+      val inboxWindowId = checkNotNull(activeRoot()).windowId
+      touch(row)
       val headingName = if (name == "Smoke Bravo") bravoDisplayName else name
-      val heading = await(headingName)
-      val first = await("Pin chat")
+      val geometry = awaitMenuGeometry(inboxWindowId, headingName)
+      menuWindowId = geometry.windowId
+      val heading = geometry.heading
+      val first = geometry.firstAction
       assertTrue("Heading must have nonzero height above the action area: $heading / $first",
         heading.height() > 0 && heading.bottom <= first.top)
       awaitCloseAction()
-      val afterScroll = await(headingName)
+      // Compare the same heading identity, in the same active modal,
+      // after scroll reachability. Wait for two consecutive observations.
+      val deadline = SystemClock.uptimeMillis() + 20_000
+      var previous: Rect? = null
+      var afterScroll: Rect? = null
+      while (SystemClock.uptimeMillis() < deadline) {
+        val bounds = dedicatedHeading(modalRoot(geometry.windowId), headingName)
+        if (bounds != null && bounds == previous) { afterScroll = bounds; break }
+        previous = bounds
+        SystemClock.sleep(200)
+      }
       assertEquals("Heading must stay visible and stationary while actions scroll", heading, afterScroll)
-      trace("HEADING_VISIBLE name=${JSONObject.quote(headingName)} bounds=$heading firstAction=$first afterScroll=$afterScroll")
+      trace("HEADING_VISIBLE name=${JSONObject.quote(headingName)} inboxWindow=$inboxWindowId modalWindow=${geometry.windowId} bounds=$heading firstAction=$first afterScroll=$afterScroll")
     }
     try {
       // Waiting for actual UI ensures the production React instance is running.
@@ -243,7 +313,7 @@ class ConversationMenuUiTest {
       checkpoint("back-dismissed")
       openOptions("Smoke Bravo")
       checkpoint("bravo-menu", screenshot = true)
-      tap("Close chat options")
+      touch(awaitCloseAction())
       inbox()
       checkpoint("button-dismissed")
       // The second, compact-viewport qualification is deliberately focused
@@ -252,12 +322,12 @@ class ConversationMenuUiTest {
       if (constrained) return
       openOptions("Smoke Alpha")
       // Backdrop centre could be obscured by sheet, tap near its top instead.
-      val backdrop = await("Dismiss conversation options")
+      val backdrop = awaitMenuAction("Dismiss conversation options")
       touch(backdrop, (backdrop.top + 20).toFloat())
       inbox()
       checkpoint("backdrop-dismissed")
       openOptions("Smoke Bravo")
-      tap("Chat details")
+      touch(awaitMenuAction("Chat details"))
       await("Back")
       await("Smoke Bravo")
       checkpoint("bravo-details")
@@ -265,7 +335,7 @@ class ConversationMenuUiTest {
       inbox()
       checkpoint("details-returned")
       openOptions("Smoke Alpha")
-      tap("Close chat options")
+      touch(awaitCloseAction())
       inbox()
       checkpoint("complete")
     } catch (failure: Throwable) {

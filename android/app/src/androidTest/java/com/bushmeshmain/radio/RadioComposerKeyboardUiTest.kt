@@ -12,7 +12,6 @@ import android.widget.EditText
 import java.io.File
 import android.os.SystemClock
 import android.view.KeyEvent
-import android.view.KeyCharacterMap
 import android.view.inputmethod.EditorInfo
 import android.text.InputType
 import android.view.MotionEvent
@@ -152,14 +151,11 @@ class RadioComposerKeyboardUiTest {
     // printable key events, which can invoke Android/IME capitalisation.
     // No inputType, keyboard preference, JS draft, or production prop changes.
     // The editor's normal text watchers still deliver changes to React.
-    fun commitLiteral(text: String, replaceAll: Boolean = false) {
+    fun commitLiteral(text: String) {
       instrumentation.runOnMainSync {
         val input = checkNotNull(activity.window.decorView.findViewWithTag<EditText>("radio-ime-input"))
         check(activity.currentFocus === input && input.isFocused) { "Literal input requires the focused composer" }
         val connection = checkNotNull(input.onCreateInputConnection(EditorInfo())) { "No composer input connection" }
-        if (replaceAll) {
-          check(connection.setSelection(0, input.text.length)) { "Could not select synthetic probe text" }
-        }
         check(connection.commitText(text, 1)) { "Composer refused literal text commit" }
       }
       instrumentation.waitForIdleSync()
@@ -316,27 +312,11 @@ class RadioComposerKeyboardUiTest {
       awaitOpenGeometry(closedHistory, closedHeader)
       val alphaDraft = "first line\nsecond line"
       val bravoDraft = "bravo"
-      phase = "alpha-key-event-probe"
-      awaitDraft("Alpha must start empty and focused", "")
-      // Reproduce the previous input path for evidence, not as an equality
-      // oracle. The provider is allowed to transform this disposable probe.
-      val keyEvents = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents("first line".toCharArray())
-      trace("KEY_EVENT_PROBE firstKey=${keyEvents?.firstOrNull()?.keyCode} firstMeta=${keyEvents?.firstOrNull()?.metaState} ${draftState().evidence()}")
-      instrumentation.sendStringSync("first line")
-      instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
-      instrumentation.sendStringSync("second line")
-      instrumentation.waitForIdleSync()
-      // Wait for the synthetic event stream to be delivered without accepting
-      // any particular case as a successful qualification result.
-      awaitCondition("Key-event diagnostic must reach focused editor") {
-        val observed = draftState()
-        observed.focused && !observed.text.isNullOrEmpty()
-      }
-      trace("KEY_EVENT_PROBE expected=${JSONObject.quote(alphaDraft)} ${draftState().evidence()}")
-      commitLiteral("", replaceAll = true)
-      awaitDraft("Disposable key-event probe must be cleared", "")
-      awaitOpenGeometry(closedHistory, closedHeader)
+      // Start the deterministic path directly. Printable synthetic key
+      // events can arrive after an apparent clear and contaminate the draft.
       phase = "alpha-multiline"
+      awaitDraft("Alpha must start empty and focused", "")
+      awaitOpenGeometry(closedHistory, closedHeader)
       commitLiteral("first line")
       awaitDraft("First literal line must remain exact", "first line")
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)

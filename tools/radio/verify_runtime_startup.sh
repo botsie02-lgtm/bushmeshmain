@@ -125,7 +125,7 @@ for round in 1 2 3; do
   else
     fixture_contaminated=0
   fi
-  grep -Fq 'KEY_EVENT_PROBE expected=' "$transitions" || round_result=1
+  grep -Fq 'phase=alpha-multiline DRAFT_EXACT expected="" observed="" focused=true' "$transitions" || round_result=1
   for screenshot in keyboard-closed.png keyboard-multiline.png keyboard-reopen-1.png keyboard-reopen-2.png keyboard-reopen-3.png keyboard-quick-message.png keyboard-final.png; do
     destination="$out/keyboard-run-$round-${screenshot#keyboard-}"
     if ! adb pull "/sdcard/Android/data/$pkg/files/$screenshot" "$destination" || [ ! -s "$destination" ]; then
