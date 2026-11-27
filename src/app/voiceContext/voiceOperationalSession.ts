@@ -182,17 +182,6 @@ function sameSelection(
     : a.kind === 'convoy' && b.kind === 'convoy' && a.convoyId === b.convoyId);
 }
 
-function sameMembership(
-  a: AuthorizedConvoyMembership | null,
-  b: AuthorizedConvoyMembership | null,
-): boolean {
-  return (!a || !b) ? a === b :
-    a.convoyId === b.convoyId && a.localIdentityRef === b.localIdentityRef &&
-    a.membershipRecordRef === b.membershipRecordRef &&
-    a.verifiedBy === b.verifiedBy &&
-    a.authorizationState === b.authorizationState;
-}
-
 function validatedMembership(inputs: VoiceOperationalInputs): AuthorizedConvoyMembership | null {
   const membership = inputs.activeConvoy;
   if (!inputs.localIdentityRef || !membership) return null;
