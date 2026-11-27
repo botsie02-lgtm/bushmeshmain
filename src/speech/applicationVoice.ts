@@ -23,13 +23,18 @@ export const applicationVoice=new VoiceAssistant({
 // Separate held-text adapter for the composer integration worker. Neither
 // activation nor completion calls VoiceDestination.send.
 export const applicationHoldToTalk = new HoldToTalk({
-  permission: async () => {
-    if (Platform.OS !== 'android' || !nativeSpeechRecognition.supportsHeldRecognition() ||
-        !(await nativeSpeechRecognition.getStatus()).supported) {
+  permission: async stillHeld => {
+    if (Platform.OS !== 'android' || !stillHeld() ||
+        !nativeSpeechRecognition.supportsHeldRecognition() ||
+        !(await nativeSpeechRecognition.getStatus()).supported || !stillHeld()) {
       return false;
     }
     const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
-    return await PermissionsAndroid.check(permission) ||
+    const granted = await PermissionsAndroid.check(permission);
+    if (!stillHeld()) {
+      return false;
+    }
+    return granted ||
       await PermissionsAndroid.request(permission) === PermissionsAndroid.RESULTS.GRANTED;
   },
   recognize: (locale, requestId) => nativeSpeechRecognition.recognizeHeld(locale, requestId),
