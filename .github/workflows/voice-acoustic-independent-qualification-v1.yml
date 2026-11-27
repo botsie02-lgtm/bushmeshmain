@@ -1,0 +1,115 @@
+name: BushMesh independent voice acoustic qualification v1
+
+on:
+  push:
+    branches:
+      - test/voice-acoustic-qualification-v1
+    paths:
+      - 'tools/voice/qualification/**'
+      - 'docs/VOICE_ACOUSTIC_QUALIFICATION_V1.md'
+      - '.github/workflows/voice-acoustic-independent-qualification-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-and-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate independent audio integrity and synthetic lifecycle test contracts
+        run: python -m unittest discover -s tools/voice/qualification -p 'test_*.py' -v
+      - name: Publish explicit synthetic lifecycle trace
+        run: |
+          python -m tools.voice.qualification.lifecycle_report voice-qualification-evidence/synthetic-lifecycle.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Locked JS dependencies for existing application voice regression boundary
+        run: npm ci
+      - name: Existing VoiceAssistant, hold-to-talk, speech policy and radio owner tests
+        run: |
+          npm test -- --runInBand \
+            __tests__/voiceAssistant.test.ts \
+            __tests__/holdToTalk.test.ts \
+            __tests__/radioSpeechPolicy.test.ts \
+            __tests__/appRadioNativeStopLifecycle.test.ts
+      - name: Upload synthetic lifecycle evidence (NO microphone audio)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voice-independent-lifecycle-${{ github.sha }}
+          path: voice-qualification-evidence/synthetic-lifecycle.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  development-acoustic-baseline:
+    needs: contract-and-lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install offline comparison engine and local synthesis tooling
+        run: |
+          python -m pip install vosk==0.3.45
+          sudo apt-get update -qq
+          sudo apt-get install -y espeak-ng ffmpeg
+      - name: Generate actual PCM synthesized speech and deterministic noise (DEVELOPMENT ONLY)
+        run: |
+          python -m tools.voice.qualification.cli generate \
+            --out "$RUNNER_TEMP/voice-development" --seed 0xB05A
+          python -m tools.voice.qualification.cli validate \
+            --manifest "$RUNNER_TEMP/voice-development/manifest.json" --require-coverage
+      - name: Detector-independent no-op and persistent external-JSONL baselines
+        run: |
+          mkdir -p voice-acoustic-results
+          python -m tools.voice.qualification.cli evaluate \
+            --manifest "$RUNNER_TEMP/voice-development/manifest.json" \
+            --adapter noop --conditions clean,snr10 --seed 0x5101 \
+            --report voice-acoustic-results/noop-development.json
+          python -m tools.voice.qualification.cli evaluate \
+            --manifest "$RUNNER_TEMP/voice-development/manifest.json" \
+            --adapter external \
+            --adapter-command 'python -m tools.voice.qualification.example_adapter' \
+            --conditions clean --seed 0x5101 \
+            --report voice-acoustic-results/external-wire-smoke.json
+      - name: Provision publisher-pinned Vosk model from existing qualification script
+        run: python tools/voice/qualify_wake_audio.py provision "$RUNNER_TEMP/pinned-model"
+      - name: Real streaming Vosk unconstrained DEV baseline (not qualification)
+        run: |
+          python -m tools.voice.qualification.cli evaluate \
+            --manifest "$RUNNER_TEMP/voice-development/manifest.json" \
+            --adapter vosk --model "$RUNNER_TEMP/pinned-model/vosk-model-small-en-us-0.15" \
+            --vosk-mode unconstrained --conditions clean,snr10 --seed 0x5101 \
+            --report voice-acoustic-results/vosk-unconstrained-development.json
+      - name: Real streaming Vosk constrained DEV baseline (not qualification)
+        run: |
+          python -m tools.voice.qualification.cli evaluate \
+            --manifest "$RUNNER_TEMP/voice-development/manifest.json" \
+            --adapter vosk --model "$RUNNER_TEMP/pinned-model/vosk-model-small-en-us-0.15" \
+            --vosk-mode grammar --conditions clean,snr10 --seed 0x5101 \
+            --report voice-acoustic-results/vosk-grammar-development.json
+      - name: Record model and development-manifest provenance only (no audio)
+        if: always()
+        run: |
+          cp "$RUNNER_TEMP/pinned-model/model-provenance.json" voice-acoustic-results/model-provenance.json 2>/dev/null || true
+          cp "$RUNNER_TEMP/voice-development/manifest.json" voice-acoustic-results/development-manifest.json 2>/dev/null || true
+          echo "${{ github.sha }}" > voice-acoustic-results/source-sha.txt
+          printf '%s\n' 'Development synth only; not human acoustic acceptance and not permission to ship a model.' > voice-acoustic-results/evidence-class.txt
+      - name: Upload results and provenance, EXCLUDE all WAV and human recordings
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voice-independent-acoustics-${{ github.sha }}
+          path: voice-acoustic-results/
+          if-no-files-found: warn
+          retention-days: 30
