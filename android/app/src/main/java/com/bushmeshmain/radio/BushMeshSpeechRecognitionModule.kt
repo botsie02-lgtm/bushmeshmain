@@ -337,7 +337,15 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   @ReactMethod fun stopListening(promise: Promise) {
     main.post { if (heldTurn != null) { promise.resolve(false); return@post }; try { engine?.stopListening(); promise.resolve(pending != null) } catch (_: Exception) { fail("STOP_FAILED", "Recognition could not stop."); promise.resolve(false) } }
   }
-  @ReactMethod fun cancel(promise: Promise) { main.post { fail("CANCELLED", "Recognition cancelled."); promise.resolve(true) } }
+  @ReactMethod fun cancel(promise: Promise) {
+    main.post {
+      // The existing dialogue adapter owns unscoped finite command turns.
+      // Held turns must be cancelled by their request ID (or lifecycle).
+      if (heldTurn != null) { promise.resolve(false); return@post }
+      fail("CANCELLED", "Recognition cancelled.")
+      promise.resolve(true)
+    }
+  }
   override fun onHostResume() { main.post { if (!invalidated) { resumed = true; publishStatus() } } }
   override fun onHostPause() { main.post { resumed = false; cancelProbe?.invoke(); fail("SUSPENDED", "Recognition suspended."); publishStatus() } }
   override fun onHostDestroy() = onHostPause()
