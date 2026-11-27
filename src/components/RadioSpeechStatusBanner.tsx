@@ -53,7 +53,7 @@ export function RadioSpeechStatusBanner(): React.JSX.Element | null {
     try {
       const spoken = await nativeSpeech.speak(
         replayText(latestReceived.channelName, latestReceived.text),
-        true,
+        false,
       );
       setDetailOverride(
         spoken

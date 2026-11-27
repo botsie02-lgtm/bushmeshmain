@@ -5,6 +5,9 @@ import {
 } from 'react-native';
 import {colors} from '../../theme/colors';
 import {radioMessageClipboard} from '../../native/SensitiveClipboard';
+import {VoiceComposerControls} from '../../speech/VoiceComposerControls';
+import type {VoiceDestination} from '../../speech/VoiceAssistant';
+import {applicationVoice} from '../../speech/applicationVoice';
 import {QuickMessageEditor} from '../../radio/chatManagement/QuickMessageEditor';
 import {ChatAvatar} from '../../radio/chatManagement/ChatAvatar';
 import type {ChatPersonalisation} from '../../radio/chatManagement/chatPreferences';
@@ -16,6 +19,7 @@ import {
 
 export type RadioChatRoomProps = {
   scope: RadioConversationScope;
+  voiceDestination?: VoiceDestination;
   initialSearch?: boolean;
   visible?: boolean;
   firstUnreadId?: string;
@@ -97,7 +101,7 @@ function Bubble({entry}: {entry: ScopedMessage}) {
 /** Chat is a UI projection only. It never changes the transport carrier,
  * the operational convoy, secure membership, or Bluetooth owner. */
 export function RadioChatRoom({
-  scope, messages, connected, canSubmit, reason, draft, isSubmitting,
+  scope, voiceDestination, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
   onTogglePinned, personalisation, displayName, persistentPin, visible = true,
   starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false, firstUnreadId, onForwardMessage,
@@ -264,6 +268,7 @@ export function RadioChatRoom({
           <View accessibilityViewIsModal style={styles.actionSheet}>
             <Text numberOfLines={2} style={styles.title}>{actionMessage.text}</Text>
             {radioMessageClipboard.supported() ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Copy message" style={styles.menuButton} onPress={() => {setActionId(null); radioMessageClipboard.copy(actionMessage.text).catch(() => Alert.alert('Copy unavailable', 'The message was not copied.'));}}><Text style={styles.menuText}>Copy text</Text></TouchableOpacity> : null}
+            {voiceDestination && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Read message aloud" style={styles.menuButton} onPress={() => {setActionId(null); applicationVoice.readText(actionMessage.text,voiceDestination).catch(()=>undefined);}}><Text style={styles.menuText}>Read aloud</Text></TouchableOpacity>}
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Message details" style={styles.menuButton} onPress={() => {setActionId(null); Alert.alert('Message details', new Date(actionMessage.createdAt).toLocaleString() + '\n' + deliveryText(actionMessage) + '\nMeshCore channel ' + actionMessage.channelName + '\nLocal history only.');}}><Text style={styles.menuText}>Message details</Text></TouchableOpacity>
             {onMessagePreference ? <>
               <TouchableOpacity accessibilityRole="button" accessibilityLabel={starredIds?.includes(actionMessage.id) ? 'Unstar message' : 'Star message'} style={styles.menuButton} onPress={() => {onMessagePreference(actionMessage.id, 'starredIds'); setActionId(null);}}><Text style={styles.menuText}>{starredIds?.includes(actionMessage.id) ? 'Unstar' : 'Star'}</Text></TouchableOpacity>
@@ -290,6 +295,7 @@ export function RadioChatRoom({
           </View>
         </View> : null}
         {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
+        {voiceDestination && <VoiceComposerControls destination={voiceDestination} visible={visible} disabled={isSubmitting}/>}
         <View style={styles.composerRow}>
           <TextInput
             accessibilityLabel="Carrier message draft"

@@ -1285,7 +1285,7 @@ export class AppRadioConnectionService {
   }
 
   /** Check and submit within the same guarded radio command ownership scope. */
-  async sendVerifiedChat(expected: ChatConfiguration, text: string, beforeSubmit?: () => Promise<void>): Promise<void> {
+  async sendVerifiedChat(expected: ChatConfiguration, text: string, beforeSubmit?: () => Promise<void>, finalGuard?: () => boolean): Promise<void> {
     let submitted = false;
     try {
       await this.withChatPort(expected.radio, async (port, assertCurrent) => {
@@ -1295,6 +1295,7 @@ export class AppRadioConnectionService {
         assertCurrent();
         // Local encrypted commit may take time: re-read exact configuration immediately before RF submission.
         if (beforeSubmit) {await this.requireChatConfiguration(port, expected); assertCurrent();}
+        if (finalGuard && !finalGuard()) throw new ChatOperationError('stale', 'Voice destination changed. No message submitted.');
         submitted = true;
         await this.sendChannelMessage(expected.slot, text);
       });

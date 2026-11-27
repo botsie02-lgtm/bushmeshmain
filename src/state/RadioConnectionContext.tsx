@@ -186,7 +186,7 @@ export function RadioConnectionProvider({
       listChatConfigurations: radio => service.listChatConfigurations(radio),
       provisionChat: (radio, input) => service.provisionChat(radio, input),
       verifyChatConfiguration: expected => service.verifyChatConfiguration(expected),
-      sendVerifiedChat: (expected, text, beforeSubmit) => service.sendVerifiedChat(expected, text, beforeSubmit),
+      sendVerifiedChat: (expected, text, beforeSubmit, finalGuard) => service.sendVerifiedChat(expected, text, beforeSubmit, finalGuard),
       revealChatCredential: expected => service.revealChatCredential(expected),
       leaveChat: (expected, onPhase) => service.leaveChat(expected, onPhase),
       refreshChannels: () => service.refreshChannels(),

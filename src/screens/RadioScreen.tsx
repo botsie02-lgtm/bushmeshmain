@@ -24,6 +24,7 @@ import {
 } from './radioMessenger/messengerModel';
 import {RadioInbox} from './radioMessenger/RadioInbox';
 import {RadioChatRoom} from './radioMessenger/RadioChatRoom';
+import type {VoiceDestination} from '../speech/VoiceAssistant';
 import {RadioTechnicalDrawer} from './radioMessenger/RadioTechnicalDrawer';
 import {buildConversationExport} from '../radio/chatManagement/conversationExport';
 import {nativeFileExport} from '../native/NativeFileExport';
@@ -508,12 +509,13 @@ function RadioMessenger({
     setNotices(current => ({...current, [key]: value}));
   };
 
-  const submit = async () => {
-    if (!selectedScope || !activeKey || sendingRef.current || !canSubmit) return;
-    const validation = validateCarrierText(activeDraft);
+  const submit = async (voiceText?: string, voiceGuard?: () => boolean): Promise<string> => {
+    const voice = voiceText !== undefined;
+    if (!selectedScope || !activeKey || sendingRef.current || !canSubmit || (voice && !voiceGuard?.())) return 'No message submitted. Destination unavailable.';
+    const validation = validateCarrierText(voiceText ?? activeDraft);
     if (!validation.valid) {
       postNotice(activeKey, validation.issue ?? 'Message not ready.');
-      return;
+      return 'Message invalid. Nothing sent.';
     }
     // Revalidation against current enumerated slot, name and actual radio
     // identity is mandatory. Never select a carrier or switch the convoy.
@@ -523,19 +525,21 @@ function RadioMessenger({
       !current || !liveScopes.some(s => equalScope(s, selectedScope)) ||
       !canSendChannelMessage || !validChannelIndex(selectedScope.channelIndex)) {
       postNotice(activeKey, 'Chat binding changed. Message was not submitted.');
-      return;
+      return 'Destination changed. Nothing sent.';
     }
     const capturedScope = selectedScope;
     const verifiedChat = chatFor(capturedScope);
     if (management && !verifiedChat) {
       postNotice(activeKey, 'Refresh the verified chat before sending.');
-      return;
+      return 'Verified chat unavailable. Nothing sent.';
     }
     const capturedKey = activeKey;
     const submittedText = validation.text;
     let durableId: string | null = null;
     const durable = !!verifiedChat && !!addDurableChannelMessage && !!finishDurableSubmission;
+    if (voice && !durable) return 'Durable verified submission unavailable. Nothing sent.';
     const beforeSubmit = async () => {
+      if (voice && !voiceGuard?.()) throw new Error('Voice destination changed.');
       const id = 'submission-' + Date.now() + '-' + Math.random().toString(16).slice(2);
       const inserted = await addDurableChannelMessage({id, createdAt: new Date().toISOString(), channelIndex: capturedScope.channelIndex,
         channelName: capturedScope.channelName, text: submittedText, direction: 'sent', status: 'pending',
@@ -560,7 +564,10 @@ function RadioMessenger({
     try {
       // Only the owning service issues the command. A resolved promise proves
       // PACKET_OK acceptance, never a peer acknowledgement.
-      if (verifiedChat && durable) await radioConnection.sendVerifiedChat(verifiedChat, submittedText, beforeSubmit);
+      if (verifiedChat && durable) {
+        if (voice) await radioConnection.sendVerifiedChat(verifiedChat, submittedText, beforeSubmit, voiceGuard);
+        else await radioConnection.sendVerifiedChat(verifiedChat, submittedText, beforeSubmit);
+      }
       else if (verifiedChat) await radioConnection.sendVerifiedChat(verifiedChat, submittedText);
       else await sendChannelMessage(Number(capturedScope.channelIndex), submittedText);
       // Radio accepted; a separate local history failure must not turn this
@@ -571,24 +578,25 @@ function RadioMessenger({
       } catch {
         recorded = false;
       }
-      setDrafts(currentDrafts => ({
+      if (!voice) setDrafts(currentDrafts => ({
         ...currentDrafts,
         [capturedKey]: currentDrafts[capturedKey]?.trim() === submittedText
           ? '' : currentDrafts[capturedKey] ?? '',
       }));
-      if (verifiedChat && management && recorded) management.updateLocal(verifiedChat.id, {draft: ''}, Number(capturedScope.channelGeneration.split(':')[1])).catch(() => postNotice(capturedKey, 'Radio accepted; saved draft could not be cleared. Do not resend.'));
+      if (!voice && verifiedChat && management && recorded) management.updateLocal(verifiedChat.id, {draft: ''}, Number(capturedScope.channelGeneration.split(':')[1])).catch(() => postNotice(capturedKey, 'Radio accepted; saved draft could not be cleared. Do not resend.'));
       postNotice(capturedKey, recorded
         ? 'Radio accepted. No peer delivery confirmation.'
         : 'Radio accepted, but local history recording failed. Do not resend to repair history.');
+      return recorded ? 'Message accepted by the radio. Peer delivery not confirmed.' : 'Radio accepted, but history recording failed. Do not resend.';
     } catch (error) {
       if (management) management.invalidate();
       if (error instanceof ChatOperationError && error.code === 'stale') {
         if (durableId) {
           try {await finishDurableSubmission(durableId, {status: 'failed', submissionNotAttempted: true});}
-          catch {postNotice(capturedKey, 'No message submitted; pending history outcome could not be saved.'); return;}
+          catch {postNotice(capturedKey, 'No message submitted; pending history outcome could not be saved.'); return 'No message submitted. History outcome could not be saved.';}
         }
         postNotice(capturedKey, error.message);
-        return; // No command was submitted, no uncertain delivery record.
+        return 'No message submitted. Configuration or local storage could not be verified.';
       }
       const failure = classifyChannelSubmissionFailure(error);
       let recorded = true;
@@ -601,11 +609,27 @@ function RadioMessenger({
       if (couldHaveSent) setUncertain(currentSet => new Set(currentSet).add(capturedKey));
       postNotice(capturedKey, formatChannelSubmissionFailure(failure) +
         (recorded ? '' : ' Local history could not record this outcome.'));
+      return couldHaveSent ? 'Radio acceptance uncertain. Do not resend automatically.' : 'Radio rejected the message.';
     } finally {
       sendingRef.current = false;
       setSending(false);
     }
   };
+
+  const voiceLive = useRef({key: activeKey, epoch: management?.sessionEpoch, ready: roomVisible, draft: activeDraft, submit, updateDraft});
+  voiceLive.current = {key: activeKey, epoch: management?.sessionEpoch, ready: roomVisible, draft: activeDraft, submit, updateDraft};
+  const voiceDestination: VoiceDestination | undefined = selectedScope && activeKey && management ? (() => {
+    const key = activeKey; const epoch = management.sessionEpoch;
+    const current = () => voiceLive.current.key === key && voiceLive.current.epoch === epoch && voiceLive.current.ready && radioConnection.getChatSessionEpoch() === epoch;
+    const incoming = selectedMessages.filter(m => m.message.direction === 'received');
+    return {key: JSON.stringify([key,epoch]), label: selectedScope.channelName, isCurrent: current,
+      draft: () => voiceLive.current.draft, editDraft: value => {if(current()) voiceLive.current.updateDraft(value);},
+      send: chatFor(selectedScope) && canSubmit ? (text,guard) => voiceLive.current.submit(text,()=>current()&&guard()) : undefined,
+      latest: () => incoming[incoming.length-1]?.message.text ?? null,
+      unread: () => {const index=incoming.findIndex(m=>m.message.id===unreadAnchor?.id);return index>=0?incoming.slice(index).map(m=>m.message.text):[];},
+      quick: () => localPreference?.quickMessages ?? globalTemplates,
+      radio: () => connected ? 'Radio connected locally. Peer reachability not confirmed.' : 'Radio disconnected.'};
+  })() : undefined;
 
   const openSettings = () => {
     if (onOpenMessagingSettings) onOpenMessagingSettings();
@@ -736,6 +760,7 @@ function RadioMessenger({
         </Modal> : null}
         <RadioChatRoom
           scope={selectedScope} messages={selectedMessages} initialSearch={searchRoom}
+          voiceDestination={voiceDestination}
           connected={connected && radioId === selectedScope.radioId}
           visible={roomVisible}
           firstUnreadId={unreadAnchor?.key === activeKey ? unreadAnchor?.id : undefined}
