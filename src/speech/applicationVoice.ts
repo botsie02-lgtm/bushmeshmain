@@ -9,11 +9,13 @@ let recognitionLocale='en-AU';
 // activation nor completion calls VoiceDestination.send.
 export const applicationHoldToTalk = new HoldToTalk({
   permission: async stillHeld => {
-    if (Platform.OS !== 'android' || !stillHeld() ||
-        !nativeSpeechRecognition.supportsHeldRecognition() ||
-        !(await nativeSpeechRecognition.getStatus()).supported || !stillHeld()) {
-      return false;
+    if (!stillHeld()) return false;
+    if (Platform.OS !== 'android' || !nativeSpeechRecognition.supportsHeldRecognition() ||
+        !(await nativeSpeechRecognition.getStatus()).supported) {
+      if (!stillHeld()) return false;
+      throw new Error('On-device recognizer unavailable. Open Voice assistant readiness.');
     }
+    if (!stillHeld()) return false;
     const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
     const granted = await PermissionsAndroid.check(permission);
     if (!stillHeld()) {

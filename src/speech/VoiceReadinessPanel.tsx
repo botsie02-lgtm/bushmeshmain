@@ -41,6 +41,7 @@ export function VoiceReadinessPanel() {
   const [busy, setBusy] = useState(false);
   const [showVoices, setShowVoices] = useState(false);
   const [inventory, setInventory] = useState<OfflineLanguageInventory | null>(null);
+  const [recognizerAvailable, setRecognizerAvailable] = useState(false);
   const [modelStatus, setModelStatus] = useState<OfflineLanguageInventory['status']>('unknown');
   const [feedback, setFeedback] = useState('');
   const [testTranscript, setTestTranscript] = useState('');
@@ -82,6 +83,7 @@ export function VoiceReadinessPanel() {
       const model = readiness.model;
       if (!current()) return;
       setPrefs(p);
+      setRecognizerAvailable(r.supported);
       setInventory(readiness.inventory);
       setModelStatus(model);
       setStatus((r.supported ? 'On-device recognizer available. ' + locale + ' model: ' +
@@ -90,7 +92,7 @@ export function VoiceReadinessPanel() {
         (s?.offlineVoice ? 'Offline voice: ' + s.languageTag : supported && !s ? 'Offline voice status unavailable.' : 'Offline English voice unavailable.') +
         ' Wake phrase and screen-off listening unavailable.');
     } catch {
-      if (current()) setStatus('Speech status unavailable.');
+      if (current()) {setStatus('Speech status unavailable.'); setRecognizerAvailable(false); setModelStatus('unknown'); setInventory(null);}
     }
   }, [refreshSpeech, supported]);
 
@@ -166,6 +168,7 @@ export function VoiceReadinessPanel() {
           latest: () => null, unread: () => [], quick: () => [], radio: () => '',
         });
         if (current() && transcript) setTestDetail('Recognition returned a local transcript. Nothing transmitted.');
+        else if (current() && applicationVoice.snapshot().phase !== 'error' && applicationVoice.snapshot().phase !== 'suspended') setTestDetail('No new transcript. Nothing transmitted.');
       } finally {
         unsubscribe();
         if (testKey.current === key) testKey.current = null;
@@ -183,13 +186,13 @@ export function VoiceReadinessPanel() {
     {prefs && <><Text style={styles.text}>Recognition language</Text><View style={styles.row}>{englishModelChoices(inventory, prefs.locale).map(locale => choice(locale, () => update({locale}), prefs.locale === locale))}</View>
       <Text style={styles.text}>Australian English is preferred when installed. Select another English model explicitly if needed.</Text>
       {inventory && <Text style={styles.text}>Installed: {inventory.installed.join(', ') || 'none reported'}{'\n'}Pending: {inventory.pending.join(', ') || 'none reported'}{'\n'}Supported for download: {inventory.downloadable.join(', ') || 'none reported'}{inventory.reason ? '\n' + inventory.reason : ''}</Text>}
-      {modelStatus !== 'installed' && modelStatus !== 'unsupported' && choice('Download selected offline model', download)}
+      {recognizerAvailable && modelStatus !== 'installed' && modelStatus !== 'unsupported' && choice('Download selected offline model', download)}
       {!!feedback && <Text accessibilityLiveRegion="polite" style={styles.text}>{feedback}</Text>}
       {downloadRequest.current && <TouchableOpacity accessibilityRole="button" onPress={() => {
         const id = downloadRequest.current;
         if (id) nativeSpeechRecognition.stopDownloadObservation(id).catch(() => undefined);
       }} style={styles.button}><Text style={styles.text}>Stop waiting for download</Text></TouchableOpacity>}
-      {choice('Test offline recognition', testRecognition)}
+      {recognizerAvailable && choice('Test offline recognition', testRecognition)}
       {testRunning && <TouchableOpacity accessibilityRole="button" onPress={() => {
         const key = testKey.current;
         if (key) applicationVoice.cancelDestination(key).catch(() => undefined);

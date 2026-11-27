@@ -26,6 +26,7 @@ beforeEach(() => {
   jest.spyOn(nativeSpeech, 'setVoicePreferences').mockResolvedValue(undefined);
   jest.spyOn(nativeSpeechRecognition, 'getStatus').mockResolvedValue(recognition);
   jest.spyOn(nativeSpeechRecognition, 'checkLanguage').mockResolvedValue('installed');
+  jest.spyOn(nativeSpeechRecognition, 'getLanguageInventory').mockResolvedValue(null);
 });
 afterEach(async () => {
   if (tree) await act(async () => {tree!.unmount();});
@@ -103,4 +104,48 @@ test('a different locale waits for the previous probe and ignores its old result
   expect(nativeSpeechRecognition.checkLanguage).toHaveBeenLastCalledWith('en-GB');
   expect(content()).toContain('en-GB model: download required');
   expect(content()).not.toContain('reported installed');
+});
+
+test('explicit download rechecks actual provider inventory and never assumes success means installed', async () => {
+  const missing = {locale:'en-AU', status:'download-required' as const, reason:null,
+    installed:['en-US'], pending:[], downloadable:['en-AU']};
+  const inventory = jest.spyOn(nativeSpeechRecognition, 'getLanguageInventory').mockResolvedValue(missing);
+  const download = jest.spyOn(nativeSpeechRecognition, 'downloadLanguage').mockResolvedValue('completed');
+  await mount();
+  expect(download).not.toHaveBeenCalled();
+  expect(content()).toContain('download required');
+  await act(async () => {button('Download selected offline model').props.onPress();});
+  expect(download).toHaveBeenCalledWith('en-AU', expect.any(String));
+  expect(inventory).toHaveBeenCalledTimes(2);
+  expect(content()).toContain('download required');
+  expect(content()).toContain('Rechecking actual installed readiness');
+});
+
+test('download observer is scoped and late progress cannot update a reopened panel', async () => {
+  const missing = {locale:'en-AU', status:'download-required' as const, reason:null,
+    installed:[], pending:[], downloadable:['en-AU']};
+  jest.spyOn(nativeSpeechRecognition, 'getLanguageInventory').mockResolvedValue(missing);
+  const pending = deferred<string>();
+  const download = jest.spyOn(nativeSpeechRecognition, 'downloadLanguage').mockReturnValue(pending.promise);
+  const stop = jest.spyOn(nativeSpeechRecognition, 'stopDownloadObservation').mockResolvedValue(true);
+  let progress!: (value: {requestId:string; percent:number}) => void;
+  const unsubscribe = jest.fn();
+  jest.spyOn(nativeSpeechRecognition, 'subscribeModelProgress').mockImplementation(listener => {
+    progress = listener;
+    return unsubscribe;
+  });
+  await mount();
+  await act(async () => {button('Download selected offline model').props.onPress();});
+  const id = download.mock.calls[0][1];
+  await act(async () => {progress({requestId:'other',percent:99});});
+  expect(content()).not.toContain('99%');
+  await act(async () => {progress({requestId:id,percent:25});});
+  expect(content()).toContain('25%');
+  await act(async () => {tree!.update(view(false));});
+  expect(stop).toHaveBeenCalledWith(id);
+  await act(async () => {tree!.update(view());});
+  await act(async () => {progress({requestId:id,percent:100});pending.resolve('completed');});
+  expect(content()).not.toContain('100%');
+  expect(content()).not.toContain('Rechecking actual installed readiness');
+  expect(unsubscribe).toHaveBeenCalled();
 });
