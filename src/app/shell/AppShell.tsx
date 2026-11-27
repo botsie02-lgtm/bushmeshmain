@@ -242,14 +242,23 @@ export function AppShell(): React.JSX.Element {
     setRadioSettingsOpen(true);
   }, []);
   const openRadioConnection = useCallback(() => {Keyboard.dismiss(); setDirectRadioPage(true); setRadioPage('connection'); setRadioSettingsOpen(true);}, []);
-  const closeMessagingSettings = useCallback(() => setRadioSettingsOpen(false), []);
+  const openVoiceReadiness = useCallback(() => {
+    Keyboard.dismiss();
+    setDirectRadioPage(true);
+    setRadioPage('ptt');
+    setRadioSettingsOpen(true);
+  }, []);
+  const closeMessagingSettings = useCallback(() => {
+    Keyboard.dismiss();
+    setRadioSettingsOpen(false);
+  }, []);
   const backRadioSettings = useCallback(() => {
     if (radioPage === 'hub' || directRadioPage) closeMessagingSettings();
     else setRadioPage('hub');
   }, [radioPage, directRadioPage, closeMessagingSettings]);
   const radioNavigation = useMemo(() => ({
-    openMessagingSettings, closeMessagingSettings,
-  }), [openMessagingSettings, closeMessagingSettings]);
+    openMessagingSettings, openVoiceReadiness, closeMessagingSettings,
+  }), [openMessagingSettings, openVoiceReadiness, closeMessagingSettings]);
 
   useEffect(() => {
     if (activeTab !== 'radio') {

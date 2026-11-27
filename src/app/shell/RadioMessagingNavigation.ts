@@ -2,6 +2,8 @@ import {createContext, useContext} from 'react';
 
 export type RadioMessagingNavigation = {
   openMessagingSettings: () => void;
+  /** Direct entry from the composer; Back returns to the retained room. */
+  openVoiceReadiness?: () => void;
   closeMessagingSettings: () => void;
 };
 

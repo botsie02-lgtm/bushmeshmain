@@ -38,9 +38,14 @@ keyboard_result=0
 run_test RadioComposerKeyboardUiTest || keyboard_result=$?
 adb logcat -d -s BushMeshRadioIme:I BushMeshKeyboardTest:I ImeTracker:I InsetsController:D FrameTracker:W > "$out/smoke-keyboard-transitions.txt" || true
 for screenshot in keyboard-closed.png keyboard-multiline.png keyboard-reopen-1.png keyboard-reopen-2.png keyboard-reopen-3.png keyboard-quick-message.png keyboard-final.png; do
-  adb pull "/sdcard/Android/data/$pkg/files/$screenshot" "$out/$screenshot" || true
+  if ! adb pull "/sdcard/Android/data/$pkg/files/$screenshot" "$out/$screenshot" || [ ! -s "$out/$screenshot" ]; then
+    printf 'Missing keyboard screenshot: %s\n' "$screenshot" >&2
+    keyboard_result=1
+  fi
 done
 run_test VoicePermissionDeniedTest
+grep -Fq 'modelInspectionNeverAcquiresMicrophoneOrRequestsCapture' "$out/smoke-VoicePermissionDeniedTest.txt"
+grep -Fq 'OK (2 tests)' "$out/smoke-VoicePermissionDeniedTest.txt"
 # Grants are only test-environment setup, after the ungranted smoke.
 adb shell pm grant "$pkg" android.permission.BLUETOOTH_CONNECT
 adb shell pm grant "$pkg" android.permission.ACCESS_FINE_LOCATION
@@ -74,6 +79,8 @@ adb logcat -d -b crash > "$out/smoke-revoked-crash.txt"
 if grep -Fq "$pkg" "$out/smoke-revoked-crash.txt"; then exit 1; fi
 run_test RuntimeLifecycleDeniedTest
 run_test VoicePermissionDeniedTest
+grep -Fq 'modelInspectionNeverAcquiresMicrophoneOrRequestsCapture' "$out/smoke-VoicePermissionDeniedTest.txt"
+grep -Fq 'OK (2 tests)' "$out/smoke-VoicePermissionDeniedTest.txt"
 if [ "$keyboard_result" -ne 0 ]; then
   printf 'Keyboard qualification failed; subsequent native regression gates executed.\n' | tee "$out/smoke-result.txt"
   exit "$keyboard_result"

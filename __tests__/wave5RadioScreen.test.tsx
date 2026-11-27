@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {AppState, FlatList, Keyboard, KeyboardAvoidingView, Modal, PermissionsAndroid, Platform, StyleSheet} from 'react-native';
+import {AppState, FlatList, Keyboard, KeyboardAvoidingView, Modal, PermissionsAndroid, Platform, StyleSheet, Text, TouchableOpacity} from 'react-native';
 import {RadioScreen} from '../src/screens/RadioScreen';
 import {RadioInbox} from '../src/screens/radioMessenger/RadioInbox';
 import {ViewedConversationProvider} from '../src/app/activeContext/ViewedConversationContext';
@@ -13,6 +13,9 @@ import {ChatOperationError} from '../src/radio/chatManagement/chatInvitations';
 import {applicationVoice} from '../src/speech/applicationVoice';
 import {nativeSpeechRecognition, type NativeSpeechRecognitionResult} from '../src/native/NativeSpeechRecognition';
 import {nativeSpeech} from '../src/native/NativeSpeech';
+import {SpeechProvider} from '../src/state/SpeechContext';
+import {VoiceReadinessPanel} from '../src/speech/VoiceReadinessPanel';
+import {RadioMessagingNavigationContext} from '../src/app/shell/RadioMessagingNavigation';
 import {meshCoreInboundInbox} from '../src/meshcore/meshcoreInboundInbox';
 import {meshCoreInboundMessageId} from '../src/meshcore/meshcoreInboundIdentity';
 import type {ParsedChannelMessage} from '../src/meshcore/meshcoreParsers';
@@ -762,4 +765,56 @@ test('quick message selection fills a draft rather than transmitting it', async 
   expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' &&
     typeof node.props.onChangeText === 'function')[0].props.value).toBe('Ready to go.');
   expect(send).not.toHaveBeenCalled();
+});
+
+/** Real room and readiness panel under the same retained navigation/provider
+ * lifetime as AppShell. No mock of VoiceAssistant or the voice composer. */
+function VoiceSetupFixture() {
+  const [settings, setSettings] = React.useState(false);
+  const open = () => {Keyboard.dismiss(); setSettings(true);};
+  const close = () => {Keyboard.dismiss(); setSettings(false);};
+  return <SpeechProvider><ViewedConversationProvider>
+    <RadioMessagingNavigationContext.Provider value={{openMessagingSettings:open,openVoiceReadiness:open,closeMessagingSettings:close}}>
+      <RadioScreen enableChatManagement settingsVisible={settings} tabVisible/>
+      {settings && <><VoiceReadinessPanel/><TouchableOpacity accessibilityLabel="Return from voice test" onPress={close}><Text>Back</Text></TouchableOpacity></>}
+    </RadioMessagingNavigationContext.Provider>
+  </ViewedConversationProvider></SpeechProvider>;
+}
+test('voice setup leaves multiline draft intact and hidden composer cannot cancel local recognition test',async()=>{
+  const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const f=heldFixture();
+  const dismiss=jest.spyOn(Keyboard,'dismiss');
+  const cancel=jest.spyOn(nativeSpeechRecognition,'cancel').mockResolvedValue(true);
+  jest.spyOn(nativeSpeech,'isSupported').mockReturnValue(true);
+  jest.spyOn(nativeSpeech,'getVoicePreferences').mockResolvedValue({locale:'en-GB',rate:1,voice:null,voices:[]});
+  jest.spyOn(nativeSpeechRecognition,'getLanguageInventory').mockResolvedValue({locale:'en-GB',status:'installed',reason:null,installed:['en-GB'],pending:[],downloadable:[]});
+  f.once.mockRejectedValueOnce(new Error('Offline language unavailable. Open Voice assistant readiness.'));
+  let finishTest!:(result:NativeSpeechRecognitionResult)=>void;
+  const testResult=new Promise<NativeSpeechRecognitionResult>(done=>{finishTest=done;});
+  f.once.mockReturnValueOnce(testResult);
+  try{
+    configure();
+    await act(async()=>{tree=TestRenderer.create(<VoiceSetupFixture/>);});
+    await room('Private');await draft('first line\nsecond line');
+    await press('Dictate message');
+    expect(viewText()).toContain('Offline language unavailable');
+    await press('Voice setup instructions');
+    expect(dismiss).toHaveBeenCalled();
+    expect(tree.root.findAllByType(VoiceReadinessPanel)).toHaveLength(1);
+    expect(tree.root.findAll(n=>n.props.accessibilityLabel==='Dictate message'&&typeof n.props.onPress==='function')).toHaveLength(0);
+    await press('Test offline recognition');
+    expect(f.once).toHaveBeenCalledTimes(2);
+    expect(f.once).toHaveBeenLastCalledWith('en-GB');
+    expect(cancel).not.toHaveBeenCalled();
+    await act(async()=>{finishTest({...finalHeld,text:'local test only'});});
+    expect(tree.root.findAll(n=>n.props.accessibilityLabel==='Local recognition test transcript'&&typeof n.props.onChangeText==='function')[0].props.value).toBe('local test only');
+    expect(viewText()).toContain('Nothing transmitted');
+    await press('Return from voice test');
+    expect(draftValue()).toBe('first line\nsecond line');
+    expect(tree.root.findAllByType(VoiceReadinessPanel)).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();expect(verifiedSend).not.toHaveBeenCalled();
+    await press('Dictate message');
+    expect(f.once).toHaveBeenLastCalledWith('en-GB');
+    expect(draftValue()).toBe('first line\nsecond line tap text');
+  }finally{await act(async()=>{finishTest(finalHeld);f.resolve(finalHeld);await applicationVoice.cancel();});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
 });

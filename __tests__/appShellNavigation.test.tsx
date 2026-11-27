@@ -3,7 +3,7 @@ import ReactTestRenderer from 'react-test-renderer';
 
 import {AppShell, MAIN_TABS} from '../src/app/shell/AppShell';
 import {ConnectedFieldPulse} from '../src/app/fieldExperience/ConnectedFieldPulse';
-import {BackHandler, StyleSheet} from 'react-native';
+import {BackHandler, Keyboard, StyleSheet} from 'react-native';
 import {ConnectedDriveDashboard} from '../src/drive/dashboard/ConnectedDriveDashboard';
 import {ConnectedFieldReadinessDashboard} from '../src/drive/fieldReadiness/ConnectedFieldReadinessDashboard';
 import {MapScreen} from '../src/screens/MapScreen';
@@ -62,7 +62,15 @@ jest.mock('../src/app/fieldExperience/ConnectedFieldPulse', () => ({
   ConnectedFieldPulse: () => null,
 }));
 jest.mock('../src/screens/ConvoyScreen', () => ({ConvoyScreen: () => null}));
-jest.mock('../src/screens/RadioScreen', () => ({RadioScreen: () => null}));
+jest.mock('../src/screens/RadioScreen', () => {
+  const ReactModule = jest.requireActual<typeof React>('react');
+  const {TouchableOpacity} = jest.requireActual<typeof import('react-native')>('react-native');
+  const {RadioMessagingNavigationContext: Navigation} = jest.requireActual<typeof import('../src/app/shell/RadioMessagingNavigation')>('../src/app/shell/RadioMessagingNavigation');
+  return {RadioScreen: () => {
+    const navigation = ReactModule.useContext(Navigation);
+    return ReactModule.createElement(TouchableOpacity, {accessibilityLabel:'Open direct voice setup fixture',onPress:navigation?.openVoiceReadiness});
+  }};
+});
 jest.mock('../src/screens/NativeRadioSetupScreen', () => ({NativeRadioSetupScreen: () => null}));
 jest.mock('../src/screens/ContactsScreen', () => ({ContactsScreen: () => null}));
 jest.mock('../src/screens/LocationScreen', () => ({LocationScreen: () => null}));
@@ -371,4 +379,23 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
     nativeOutboundDiagnostics.reset();
     back.mockRestore();
   }
+});
+
+test('direct composer voice setup dismisses keyboard and returns to same messenger',async()=>{
+  let renderer!:ReactTestRenderer.ReactTestRenderer;
+  const dismiss=jest.spyOn(Keyboard,'dismiss');
+  try{
+    await ReactTestRenderer.act(async()=>{renderer=ReactTestRenderer.create(<AppShell/>);});
+    await ReactTestRenderer.act(async()=>{pressByLabel(renderer,'Radio');});
+    const messenger=renderer.root.findByType(RadioScreen);
+    await ReactTestRenderer.act(async()=>{messenger.props.onRoomKeyboardVisibilityChange(true);});
+    await ReactTestRenderer.act(async()=>{pressByLabel(renderer,'Open direct voice setup fixture');});
+    expect(dismiss).toHaveBeenCalled();
+    expect(renderer.root.findByType(RadioMessagingSettingsScreen).props.page).toBe('ptt');
+    expect(messenger.props.settingsVisible).toBe(true);
+    await ReactTestRenderer.act(async()=>{pressByLabel(renderer,'Back to Radio');});
+    expect(renderer.root.findByType(RadioScreen)).toBe(messenger);
+    expect(messenger.props.settingsVisible).toBe(false);
+    expect(renderer.root.findAllByType(RadioMessagingSettingsScreen)).toHaveLength(0);
+  }finally{if(renderer)await ReactTestRenderer.act(async()=>{renderer.unmount();});dismiss.mockRestore();}
 });
