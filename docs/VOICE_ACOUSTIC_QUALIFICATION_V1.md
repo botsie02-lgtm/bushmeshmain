@@ -11,6 +11,35 @@ The separate wake-model worker owns acoustic training, quantization, Android pac
 
 `docs/VOICE_WAKE_QUALIFICATION.md` and `tools/voice/qualify_wake_audio.py` are preserved. Earlier Vosk testing reported **0/4 positives** with unconstrained decoding and **4/4 positives plus 9/33 false activations on negatives** with constrained grammar; these figures are *previous small-sample synthetic evaluations*, not results for the newly generated v1 corpus. Vosk is offline **full speech recognition**, not a qualified custom keyword spotter. Its unconstrained decoder is not assumed to work from a successful APK build; its constrained grammar can spuriously label unrelated speech. An endpoint is accepted only on the full exact token sequence and word confidence ≥0.85, never a partial or forced EOF. The old historical results must never be combined arithmetically with the new corpus.
 
+### Measured independent *development* comparison — synthetic only
+
+A branch CI run actually decoded the new corpus with the publisher-SHA-verified
+`vosk-model-small-en-us-0.15` under the unchanged conservative endpoint
+policy. See [the successful baseline run](https://github.com/botsie02-lgtm/bushmeshmain/actions/runs/45930029664).
+The generated fixture manifest contains **23 unique clips: 2 synthesized
+wake positives and 21 hard/confusable/background negatives**, representing
+approximately **165.04 seconds of PCM** and 3 TTS voice/ensemble labels.
+It contains **zero consented human speakers** and is **not** the final
+acceptance dataset. The exposure used for false-event rate is about 0.0444 h
+(2.67 min) per condition after excluding positive windows.
+
+| Detector control | 2 wake phrases detected (clean / 10 dB SNR) | False events (clean / 10 dB SNR) | Clean observed false/hour | Decision |
+|---|---:|---:|---:|---|
+| No-op and external JSONL no-op | 0 / 0 | 0 / 0 | 0 | Wiring negative control only |
+| Offline Vosk unconstrained | 0 / 0 | 0 / 0 | 0 | Failed recall, **not accepted** |
+| Offline Vosk constrained grammar | 2 / 2 | 8 / 7 | ~180.04 | Excessive false activations, **not accepted** |
+
+With zero observed false wakes over this very short non-wake duration,
+the *one-sided 95% upper bound* is still **~67.42 false events/hour**, not
+zero. The constrained grammar's observed false rates are **~180.04/h**
+clean and **~157.53/h** at 10 dB SNR; they are noisy, short synthetic
+corpus rates, **not physical vehicle estimates**. The earlier 0/4 and 9/33
+historical results used different synthesized clips and are not pooled here.
+These baseline results support an unequivocal **NO GO** for either Vosk
+configuration. The future custom wake model must be submitted blind via the
+external adapter and independently evaluated on consented held-out
+Australian English recordings.
+
 The independent CI generates real **TTS-produced audio PCM**, not human speech. It includes positives ("hey bush mesh"), hard negatives, sound-alike words, synthetic two-voice passenger dialogues, a simulated spoken radio bulletin, application-like spoken feedback, generated silence, original algorithmic music tones, procedurally generated engine/road-like noise and 45 seconds of continuous background sound. The generated tones/noise **do not reproduce actual tyres, wind, road surface, motor, radio leakage, microphone placement, stereo speakers, or Australian vehicle conditions**.
 
 Synthetic fixture source: eSpeak NG + FFmpeg with exact seed `0xB05A` and explicit provenance in each fixture entry. Engine/voice licensing and output redistribution rights are **not independently cleared**. The files are generated *ephemerally within CI* and are **not bundled into any app, downloaded to a user, or uploaded as an artifact**. The per-file manifest includes `permission_to_redistribute=false`. CI downloads a pinned Vosk candidate model through the existing script, without turning that model or its native binaries into production dependencies.
@@ -75,7 +104,7 @@ Use a new clean `--out` folder per generation; generator intentionally refuses t
 
 ### Actual acoustic measurements
 
-Each whole-condition report contains per-stream true positives / misses, true-positive rate, 95% Wilson interval, false activation count, observed false events per **non-wake audio hour**, one-sided 95% Poisson upper bound (zero-count: `-ln(0.05)/hours`), duplicate wake events, median and 95th-percentile detection latency relative to the annotated end of the spoken wake phrase, clipping count, total samples, host CPU/wall times, host peak resident memory, audio real-time factor and exact stream start/finish counts. Each noise condition `clean`, `snr10`, `snr0`, etc. creates its own uninterrupted stream, never a fresh recognizer for every phrase. Deterministically seeded additive white Gaussian noise is an *augmentation*, not measured in-car acoustics.
+Each whole-condition report contains per-category false wake counts and source audio duration, unique negative fixture hours (deduplicated by SHA, **not** independent human hours), plus per-stream true positives / misses, true-positive rate, 95% Wilson interval, false activation count, observed false events per **non-wake audio hour**, one-sided 95% Poisson upper bound (zero-count: `-ln(0.05)/hours`), duplicate wake events, median and 95th-percentile detection latency relative to the annotated end of the spoken wake phrase, clipping count, total samples, adapter/model setup time and CPU, host CPU/wall times, host peak resident memory, audio real-time factor and exact stream start/finish counts. Each noise condition `clean`, `snr10`, `snr0`, etc. creates its own uninterrupted stream, never a fresh recognizer for every phrase. Deterministically seeded additive white Gaussian noise is an *augmentation*, not measured in-car acoustics.
 
 Positive windows are anchored to onset and endpoint annotations and capped at the end of that clip; duplicate events in the same positive window count as duplicates, and wake-like events outside windows count as false activations. Negative hours exclude positive matching windows; repetitions of the same recording are not statistically independent. **Zero false wakes in five minutes gives an approximate one-sided 95% upper bound of 36 false activations/hour**, not zero. A report that contains only no-op detector zeros is a pipeline negative-control, never a qualification.
 
@@ -100,7 +129,7 @@ python -m tools.voice.qualification.cli ingest-consented \
   --wake-start-ms 600 --wake-end-ms 1600 --confirm-consent
 ```
 
-This interface records an *operator attestation*, not independently verified legal consent. Keep original written consent securely offline, pseudonymise files and IDs, use privacy-preserving locations, and honour withdrawal. Never commit/upload raw audio, precise coordinates, raw transcripts, private keys, app message history, third-party broadcasts or actual acceptance recordings. The GitHub workflow uploads only **synthetic development manifest**, pinned model provenance, summarized scores and test-only synthetic lifecycle event traces, no WAV.
+This interface records an *operator attestation*, not independently verified legal consent. Keep original written consent securely offline, pseudonymise files and IDs, use privacy-preserving locations, and honour withdrawal. Never commit/upload raw audio, precise coordinates, raw transcripts, private keys, app message history, third-party broadcasts or actual acceptance recordings. The GitHub workflow uploads only **synthetic development manifest**, exact host generator/runtime versions, pinned model provenance, summarized scores and test-only synthetic lifecycle event traces, no WAV.
 
 Run the cross-partition audit:
 
