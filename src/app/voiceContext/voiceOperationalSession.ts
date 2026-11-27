@@ -27,7 +27,7 @@ export type RadioVoiceBinding = {
   /** Opaque Radio chat-management identifier, NOT a MeshCore channel slot. */
   readonly chatRecordRef: string;
   /** Actual RadioConnection.getChatSessionEpoch() for this binding. */
-  readonly radioSessionEpoch: string;
+  readonly radioSessionEpoch: number;
   /** Attested by actual verified Radio chat submission adapter. */
   readonly submissionAuthority: 'verified-radio-chat';
   readonly state: 'ready' | 'unavailable';
@@ -49,7 +49,7 @@ export type VoiceOperationalInputs = {
   readonly lifecycle: HostLifecycle;
   readonly activeConvoy: AuthorizedConvoyMembership | null;
   readonly localIdentityRef: string | null;
-  readonly radioSessionEpoch: string | null;
+  readonly radioSessionEpoch: number | null;
   readonly radioBindings: readonly RadioVoiceBinding[];
   readonly convoyLinks: readonly VerifiedConvoyRadioLink[];
   /** Default false. Future native provider must attest actual wake readiness. */
@@ -91,7 +91,7 @@ export type ResolvedVoiceDestination = Readonly<{
   scope: Readonly<RadioConversationScope>;
   key: string;
   chatRecordRef: string;
-  radioSessionEpoch: string;
+  radioSessionEpoch: number;
   convoy: Readonly<{
     convoyId: string;
     membershipRecordRef: string;
@@ -212,8 +212,9 @@ function validatedBindings(
   const binding = matches[0];
   if (!validOpaque(binding.chatRecordRef) ||
     binding.submissionAuthority !== 'verified-radio-chat' ||
-    !validOpaque(binding.radioSessionEpoch)) return unavailable('radio-binding-missing');
-  if (!inputs.radioSessionEpoch ||
+    !Number.isSafeInteger(binding.radioSessionEpoch) ||
+    binding.radioSessionEpoch < 0) return unavailable('radio-binding-missing');
+  if (inputs.radioSessionEpoch === null ||
     binding.radioSessionEpoch !== inputs.radioSessionEpoch) {
     return unavailable('radio-session-changed');
   }
