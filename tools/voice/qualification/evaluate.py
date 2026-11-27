@@ -257,7 +257,9 @@ def evaluate_stream(
     cpu0 = time.process_time()
     rss0 = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     try:
-        events.extend(adapter.start(SAMPLE_RATE))
+        at_start = adapter.start(SAMPLE_RATE)
+        if at_start:
+            raise ValueError("Detector emitted a wake before any PCM samples")
         for occurrence, clip in enumerate(plan):
             base = offset_samples / SAMPLE_RATE
             segments.append((base, base + clip["frames"]/SAMPLE_RATE, clip["category"]))
@@ -294,9 +296,8 @@ def evaluate_stream(
         # Explicit stream end; adapter must not convert forced end-of-file into
         # a wake classification (Vosk comparator discards FinalResult).
         trailing = adapter.finish()
-        if any(event.sample_index > offset_samples for event in trailing):
-            raise ValueError("Adapter emitted post-stream future event")
-        events.extend(trailing)
+        if trailing:
+            raise ValueError("Detector attempted to turn forced end-of-file into a wake event")
     finally:
         adapter.close()
     wall = time.perf_counter() - t0
