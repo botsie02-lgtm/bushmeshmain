@@ -5,6 +5,9 @@ import android.graphics.Rect
 import android.graphics.Bitmap
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.view.WindowInsets
+import android.view.View
+import android.view.accessibility.AccessibilityWindowInfo
+import android.util.Log
 import android.widget.EditText
 import java.io.File
 import android.os.SystemClock
@@ -82,6 +85,12 @@ class RadioComposerKeyboardUiTest {
       }
       instrumentation.waitForIdleSync()
     }
+    var phase = "startup"
+    fun trace(message: String) {
+      val line = "phase=$phase $message"
+      Log.i("BushMeshKeyboardTest", line)
+      println(line)
+    }
     fun imeTop(): Int? {
       val value = AtomicReference<Int?>()
       instrumentation.runOnMainSync {
@@ -99,7 +108,8 @@ class RadioComposerKeyboardUiTest {
         if (condition()) return
         SystemClock.sleep(150)
       }
-      fail(message)
+      trace("TIMEOUT $message")
+      fail("$phase: $message")
     }
     fun currentDraft(): String? {
       val value = AtomicReference<String?>()
@@ -121,19 +131,104 @@ class RadioComposerKeyboardUiTest {
     val maxGap = (64 * density).toInt()
     val inputLabel = "Carrier message draft"
     val sendLabel = "Submit channel text to radio"
-    fun awaitOpenGeometry(closedHistory: Rect, closedHeader: Rect) {
-      awaitCondition("Docked IME must leave the full input, Send, header and shrunken history visible") {
-        val top = imeTop() ?: return@awaitCondition false
-        val root = appRoot()
-        val input = find(root, inputLabel) ?: return@awaitCondition false
-        val send = find(root, sendLabel) ?: return@awaitCondition false
-        val history = find(root, "Chat message history") ?: return@awaitCondition false
-        val header = find(root, "Back to chats") ?: return@awaitCondition false
-        input.bottom <= top && send.bottom <= top &&
-          input.height() >= touchTarget && send.height() >= touchTarget && send.width() >= touchTarget &&
-          top - send.bottom <= maxGap && header.top == closedHeader.top &&
-          history.height() > 0 && history.height() < closedHistory.height()
+    data class Bounds(val full: Rect, val visible: Rect, val shown: Boolean, val focused: Boolean, val identity: Int, val tag: Int)
+    data class NativeGeometry(
+      val imeVisible: Boolean, val imeTop: Int?, val navInset: Int,
+      val room: Bounds?, val layout: Bounds?, val input: Bounds?, val send: Bounds?,
+      val header: Bounds?, val history: Bounds?, val navigation: Bounds?
+    )
+    fun nativeGeometry(): NativeGeometry {
+      val value = AtomicReference<NativeGeometry>()
+      instrumentation.runOnMainSync {
+        val decor = activity.window.decorView
+        val insets = decor.rootWindowInsets
+        val bottom = insets?.getInsets(WindowInsets.Type.ime())?.bottom ?: 0
+        val visible = insets?.isVisible(WindowInsets.Type.ime()) == true && bottom > 0
+        fun bounds(name: String): Bounds? {
+          val v = decor.findViewWithTag<View>(name) ?: return null
+          val xy = IntArray(2)
+          v.getLocationOnScreen(xy)
+          val full = Rect(xy[0], xy[1], xy[0] + v.width, xy[1] + v.height)
+          val clipped = Rect()
+          v.getGlobalVisibleRect(clipped)
+          return Bounds(full, clipped, v.isShown, v.isFocused, System.identityHashCode(v), v.id)
+        }
+        value.set(NativeGeometry(visible,
+          if (visible) activity.windowManager.currentWindowMetrics.bounds.bottom - bottom else null,
+          insets?.getInsets(WindowInsets.Type.navigationBars())?.bottom ?: 0,
+          bounds("radio-ime-room"), bounds("radio-ime-layout"), bounds("radio-ime-input"),
+          bounds("radio-ime-send"), bounds("radio-ime-header"), bounds("radio-ime-history"),
+          bounds("radio-ime-bottom-navigation")))
       }
+      return checkNotNull(value.get())
+    }
+    fun imeWindows(): List<Rect> = automation.windows.filter { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+      .map { Rect().apply { it.getBoundsInScreen(this) } }
+    fun awaitOpenGeometry(closedHistory: Rect, closedHeader: Rect) {
+      var previous: String? = null
+      var consecutive = 0
+      awaitCondition("Docked IME must leave the full input, Send, header and shrunken history visible") {
+        val native = nativeGeometry()
+        val top = native.imeTop
+        val root = appRoot()
+        val input = find(root, inputLabel)
+        val send = find(root, sendLabel)
+        val history = find(root, "Chat message history")
+        val header = find(root, "Back to chats")
+        val windows = imeWindows()
+        val failures = mutableListOf<String>()
+        if (!native.imeVisible || top == null) failures.add("IME_NOT_VISIBLE")
+        if (input == null || send == null || history == null || header == null) failures.add("ACCESSIBILITY_NODE_MISSING")
+        if (top != null && input != null && input.bottom > top) failures.add("INPUT_BELOW_IME")
+        if (top != null && send != null && send.bottom > top) failures.add("SEND_BELOW_IME")
+        if (input != null && input.height() < touchTarget) failures.add("INPUT_TOUCH_HEIGHT")
+        if (send != null && (send.height() < touchTarget || send.width() < touchTarget)) failures.add("SEND_TOUCH_SIZE")
+        if (top != null && send != null && top - send.bottom > maxGap) failures.add("SEND_GAP")
+        if (header != null && header.top != closedHeader.top) failures.add("HEADER_MOVED")
+        if (history != null && (history.height() <= 0 || history.height() >= closedHistory.height())) failures.add("HISTORY_NOT_SHRUNK")
+        // Accessibility bounds can be clipped. The underlying input and Send
+        // must independently fit in their entirety, not just their visible slice.
+        val fullInput = native.input
+        val fullSend = native.send
+        if (fullInput == null || fullSend == null) failures.add("NATIVE_COMPOSER_MISSING")
+        if (top != null && fullInput != null && (!fullInput.shown || fullInput.full.bottom > top ||
+            fullInput.full.height() < touchTarget || fullInput.visible.height() != fullInput.full.height() ||
+            fullInput.visible.width() != fullInput.full.width())) failures.add("NATIVE_INPUT_CLIPPED")
+        if (top != null && fullSend != null && (!fullSend.shown || fullSend.full.bottom > top ||
+            fullSend.full.height() < touchTarget || fullSend.full.width() < touchTarget ||
+            fullSend.visible.height() != fullSend.full.height() || fullSend.visible.width() != fullSend.full.width() ||
+            top - fullSend.full.bottom > maxGap)) failures.add("NATIVE_SEND_CLIPPED_OR_GAP")
+        if (native.navigation?.shown == true) failures.add("BOTTOM_NAVIGATION_VISIBLE")
+        val snapshot = "failures=$failures imeWindows=$windows input=$input send=$send header=$header history=$history closedHeader=$closedHeader closedHistory=$closedHistory native=$native"
+        if (snapshot != previous) { trace(snapshot); previous = snapshot; consecutive = 0 }
+        consecutive = if (failures.isEmpty()) consecutive + 1 else 0
+        consecutive >= 2
+      }
+      trace("OPEN_GEOMETRY_PASSED")
+    }
+    fun awaitClosedGeometry(closedSend: Rect) {
+      var previous: String? = null
+      var consecutive = 0
+      awaitCondition("Back must fully dismiss IME and restore conversation geometry before another touch") {
+        val native = nativeGeometry()
+        val root = appRoot()
+        val send = find(root, sendLabel)
+        val input = find(root, inputLabel)
+        val header = find(root, "Back to chats")
+        val windows = imeWindows()
+        val fullInput = native.input
+        val fullSend = native.send
+        val restored = !native.imeVisible && windows.none { !it.isEmpty } &&
+          header != null && native.navigation?.shown == true &&
+          send != null && input != null && fullInput != null && fullSend != null &&
+          send.bottom >= closedSend.bottom - (8 * density).toInt() &&
+          fullSend.full.bottom == send.bottom && fullInput.full.bottom == input.bottom
+        val snapshot = "restored=$restored imeWindows=$windows input=$input send=$send header=$header native=$native"
+        if (snapshot != previous) { trace(snapshot); previous = snapshot; consecutive = 0 }
+        consecutive = if (restored) consecutive + 1 else 0
+        consecutive >= 2
+      }
+      trace("CLOSED_GEOMETRY_PASSED")
     }
     try {
       // Waiting for actual UI ensures the production React instance is running.
@@ -161,52 +256,74 @@ class RadioComposerKeyboardUiTest {
       assertTrue("Encrypted catalogue readback mismatch", nativeCall { store.loadChatPreferences(it) } == fixture)
       tap("Radio")
       tap("Open chat Keyboard Alpha")
-      val closedHistory = await("Chat message history")
-      val closedHeader = await("Back to chats")
+      phase = "alpha-initial-closed"
       val closedSend = await(sendLabel)
       assertNull("Keyboard must start dismissed", imeTop())
+      awaitClosedGeometry(closedSend)
+      val closedHistory = await("Chat message history")
+      val closedHeader = await("Back to chats")
       screenshot("keyboard-closed.png")
+      phase = "alpha-initial-open"
       tap(inputLabel)
       awaitOpenGeometry(closedHistory, closedHeader)
+      phase = "alpha-multiline"
       instrumentation.sendStringSync("first line")
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
       instrumentation.sendStringSync("second line")
       awaitCondition("Multiline typing must remain in the focused draft") { currentDraft() == "first line\nsecond line" }
       awaitOpenGeometry(closedHistory, closedHeader)
       screenshot("keyboard-multiline.png")
+      phase = "alpha-first-close"
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-      awaitCondition("Back must dismiss the IME without closing the chat") {
-        imeTop() == null && find(appRoot(), "Back to chats") != null &&
-          (find(appRoot(), sendLabel)?.bottom ?: 0) >= closedSend.bottom - (8 * density).toInt()
-      }
+      awaitClosedGeometry(closedSend)
       tap("Back to chats")
       tap("Open chat Keyboard Bravo")
+      phase = "bravo-closed"
+      val bravoSend = await(sendLabel)
+      awaitClosedGeometry(bravoSend)
+      val bravoHistory = await("Chat message history")
+      val bravoHeader = await("Back to chats")
+      phase = "bravo-open"
       tap(inputLabel)
-      awaitOpenGeometry(closedHistory, closedHeader)
+      awaitOpenGeometry(bravoHistory, bravoHeader)
       awaitCondition("Other conversation must start with its own empty draft") { currentDraft() == "" }
       instrumentation.sendStringSync("bravo")
       awaitCondition("Bravo draft must be editable") { currentDraft() == "bravo" }
+      phase = "bravo-close"
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-      awaitCondition("Bravo IME dismissal") { imeTop() == null }
+      awaitClosedGeometry(bravoSend)
       tap("Back to chats")
       tap("Open chat Keyboard Alpha")
-      repeat(2) {
+      phase = "alpha-return-closed"
+      val returnSend = await(sendLabel)
+      awaitClosedGeometry(returnSend)
+      val returnHistory = await("Chat message history")
+      val returnHeader = await("Back to chats")
+      repeat(2) { round ->
+        phase = "alpha-reopen-${round + 1}"
         tap(inputLabel)
-        awaitOpenGeometry(closedHistory, closedHeader)
+        awaitOpenGeometry(returnHistory, returnHeader)
         awaitCondition("Alpha multiline draft must survive room switch and IME reopen") { currentDraft() == "first line\nsecond line" }
+        screenshot("keyboard-reopen-${round + 1}.png")
+        phase = "alpha-reclose-${round + 1}"
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-        awaitCondition("Repeated IME dismissal") { imeTop() == null && find(appRoot(), "Back to chats") != null }
+        awaitClosedGeometry(returnSend)
       }
+      phase = "alpha-reopen-3"
       tap(inputLabel)
-      awaitOpenGeometry(closedHistory, closedHeader)
+      awaitOpenGeometry(returnHistory, returnHeader)
+      screenshot("keyboard-reopen-3.png")
+      phase = "alpha-quick-message"
       tap("Quick messages")
       tap("Ready to go.")
       awaitCondition("Quick message must populate the draft") { currentDraft() == "Ready to go." }
-      awaitOpenGeometry(closedHistory, closedHeader)
+      awaitOpenGeometry(returnHistory, returnHeader)
       screenshot("keyboard-quick-message.png")
+      phase = "alpha-final-close"
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-      awaitCondition("Final IME dismissal") { imeTop() == null }
+      awaitClosedGeometry(returnSend)
     } finally {
+      runCatching { trace("FINAL native=${nativeGeometry()} imeWindows=${imeWindows()}") }
       screenshot("keyboard-final.png")
       instrumentation.runOnMainSync { activity.finish() }
       // Restore only if the fixture actually wrote to the isolated store.

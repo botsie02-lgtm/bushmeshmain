@@ -1,6 +1,6 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
-  Alert, BackHandler, FlatList, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, NativeScrollEvent, NativeSyntheticEvent,
+  Alert, BackHandler, findNodeHandle, FlatList, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, NativeScrollEvent, NativeSyntheticEvent,
   Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
@@ -110,7 +110,8 @@ export function RadioChatRoom({
   onTogglePinned, personalisation, displayName, persistentPin, visible = true,
   starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false, firstUnreadId, onForwardMessage, onKeyboardVisibilityChange,
 }: RadioChatRoomProps): React.JSX.Element {
-  const {viewRef, onLayout, keyboardOpen, overlap, accessoryMaxHeight, inputMaxHeight} = useRadioImeLayout(visible);
+  const inputRef = useRef<TextInput>(null);
+  const {viewRef, onLayout, keyboardOpen, overlap, accessoryMaxHeight, inputMaxHeight, reopenFocusedInput} = useRadioImeLayout(visible);
   useEffect(() => {onKeyboardVisibilityChange?.(keyboardOpen);}, [keyboardOpen, onKeyboardVisibilityChange]);
   useEffect(() => () => onKeyboardVisibilityChange?.(false), [onKeyboardVisibilityChange]);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -157,10 +158,10 @@ export function RadioChatRoom({
   };
 
   return (
-    <View ref={viewRef} collapsable={false} onLayout={onLayout} style={styles.root}>
-    <KeyboardAvoidingView style={[styles.root, Platform.OS === 'android' && {paddingBottom: overlap}]}
+    <View ref={viewRef} testID="radio-ime-room" collapsable={false} onLayout={onLayout} style={styles.root}>
+    <KeyboardAvoidingView testID="radio-ime-layout" style={[styles.root, Platform.OS === 'android' && {paddingBottom: overlap}]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.header}>
+      <View testID="radio-ime-header" style={styles.header}>
         <TouchableOpacity accessibilityRole="button"
           accessibilityLabel="Back to chats"
           onPress={onBack} style={styles.backButton}>
@@ -227,6 +228,7 @@ export function RadioChatRoom({
       {searching ? <TextInput accessibilityLabel="Search chat messages" value={query} onChangeText={setQuery} placeholder="Search messages" placeholderTextColor={colors.textSecondary} style={styles.input}/> : null}
       <FlatList
         ref={listRef}
+        testID="radio-ime-history"
         accessibilityLabel="Chat message history"
         style={styles.messages}
         contentContainerStyle={styles.messageContent}
@@ -312,7 +314,10 @@ export function RadioChatRoom({
         </ScrollView>
         <View style={styles.composerRow}>
           <TextInput
+            ref={inputRef}
+            testID="radio-ime-input"
             accessibilityLabel="Carrier message draft"
+            onPressIn={() => {if (!isSubmitting && inputRef.current?.isFocused()) reopenFocusedInput(findNodeHandle(inputRef.current));}}
             multiline
             placeholder={connected ? 'Message…' : 'Connect radio to send'}
             placeholderTextColor={colors.textSecondary}
@@ -325,6 +330,7 @@ export function RadioChatRoom({
             textAlignVertical="center"
           />
           <TouchableOpacity accessibilityRole="button"
+            testID="radio-ime-send"
             accessibilityLabel="Submit channel text to radio"
             accessibilityState={{disabled: !sendEnabled}}
             disabled={!sendEnabled}

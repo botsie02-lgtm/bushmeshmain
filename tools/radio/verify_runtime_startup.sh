@@ -12,6 +12,7 @@ grep -qx 36 "$out/smoke-api.txt"
 adb shell input keyevent 82
 adb install "$apk"
 adb install "$test_apk"
+adb logcat -G 16M || true
 adb logcat -c
 # No -g and no permission grants before the fresh-install smoke.
 adb shell am start -W -n "$pkg/com.bushmeshmain.MainActivity" | tee "$out/smoke-launch.txt"
@@ -27,7 +28,7 @@ run_test() {
   local class="$1"
   adb shell am instrument -w -r -e class "com.bushmeshmain.radio.$class" "$runner" | tee "$out/smoke-$class.txt" || return 1
   grep -Eq 'OK \([1-9][0-9]* tests?\)' "$out/smoke-$class.txt" || return 1
-  if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$out/smoke-$class.txt"; then exit 1; fi
+  if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$out/smoke-$class.txt"; then return 1; fi
 }
 run_test RuntimeLifecycleDeniedTest
 run_test ConversationMenuUiTest
@@ -35,10 +36,10 @@ run_test ConversationMenuUiTest
 adb shell settings put secure show_ime_with_hard_keyboard 1
 keyboard_result=0
 run_test RadioComposerKeyboardUiTest || keyboard_result=$?
-for screenshot in keyboard-closed.png keyboard-multiline.png keyboard-quick-message.png keyboard-final.png; do
+adb logcat -d -s BushMeshRadioIme:I BushMeshKeyboardTest:I ImeTracker:I InsetsController:D FrameTracker:W > "$out/smoke-keyboard-transitions.txt" || true
+for screenshot in keyboard-closed.png keyboard-multiline.png keyboard-reopen-1.png keyboard-reopen-2.png keyboard-reopen-3.png keyboard-quick-message.png keyboard-final.png; do
   adb pull "/sdcard/Android/data/$pkg/files/$screenshot" "$out/$screenshot" || true
 done
-if [ "$keyboard_result" -ne 0 ]; then exit "$keyboard_result"; fi
 run_test VoicePermissionDeniedTest
 # Grants are only test-environment setup, after the ungranted smoke.
 adb shell pm grant "$pkg" android.permission.BLUETOOTH_CONNECT
@@ -73,4 +74,8 @@ adb logcat -d -b crash > "$out/smoke-revoked-crash.txt"
 if grep -Fq "$pkg" "$out/smoke-revoked-crash.txt"; then exit 1; fi
 run_test RuntimeLifecycleDeniedTest
 run_test VoicePermissionDeniedTest
+if [ "$keyboard_result" -ne 0 ]; then
+  printf 'Keyboard qualification failed; subsequent native regression gates executed.\n' | tee "$out/smoke-result.txt"
+  exit "$keyboard_result"
+fi
 printf 'Fresh install and post-revocation launch survived; native lifecycle tests passed.\n' | tee "$out/smoke-result.txt"

@@ -1,7 +1,20 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {DeviceEventEmitter, findNodeHandle, Keyboard, NativeModules, Platform, type LayoutChangeEvent, type View} from 'react-native';
 
-type Geometry = {tag: number; visible: boolean; overlap: number};
+type Geometry = {tag: number; session: number; visible: boolean; overlap: number};
+let nextSession = 0;
+
+/** Native callbacks may arrive after a room is hidden, remounted or rewatched. */
+export function acceptsRadioImeGeometry(value: Geometry, tag: number, session: number, currentSession: number | null): boolean {
+  return value.tag === tag && value.session === session && currentSession === session &&
+    typeof value.visible === 'boolean' && Number.isFinite(value.overlap) && value.overlap >= 0;
+}
+type NativeIme = {
+  watch: (tag: number, session: number) => void;
+  unwatch: (tag: number, session: number) => void;
+  reopenFocusedInput: (tag: number, session: number, inputTag: number) => void;
+  reportLayout: (tag: number, session: number, visible: boolean, padding: number, height: number) => void;
+};
 const CLOSED = {visible: false, overlap: 0};
 
 /** Bounded accessory area leaves the editable row outside its scroll region. */
@@ -18,7 +31,8 @@ export function useRadioImeLayout(visible: boolean) {
   const [tag, setTag] = useState<number | null>(null);
   const [height, setHeight] = useState(0);
   const [geometry, setGeometry] = useState(CLOSED);
-  const native = NativeModules.BushMeshRadioIme as {watch: (id: number) => void; unwatch: (id: number) => void} | undefined;
+  const sessionRef = useRef<number | null>(null);
+  const native = NativeModules.BushMeshRadioIme as NativeIme | undefined;
   const modern = Platform.OS === 'android' && Number(Platform.Version) >= 30 && !!native;
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
@@ -30,13 +44,20 @@ export function useRadioImeLayout(visible: boolean) {
     if (!visible || Platform.OS !== 'android') return;
     if (modern && native) {
       if (tag === null) return;
+      const session = ++nextSession;
+      sessionRef.current = session;
       const subscription = DeviceEventEmitter.addListener('BushMeshRadioImeGeometry', (value: Geometry) => {
-        if (value.tag !== tag || typeof value.visible !== 'boolean' ||
-            !Number.isFinite(value.overlap) || value.overlap < 0) return;
-        setGeometry({visible: value.visible, overlap: value.visible ? value.overlap : 0});
+        if (!acceptsRadioImeGeometry(value, tag, session, sessionRef.current)) return;
+        const next = {visible: value.visible, overlap: value.visible ? value.overlap : 0};
+        setGeometry(current => current.visible === next.visible && current.overlap === next.overlap ? current : next);
       });
-      native.watch(tag);
-      return () => {subscription.remove(); native.unwatch(tag); setGeometry(CLOSED);};
+      native.watch(tag, session);
+      return () => {
+        sessionRef.current = null;
+        subscription.remove();
+        native.unwatch(tag, session);
+        setGeometry(CLOSED);
+      };
     }
     // Older Android relies on the existing adjustResize. Never add an
     // estimated keyboard height on top of a system-resized window.
@@ -48,6 +69,19 @@ export function useRadioImeLayout(visible: boolean) {
 
   const keyboardOpen = visible && Platform.OS === 'android' && geometry.visible;
   const overlap = keyboardOpen ? Math.min(height, geometry.overlap) : 0;
-  return {viewRef, onLayout, keyboardOpen, overlap,
+  useEffect(() => {
+    const session = sessionRef.current;
+    if (visible && modern && native && tag !== null && session !== null) {
+      native.reportLayout(tag, session, keyboardOpen, overlap, height);
+    }
+  }, [visible, modern, native, tag, keyboardOpen, overlap, height]);
+
+  const reopenFocusedInput = useCallback((inputTag: number | null) => {
+    const session = sessionRef.current;
+    if (visible && modern && native && tag !== null && session !== null && inputTag !== null) {
+      native.reopenFocusedInput(tag, session, inputTag);
+    }
+  }, [visible, modern, native, tag]);
+  return {viewRef, onLayout, keyboardOpen, overlap, reopenFocusedInput,
     ...radioComposerKeyboardBudget(height, overlap)};
 }

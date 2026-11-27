@@ -772,6 +772,7 @@ function RadioMessenger({
           </View>
         </Modal> : null}
         <RadioChatRoom
+          key={activeKey ?? undefined}
           scope={selectedScope} messages={selectedMessages} initialSearch={searchRoom}
           voiceDestination={voiceDestination}
           onToggleAutoRead={management && localId && localPreference ? () => management.updateLocal(localId,{autoRead: localPreference.autoRead===false},localIncarnation).catch(()=>postNotice(activeKey??'', 'Auto-read preference could not be saved.')) : undefined}

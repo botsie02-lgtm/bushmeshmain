@@ -547,7 +547,7 @@ export function AppShell(): React.JSX.Element {
         </ScreenMountGate>
       </View>
 
-      <View style={[styles.tabBar, hideRadioTabs && styles.radioCovered]} accessibilityRole="tablist"
+      <View testID="radio-ime-bottom-navigation" style={[styles.tabBar, hideRadioTabs && styles.radioCovered]} accessibilityRole="tablist"
         importantForAccessibility={hideRadioTabs ? 'no-hide-descendants' : 'auto'}>
         {MAIN_TABS.map(tab => {
           const selected = activeTab === tab.key;
