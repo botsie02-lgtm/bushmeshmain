@@ -143,6 +143,7 @@ def make_plan(manifest: dict, negative_loop_hours: float) -> list[dict]:
 def _score(
     events: list[WakeEvent],
     positive_windows: list[tuple[float, float, float]],
+    segments: list[tuple[float, float, str]],
     duration_s: float, dataset: dict, clip_occurrences: int,
     clipping_samples: int, processing: dict, condition: str,
     negative_loop_hours: float,
@@ -166,6 +167,19 @@ def _score(
     for start, end, _ in positive_windows:
         covered += max(0, end - start)
     exposure_s = max(0, duration_s - covered)
+    by_category = {category: {"false_events": 0, "audio_seconds": 0.0}
+                   for _, _, category in segments}
+    for start, end, category in segments:
+        by_category[category]["audio_seconds"] += max(0, end - start)
+    for t in false_events:
+        category = next((category for start, end, category in segments
+                         if start <= t < end), "outside-stream")
+        if category in by_category:
+            by_category[category]["false_events"] += 1
+    # This is only distinct audio by SHA, not independent speakers or sessions.
+    unique_negative = {clip["sha256"]: clip["frames"] for clip in dataset["clips"]
+                       if clip["label"] == "negative"}
+    unique_negative_seconds = sum(unique_negative.values()) / SAMPLE_RATE
     positives = len(positive_windows)
     tps = sum(accepted)
     tpr = tps/positives if positives else None
@@ -193,6 +207,12 @@ def _score(
         "stream_audio_seconds": round(duration_s, 3),
         "nonwake_exposure_hours": round(exposure_s/3600, 6),
         "source_independent_negative_hours": None,
+        "unique_negative_fixture_hours": round(unique_negative_seconds/3600, 6),
+        "false_activations_by_category": {
+            name: {"false_events": value["false_events"],
+                   "audio_seconds": round(value["audio_seconds"], 3)}
+            for name, value in sorted(by_category.items())
+        },
         "negative_loop_hours_requested": negative_loop_hours,
         "clip_occurrences": clip_occurrences,
         "saturated_samples_after_augmentation": clipping_samples,
@@ -231,6 +251,7 @@ def evaluate_stream(
     chunk_frames = chunk_ms * SAMPLE_RATE // 1000
     offset_samples, clipping, chunk_count = 0, 0, 0
     positives: list[tuple[float, float, float]] = []
+    segments: list[tuple[float, float, str]] = []
     events: list[WakeEvent] = []
     t0 = time.perf_counter()
     cpu0 = time.process_time()
@@ -239,6 +260,7 @@ def evaluate_stream(
         events.extend(adapter.start(SAMPLE_RATE))
         for occurrence, clip in enumerate(plan):
             base = offset_samples / SAMPLE_RATE
+            segments.append((base, base + clip["frames"]/SAMPLE_RATE, clip["category"]))
             if clip["label"] == "positive":
                 # Detection is valid from slight pre-onset to 1.5 s after
                 # the spoken phrase end (for a streaming endpoint decoder).
@@ -295,5 +317,5 @@ def evaluate_stream(
         "detector_finish_calls": 1,
         "per_phrase_resets": 0,
     }
-    return _score(events, positives, offset_samples/SAMPLE_RATE, manifest,
+    return _score(events, positives, segments, offset_samples/SAMPLE_RATE, manifest,
                   len(plan), clipping, processing, condition, negative_loop_hours)
