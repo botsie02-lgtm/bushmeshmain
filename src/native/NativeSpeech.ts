@@ -5,6 +5,8 @@ export type NativeSpeechStatus = {
   initializing: boolean;
   failed: boolean;
   languageTag: string | null;
+  offlineVoice?: boolean;
+  speaking?: boolean;
   criticalAlertsEnabled: boolean;
   radioMessagesEnabled: boolean;
 };
@@ -12,6 +14,8 @@ export type NativeSpeechStatus = {
 type NativeSpeechModule = {
   speak: (text: string, interrupt: boolean) => Promise<boolean>;
   stop: () => Promise<boolean>;
+  speakOrdinaryAndWait?: (text: string) => Promise<boolean>;
+  stopOrdinary?: () => Promise<boolean>;
   getStatus: () => Promise<NativeSpeechStatus>;
   setCriticalAlertsEnabled: (enabled: boolean) => Promise<boolean>;
   getCriticalAlertsEnabled: () => Promise<boolean>;
@@ -48,6 +52,13 @@ export const nativeSpeech = {
     return module.speak(clean, interrupt);
   },
 
+  async speakOrdinaryAndWait(text: string): Promise<boolean> {
+    if (!module?.speakOrdinaryAndWait) throw new Error('Offline speech output unavailable.');
+    return module.speakOrdinaryAndWait(text);
+  },
+  async stopOrdinary(): Promise<boolean> {
+    return module?.stopOrdinary ? module.stopOrdinary() : false;
+  },
   async stop(): Promise<boolean> {
     if (!this.isSupported() || !module) {
       return false;

@@ -1,7 +1,9 @@
 package com.bushmeshmain.radio
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -12,306 +14,115 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import com.facebook.react.bridge.Arguments
-import com.facebook.react.bridge.Promise
-import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.bridge.ReactContextBaseJavaModule
-import com.facebook.react.bridge.ReactMethod
-import java.util.Locale
+import com.facebook.react.bridge.*
 
-/**
- * Strictly on-device speech recognition for Bushmesh PTT dictation.
- *
- * This module never falls back to the platform's network recognizer. Android
- * must advertise an on-device recognizer (API 31+) or Bushmesh reports STT as
- * unavailable. Recognition takes transient-exclusive audio focus while PTT is
- * active so vehicle/media playback does not feed back into the microphone.
- */
-class BushMeshSpeechRecognitionModule(
-  reactContext: ReactApplicationContext,
-) : ReactContextBaseJavaModule(reactContext), RecognitionListener {
-
-  companion object {
-    private const val MIN_SUPPORTED_API = Build.VERSION_CODES.S
-  }
-
-  private val mainHandler = Handler(Looper.getMainLooper())
-  private val audioManager =
-    reactContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-  private val focusChangeListener = AudioManager.OnAudioFocusChangeListener {
-    // Recognition remains authoritative while the driver is holding PTT.
-  }
-  private val recognitionAudioAttributes = AudioAttributes.Builder()
-    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-    .build()
-
-  private var recognizer: SpeechRecognizer? = null
-  private var activePromise: Promise? = null
-  private var listening = false
-  private var startedAtMs = 0L
-  private var activeFocusRequest: AudioFocusRequest? = null
-
-  override fun getName(): String = "BushMeshSpeechRecognition"
-
-  @ReactMethod
-  fun getStatus(promise: Promise) {
-    mainHandler.post {
-      try {
-        val supported = isOnDeviceAvailable()
-        val result = Arguments.createMap().apply {
-          putBoolean("supported", supported)
-          putBoolean("listening", listening)
-          putDouble("apiLevel", Build.VERSION.SDK_INT.toDouble())
-          putString(
-            "reason",
-            when {
-              Build.VERSION.SDK_INT < MIN_SUPPORTED_API ->
-                "Android ${MIN_SUPPORTED_API}+ is required for strict on-device recognition."
-              !supported -> "No on-device speech recognizer is installed on this device."
-              else -> null
-            },
-          )
-        }
-        promise.resolve(result)
-      } catch (error: Exception) {
-        promise.reject("BUSHMESH_STT_STATUS_FAILED", error.message, error)
-      }
+/** A fresh recognizer per explicit turn. Stale callbacks never settle another
+ * turn. No platform network recognizer, microphone service or automatic loop. */
+class BushMeshSpeechRecognitionModule(private val context: ReactApplicationContext) :
+  ReactContextBaseJavaModule(context), LifecycleEventListener {
+  private val main = Handler(Looper.getMainLooper())
+  private val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+  private var engine: SpeechRecognizer? = null
+  private var pending: Promise? = null
+  private var focus: AudioFocusRequest? = null
+  private var timeout: Runnable? = null
+  private var generation = 0L
+  private var resumed = context.lifecycleState == com.facebook.react.common.LifecycleState.RESUMED
+  init { context.addLifecycleEventListener(this) }
+  override fun getName() = "BushMeshSpeechRecognition"
+  private fun supported() = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+  @ReactMethod fun getStatus(promise: Promise) {
+    main.post {
+      val available = runCatching { supported() }.getOrDefault(false)
+      promise.resolve(Arguments.createMap().apply {
+        putBoolean("supported", available)
+        putBoolean("listening", pending != null)
+        putDouble("apiLevel", Build.VERSION.SDK_INT.toDouble())
+        putString("reason", if (available) null else "No on-device recognizer available.")
+      })
     }
   }
-
-  @ReactMethod
-  fun recognizeOnce(localeTag: String?, promise: Promise) {
-    mainHandler.post {
-      if (!isOnDeviceAvailable()) {
-        promise.reject(
-          "BUSHMESH_STT_UNAVAILABLE",
-          "Strict on-device speech recognition is unavailable on this Android device.",
-        )
-        return@post
+  private fun release() {
+    generation++
+    pending = null
+    timeout?.let { main.removeCallbacks(it) }; timeout = null
+    val previous = engine; engine = null
+    runCatching { previous?.cancel() }
+    runCatching { previous?.destroy() }
+    focus?.let { audio.abandonAudioFocusRequest(it) }; focus = null
+    VoiceAudioOwnership.cancelRecognition = null
+  }
+  private fun fail(code: String, message: String) {
+    val p = pending ?: return
+    release()
+    p.reject("BUSHMESH_STT_" + code, message)
+  }
+  @ReactMethod fun recognizeOnce(localeTag: String?, promise: Promise) {
+    main.post {
+      if (pending != null || VoiceAudioOwnership.cancelRecognition != null || VoiceAudioOwnership.speaking) {
+        promise.reject("BUSHMESH_STT_BUSY", "Microphone or speech output is busy."); return@post
       }
-
-      if (activePromise != null || listening) {
-        promise.reject(
-          "BUSHMESH_STT_BUSY",
-          "Bushmesh speech recognition is already listening.",
-        )
-        return@post
+      if (!resumed || context.currentActivity == null || context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        promise.reject("BUSHMESH_STT_PERMISSION", "Foreground microphone permission required."); return@post
       }
-
+      pending = promise
+      val turn = ++generation
+      val started = android.os.SystemClock.elapsedRealtime()
       try {
-        val engine = ensureRecognizer()
-        val locale = localeTag
-          ?.trim()
-          ?.takeIf { it.isNotEmpty() }
-          ?: Locale.getDefault().toLanguageTag()
-
+        check(supported())
+        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+          .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+          .setOnAudioFocusChangeListener({ change ->
+            if (change < 0 && generation == turn) fail("FOCUS", "Microphone audio focus lost.")
+          }, main).build()
+        focus = request
+        check(audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+        VoiceAudioOwnership.cancelRecognition = { if (generation == turn) fail("INTERRUPTED", "Interrupted by critical speech.") }
+        val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+        engine = recognizer
+        recognizer.setRecognitionListener(object : RecognitionListener {
+          override fun onReadyForSpeech(params: Bundle?) = Unit
+          override fun onBeginningOfSpeech() = Unit
+          override fun onRmsChanged(rmsdB: Float) = Unit
+          override fun onBufferReceived(buffer: ByteArray?) = Unit
+          override fun onEndOfSpeech() = Unit
+          override fun onPartialResults(partialResults: Bundle?) = Unit
+          override fun onEvent(eventType: Int, params: Bundle?) = Unit
+          override fun onError(error: Int) {
+            if (generation == turn) fail("RECOGNITION", "On-device recognition unavailable or unsuccessful (code $error). Check offline language resources and retry.")
+          }
+          override fun onResults(results: Bundle?) {
+            if (generation != turn) return
+            val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+            if (!resumed || context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED || matches.isEmpty()) {
+              fail("NO_MATCH", "No usable foreground recognition result."); return
+            }
+            val result = Arguments.createMap().apply {
+              putString("text", matches.first())
+              putDouble("confidence", results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)?.firstOrNull()?.toDouble() ?: -1.0)
+              putDouble("durationMs", (android.os.SystemClock.elapsedRealtime() - started).toDouble())
+              putArray("alternatives", Arguments.createArray().apply { matches.drop(1).take(2).forEach { pushString(it) } })
+            }
+            val p = pending; release(); p?.resolve(result)
+          }
+        })
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-          putExtra(
-            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
-          )
-          putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
-          putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, locale)
-          putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-          putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+          putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+          putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag ?: "en-AU")
           putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+          putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
         }
-
-        requestRecognitionFocus()
-        activePromise = promise
-        listening = true
-        startedAtMs = System.currentTimeMillis()
-        engine.startListening(intent)
-      } catch (error: Exception) {
-        activePromise = null
-        listening = false
-        startedAtMs = 0L
-        abandonRecognitionFocus()
-        promise.reject("BUSHMESH_STT_START_FAILED", error.message, error)
-      }
+        timeout = Runnable { if (generation == turn) fail("TIMEOUT", "Listening timed out.") }.also { main.postDelayed(it, 20_000) }
+        recognizer.startListening(intent)
+      } catch (_: Exception) { fail("START_FAILED", "On-device recognition could not start. Check language resources and audio focus.") }
     }
   }
-
-  @ReactMethod
-  fun stopListening(promise: Promise) {
-    mainHandler.post {
-      try {
-        if (!listening) {
-          promise.resolve(false)
-          return@post
-        }
-        recognizer?.stopListening()
-        promise.resolve(true)
-      } catch (error: Exception) {
-        promise.reject("BUSHMESH_STT_STOP_FAILED", error.message, error)
-      }
-    }
+  @ReactMethod fun stopListening(promise: Promise) {
+    main.post { try { engine?.stopListening(); promise.resolve(pending != null) } catch (_: Exception) { fail("STOP_FAILED", "Recognition could not stop."); promise.resolve(false) } }
   }
-
-  @ReactMethod
-  fun cancel(promise: Promise) {
-    mainHandler.post {
-      try {
-        recognizer?.cancel()
-        listening = false
-        rejectActive("BUSHMESH_STT_CANCELLED", "Speech recognition was cancelled.")
-        promise.resolve(true)
-      } catch (error: Exception) {
-        abandonRecognitionFocus()
-        promise.reject("BUSHMESH_STT_CANCEL_FAILED", error.message, error)
-      }
-    }
-  }
-
-  override fun onReadyForSpeech(params: Bundle?) = Unit
-
-  override fun onBeginningOfSpeech() = Unit
-
-  override fun onRmsChanged(rmsdB: Float) = Unit
-
-  override fun onBufferReceived(buffer: ByteArray?) = Unit
-
-  override fun onEndOfSpeech() {
-    listening = false
-  }
-
-  override fun onError(error: Int) {
-    listening = false
-    val code = when (error) {
-      SpeechRecognizer.ERROR_AUDIO -> "AUDIO"
-      SpeechRecognizer.ERROR_CLIENT -> "CLIENT"
-      SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "PERMISSION"
-      SpeechRecognizer.ERROR_NETWORK -> "NETWORK"
-      SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "NETWORK_TIMEOUT"
-      SpeechRecognizer.ERROR_NO_MATCH -> "NO_MATCH"
-      SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "BUSY"
-      SpeechRecognizer.ERROR_SERVER -> "SERVER"
-      SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "SPEECH_TIMEOUT"
-      SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "TOO_MANY_REQUESTS"
-      else -> "ERROR_$error"
-    }
-
-    val detail = when (error) {
-      SpeechRecognizer.ERROR_NO_MATCH -> "No clear speech was recognized."
-      SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech was heard before the on-device recognizer timed out."
-      SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required for Bushmesh PTT."
-      SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The on-device speech recognizer is busy."
-      SpeechRecognizer.ERROR_NETWORK,
-      SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-        "The on-device recognizer unexpectedly requested network access; Bushmesh will not fall back to cloud speech."
-      else -> "On-device speech recognition failed ($code)."
-    }
-
-    rejectActive("BUSHMESH_STT_$code", detail)
-  }
-
-  override fun onResults(results: Bundle?) {
-    listening = false
-    val matches = results
-      ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-      ?.map { it.trim() }
-      ?.filter { it.isNotEmpty() }
-      .orEmpty()
-
-    val confidences = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
-    val promise = activePromise ?: run {
-      abandonRecognitionFocus()
-      return
-    }
-    activePromise = null
-    abandonRecognitionFocus()
-
-    if (matches.isEmpty()) {
-      startedAtMs = 0L
-      promise.reject("BUSHMESH_STT_NO_MATCH", "No clear speech was recognized.")
-      return
-    }
-
-    val result = Arguments.createMap().apply {
-      putString("text", matches.first())
-      putDouble(
-        "confidence",
-        confidences?.firstOrNull()?.takeIf { it >= 0f }?.toDouble() ?: -1.0,
-      )
-      putDouble(
-        "durationMs",
-        (System.currentTimeMillis() - startedAtMs).coerceAtLeast(0L).toDouble(),
-      )
-      val alternatives = Arguments.createArray()
-      matches.drop(1).take(2).forEach(alternatives::pushString)
-      putArray("alternatives", alternatives)
-    }
-    startedAtMs = 0L
-    promise.resolve(result)
-  }
-
-  override fun onPartialResults(partialResults: Bundle?) = Unit
-
-  override fun onEvent(eventType: Int, params: Bundle?) = Unit
-
-  override fun invalidate() {
-    mainHandler.post {
-      try {
-        recognizer?.cancel()
-        recognizer?.destroy()
-      } finally {
-        recognizer = null
-        listening = false
-        startedAtMs = 0L
-        rejectActive(
-          "BUSHMESH_STT_INVALIDATED",
-          "Bushmesh speech recognition was shut down.",
-        )
-        abandonRecognitionFocus()
-      }
-    }
-    super.invalidate()
-  }
-
-  private fun isOnDeviceAvailable(): Boolean {
-    return Build.VERSION.SDK_INT >= MIN_SUPPORTED_API &&
-      SpeechRecognizer.isOnDeviceRecognitionAvailable(reactApplicationContext)
-  }
-
-  private fun ensureRecognizer(): SpeechRecognizer {
-    val existing = recognizer
-    if (existing != null) {
-      return existing
-    }
-
-    if (Build.VERSION.SDK_INT < MIN_SUPPORTED_API) {
-      throw IllegalStateException("On-device recognition requires Android 12 or newer.")
-    }
-
-    return SpeechRecognizer
-      .createOnDeviceSpeechRecognizer(reactApplicationContext)
-      .also {
-        it.setRecognitionListener(this)
-        recognizer = it
-      }
-  }
-
-  private fun requestRecognitionFocus(): Boolean {
-    val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-      .setAudioAttributes(recognitionAudioAttributes)
-      .setOnAudioFocusChangeListener(focusChangeListener, mainHandler)
-      .build()
-    activeFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
-    activeFocusRequest = request
-    return audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-  }
-
-  private fun abandonRecognitionFocus() {
-    activeFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
-    activeFocusRequest = null
-  }
-
-  private fun rejectActive(code: String, message: String) {
-    val promise = activePromise
-    activePromise = null
-    startedAtMs = 0L
-    abandonRecognitionFocus()
-    promise?.reject(code, message)
-  }
+  @ReactMethod fun cancel(promise: Promise) { main.post { fail("CANCELLED", "Recognition cancelled."); promise.resolve(true) } }
+  override fun onHostResume() { main.post { resumed = true } }
+  override fun onHostPause() { main.post { resumed = false; fail("SUSPENDED", "Recognition suspended.") } }
+  override fun onHostDestroy() = onHostPause()
+  override fun invalidate() { context.removeLifecycleEventListener(this); onHostPause(); super.invalidate() }
 }

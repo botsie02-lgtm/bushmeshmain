@@ -4,7 +4,7 @@ import {Linking, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View} f
 import {CarMessagingStatusBanner} from '../components/CarMessagingStatusBanner';
 import {RadioSpeechStatusBanner} from '../components/RadioSpeechStatusBanner';
 import {SecureDataStatusBanner} from '../components/SecureDataStatusBanner';
-import {SpeechPttPanel} from '../components/SpeechPttPanel';
+import {VoiceReadinessPanel} from '../speech/VoiceReadinessPanel';
 import {SpeechStatusBanner} from '../components/SpeechStatusBanner';
 import {meshCoreInboundDiagnostics} from '../meshcore/meshcoreInboundDiagnostics';
 import {nativeOutboundDiagnostics} from '../meshcore/nativeOutboundDiagnostics';
@@ -139,8 +139,8 @@ function SettingsDetail({page}: {page: RadioSettingsPage}): React.JSX.Element {
       </Section></>}
       {page === 'ptt' && <Section
         heading="Push-to-talk diagnostics"
-        detail="Hold to create a local speech draft, then review it before explicitly submitting text to the selected MeshCore carrier. Opening settings never activates the microphone.">
-        <SpeechPttPanel />
+        detail="Use the microphone inside a verified Radio conversation. The legacy direct-send PTT panel is no longer mounted. Opening settings never activates the microphone.">
+        <VoiceReadinessPanel />
       </Section>}
       {page === 'privacy' && <Section
         heading="Message history & privacy"
