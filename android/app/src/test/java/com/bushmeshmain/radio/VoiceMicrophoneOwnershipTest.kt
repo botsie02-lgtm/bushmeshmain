@@ -69,4 +69,35 @@ class VoiceMicrophoneOwnershipTest {
     assertEquals(VoiceHeldTurn.Finish.CANCEL, turn.finish("second", true))
     assertEquals(VoiceHeldTurn.Finish.IGNORE, turn.finish("second", true))
   }
+
+  @Test fun playbackLeaseRejectsMicrophoneAndStaleRelease() {
+    val playback = VoicePlaybackOwnership()
+    assertNull(playback.claim(false, true) {})
+    val ordinary = playback.claim(false, false) {}
+    assertNotNull(ordinary)
+    assertFalse(playback.critical)
+    assertNull(playback.claim(true, false) {})
+    playback.release(ordinary)
+    val critical = playback.claim(true, false) {}
+    assertNotNull(critical)
+    assertTrue(playback.critical)
+    playback.release(ordinary)
+    assertTrue(playback.owns(critical))
+    playback.release(critical)
+    assertFalse(playback.busy)
+  }
+
+  @Test fun playbackInterruptionCannotOverlapNewMicrophone() {
+    val microphone = VoiceMicrophoneOwnership()
+    val playback = VoicePlaybackOwnership()
+    var lease: VoicePlaybackOwnership.Lease? = null
+    lease = playback.claim(false, false) { playback.release(lease) }
+    assertNotNull(lease)
+    assertNull(microphone.claim(VoiceMicrophoneOwnership.Kind.COMMAND, playback.busy) {})
+    playback.interrupt()
+    val mic = microphone.claim(VoiceMicrophoneOwnership.Kind.COMMAND, playback.busy) {}
+    assertNotNull(mic)
+    assertNull(playback.claim(true, microphone.busy) {})
+    microphone.release(mic)
+  }
 }
