@@ -21,6 +21,7 @@ function controller() {
   const value: ChatManagementController = {
     radio: chat.radio, sessionEpoch: 1, busy: false, radioBusy: false, error: null, ready: true,
     capacity: {used: 1, total: 4}, chats: [chat],
+    catalogueStatus: 'ready',
     preferences: {[chat.id]: {...defaultChatPreferences, localCreator: true, origin: 'created'}},
     refresh: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockResolvedValue(undefined),
