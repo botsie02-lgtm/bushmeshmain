@@ -53,3 +53,84 @@ jobs:
           path: wake-evidence/
           if-no-files-found: error
           retention-days: 14
+
+  android-audio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci
+      - name: Provision pinned model and synthetic acoustic fixtures
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y espeak-ng ffmpeg
+          python tools/voice/qualify_wake_audio.py provision "$RUNNER_TEMP/wake"
+          mkdir -p "$RUNNER_TEMP/wake-assets" wake-android-evidence
+          cp -R "$RUNNER_TEMP/wake/vosk-model-small-en-us-0.15" "$RUNNER_TEMP/wake-assets/wake-model"
+          python tools/voice/qualify_wake_audio.py generate "$RUNNER_TEMP/wake-assets/wake-fixtures"
+          cp "$RUNNER_TEMP/wake/model-provenance.json" wake-android-evidence/
+          cp "$RUNNER_TEMP/wake-assets/wake-fixtures/manifest.json" wake-android-evidence/fixture-manifest.json
+      - name: Compile isolated app and evaluation-only instrumentation
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew :app:assembleRelease :app:assembleReleaseAndroidTest \
+            -PradioRedesignFieldTest -PwakeEvaluationAssets="$RUNNER_TEMP/wake-assets" --no-daemon
+      - name: Measure APK sizes and inspect native dependency provenance
+        run: |
+          app=android/app/build/outputs/apk/release/app-release.apk
+          test_apk="$(find android/app/build/outputs/apk/androidTest -name '*.apk' -type f -print -quit)"
+          test -n "$test_apk"
+          cp "$test_apk" "$RUNNER_TEMP/wake-test.apk"
+          printf 'app_bytes=%s\nevaluation_test_bytes=%s\n' "$(wc -c < "$app")" "$(wc -c < "$test_apk")" | tee wake-android-evidence/apk-sizes.txt
+          sha256sum "$app" "$test_apk" > wake-android-evidence/apk-sha256.txt
+          unzip -Z1 "$app" > wake-android-evidence/app-inventory.txt
+          if grep -Ei 'libvosk|libjnidispatch|assets/wake-model' wake-android-evidence/app-inventory.txt; then
+            echo 'Unexpected candidate dependency in production APK'; exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/wake-native"
+          unzip -j "$test_apk" 'lib/arm64-v8a/libvosk.so' 'lib/arm64-v8a/libjnidispatch.so' -d "$RUNNER_TEMP/wake-native"
+          for lib in "$RUNNER_TEMP"/wake-native/*.so; do
+            sha256sum "$lib"
+            readelf -h "$lib"
+            readelf -lW "$lib"
+          done | tee wake-android-evidence/arm64-elf.txt
+          for dep in com.alphacephei/vosk-android/0.3.75 net.java.dev.jna/jna/5.18.1; do
+            find "$HOME/.gradle/caches/modules-2/files-2.1/$dep" -type f \( -name '*.aar' -o -name '*.pom' \) -exec sha256sum {} \;
+          done | tee wake-android-evidence/dependency-digests.txt
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Real offline PCM recognition on Android 16
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash tools/voice/verify_wake_audio_android.sh android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/wake-test.apk" wake-android-evidence
+      - name: Upload qualification evidence (no executable or model distribution)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wake-android-evaluation-${{ github.sha }}
+          path: wake-android-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
