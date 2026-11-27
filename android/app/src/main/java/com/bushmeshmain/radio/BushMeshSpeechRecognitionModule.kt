@@ -19,6 +19,8 @@ import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import com.facebook.react.bridge.*
+import com.facebook.react.common.LifecycleState
+import com.bushmeshmain.MainActivity
 
 /** A fresh recognizer per explicit turn. Stale callbacks never settle another
  * turn. No platform network recognizer, microphone service or automatic loop. */
@@ -40,7 +42,10 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   @Volatile private var invalidated = false
   private var probe: SpeechRecognizer? = null
   private var cancelProbe: (() -> Unit)? = null
-  private var resumed = context.lifecycleState == com.facebook.react.common.LifecycleState.RESUMED
+  private var admittedActivity: MainActivity? = null
+  private var admittedEpoch = -1L
+  private var microphoneClaims = 0L
+  private var startListeningRequests = 0L
   init { context.addLifecycleEventListener(this) }
   override fun getName() = "BushMeshSpeechRecognition"
   private fun supported() = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
@@ -51,7 +56,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
         putBoolean("listening", pending != null)
         putDouble("apiLevel", Build.VERSION.SDK_INT.toDouble())
         putString("reason", if (available) null else "No on-device recognizer available.")
-        putBoolean("foreground", resumed && context.currentActivity != null)
+        putBoolean("foreground", foregroundActivity() != null)
         putBoolean("permissionGranted", hasPermission())
         putString("microphoneOwner", when (VoiceAudioOwnership.microphone.owner) {
           VoiceMicrophoneOwnership.Kind.COMMAND -> "command"
@@ -62,6 +67,8 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
         putBoolean("playbackActive", VoiceAudioOwnership.speaking)
         putString("lastFailure", lastFailure)
         putString("phase", phase)
+        putDouble("microphoneClaims", microphoneClaims.toDouble())
+        putDouble("startListeningRequests", startListeningRequests.toDouble())
     }
   }
 
@@ -121,13 +128,26 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
     audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_IN_COMMUNICATION ||
       audio.mode == AudioManager.MODE_RINGTONE
 
-  private fun eligible() = !invalidated && resumed && context.currentActivity != null && hasPermission()
+  /** Lifecycle callbacks are hints, never authority to enable capture.
+   * React may enqueue a registration-time resume; read both live states
+   * on the main looper, including the actual Activity lifecycle. */
+  private fun foregroundActivity(): MainActivity? {
+    if (invalidated || context.lifecycleState != LifecycleState.RESUMED) return null
+    val activity = context.currentActivity as? MainActivity ?: return null
+    return activity.takeIf { it.voiceForegroundResumed && !it.isFinishing && !it.isDestroyed }
+  }
+
+  private fun eligibleTurn(): Boolean {
+    val activity = foregroundActivity() ?: return false
+    return hasPermission() && activity === admittedActivity &&
+      activity.voiceForegroundEpoch == admittedEpoch
+  }
 
   private fun watchEligibility(turn: Long) {
     val check = object : Runnable {
       override fun run() {
         if (generation != turn || pending == null) return
-        if (!eligible()) { fail("SUSPENDED", "Foreground microphone permission or activity lost."); return }
+        if (!eligibleTurn()) { fail("SUSPENDED", "Foreground microphone permission or activity lost."); return }
         if (callActive()) { fail("INTERRUPTED", "Call or communication audio became active."); return }
         main.postDelayed(this, 500L)
       }
@@ -158,6 +178,8 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
     timeout?.let { main.removeCallbacks(it) }; timeout = null
     eligibilityCheck?.let { main.removeCallbacks(it) }; eligibilityCheck = null
     heldTurn = null
+    admittedActivity = null
+    admittedEpoch = -1L
     audioDevices?.let { runCatching { audio.unregisterAudioDeviceCallback(it) } }; audioDevices = null
     val previous = engine; engine = null
     runCatching { previous?.cancel() }
@@ -190,12 +212,15 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
       if (pending != null || probe != null || VoiceAudioOwnership.microphoneBusy || VoiceAudioOwnership.speaking) {
         promise.reject("BUSHMESH_STT_BUSY", "Microphone or speech output is busy."); return@post
       }
-      if (!eligible()) {
+      val activity = foregroundActivity()
+      if (activity == null || !hasPermission()) {
         promise.reject("BUSHMESH_STT_PERMISSION", "Foreground microphone permission required."); return@post
       }
       if (callActive()) {
         promise.reject("BUSHMESH_STT_INTERRUPTED", "Call or communication audio is active."); return@post
       }
+      admittedActivity = activity
+      admittedEpoch = activity.voiceForegroundEpoch
       pending = promise
       lastFailure = null
       phase = "starting"
@@ -216,12 +241,14 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
           if (generation == turn) fail("INTERRUPTED", "Interrupted by critical speech.")
         }
         check(microphoneLease != null)
+        microphoneClaims++
         publishStatus()
         val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         engine = recognizer
         recognizer.setRecognitionListener(object : RecognitionListener {
           override fun onReadyForSpeech(params: Bundle?) {
             if (generation == turn && VoiceAudioOwnership.microphone.owns(microphoneLease)) {
+              if (!eligibleTurn()) { fail("SUSPENDED", "Recognition suspended."); return }
               if (phase == "starting") phase = "listening"
               heldTurn?.markReady()
               publishStatus()
@@ -239,7 +266,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
           override fun onPartialResults(partialResults: Bundle?) {
             // Platform support varies. Partial text is never a command, never
             // persisted, and is emitted only for an explicitly held turn.
-            if (requestId == null || generation != turn || !eligible() ||
+            if (requestId == null || generation != turn || !eligibleTurn() ||
               !VoiceAudioOwnership.microphone.owns(microphoneLease)) return
             val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
               ?.firstOrNull()?.trim()?.take(2048)?.takeIf { it.isNotEmpty() } ?: return
@@ -260,7 +287,8 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
           override fun onResults(results: Bundle?) {
             if (generation != turn || !VoiceAudioOwnership.microphone.owns(microphoneLease)) return
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-            if (!eligible() || callActive() || matches.isEmpty()) {
+            if (!eligibleTurn()) { fail("SUSPENDED", "Recognition suspended."); return }
+            if (callActive() || matches.isEmpty()) {
               fail("NO_MATCH", "No usable foreground recognition result."); return
             }
             val result = Arguments.createMap().apply {
@@ -281,6 +309,8 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
         }
         timeout = Runnable { if (generation == turn) fail("TIMEOUT", "Listening timed out.") }.also { main.postDelayed(it, 20_000) }
         watchAudioDevices(turn)
+        if (!eligibleTurn()) { fail("SUSPENDED", "Recognition suspended before start."); return@post }
+        startListeningRequests++
         recognizer.startListening(intent)
         watchEligibility(turn)
       } catch (_: Exception) { fail("START_FAILED", "On-device recognition could not start. Check language resources and audio focus.") }
@@ -346,8 +376,30 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
       promise.resolve(true)
     }
   }
-  override fun onHostResume() { main.post { if (!invalidated) { resumed = true; publishStatus() } } }
-  override fun onHostPause() { main.post { resumed = false; cancelProbe?.invoke(); fail("SUSPENDED", "Recognition suspended."); publishStatus() } }
-  override fun onHostDestroy() = onHostPause()
-  override fun invalidate() { invalidated = true; context.removeLifecycleEventListener(this); onHostPause(); super.invalidate() }
+  // React lifecycle callbacks normally run on the UI thread. Handle them
+  // synchronously there to avoid reordering pause behind a new turn. If
+  // delivered off-main, reconcile live state when the callback executes.
+  private fun onMain(action: () -> Unit) {
+    if (Looper.myLooper() == main.looper) action() else main.post { action() }
+  }
+
+  private fun reconcileLifecycle() = onMain {
+    if (foregroundActivity() == null) cancelProbe?.invoke()
+    if (pending != null && !eligibleTurn()) fail("SUSPENDED", "Recognition suspended.")
+    publishStatus()
+  }
+
+  override fun onHostResume() = reconcileLifecycle()
+  override fun onHostPause() = reconcileLifecycle()
+  override fun onHostDestroy() = reconcileLifecycle()
+
+  override fun invalidate() {
+    invalidated = true
+    context.removeLifecycleEventListener(this)
+    onMain {
+      cancelProbe?.invoke()
+      fail("SUSPENDED", "Recognition module closed.")
+    }
+    super.invalidate()
+  }
 }
