@@ -146,10 +146,16 @@ class BushMeshSpeechModule(
         promise.reject("BUSHMESH_TTS_UNAVAILABLE", "Installed offline voice unavailable."); return@withReady
       }
       if (!critical && generation != ordinaryGeneration) { promise.reject("BUSHMESH_TTS_INTERRUPTED", "Speech was cancelled."); return@withReady }
-      if (!critical && (VoiceAudioOwnership.cancelRecognition != null || VoiceAudioOwnership.critical)) {
+      if (!critical && (VoiceAudioOwnership.microphoneBusy || VoiceAudioOwnership.critical)) {
         promise.reject("BUSHMESH_TTS_BUSY", "Microphone or critical speech is active."); return@withReady
       }
-      if (critical) { VoiceAudioOwnership.cancelRecognition?.invoke(); clearSpeech() }
+      if (critical) {
+        VoiceAudioOwnership.interruptRecognition()
+        if (VoiceAudioOwnership.microphoneBusy) {
+          promise.reject("BUSHMESH_TTS_BUSY", "Microphone ownership has not been released."); return@withReady
+        }
+        clearSpeech()
+      }
       if (utterances.isEmpty() && !requestSpeechFocus()) { abandonSpeechFocus(); promise.reject("BUSHMESH_TTS_FOCUS", "Speech audio focus unavailable."); return@withReady }
       val id = "bushmesh-" + (++utteranceSequence)
       VoiceAudioOwnership.speaking = true
@@ -218,7 +224,7 @@ class BushMeshSpeechModule(
     mainHandler.post {
       try {
         require(locale in listOf("en-AU","en-GB","en-US") && rate.isFinite() && rate in 0.75..1.35)
-        check(!VoiceAudioOwnership.speaking && VoiceAudioOwnership.cancelRecognition == null)
+        check(!VoiceAudioOwnership.speaking && !VoiceAudioOwnership.microphoneBusy)
         val tts = engine
         val previous = tts?.voice
         val previousRate = speechRate()
