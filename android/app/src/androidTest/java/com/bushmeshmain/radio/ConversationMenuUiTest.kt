@@ -30,6 +30,8 @@ class ConversationMenuUiTest {
   @Test fun actualTouchDismissalAndSwitchingOfflineCatalogueRows() {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val context = instrumentation.targetContext
+    val constrained = InstrumentationRegistry.getArguments().getString("menuConstrained") == "true"
+    val bravoDisplayName = "Smoke Bravo — remote Australian convoy recovery and campsite coordination"
     check(context.packageName == "com.bushmeshmain.radioredesign")
     fun nativeCall(call: (PromiseImpl) -> Unit): Any? {
       val result = AtomicReference<Any?>()
@@ -149,9 +151,9 @@ class ConversationMenuUiTest {
       instrumentation.waitForIdleSync()
     }
     fun tap(label: String) = touch(await(label))
-    fun checkpoint(name: String) {
+    fun checkpoint(name: String, screenshot: Boolean = false) {
       stage = name
-      evidence(name)
+      evidence(name, screenshot)
     }
     fun inbox() {
       await("Radio", true, tab = true)
@@ -159,17 +161,50 @@ class ConversationMenuUiTest {
       await("Chat options Smoke Alpha")
       await("Chat options Smoke Bravo")
     }
+    fun scrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+      if (node == null) return null
+      if (node.isVisibleToUser && node.isScrollable && node.className?.toString() == "android.widget.ScrollView") return node
+      for (i in 0 until node.childCount) scrollable(node.getChild(i))?.let { return it }
+      return null
+    }
+    fun awaitCloseAction(): Rect {
+      val deadline = SystemClock.uptimeMillis() + 20_000
+      while (SystemClock.uptimeMillis() < deadline) {
+        val root = activeRoot()
+        val close = find(root, "Close chat options")
+        // An accessibility node can be partially clipped. Require a
+        // usable full 48dp target before the existing real-touch dismissal.
+        if (close != null && close.height() >= (48 * context.resources.displayMetrics.density).toInt() - 1) return close
+        scrollable(root)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        SystemClock.sleep(200)
+      }
+      error("Close chat options not reachable at $stage")
+    }
     fun openOptions(name: String) {
       stage = "open-" + name.substringAfter(" ").lowercase()
       tap("Chat options $name")
-      await("Close chat options")
-      await(name)
+      val headingName = if (name == "Smoke Bravo") bravoDisplayName else name
+      val heading = await(headingName)
+      val first = await("Pin chat")
+      assertTrue("Heading must have nonzero height above the action area: $heading / $first",
+        heading.height() > 0 && heading.bottom <= first.top)
+      awaitCloseAction()
+      val afterScroll = await(headingName)
+      assertEquals("Heading must stay visible and stationary while actions scroll", heading, afterScroll)
+      trace("HEADING_VISIBLE name=${JSONObject.quote(headingName)} bounds=$heading firstAction=$first afterScroll=$afterScroll")
     }
     try {
       // Waiting for actual UI ensures the production React instance is running.
       await("Drive", true, tab = true)
       await("Radio", false, tab = true)
       checkpoint("drive-before-fixture")
+      val fontScale = activity.resources.configuration.fontScale
+      val viewport = activity.windowManager.currentWindowMetrics.bounds
+      trace("MENU_VIEWPORT constrained=$constrained fontScale=$fontScale bounds=$viewport")
+      if (constrained) {
+        assertTrue("Constrained menu must actually use large fonts", fontScale >= 1.45f)
+        assertTrue("Constrained menu must actually use a reduced viewport", viewport.height() <= 1500)
+      }
       val deadline = SystemClock.uptimeMillis() + 20_000
       var reactContext: ReactApplicationContext? = null
       while (reactContext == null && SystemClock.uptimeMillis() < deadline) {
@@ -184,7 +219,7 @@ class ConversationMenuUiTest {
         val id = nativeCall { store.chatConfigurationId("synthetic-menu-fixture-" + slot, it) } as String
         expected.add("$name slot=$slot id=$id")
         val config = JSONObject().put("id", id).put("radio", "synthetic-offline-radio").put("slot", slot).put("name", name).put("privateChannel", true)
-        entries.put(id, JSONObject().put("displayName", "").put("pinned", false).put("archived", false).put("unread", false)
+        entries.put(id, JSONObject().put("displayName", if (slot == 1) bravoDisplayName else "").put("pinned", false).put("archived", false).put("unread", false)
           .put("localCreator", false).put("origin", "unknown").put("description", "").put("avatarColor", "lime").put("avatarIcon", "initials")
           .put("configuration", config).put("incarnation", 1).put("retired", false))
       }
@@ -202,15 +237,19 @@ class ConversationMenuUiTest {
       inbox()
       checkpoint("catalogue-ready")
       openOptions("Smoke Alpha")
-      checkpoint("alpha-menu")
+      checkpoint("alpha-menu", screenshot = true)
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
       inbox()
       checkpoint("back-dismissed")
       openOptions("Smoke Bravo")
-      checkpoint("bravo-menu")
+      checkpoint("bravo-menu", screenshot = true)
       tap("Close chat options")
       inbox()
       checkpoint("button-dismissed")
+      // The second, compact-viewport qualification is deliberately focused
+      // on heading geometry and scroll reachability. The normal run below
+      // still covers every original dismissal and details interaction.
+      if (constrained) return
       openOptions("Smoke Alpha")
       // Backdrop centre could be obscured by sheet, tap near its top instead.
       val backdrop = await("Dismiss conversation options")

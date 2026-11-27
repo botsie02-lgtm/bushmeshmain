@@ -227,8 +227,10 @@ export function RadioInbox({
         <View style={styles.overlay}>
           <Pressable accessibilityRole="button" accessibilityLabel="Dismiss conversation options" style={StyleSheet.absoluteFill} onPress={closeMenu}/>
           <View accessibilityViewIsModal style={styles.sheet}>
-            <Text style={styles.rowName}>{selected.displayName || selected.channel.channelName}</Text>
-            <ScrollView keyboardShouldPersistTaps="always" style={styles.sheetScroll}>
+            <Text testID="conversation-options-heading" accessibilityRole="header" style={styles.sheetHeading}>
+              {selected.displayName || selected.channel.channelName}
+            </Text>
+            <ScrollView testID="conversation-options-actions" keyboardShouldPersistTaps="always" style={styles.sheetScroll}>
               <Action subtle label={selected.pinned ? 'Unpin chat' : 'Pin chat'} onPress={() => action(onPin)}/>
               {onArchive && <Action subtle label={filter === 'archived' ? 'Unarchive chat' : 'Archive chat'} onPress={() => action(onArchive)}/>}
               {onMarkRead && (selected.manualUnread || !!selected.unreadCount) ? <Action subtle label="Mark read" onPress={() => action(onMarkRead)}/> : onMarkUnread && <Action subtle label="Mark unread" onPress={() => action(onMarkUnread)}/>}
@@ -295,8 +297,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', marginRight: 4},
   unreadText: {fontSize: 12, fontWeight: '900', color: colors.background},
   overlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end'},
-  sheet: {backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 32, maxHeight: '85%', gap: 12},
-  sheetScroll: {flexGrow: 0},
+  sheet: {backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 32, maxHeight: '85%', flexShrink: 1, gap: 12},
+  // The row title's flex:1 is for horizontal rows; a vertical sheet must
+  // reserve the heading's measured text height before allocating actions.
+  sheetHeading: {flexGrow: 0, flexShrink: 0, color: colors.textPrimary, fontSize: 16, fontWeight: '800'},
+  sheetScroll: {flexGrow: 0, flexShrink: 1, minHeight: 0},
   action: {minHeight: 48, paddingHorizontal: 14, borderRadius: 11,
     backgroundColor: colors.accent, justifyContent: 'center'},
   subtle: {backgroundColor: colors.surfaceSoft},

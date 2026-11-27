@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {AppState, FlatList, Keyboard, KeyboardAvoidingView, Modal, PermissionsAndroid, Platform, StyleSheet, Text, TouchableOpacity} from 'react-native';
+import {AppState, FlatList, Keyboard, KeyboardAvoidingView, Modal, PermissionsAndroid, Platform, ScrollView, StyleSheet, Text, TouchableOpacity} from 'react-native';
 import {RadioScreen} from '../src/screens/RadioScreen';
 import {RadioInbox} from '../src/screens/radioMessenger/RadioInbox';
 import {ViewedConversationProvider} from '../src/app/activeContext/ViewedConversationContext';
@@ -839,4 +839,28 @@ test('offline catalogue read failure is distinguished from a genuinely empty cat
   await mount({enableChatManagement:true});
   expect(viewText()).toContain('Saved chats unavailable');
   expect(viewText()).not.toContain('No chats available offline');
+});
+
+test('conversation options heading retains intrinsic height and actions alone can shrink', async () => {
+  const longName = 'Smoke Bravo — remote Australian convoy recovery and campsite coordination';
+  connected = false; addr = null;
+  const chat = chatConfigs[1];
+  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({
+    entries: {[chat.id]: {...defaultChatPreferences, displayName: longName, configuration: chat, incarnation: 1, retired: false}},
+    sort: 'recent',
+  });
+  await mount({enableChatManagement: true});
+  await press('Chat options Private');
+  const modal = tree.root.findByType(Modal);
+  const heading = modal.findAllByType(Text).find(node => node.props.testID === 'conversation-options-heading');
+  const actions = modal.findAllByType(ScrollView).find(node => node.props.testID === 'conversation-options-actions');
+  expect(heading?.props.children).toBe(longName);
+  expect(heading?.props.accessibilityRole).toBe('header');
+  expect(heading?.props.numberOfLines).toBeUndefined();
+  expect(heading?.props.allowFontScaling).not.toBe(false);
+  expect(StyleSheet.flatten(heading?.props.style)).toEqual(expect.objectContaining({flexGrow: 0, flexShrink: 0}));
+  expect(StyleSheet.flatten(heading?.props.style).flex).toBeUndefined();
+  expect(StyleSheet.flatten(actions?.props.style)).toEqual(expect.objectContaining({flexGrow: 0, flexShrink: 1, minHeight: 0}));
+  await press('Close chat options');
+  expect(tree.root.findAllByType(Modal)).toHaveLength(0);
 });

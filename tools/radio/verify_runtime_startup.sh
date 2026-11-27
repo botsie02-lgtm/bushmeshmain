@@ -32,7 +32,11 @@ if grep -Fq "$pkg" "$out/smoke-fresh-crash.txt"; then exit 1; fi
 run_test() {
   local class="$1" suffix="${2:-}"
   local report="$out/smoke-$class$suffix.txt"
-  adb shell am instrument -w -r -e class "com.bushmeshmain.radio.$class" "$runner" | tee "$report" || return 1
+  local extra=()
+  if [ "$class" = ConversationMenuUiTest ] && [ "$suffix" = "-constrained" ]; then
+    extra=(-e menuConstrained true)
+  fi
+  adb shell am instrument -w -r -e class "com.bushmeshmain.radio.$class" "${extra[@]}" "$runner" | tee "$report" || return 1
   grep -Eq 'OK \([1-9][0-9]* tests?\)' "$report" || return 1
   if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$report"; then return 1; fi
 }
@@ -66,22 +70,34 @@ if [ "$mode" != ui ]; then
   independent_test RuntimeLifecycleDeniedTest || overall=1
 fi
 if [ "$mode" != native ]; then
-menu_result=0
-adb shell "rm -f /sdcard/Android/data/$pkg/files/menu-*.txt /sdcard/Android/data/$pkg/files/menu-*.png" || menu_result=1
-independent_test ConversationMenuUiTest || menu_result=1
-for name in $(adb shell "ls /sdcard/Android/data/$pkg/files/menu-*.txt /sdcard/Android/data/$pkg/files/menu-*.png 2>/dev/null" | tr -d '\r'); do
-  adb pull "$name" "$out/" || menu_result=1
-done
-if ! grep -Fq 'FIXTURE_RESTORED_EXACT' "$out/menu-stages.txt"; then
-  menu_result=1
-  reset_synthetic_fixture || { record_stage menu-fixture-isolation failed; exit 1; }
-fi
-if [ "$menu_result" -eq 0 ]; then
-  for stage in drive-before-fixture fixture-written radio-selected catalogue-ready alpha-menu back-dismissed bravo-menu button-dismissed backdrop-dismissed bravo-details details-returned complete; do
-    test -s "$out/menu-$stage.txt" || menu_result=1
+qualify_menu() {
+  local suffix="$1" prefix="menu" menu_result=0
+  if [ "$suffix" = "-constrained" ]; then prefix="menu-constrained"; fi
+  adb shell "rm -f /sdcard/Android/data/$pkg/files/menu-*.txt /sdcard/Android/data/$pkg/files/menu-*.png" || menu_result=1
+  independent_test ConversationMenuUiTest "$suffix" || menu_result=1
+  for name in $(adb shell "ls /sdcard/Android/data/$pkg/files/menu-*.txt /sdcard/Android/data/$pkg/files/menu-*.png 2>/dev/null" | tr -d '\r'); do
+    filename="${name##*/}"
+    adb pull "$name" "$out/$prefix-${filename#menu-}" || menu_result=1
   done
-fi
-if [ "$menu_result" -eq 0 ]; then record_stage menu-evidence passed; else record_stage menu-evidence failed; fi
+  if ! grep -Fq 'FIXTURE_RESTORED_EXACT' "$out/$prefix-stages.txt"; then
+    menu_result=1
+    reset_synthetic_fixture || { record_stage "$prefix-fixture-isolation" failed; exit 1; }
+  fi
+  if [ "$menu_result" -eq 0 ]; then
+    local stages=(drive-before-fixture fixture-written radio-selected catalogue-ready alpha-menu back-dismissed bravo-menu button-dismissed)
+    if [ -z "$suffix" ]; then stages+=(backdrop-dismissed bravo-details details-returned complete); fi
+    for stage in "${stages[@]}"; do
+      test -s "$out/$prefix-$stage.txt" || menu_result=1
+    done
+    for stage in alpha-menu bravo-menu; do
+      test -s "$out/$prefix-$stage.png" || menu_result=1
+    done
+    test "$(grep -c 'HEADING_VISIBLE' "$out/$prefix-stages.txt")" -ge 2 || menu_result=1
+  fi
+  if [ "$menu_result" -eq 0 ]; then record_stage "$prefix-evidence" passed; else record_stage "$prefix-evidence" failed; fi
+  return "$menu_result"
+}
+qualify_menu "" || overall=1
 # Force a visible software IME even with the emulator's hardware keyboard.
 if adb shell settings put secure show_ime_with_hard_keyboard 1; then record_stage keyboard-ime-setup passed; else record_stage keyboard-ime-setup failed; fi
 # Three predetermined independent executions, not retry-until-pass.
@@ -134,6 +150,40 @@ printf 'KEYBOARD_QUALIFICATION consecutive_required=3 passed=%s\n' "$keyboard_pa
 test "$keyboard_passes" -eq 3 || keyboard_result=1
 cat "$out"/smoke-keyboard-transitions-run-*.txt > "$out/smoke-keyboard-transitions.txt"
 if [ "$keyboard_result" -eq 0 ]; then record_stage keyboard-three-rounds passed; else record_stage keyboard-three-rounds failed; fi
+# Exercise compact viewport and larger fonts after the three untouched
+# keyboard executions. Preserve both normal and compact menu evidence.
+original_size="$(adb shell wm size | tr -d '\r')" || original_size=""
+original_font="$(adb shell settings get system font_scale | tr -d '\r')" || original_font=""
+if [ -z "$original_size" ] || [ -z "$original_font" ]; then
+  record_stage menu-constrained-setup failed
+else
+  original_override="$(printf '%s\n' "$original_size" | sed -n 's/^Override size: //p')"
+  compact_setup=0
+  adb shell am force-stop "$pkg" || compact_setup=1
+  adb shell wm size 1080x1500 || compact_setup=1
+  adb shell settings put system font_scale 1.5 || compact_setup=1
+  if [ "$compact_setup" -eq 0 ]; then
+    record_stage menu-constrained-setup passed
+    qualify_menu "-constrained" || overall=1
+  else
+    record_stage menu-constrained-setup failed
+  fi
+  restore_result=0
+  adb shell am force-stop "$pkg" || restore_result=1
+  if [ -n "$original_override" ]; then
+    adb shell wm size "$original_override" || restore_result=1
+  else
+    adb shell wm size reset || restore_result=1
+  fi
+  if [ "$original_font" = null ]; then
+    adb shell settings delete system font_scale || restore_result=1
+  else
+    adb shell settings put system font_scale "$original_font" || restore_result=1
+  fi
+  test "$(adb shell wm size | tr -d '\r')" = "$original_size" || restore_result=1
+  test "$(adb shell settings get system font_scale | tr -d '\r')" = "$original_font" || restore_result=1
+  if [ "$restore_result" -eq 0 ]; then record_stage menu-constrained-display-restored passed; else record_stage menu-constrained-display-restored failed; fi
+fi
 fi
 if [ "$mode" != ui ]; then
 voice_denied() {
