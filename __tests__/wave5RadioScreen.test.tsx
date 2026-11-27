@@ -653,5 +653,5 @@ test('composer microphone appends recognized text to current draft and does not 
     await press('Dictate message');
     expect(input().props.value).toBe('Existing draft tree ahead');
     expect(send).not.toHaveBeenCalled();expect(verifiedSend).not.toHaveBeenCalled();
-  } finally {await applicationVoice.cancel();Object.defineProperty(Platform,'OS',{configurable:true,value:os});jest.restoreAllMocks();}
+  } finally {await act(async()=>{await applicationVoice.cancel();});Object.defineProperty(Platform,'OS',{configurable:true,value:os});jest.restoreAllMocks();}
 });

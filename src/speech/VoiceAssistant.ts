@@ -85,7 +85,7 @@ export class VoiceAssistant {
    const command=parseVoiceCommand(result);
    this.set({phase:'interpreting',detail:command?'Command recognized.':'Uncertain command. Nothing sent.',transcript:result.text});
    if(!command)throw new Error('Unknown or uncertain command. Nothing sent.');
-   if(command==='cancel'||command==='stop'){await this.adapter.stopSpeech();this.set({phase:'idle',detail:'Stopped.'});return;}
+   if(command==='cancel'||command==='stop'){await this.adapter.stopSpeech();check();this.set({phase:'idle',detail:'Stopped.'});return;}
    if(command==='last'||command==='unread'||command==='repeat'){
     const values=command==='last'?[d.latest()]:command==='unread'?d.unread():[this.last?.key===d.key?this.last.text:null];
     const usable=values.filter((value):value is string=>!!value);
@@ -116,7 +116,11 @@ export class VoiceAssistant {
      this.transmitting=true;
      let outcome:string;
      try{outcome=await d.send(text,()=>this.valid(token,d)&&(!auto||matchQuickMessage(text,d.quick())===text));}finally{this.transmitting=false;if(token!==this.sequence&&!this.cancelling)this.active=false;}
-     if(this.valid(token,d)){this.set({phase:'speaking',detail:outcome});await this.adapter.speak(outcome);check();this.set({phase:'idle',detail:outcome});}
+     if(this.valid(token,d)){
+      this.set({phase:'speaking',detail:outcome});
+      try{await this.adapter.speak(outcome);}catch{if(this.valid(token,d))this.set({phase:'error',detail:outcome+' Offline readback failed.'});return;}
+      check();this.set({phase:'idle',detail:outcome});
+     }
      return;
     }
     throw new Error('Confirmation attempts exhausted. Nothing sent.');

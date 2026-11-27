@@ -3,7 +3,7 @@ import {localGpsReading} from '../src/speech/voiceGps';
 const heard=(text:string,confidence=.95):Recognition=>({text,confidence});
 function fixture(values:Recognition[]){
  let draft='unsent';let current=true;
- const send=jest.fn(async(_text:string,guard:()=>boolean)=>guard()?'Message accepted by the radio.':'No message submitted.');
+ const send=jest.fn(async(_text:string,guard:()=>boolean):ReturnType<NonNullable<VoiceDestination['send']>>=>guard()?'Message accepted by the radio.':'No message submitted.');
  const adapter:VoiceAdapter={permission:jest.fn(async()=>true),recognize:jest.fn(async()=>{const r=values.shift();if(!r)throw Error('no match');return r;}),cancel:jest.fn(async()=>undefined),stopListening:jest.fn(async()=>undefined),speak:jest.fn(async()=>undefined),stopSpeech:jest.fn(async()=>undefined)};
  const d:VoiceDestination={key:'radio-A/config:2/id',label:'Camp',isCurrent:()=>current,draft:()=>draft,editDraft:v=>{draft=v;},send,latest:()=> 'send message',unread:()=>['one','two'],quick:()=>['All clear'],radio:()=> 'Connected'};
  return {a:new VoiceAssistant(adapter),adapter,d,send,change:()=>{current=false;}};
@@ -58,4 +58,11 @@ test('uncertain submission is never retried and spoken failure cannot convert ac
  const f=fixture([heard('send message'),heard('tree'),heard('yes')]);
  f.send.mockResolvedValue('Radio acceptance uncertain. Do not resend automatically.');
  await f.a.run('command',f.d);expect(f.send).toHaveBeenCalledTimes(1);expect(f.a.snapshot().detail).toContain('uncertain');
+});
+
+test('failed spoken outcome preserves uncertain submission and never retries',async()=>{
+ const f=fixture([heard('send message'),heard('tree'),heard('yes')]);
+ f.send.mockResolvedValue('Radio acceptance uncertain. Do not resend automatically.');
+ jest.spyOn(f.adapter,'speak').mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Offline speech unavailable.'));
+ await f.a.run('command',f.d);expect(f.send).toHaveBeenCalledTimes(1);expect(f.a.snapshot().detail).toContain('Radio acceptance uncertain. Do not resend automatically.');expect(f.a.snapshot().detail).toContain('readback');
 });
