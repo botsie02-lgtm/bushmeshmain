@@ -12,7 +12,7 @@ from .adapters import NoOpAdapter, VoskEndpointAdapter, ExternalJsonLinesAdapter
 from .evaluate import evaluate_stream
 from .generate import generate
 from .ingest import ingest_human
-from .manifest import assert_disjoint, load_manifest, recording_summary
+from .manifest import HEX, _id, assert_disjoint, load_manifest, recording_summary, sha256
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -30,6 +30,8 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--training-manifest", type=Path)
     check.add_argument("--tuning-manifest", type=Path)
     check.add_argument("--adapter", choices=("noop", "vosk", "external"), default="noop")
+    check.add_argument("--detector-id", help="Frozen adapter/model build identifier")
+    check.add_argument("--detector-sha256", help="SHA-256 of the frozen model artifact (required for held-out acceptance)")
     check.add_argument("--adapter-command", help="Quoted command for persistent JSONL detector")
     check.add_argument("--model", type=Path, help="Offline Vosk model directory, only for legacy comparison")
     check.add_argument("--vosk-mode", choices=("unconstrained", "grammar"), default="unconstrained")
@@ -71,8 +73,10 @@ def main(argv: list[str] | None = None) -> int:
         manifests = [load_manifest(path, require_coverage=args.require_coverage)
                      for path in args.manifest]
         assert_disjoint(manifests)
-        print(json.dumps({"valid": True, "manifests": [recording_summary(x) for x in manifests]},
-                         indent=2))
+        print(json.dumps({"valid": True, "manifests": [
+            {**recording_summary(x), "manifest_sha256": sha256(path)}
+            for x, path in zip(manifests, args.manifest)
+        ]}, indent=2))
     elif args.command == "ingest-consented":
         entry = ingest_human(
             args.input, args.out, split=args.split, clip_id=args.clip_id,
@@ -92,6 +96,13 @@ def main(argv: list[str] | None = None) -> int:
                              (json.loads(args.manifest.read_text())["split"] == "acceptance")
                              else False)
         if data["split"] == "acceptance":
+            if args.adapter == "noop":
+                raise ValueError("No-op adapter cannot evaluate final held-out acceptance")
+            if args.detector_id is None or args.detector_sha256 is None:
+                raise ValueError("Final acceptance requires a frozen detector ID and SHA-256")
+            if not HEX.fullmatch(args.detector_sha256):
+                raise ValueError("Frozen detector SHA-256 must be 64 lowercase hexadecimal characters")
+            _id(args.detector_id, "detector_id")
             if args.training_manifest is None or args.tuning_manifest is None:
                 raise ValueError("Held-out acceptance requires both training and tuning manifests for leakage audit")
             train = load_manifest(args.training_manifest)
@@ -103,6 +114,10 @@ def main(argv: list[str] | None = None) -> int:
             others = [load_manifest(path) for path in
                       (args.training_manifest, args.tuning_manifest) if path is not None]
             assert_disjoint(others + [data])
+        if args.detector_id is not None:
+            _id(args.detector_id, "detector_id")
+        if args.detector_sha256 is not None and not HEX.fullmatch(args.detector_sha256):
+            raise ValueError("Invalid frozen detector SHA256")
         if args.adapter == "vosk" and args.model is None:
             raise ValueError("Vosk adapter requires --model pointing to a verified offline model")
         if args.adapter == "external" and not args.adapter_command:
@@ -136,10 +151,15 @@ def main(argv: list[str] | None = None) -> int:
             "detector": {
                 "adapter": args.adapter,
                 "vosk_mode": args.vosk_mode if args.adapter == "vosk" else None,
-                "custom_model_identified": False,
+                "detector_id": args.detector_id,
+                "frozen_model_sha256": args.detector_sha256,
+                "custom_model_identified": bool(args.detector_id and args.detector_sha256),
                 "operational_approval": False,
             },
             "dataset": recording_summary(data),
+            "dataset_manifest_sha256": sha256(args.manifest),
+            "training_manifest_sha256": sha256(args.training_manifest) if args.training_manifest else None,
+            "tuning_manifest_sha256": sha256(args.tuning_manifest) if args.tuning_manifest else None,
             "augmentation_seed": args.seed,
             "conditions": rows,
             "held_out_acceptance": data["split"] == "acceptance",
