@@ -169,7 +169,8 @@ internal class WakeSessionController(
       }
       is WakeCaptureEvent.Failed -> stop(event.reason)
       is WakeCaptureEvent.Detected -> {
-        if (phase != WakePhase.LISTENING || !event.confidence.isFinite() || event.confidence !in 0.0..1.0) return
+        if (phase != WakePhase.LISTENING) return
+        if (!event.confidence.isFinite() || event.confidence !in 0.0..1.0) { stop(WakeReason.DETECTOR_FAILED); return }
         // Invalidate queued detections BEFORE releasing the physical input.
         if (!releaseCapture()) { stop(WakeReason.RELEASE_FAILED); return }
         wakes++

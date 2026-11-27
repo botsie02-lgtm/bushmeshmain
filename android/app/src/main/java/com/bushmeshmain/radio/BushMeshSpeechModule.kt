@@ -152,6 +152,7 @@ class BushMeshSpeechModule(
         promise.reject("BUSHMESH_TTS_UNAVAILABLE", "Installed offline voice unavailable."); return@withReady
       }
       if (!critical && generation != ordinaryGeneration) { promise.reject("BUSHMESH_TTS_INTERRUPTED", "Speech was cancelled."); return@withReady }
+      VoiceAudioOwnership.yieldWakeForAudio()
       if (!critical && (VoiceAudioOwnership.microphoneBusy || VoiceAudioOwnership.critical)) {
         promise.reject("BUSHMESH_TTS_BUSY", "Microphone or critical speech is active."); return@withReady
       }

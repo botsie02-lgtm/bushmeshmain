@@ -10,6 +10,12 @@ internal object VoiceAudioOwnership {
   val critical: Boolean get() = playback.critical
   val microphoneBusy: Boolean get() = microphone.busy
 
+  /** Only the wake lease yields to ordinary competing audio. Never cancel a
+   * finite command or held turn merely to play an ordinary message. */
+  fun yieldWakeForAudio() {
+    if (microphone.owner == VoiceMicrophoneOwnership.Kind.WAKE_DETECTOR) microphone.interrupt()
+  }
+
   fun interruptRecognition() {
     microphone.interrupt()
   }
