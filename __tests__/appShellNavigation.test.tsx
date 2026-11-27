@@ -339,7 +339,7 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Privacy and storage');});
     expect(visibleText(renderer)).toContain('does not prove verified membership');
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
-    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Voice assistant readiness');});
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Speech-to-text setup');});
     expect(renderer.root.findAllByType(VoiceReadinessPanel)).toHaveLength(1);
     expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(0);
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});

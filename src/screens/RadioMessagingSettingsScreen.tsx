@@ -19,7 +19,7 @@ import {RadioQuarantineReview} from './radioMessenger/RadioQuarantineReview';
 import {useBushMesh} from '../state/BushMeshContext';
 
 export type RadioSettingsPage = 'hub' | 'connection' | 'quick' | 'notifications' | 'speech' | 'ptt' | 'history' | 'privacy' | 'diagnostics';
-export const RADIO_SETTINGS_LABELS: Record<RadioSettingsPage, string> = {hub: 'Messaging settings', connection: 'Radio connection', quick: 'Quick messages', notifications: 'Notifications and Android Auto', speech: 'Speech and auto-read', ptt: 'Voice assistant readiness', history: 'Radio History', privacy: 'Privacy and storage', diagnostics: 'Advanced diagnostics'};
+export const RADIO_SETTINGS_LABELS: Record<RadioSettingsPage, string> = {hub: 'Messaging settings', connection: 'Radio connection', quick: 'Quick messages', notifications: 'Notifications and Android Auto', speech: 'Speech and auto-read', ptt: 'Speech-to-text setup', history: 'Radio History', privacy: 'Privacy and storage', diagnostics: 'Advanced diagnostics'};
 
 function Section({
   heading,
@@ -138,8 +138,8 @@ function SettingsDetail({page}: {page: RadioSettingsPage}): React.JSX.Element {
         <SpeechStatusBanner />
       </Section></>}
       {page === 'ptt' && <Section
-        heading="Voice assistant readiness"
-        detail="Use the microphone inside a verified Radio conversation. The legacy direct-send PTT panel is no longer mounted. Opening settings never activates the microphone.">
+        heading="Speech-to-text setup"
+        detail="Choose or download an offline language for dictation. The microphone adds text to your draft only; you send messages yourself. Opening settings never activates the microphone.">
         <VoiceReadinessPanel />
       </Section>}
       {page === 'privacy' && <Section

@@ -68,6 +68,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
         putBoolean("playbackActive", VoiceAudioOwnership.speaking)
         putString("lastFailure", lastFailure)
         putString("phase", phase)
+        putString("requestId", heldTurn?.requestId)
         putDouble("microphoneClaims", microphoneClaims.toDouble())
         putDouble("startListeningRequests", startListeningRequests.toDouble())
     }
@@ -312,7 +313,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
         promise.reject("BUSHMESH_STT_INTERRUPTED", "Call or communication audio is active."); return@post
       }
       if (!runCatching { supported() }.getOrDefault(false)) {
-        promise.reject("BUSHMESH_STT_UNAVAILABLE", "No on-device recognizer is available. Open Voice assistant readiness."); return@post
+        promise.reject("BUSHMESH_STT_UNAVAILABLE", "No on-device recognizer is available. Open speech-to-text setup."); return@post
       }
       admittedActivity = activity
       admittedEpoch = activity.voiceForegroundEpoch
@@ -342,6 +343,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
         val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         engine = recognizer
         recognizer.setRecognitionListener(object : RecognitionListener {
+          private var lastLevelAt = 0L
           override fun onReadyForSpeech(params: Bundle?) {
             if (generation == turn && VoiceAudioOwnership.microphone.owns(microphoneLease)) {
               if (!eligibleTurn()) { fail("SUSPENDED", "Recognition suspended."); return }
@@ -351,7 +353,22 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
             }
           }
           override fun onBeginningOfSpeech() = Unit
-          override fun onRmsChanged(rmsdB: Float) = Unit
+          override fun onRmsChanged(rmsdB: Float) {
+            if (requestId == null || generation != turn || phase != "listening" ||
+                !rmsdB.isFinite() || !eligibleTurn() ||
+                !VoiceAudioOwnership.microphone.owns(microphoneLease)) return
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - lastLevelAt < 100L || !context.hasActiveReactInstance()) return
+            lastLevelAt = now
+            // Level only, no recording or audio buffer is retained.
+            runCatching {
+              context.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("BushMeshSpeechAudioLevel", Arguments.createMap().apply {
+                  putString("requestId", requestId)
+                  putDouble("rmsDb", rmsdB.toDouble())
+                })
+            }
+          }
           override fun onBufferReceived(buffer: ByteArray?) = Unit
           override fun onEndOfSpeech() {
             if (generation == turn && pending != null) {

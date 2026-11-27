@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Alert, AppState, BackHandler, Keyboard, Modal, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {Alert, AppState, BackHandler, Keyboard, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {ChatManagementDialog, type ChatManagementSelection} from '../radio/chatManagement/ChatManagementDialog';
 import {useChatManagement, type ChatManagementController} from '../radio/chatManagement/useChatManagement';
 import {chatPreferenceStore, DEFAULT_QUICK_MESSAGES, defaultChatPreferences, type ChatConfiguration} from '../radio/chatManagement/chatPreferences';
@@ -25,8 +25,6 @@ import {
 import {RadioInbox} from './radioMessenger/RadioInbox';
 import {RadioChatRoom} from './radioMessenger/RadioChatRoom';
 import type {VoiceDestination} from '../speech/VoiceAssistant';
-import {useOptionalLocationSession} from '../state/LocationSessionContext';
-import {localGpsReading} from '../speech/voiceGps';
 import {RadioTechnicalDrawer} from './radioMessenger/RadioTechnicalDrawer';
 import {buildConversationExport} from '../radio/chatManagement/conversationExport';
 import {nativeFileExport} from '../native/NativeFileExport';
@@ -513,10 +511,9 @@ function RadioMessenger({
     setNotices(current => ({...current, [key]: value}));
   };
 
-  const submit = async (voiceText?: string, voiceGuard?: () => boolean): Promise<string> => {
-    const voice = voiceText !== undefined;
-    if (!selectedScope || !activeKey || sendingRef.current || !canSubmit || (voice && !voiceGuard?.())) return 'No message submitted. Destination unavailable.';
-    const validation = validateCarrierText(voiceText ?? activeDraft);
+  const submit = async (): Promise<string> => {
+    if (!selectedScope || !activeKey || sendingRef.current || !canSubmit) return 'No message submitted. Destination unavailable.';
+    const validation = validateCarrierText(activeDraft);
     if (!validation.valid) {
       postNotice(activeKey, validation.issue ?? 'Message not ready.');
       return 'Message invalid. Nothing sent.';
@@ -541,9 +538,7 @@ function RadioMessenger({
     const submittedText = validation.text;
     let durableId: string | null = null;
     const durable = !!verifiedChat && !!addDurableChannelMessage && !!finishDurableSubmission;
-    if (voice && !durable) return 'Durable verified submission unavailable. Nothing sent.';
     const beforeSubmit = async () => {
-      if (voice && !voiceGuard?.()) throw new Error('Voice destination changed.');
       const id = 'submission-' + Date.now() + '-' + Math.random().toString(16).slice(2);
       const inserted = await addDurableChannelMessage({id, createdAt: new Date().toISOString(), channelIndex: capturedScope.channelIndex,
         channelName: capturedScope.channelName, text: submittedText, direction: 'sent', status: 'pending',
@@ -569,8 +564,7 @@ function RadioMessenger({
       // Only the owning service issues the command. A resolved promise proves
       // PACKET_OK acceptance, never a peer acknowledgement.
       if (verifiedChat && durable) {
-        if (voice) await radioConnection.sendVerifiedChat(verifiedChat, submittedText, beforeSubmit, voiceGuard);
-        else await radioConnection.sendVerifiedChat(verifiedChat, submittedText, beforeSubmit);
+        await radioConnection.sendVerifiedChat(verifiedChat, submittedText, beforeSubmit);
       }
       else if (verifiedChat) await radioConnection.sendVerifiedChat(verifiedChat, submittedText);
       else await sendChannelMessage(Number(capturedScope.channelIndex), submittedText);
@@ -582,12 +576,12 @@ function RadioMessenger({
       } catch {
         recorded = false;
       }
-      if (!voice) setDrafts(currentDrafts => ({
+      setDrafts(currentDrafts => ({
         ...currentDrafts,
         [capturedKey]: currentDrafts[capturedKey]?.trim() === submittedText
           ? '' : currentDrafts[capturedKey] ?? '',
       }));
-      if (!voice && verifiedChat && management && recorded) management.updateLocal(verifiedChat.id, {draft: ''}, Number(capturedScope.channelGeneration.split(':')[1])).catch(() => postNotice(capturedKey, 'Radio accepted; saved draft could not be cleared. Do not resend.'));
+      if (verifiedChat && management && recorded) management.updateLocal(verifiedChat.id, {draft: ''}, Number(capturedScope.channelGeneration.split(':')[1])).catch(() => postNotice(capturedKey, 'Radio accepted; saved draft could not be cleared. Do not resend.'));
       postNotice(capturedKey, recorded
         ? 'Radio accepted. No peer delivery confirmation.'
         : 'Radio accepted, but local history recording failed. Do not resend to repair history.');
@@ -620,28 +614,19 @@ function RadioMessenger({
     }
   };
 
-  const gps = useOptionalLocationSession();
-  const gpsRef=useRef(gps);gpsRef.current=gps;
-  const voiceQuick=useRef(localPreference?.quickMessages??globalTemplates);
-  voiceQuick.current=localPreference?.quickMessages??globalTemplates;
-  const voiceLive = useRef({key: activeKey, epoch: management?.sessionEpoch, radioId, connected, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft});
-  voiceLive.current = {key: activeKey, epoch: management?.sessionEpoch, radioId, connected, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft};
+  // Radio dictation has only a draft-edit port. TTS retains its existing
+  // readback selection; no spoken command, GPS or transmission port exists.
+  const voiceLive = useRef({key: activeKey, epoch: management?.sessionEpoch, radioId, connected, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, updateDraft});
+  voiceLive.current = {key: activeKey, epoch: management?.sessionEpoch, radioId, connected, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, updateDraft};
   const voiceDestination: VoiceDestination | undefined = selectedScope && activeKey && management ? (() => {
     const key = activeKey; const epoch = management.sessionEpoch;
     const current = () => voiceLive.current.key === key && voiceLive.current.epoch === epoch && voiceLive.current.radioId === radioId && voiceLive.current.connected === connected && voiceLive.current.ready && radioConnection.getChatSessionEpoch() === epoch;
     const incoming = selectedMessages.filter(m => m.message.direction === 'received');
     return {key: JSON.stringify([key,epoch,radioId,connected]), label: selectedScope.channelName, isCurrent: current,
       draft: () => voiceLive.current.draft, editDraft: value => {if(current()) voiceLive.current.updateDraft(value);},
-      send: chatFor(selectedScope) && canSubmit ? (text,guard) => voiceLive.current.submit(text,()=>current()&&AppState.currentState==='active'&&guard()) : undefined,
       latest: () => incoming[incoming.length-1]?.message.text ?? null,
       unread: () => {const index=incoming.findIndex(m=>m.message.id===unreadAnchor?.id);return index>=0?incoming.slice(index).map(m=>m.message.text):[];},
-      quick: () => current()?voiceQuick.current:[],
-      radio: () => connected ? 'Radio connected locally. Peer reachability not confirmed.' : 'Radio disconnected.',
-      localReading: async command => {
-        const allowed=Platform.OS==='android' && await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
-        const latest=gpsRef.current;
-        return localGpsReading(command,latest?.latestFix??null,latest?.nativeSource===true&&(latest.status==='tracking'||latest.status==='tracking-no-link'),allowed);
-      }};
+      quick: () => [], radio: () => ''};
   })() : undefined;
 
   const openSettings = () => {

@@ -11,6 +11,7 @@ export type NativeSpeechRecognitionStatus = {
   playbackActive?: boolean;
   lastFailure?: string | null;
   phase?: 'idle' | 'starting' | 'listening' | 'finishing';
+  requestId?: string | null;
 };
 
 export type NativeHandsFreeStatus = {
@@ -126,6 +127,12 @@ export const nativeSpeechRecognition = {
       return () => undefined;
     }
     const subscription = DeviceEventEmitter.addListener('BushMeshHeldSpeechPartial', listener);
+    return () => subscription.remove();
+  },
+
+  subscribeAudioLevel(listener: (value: {requestId: string; rmsDb: number}) => void): () => void {
+    if (!this.supportsHeldRecognition()) return () => undefined;
+    const subscription = DeviceEventEmitter.addListener('BushMeshSpeechAudioLevel', listener);
     return () => subscription.remove();
   },
 

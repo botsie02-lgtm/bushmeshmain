@@ -6,7 +6,8 @@ import {
 import {colors} from '../../theme/colors';
 import {useRadioImeLayout} from './useRadioImeLayout';
 import {radioMessageClipboard} from '../../native/SensitiveClipboard';
-import {VoiceComposerControls} from '../../speech/VoiceComposerControls';
+import {DictationButton, DictationFeedback, DictationRecordingControls, useDictation} from '../../speech/VoiceComposerControls';
+import {nativeSpeech} from '../../native/NativeSpeech';
 import type {VoiceDestination} from '../../speech/VoiceAssistant';
 import {applicationVoice} from '../../speech/applicationVoice';
 import {QuickMessageEditor} from '../../radio/chatManagement/QuickMessageEditor';
@@ -149,8 +150,15 @@ export function RadioChatRoom({
     listRef.current?.scrollToIndex({index: unreadIndex, animated: true, viewPosition: 0.5});
     setJumpUnread(false);
   }, [jumpUnread, unreadIndex, page.length]);
+  const dictation = useDictation(voiceDestination, visible && !menuOpen && !actionId && !editingQuick && !detailsOpen, isSubmitting);
   const validation = validateCarrierText(draft);
-  const sendEnabled = canSubmit && validation.valid && !isSubmitting;
+  const sendEnabled = canSubmit && validation.valid && !isSubmitting && !dictation.active;
+  useEffect(() => {
+    const key = voiceDestination?.key;
+    if (!key) return;
+    if (!visible) applicationVoice.cancelDestination(key, true).catch(() => undefined);
+    return () => {applicationVoice.cancelDestination(key, true).catch(() => undefined);};
+  }, [voiceDestination?.key, visible]);
 
   const onListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     // In an inverted FlatList, offset 0 is the newest (bottom) position.
@@ -200,7 +208,7 @@ export function RadioChatRoom({
             style={styles.menuButton}>
             <Text style={styles.menuText}>{pinned ? 'Unpin' : 'Pin'}{persistentPin ? ' chat' : ' for this session'}</Text>
           </TouchableOpacity>
-          {voiceDestination&&<><TouchableOpacity accessibilityRole="button" accessibilityLabel="Read unread messages" style={styles.menuButton} onPress={()=>{setMenuOpen(false);applicationVoice.readSelection('unread',voiceDestination).catch(()=>undefined);}}><Text style={styles.menuText}>Read unread messages</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Repeat spoken message" style={styles.menuButton} onPress={()=>{setMenuOpen(false);applicationVoice.readSelection('repeat',voiceDestination).catch(()=>undefined);}}><Text style={styles.menuText}>Repeat last readback</Text></TouchableOpacity></>}
+          {voiceDestination&&<><TouchableOpacity accessibilityRole="button" accessibilityLabel="Read latest message" style={styles.menuButton} onPress={()=>{setMenuOpen(false);const text=voiceDestination.latest();if(text)applicationVoice.readText(text,voiceDestination).catch(()=>undefined);}}><Text style={styles.menuText}>Read latest message</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Stop ordinary speech" style={styles.menuButton} onPress={()=>{setMenuOpen(false);nativeSpeech.stopOrdinary().catch(()=>undefined);}}><Text style={styles.menuText}>Stop read-aloud</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Read unread messages" style={styles.menuButton} onPress={()=>{setMenuOpen(false);applicationVoice.readSelection('unread',voiceDestination).catch(()=>undefined);}}><Text style={styles.menuText}>Read unread messages</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Repeat spoken message" style={styles.menuButton} onPress={()=>{setMenuOpen(false);applicationVoice.readSelection('repeat',voiceDestination).catch(()=>undefined);}}><Text style={styles.menuText}>Repeat last readback</Text></TouchableOpacity></>}
           {onToggleAutoRead&&<TouchableOpacity accessibilityRole="button" accessibilityLabel="Toggle conversation auto-read" style={styles.menuButton} onPress={()=>{setMenuOpen(false);onToggleAutoRead();}}><Text style={styles.menuText}>{autoRead?'Mute conversation auto-read':'Enable conversation auto-read'}</Text></TouchableOpacity>}
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Search chat history" onPress={() => {setSearching(true); setMenuOpen(false);}} style={styles.menuButton}><Text style={styles.menuText}>Search messages</Text></TouchableOpacity>
           {onMessagePreference && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Filter important messages" onPress={() => {setMessageFilter(v => v === 'all' ? 'starred' : v === 'starred' ? 'pinned' : 'all'); setMenuOpen(false);}} style={styles.menuButton}><Text style={styles.menuText}>Show {messageFilter === 'all' ? 'starred' : messageFilter === 'starred' ? 'pinned' : 'all'} messages</Text></TouchableOpacity>}
@@ -297,7 +305,7 @@ export function RadioChatRoom({
       <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => listRef.current?.scrollToOffset({offset: 0, animated: true})} style={styles.menuButton}><Text style={styles.menuText}>↓ Latest</Text></TouchableOpacity>
       </View>
       <View style={styles.composerArea}>
-        <ScrollView style={[styles.composerAccessories, keyboardOpen && {maxHeight: accessoryMaxHeight}]} keyboardShouldPersistTaps="always" nestedScrollEnabled>
+        {!dictation.active && <ScrollView style={[styles.composerAccessories, keyboardOpen && {maxHeight: accessoryMaxHeight}]} keyboardShouldPersistTaps="always" nestedScrollEnabled>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Quick messages" onPress={() => setQuickOpen(v => !v)} style={styles.menuButton}><Text style={styles.menuText}>Quick messages</Text></TouchableOpacity>
         {quickOpen && <ScrollView style={{maxHeight: 180}} keyboardShouldPersistTaps="always" nestedScrollEnabled><View style={styles.quick}>{templates.map((text, index) => <TouchableOpacity key={index} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}{onSaveQuickMessages && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit quick messages" style={styles.quickItem} onPress={() => {setQuickOpen(false); setEditingQuick(true);}}><Text style={styles.menuText}>Edit templates</Text></TouchableOpacity>}</View></ScrollView>}
         {editingQuick && onSaveQuickMessages && <QuickMessageEditor initial={templates} onSave={onSaveQuickMessages} onClose={() => setEditingQuick(false)}/>}
@@ -310,9 +318,10 @@ export function RadioChatRoom({
           </View>
         </View> : null}
         {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
-        {voiceDestination && <VoiceComposerControls destination={voiceDestination} visible={visible} disabled={isSubmitting}/>}
-        </ScrollView>
+        {voiceDestination && visible && <DictationFeedback dictation={dictation}/>}
+        </ScrollView>}
         <View style={styles.composerRow}>
+          {dictation.active ? <DictationRecordingControls dictation={dictation}/> : <>
           <TextInput
             ref={inputRef}
             testID="radio-ime-input"
@@ -329,6 +338,7 @@ export function RadioChatRoom({
             submitBehavior="newline"
             textAlignVertical="center"
           />
+          {voiceDestination && visible && dictation.supported && <DictationButton dictation={dictation} disabled={isSubmitting}/>}
           <TouchableOpacity accessibilityRole="button"
             testID="radio-ime-send"
             accessibilityLabel="Submit channel text to radio"
@@ -337,7 +347,7 @@ export function RadioChatRoom({
             onPress={onSend}
             style={[styles.sendButton, !sendEnabled && styles.sendDisabled]}>
             <Text style={styles.sendIcon}>{isSubmitting ? '…' : '➤'}</Text>
-          </TouchableOpacity>
+          </TouchableOpacity></>}
         </View>
         <Text style={[styles.byteCounter, !validation.valid && draft.trim() &&
           styles.overLimit]}>

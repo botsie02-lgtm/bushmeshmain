@@ -4,7 +4,7 @@ import {nativeSpeechRecognition, type OfflineLanguageInventory} from '../native/
 import {nativeSpeech, type VoicePreferences} from '../native/NativeSpeech';
 import {colors} from '../theme/colors';
 import {useSpeech} from '../state/SpeechContext';
-import {applicationVoice} from './applicationVoice';
+import {DictationRecordingControls, useDictation} from './VoiceComposerControls';
 import {downloadFeedback, englishModelChoices, modelLabel} from './offlineRecognitionReadiness';
 
 // Android admits one language probe at a time. Share an outstanding probe
@@ -45,11 +45,15 @@ export function VoiceReadinessPanel() {
   const [modelStatus, setModelStatus] = useState<OfflineLanguageInventory['status']>('unknown');
   const [feedback, setFeedback] = useState('');
   const [testTranscript, setTestTranscript] = useState('');
-  const [testRunning, setTestRunning] = useState(false);
-  const [testDetail, setTestDetail] = useState('');
-  const testKey = useRef<string | null>(null);
+  const localTestKey = useRef('speech-settings-test-' + ++nextSetupRequest);
+  const localTranscript = useRef(testTranscript);
+  localTranscript.current = testTranscript;
   const downloadRequest = useRef<string | null>(null);
   const lifecycle = useRef({generation: 0, mounted: false, busy: false});
+  const test = useDictation({
+    key: localTestKey.current, isCurrent: () => lifecycle.current.mounted,
+    draft: () => localTranscript.current, editDraft: setTestTranscript,
+  }, true, busy);
 
   // Synchronous admission prevents double taps before React commits disabled.
   // All asynchronous UI changes are fenced to this effect's lifetime.
@@ -90,7 +94,7 @@ export function VoiceReadinessPanel() {
         modelLabel(model) + '.'
         : r.reason ?? 'Recognition unavailable.') + ' ' +
         (s?.offlineVoice ? 'Offline voice: ' + s.languageTag : supported && !s ? 'Offline voice status unavailable.' : 'Offline English voice unavailable.') +
-        ' Wake phrase and screen-off listening unavailable.');
+        ' Dictation stays on this device.');
     } catch {
       if (current()) {setStatus('Speech status unavailable.'); setRecognizerAvailable(false); setModelStatus('unknown'); setInventory(null);}
     }
@@ -104,7 +108,6 @@ export function VoiceReadinessPanel() {
       owner.mounted = false;
       owner.generation++;
       owner.busy = false;
-      if (testKey.current) applicationVoice.cancelDestination(testKey.current).catch(() => undefined);
       if (downloadRequest.current) nativeSpeechRecognition.stopDownloadObservation(downloadRequest.current).catch(() => undefined);
     };
   }, [refresh, run]);
@@ -146,44 +149,13 @@ export function VoiceReadinessPanel() {
     }).catch(() => undefined);
   };
 
-  // Same dialogue ownership as the composer. No send port or command parser.
-  const testRecognition = () => {
-    run(async current => {
-      const key = 'voice-settings-test-' + ++nextSetupRequest;
-      testKey.current = key;
-      setTestRunning(true);
-      setTestDetail('Checking microphone permission…');
-      let transcript = '';
-      const unsubscribe = applicationVoice.subscribe(() => {
-        if (current() && testKey.current === key) setTestDetail(applicationVoice.snapshot().detail);
-      });
-      try {
-        await applicationVoice.run('dictation', {
-          key, label: 'Offline speech test', isCurrent: current,
-          draft: () => transcript,
-          editDraft: value => {
-            transcript = value;
-            if (current()) setTestTranscript(value);
-          },
-          latest: () => null, unread: () => [], quick: () => [], radio: () => '',
-        });
-        if (current() && transcript) setTestDetail('Recognition returned a local transcript. Nothing transmitted.');
-        else if (current() && applicationVoice.snapshot().phase !== 'error' && applicationVoice.snapshot().phase !== 'suspended') setTestDetail('No new transcript. Nothing transmitted.');
-      } finally {
-        unsubscribe();
-        if (testKey.current === key) testKey.current = null;
-        if (current()) setTestRunning(false);
-      }
-    }).catch(() => undefined);
-  };
-
   const choice = (label: string, onPress: () => void, selected = false) =>
-    <TouchableOpacity key={label} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{selected, disabled: busy}} disabled={busy} onPress={onPress} style={styles.button}>
+    <TouchableOpacity key={label} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{selected, disabled: busy || test.active}} disabled={busy || test.active} onPress={onPress} style={styles.button}>
       <Text style={[styles.text, selected && styles.selected]}>{label}</Text>
     </TouchableOpacity>;
 
   return <View><Text style={styles.text}>{status}</Text>
-    {prefs && <><Text style={styles.text}>Recognition language</Text><View style={styles.row}>{englishModelChoices(inventory, prefs.locale).map(locale => choice(locale, () => update({locale}), prefs.locale === locale))}</View>
+    {prefs && <><Text style={styles.text}>Speech-to-text language</Text><View style={styles.row}>{englishModelChoices(inventory, prefs.locale).map(locale => choice(locale, () => update({locale}), prefs.locale === locale))}</View>
       <Text style={styles.text}>Australian English is preferred when installed. Select another English model explicitly if needed.</Text>
       {inventory && <Text style={styles.text}>Installed: {inventory.installed.join(', ') || 'none reported'}{'\n'}Pending: {inventory.pending.join(', ') || 'none reported'}{'\n'}Supported for download: {inventory.downloadable.join(', ') || 'none reported'}{inventory.reason ? '\n' + inventory.reason : ''}</Text>}
       {recognizerAvailable && modelStatus !== 'installed' && modelStatus !== 'unsupported' && choice('Download selected offline model', download)}
@@ -192,13 +164,11 @@ export function VoiceReadinessPanel() {
         const id = downloadRequest.current;
         if (id) nativeSpeechRecognition.stopDownloadObservation(id).catch(() => undefined);
       }} style={styles.button}><Text style={styles.text}>Stop waiting for download</Text></TouchableOpacity>}
-      {recognizerAvailable && choice('Test offline recognition', testRecognition)}
-      {testRunning && <TouchableOpacity accessibilityRole="button" onPress={() => {
-        const key = testKey.current;
-        if (key) applicationVoice.cancelDestination(key).catch(() => undefined);
-      }} style={styles.button}><Text style={styles.text}>Cancel recognition test</Text></TouchableOpacity>}
-      {!!testDetail && <Text accessibilityLiveRegion="polite" style={styles.text}>{testDetail}</Text>}
-      <TextInput accessibilityLabel="Local recognition test transcript" value={testTranscript} onChangeText={setTestTranscript} editable={!testRunning} multiline placeholder="Local test transcript (editable, never sent)" placeholderTextColor={colors.textSecondary} style={styles.text}/>
+      {recognizerAvailable && !test.active && choice('Test offline recognition', () => {test.start().catch(() => undefined);})}
+      {test.active && <DictationRecordingControls dictation={test}/>}
+      {!test.active && !!test.state.detail && <Text accessibilityLiveRegion="polite" style={styles.text}>{test.state.phase === 'idle' ? 'Recognition returned a local transcript. Nothing transmitted.' : test.state.detail}</Text>}
+      <TextInput accessibilityLabel="Local recognition test transcript" value={testTranscript} onChangeText={setTestTranscript} editable={!test.active} multiline placeholder="Local test transcript (editable, never sent)" placeholderTextColor={colors.textSecondary} style={styles.text}/>
+
 
       <Text style={styles.text}>Speech rate</Text><View style={styles.row}>{[.85, 1, 1.15].map(rate => choice(rate.toFixed(2) + '×', () => update({rate}), Math.abs(prefs.rate - rate) < .01))}</View>
       {choice(showVoices ? 'Hide installed voices' : 'Choose installed offline voice', () => setShowVoices(v => !v))}
@@ -212,7 +182,7 @@ export function VoiceReadinessPanel() {
           }
         }).catch(() => undefined);
       })}</>}
-    {choice('Refresh voice readiness', () => {run(refresh).catch(() => undefined);})}
+    {choice('Refresh speech readiness', () => {run(refresh).catch(() => undefined);})}
     {choice('Open microphone and app settings', () => {
       run(async current => {
         try {await Linking.openSettings();}

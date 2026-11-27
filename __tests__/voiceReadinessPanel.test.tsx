@@ -51,11 +51,11 @@ test('manual refresh is single flight and a preference write gets fresh language
   const pending = deferred<NativeSpeechStatus>();
   jest.spyOn(nativeSpeech, 'getStatus').mockReturnValueOnce(pending.promise);
   await act(async () => {
-    const press = button('Refresh voice readiness').props.onPress;
+    const press = button('Refresh speech readiness').props.onPress;
     press(); press();
   });
   expect(nativeSpeech.getStatus).toHaveBeenCalledTimes(2);
-  expect(button('Refresh voice readiness').props.disabled).toBe(true);
+  expect(button('Refresh speech readiness').props.disabled).toBe(true);
   await act(async () => {pending.resolve(ready);});
   expect(nativeSpeechRecognition.checkLanguage).toHaveBeenCalledTimes(2);
   jest.spyOn(nativeSpeech, 'getVoicePreferences').mockResolvedValue({...preferences, locale: 'en-GB'});

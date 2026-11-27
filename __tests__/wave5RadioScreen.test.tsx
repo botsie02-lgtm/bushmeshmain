@@ -10,7 +10,6 @@ import {useRadioSession} from '../src/state/RadioSessionContext';
 import type {BushMeshChannelMessage} from '../src/state/BushMeshContext';
 import {chatPreferenceStore, defaultChatPreferences} from '../src/radio/chatManagement/chatPreferences';
 import {ChatOperationError} from '../src/radio/chatManagement/chatInvitations';
-import {applicationVoice} from '../src/speech/applicationVoice';
 import {nativeSpeechRecognition, type NativeSpeechRecognitionResult} from '../src/native/NativeSpeechRecognition';
 import {nativeSpeech} from '../src/native/NativeSpeech';
 import {SpeechProvider} from '../src/state/SpeechContext';
@@ -641,92 +640,93 @@ test('message reply and forwarding prepare drafts without transmitting', async (
 });
 
 
-test('composer microphone appends recognized text to current draft and does not transmit',async()=>{
-  jest.spyOn(chatPreferenceStore, 'loadState').mockResolvedValue({entries: {}, sort: 'recent'});
-  const os=Platform.OS;
-  try {
-    Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
-    jest.spyOn(nativeSpeechRecognition,'isSupported').mockReturnValue(true);
-    jest.spyOn(nativeSpeechRecognition,'getStatus').mockResolvedValue({supported:true,listening:false,apiLevel:36,reason:null});
-    jest.spyOn(PermissionsAndroid,'check').mockResolvedValue(true);
-    jest.spyOn(nativeSpeechRecognition,'recognizeOnce').mockResolvedValue({text:'tree ahead',confidence:.95,durationMs:200,alternatives:[]});
-    await mount({enableChatManagement:true});
-    await room('Private');
-    const input=()=>tree.root.findAll(node=>node.props.accessibilityLabel==='Carrier message draft'&&typeof node.props.onChangeText==='function')[0];
-    await act(async()=>{input().props.onChangeText('Existing draft');});
-    await press('Dictate message');
-    expect(input().props.value).toBe('Existing draft tree ahead');
-    expect(send).not.toHaveBeenCalled();expect(verifiedSend).not.toHaveBeenCalled();
-  } finally {await act(async()=>{await applicationVoice.cancel();});Object.defineProperty(Platform,'OS',{configurable:true,value:os});jest.restoreAllMocks();}
-});
-
-function heldFixture() {
+function dictationFixture() {
   jest.spyOn(chatPreferenceStore,'loadState').mockResolvedValue({entries:{},sort:'recent'});
   jest.spyOn(nativeSpeechRecognition,'isSupported').mockReturnValue(true);
   jest.spyOn(nativeSpeechRecognition,'supportsHeldRecognition').mockReturnValue(true);
   jest.spyOn(nativeSpeechRecognition,'getStatus').mockResolvedValue({supported:true,listening:false,apiLevel:36,reason:null});
   jest.spyOn(nativeSpeech,'getStatus').mockResolvedValue({initialized:true,initializing:false,failed:false,languageTag:'en-AU',recognitionLocale:'en-GB',criticalAlertsEnabled:true,radioMessagesEnabled:false});
   jest.spyOn(PermissionsAndroid,'check').mockResolvedValue(true);
-  const once=jest.spyOn(nativeSpeechRecognition,'recognizeOnce').mockResolvedValue({text:'tap text',confidence:.95,durationMs:100,alternatives:[]});
   let resolve!:(result:NativeSpeechRecognitionResult)=>void;
   const result=new Promise<NativeSpeechRecognitionResult>(done=>{resolve=done;});
   const recognize=jest.spyOn(nativeSpeechRecognition,'recognizeHeld').mockReturnValue(result);
   const finish=jest.spyOn(nativeSpeechRecognition,'finishHeld').mockResolvedValue(true);
-  let partial: Parameters<typeof nativeSpeechRecognition.subscribeHeldPartial>[0] | undefined;
-  jest.spyOn(nativeSpeechRecognition,'subscribeHeldPartial').mockImplementation(listener=>{partial=listener;return ()=>{partial=undefined;};});
-  jest.spyOn(nativeSpeechRecognition,'subscribeSessionState').mockReturnValue(()=>undefined);
-  return {once,recognize,finish,resolve,emit:(text:string)=>partial?.({requestId:recognize.mock.calls[0][1],text})};
+  let phase: Parameters<typeof nativeSpeechRecognition.subscribeSessionState>[0] | undefined;
+  let audio: Parameters<typeof nativeSpeechRecognition.subscribeAudioLevel>[0] | undefined;
+  jest.spyOn(nativeSpeechRecognition,'subscribeSessionState').mockImplementation(listener=>{phase=listener;return ()=>{phase=undefined;};});
+  jest.spyOn(nativeSpeechRecognition,'subscribeAudioLevel').mockImplementation(listener=>{audio=listener;return ()=>{audio=undefined;};});
+  return {recognize,finish,resolve, ready:()=>phase?.({supported:true,listening:true,apiLevel:36,reason:null,phase:'listening',requestId:recognize.mock.calls[0][1]}),
+    level:(rmsDb:number)=>audio?.({requestId:recognize.mock.calls[0][1],rmsDb})};
 }
-const finalHeld={text:'final held text',confidence:.95,durationMs:1000,alternatives:[]};
+const finalHeld={text:'final dictated text',confidence:.95,durationMs:1000,alternatives:[]};
 const draftValue=()=>tree.root.findAll(node=>node.props.accessibilityLabel==='Carrier message draft'&&typeof node.props.onChangeText==='function')[0].props.value;
-test('held composer previews partials, uses selected locale, releases once and appends only final text',async()=>{
-  const os=Platform.OS;
-  Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
-  const f=heldFixture();
+test('early recognition result waits for tick and appends to draft without transmission',async()=>{
+  const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const f=dictationFixture();
   try{
-    await mount({enableChatManagement:true});await room('Private');await draft('Existing');
-    const mic=button('Dictate message').props;
-    await act(async()=>{mic.onPressIn();mic.onLongPress();});
+    await mount({enableChatManagement:true});await room('Private');await draft('Existing draft');
+    await press('Dictate message');
     expect(f.recognize).toHaveBeenCalledTimes(1);
     expect(f.recognize.mock.calls[0][0]).toBe('en-GB');
-    await act(async()=>{f.emit('preview only');});
-    expect(viewText()).toContain('preview only');expect(draftValue()).toBe('Existing');
-    await act(async()=>{mic.onPressOut();mic.onPress();});
-    expect(f.finish).toHaveBeenCalledWith(f.recognize.mock.calls[0][1],false);
-    expect(f.once).not.toHaveBeenCalled();
+    expect(tree.root.findAll(n=>n.props.accessibilityLabel==='Voice command')).toHaveLength(0);
+    expect(tree.root.findAll(n=>n.props.accessibilityLabel==='Submit channel text to radio')).toHaveLength(0);
     await act(async()=>{f.resolve(finalHeld);});
-    expect(draftValue()).toBe('Existing final held text');expect(viewText()).not.toContain('preview only');
+    expect(viewText()).toContain('Speech ready');
+    expect(chatPreferenceStore.update).not.toHaveBeenCalledWith(expect.anything(),{draft:'Existing draft final dictated text'},expect.anything());
+    await press('Confirm dictation');
+    expect(draftValue()).toBe('Existing draft final dictated text');
     expect(send).not.toHaveBeenCalled();expect(verifiedSend).not.toHaveBeenCalled();
-    const next=button('Dictate message').props;
-    await act(async()=>{next.onPressIn();next.onPressOut();next.onPress();});
-    expect(f.once).toHaveBeenCalledTimes(1);
-    expect(draftValue()).toBe('Existing final held text tap text');
-  }finally{await act(async()=>{await applicationVoice.cancel();f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
+  }finally{await act(async()=>{f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
 });
-test('held composer cancels on hidden tab and discards late final text',async()=>{
+test('dictation displays real scoped audio activity and tick finishes once before draft insertion',async()=>{
   const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
-  const f=heldFixture();
+  const f=dictationFixture();
+  try{
+    await mount({enableChatManagement:true});await room('Private');await draft('Existing');
+    await press('Dictate message');
+    await act(async()=>{f.ready();f.level(9);});
+    expect(viewText()).toContain('Listening');
+    expect(viewText()).toContain('Live microphone activity');
+    await press('Confirm dictation');
+    expect(f.finish).toHaveBeenCalledWith(f.recognize.mock.calls[0][1],false);
+    expect(button('Confirm dictation').props.disabled).toBe(true);
+    expect(viewText()).toContain('Processing speech');
+    await act(async()=>{f.resolve(finalHeld);});
+    expect(draftValue()).toBe('Existing final dictated text');
+    expect(send).not.toHaveBeenCalled();expect(verifiedSend).not.toHaveBeenCalled();
+  }finally{await act(async()=>{f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
+});
+test('X cancellation preserves original multiline draft and discards late recognition',async()=>{
+  const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const f=dictationFixture();
+  try{
+    await mount({enableChatManagement:true});await room('Private');await draft('Keep\\nthis');
+    await press('Dictate message');await press('Cancel dictation');
+    expect(f.finish).toHaveBeenCalledWith(f.recognize.mock.calls[0][1],true);
+    await act(async()=>{f.resolve(finalHeld);});
+    expect(draftValue()).toBe('Keep\\nthis');expect(verifiedSend).not.toHaveBeenCalled();
+  }finally{await act(async()=>{f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
+});
+test('dictation cancels on hidden tab and discards late final text',async()=>{
+  const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const f=dictationFixture();
   try{
     await mount({enableChatManagement:true});await room('Private');await draft('Keep');
-    const mic=button('Dictate message').props;
-    await act(async()=>{mic.onPressIn();mic.onLongPress();});
+    await press('Dictate message');
     expect(f.recognize).toHaveBeenCalledTimes(1);
-    expect(button('Voice command').props.disabled).toBe(true);
     await rerender({enableChatManagement:true,tabVisible:false});
     expect(f.finish).toHaveBeenCalledWith(f.recognize.mock.calls[0][1],true);
     await act(async()=>{f.resolve(finalHeld);});
     await rerender({enableChatManagement:true,tabVisible:true});
     expect(draftValue()).toBe('Keep');expect(verifiedSend).not.toHaveBeenCalled();
-  }finally{await act(async()=>{await applicationVoice.cancel();f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
+  }finally{await act(async()=>{f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
 });
-
-test('switching conversations cancels held capture and cannot append its late result in either chat',async()=>{
+test('switching conversations cancels dictation and cannot append its late result in either chat',async()=>{
   const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
-  const f=heldFixture();
+  const f=dictationFixture();
   try{
     await mount({enableChatManagement:true});await room('Private');await draft('Private draft');
-    const mic=button('Dictate message').props;
-    await act(async()=>{mic.onPressIn();mic.onLongPress();});
+    await press('Dictate message');
     expect(f.recognize).toHaveBeenCalledTimes(1);
     await press('Back to chats');await room('Public');
     expect(f.finish).toHaveBeenCalledWith(f.recognize.mock.calls[0][1],true);
@@ -734,7 +734,7 @@ test('switching conversations cancels held capture and cannot append its late re
     expect(draftValue()).toBe('Public draft');
     await press('Back to chats');await room('Private');
     expect(draftValue()).toBe('Private draft');expect(verifiedSend).not.toHaveBeenCalled();
-  }finally{await act(async()=>{await applicationVoice.cancel();f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
+  }finally{await act(async()=>{f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
 });
 
 test('multiline composer retains its draft across keyboard dismissal and room changes without sending', async () => {
@@ -782,31 +782,32 @@ function VoiceSetupFixture() {
 }
 test('voice setup leaves multiline draft intact and hidden composer cannot cancel local recognition test',async()=>{
   const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
-  const f=heldFixture();
+  const f=dictationFixture();
   const dismiss=jest.spyOn(Keyboard,'dismiss');
   const cancel=jest.spyOn(nativeSpeechRecognition,'cancel').mockResolvedValue(true);
   jest.spyOn(nativeSpeech,'isSupported').mockReturnValue(true);
   jest.spyOn(nativeSpeech,'getVoicePreferences').mockResolvedValue({locale:'en-GB',rate:1,voice:null,voices:[]});
   jest.spyOn(nativeSpeechRecognition,'getLanguageInventory').mockResolvedValue({locale:'en-GB',status:'installed',reason:null,installed:['en-GB'],pending:[],downloadable:[]});
-  f.once.mockRejectedValueOnce(new Error('Offline language unavailable. Open Voice assistant readiness.'));
+  f.recognize.mockRejectedValueOnce(new Error('Offline language unavailable. Check speech-to-text setup.'));
   let finishTest!:(result:NativeSpeechRecognitionResult)=>void;
   const testResult=new Promise<NativeSpeechRecognitionResult>(done=>{finishTest=done;});
-  f.once.mockReturnValueOnce(testResult);
+  f.recognize.mockReturnValueOnce(testResult).mockResolvedValueOnce({...finalHeld,text:'tap text'});
   try{
     configure();
     await act(async()=>{tree=TestRenderer.create(<VoiceSetupFixture/>);});
     await room('Private');await draft('first line\nsecond line');
     await press('Dictate message');
     expect(viewText()).toContain('Offline language unavailable');
-    await press('Voice setup instructions');
+    await press('Speech-to-text setup');
     expect(dismiss).toHaveBeenCalled();
     expect(tree.root.findAllByType(VoiceReadinessPanel)).toHaveLength(1);
     expect(tree.root.findAll(n=>n.props.accessibilityLabel==='Dictate message'&&typeof n.props.onPress==='function')).toHaveLength(0);
     await press('Test offline recognition');
-    expect(f.once).toHaveBeenCalledTimes(2);
-    expect(f.once).toHaveBeenLastCalledWith('en-GB');
+    expect(f.recognize).toHaveBeenCalledTimes(2);
+    expect(f.recognize).toHaveBeenLastCalledWith('en-GB',expect.any(String));
     expect(cancel).not.toHaveBeenCalled();
     await act(async()=>{finishTest({...finalHeld,text:'local test only'});});
+    await press('Confirm dictation');
     expect(tree.root.findAll(n=>n.props.accessibilityLabel==='Local recognition test transcript'&&typeof n.props.onChangeText==='function')[0].props.value).toBe('local test only');
     expect(viewText()).toContain('Nothing transmitted');
     await press('Return from voice test');
@@ -814,9 +815,10 @@ test('voice setup leaves multiline draft intact and hidden composer cannot cance
     expect(tree.root.findAllByType(VoiceReadinessPanel)).toHaveLength(0);
     expect(send).not.toHaveBeenCalled();expect(verifiedSend).not.toHaveBeenCalled();
     await press('Dictate message');
-    expect(f.once).toHaveBeenLastCalledWith('en-GB');
+    expect(f.recognize).toHaveBeenLastCalledWith('en-GB',expect.any(String));
+    await press('Confirm dictation');
     expect(draftValue()).toBe('first line\nsecond line tap text');
-  }finally{await act(async()=>{finishTest(finalHeld);f.resolve(finalHeld);await applicationVoice.cancel();});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
+  }finally{await act(async()=>{finishTest(finalHeld);f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
 });
 
 test('offline catalogue distinguishes hydration from an empty catalogue and exposes exact saved rows after load',async()=>{
