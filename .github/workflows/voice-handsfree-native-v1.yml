@@ -87,6 +87,7 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleRelease :app:assembleReleaseAndroidTest -PradioRedesignFieldTest --no-daemon
       - name: APK byte size and provenance (not distribution approval)
+        id: feature_bytes
         run: |
           mkdir -p voice-test
           apk=android/app/build/outputs/apk/release/app-release.apk
@@ -113,6 +114,23 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: bash tools/voice/verify_native_voice_lifecycle.sh android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/voice-instrumentation.apk" voice-test
+      - name: Measure exact baseline APK and byte delta
+        if: ${{ !cancelled() && steps.feature_bytes.outcome == 'success' }}
+        run: |
+          trap 'git checkout --detach "$GITHUB_SHA"' EXIT
+          git checkout --detach 626fc26e09a07a8b1b90429009adcd6aa082c5ba
+          git rev-parse HEAD > voice-test/base-commit.txt
+          (cd android && ./gradlew :app:assembleRelease -PradioRedesignFieldTest --no-daemon)
+          wc -c < android/app/build/outputs/apk/release/app-release.apk | tee voice-test/base-apk-bytes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          out = Path('voice-test')
+          base = int((out / 'base-apk-bytes.txt').read_text())
+          feature = int((out / 'feature-apk-bytes.txt').read_text())
+          result = f'base={base} feature={feature} delta={feature-base} bytes'
+          print(result)
+          (out / 'apk-size-delta.txt').write_text(result + '\n')
+          PY
       - name: Upload native validation evidence
         if: always()
         uses: actions/upload-artifact@v4
