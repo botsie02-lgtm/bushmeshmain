@@ -56,8 +56,14 @@ def inspect_wav(path: Path) -> tuple[int, int]:
             frames = audio.getnframes()
             if not 0 < frames <= SAMPLE_RATE * MAX_AUDIO_SECONDS:
                 raise ValueError(f"Invalid WAV duration: {path.name}")
-            if len(audio.readframes(1)) != 2:
-                raise ValueError(f"Truncated WAV header/audio: {path.name}")
+            # Wave headers can advertise more frames than the file actually
+            # carries. Inspect every PCM frame without loading whole clips.
+            remaining = frames
+            while remaining:
+                chunk = audio.readframes(min(remaining, 16000))
+                if not chunk or len(chunk) % 2:
+                    raise ValueError(f"Truncated WAV PCM frames: {path.name}")
+                remaining -= len(chunk) // 2
     except (wave.Error, EOFError) as exc:
         raise ValueError(f"Invalid PCM WAV: {path.name}") from exc
     return frames, path.stat().st_size
