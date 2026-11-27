@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
@@ -33,16 +35,18 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   private var heldTurn: VoiceHeldTurn? = null
   private var eligibilityCheck: Runnable? = null
   private var lastFailure: String? = null
+  private var phase = "idle"
+  private var audioDevices: AudioDeviceCallback? = null
+  @Volatile private var invalidated = false
   private var probe: SpeechRecognizer? = null
   private var cancelProbe: (() -> Unit)? = null
   private var resumed = context.lifecycleState == com.facebook.react.common.LifecycleState.RESUMED
   init { context.addLifecycleEventListener(this) }
   override fun getName() = "BushMeshSpeechRecognition"
   private fun supported() = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
-  @ReactMethod fun getStatus(promise: Promise) {
-    main.post {
-      val available = runCatching { supported() }.getOrDefault(false)
-      promise.resolve(Arguments.createMap().apply {
+  private fun statusMap(): WritableMap {
+    val available = !invalidated && runCatching { supported() }.getOrDefault(false)
+    return Arguments.createMap().apply {
         putBoolean("supported", available)
         putBoolean("listening", pending != null)
         putDouble("apiLevel", Build.VERSION.SDK_INT.toDouble())
@@ -57,12 +61,24 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
         })
         putBoolean("playbackActive", VoiceAudioOwnership.speaking)
         putString("lastFailure", lastFailure)
-      })
+        putString("phase", phase)
     }
+  }
+
+  private fun publishStatus() {
+    if (invalidated || !context.hasActiveReactInstance()) return
+    runCatching {
+      context.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit("BushMeshSpeechSessionState", statusMap())
+    }
+  }
+
+  @ReactMethod fun getStatus(promise: Promise) {
+    main.post { promise.resolve(statusMap()) }
   }
   @ReactMethod fun checkLanguage(locale: String, promise: Promise) {
     main.post {
-      if (Build.VERSION.SDK_INT < 33 || !runCatching { supported() }.getOrDefault(false) || pending != null || probe != null) {
+      if (invalidated || Build.VERSION.SDK_INT < 33 || !runCatching { supported() }.getOrDefault(false) || pending != null || probe != null) {
         promise.resolve("unknown"); return@post
       }
       try {
@@ -105,7 +121,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
     audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_IN_COMMUNICATION ||
       audio.mode == AudioManager.MODE_RINGTONE
 
-  private fun eligible() = resumed && context.currentActivity != null && hasPermission()
+  private fun eligible() = !invalidated && resumed && context.currentActivity != null && hasPermission()
 
   private fun watchEligibility(turn: Long) {
     val check = object : Runnable {
@@ -120,18 +136,37 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
     main.postDelayed(check, 500L)
   }
 
+  private fun watchAudioDevices(turn: Long) {
+    val callback = object : AudioDeviceCallback() {
+      override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+        if (generation != turn || pending == null) return
+        // Conservatively end the turn when an input or Bluetooth audio
+        // endpoint disappears. Do not select a replacement route silently.
+        if (removedDevices.any { it.isSource || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }) {
+          fail("ROUTE_CHANGED", "Audio input or Bluetooth audio endpoint disconnected.")
+        }
+      }
+    }
+    audioDevices = callback
+    audio.registerAudioDeviceCallback(callback, main)
+  }
+
   private fun release() {
     generation++
     pending = null
     timeout?.let { main.removeCallbacks(it) }; timeout = null
     eligibilityCheck?.let { main.removeCallbacks(it) }; eligibilityCheck = null
     heldTurn = null
+    audioDevices?.let { runCatching { audio.unregisterAudioDeviceCallback(it) } }; audioDevices = null
     val previous = engine; engine = null
     runCatching { previous?.cancel() }
     runCatching { previous?.destroy() }
     focus?.let { runCatching { audio.abandonAudioFocusRequest(it) } }; focus = null
     VoiceAudioOwnership.microphone.release(microphoneLease)
     microphoneLease = null
+    phase = "idle"
+    publishStatus()
   }
   private fun fail(code: String, message: String) {
     val p = pending ?: return
@@ -163,6 +198,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
       }
       pending = promise
       lastFailure = null
+      phase = "starting"
       heldTurn = requestId?.let(::VoiceHeldTurn)
       val turn = ++generation
       val started = android.os.SystemClock.elapsedRealtime()
@@ -180,16 +216,26 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
           if (generation == turn) fail("INTERRUPTED", "Interrupted by critical speech.")
         }
         check(microphoneLease != null)
+        publishStatus()
         val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         engine = recognizer
         recognizer.setRecognitionListener(object : RecognitionListener {
           override fun onReadyForSpeech(params: Bundle?) {
-            if (generation == turn && VoiceAudioOwnership.microphone.owns(microphoneLease)) heldTurn?.markReady()
+            if (generation == turn && VoiceAudioOwnership.microphone.owns(microphoneLease)) {
+              if (phase == "starting") phase = "listening"
+              heldTurn?.markReady()
+              publishStatus()
+            }
           }
           override fun onBeginningOfSpeech() = Unit
           override fun onRmsChanged(rmsdB: Float) = Unit
           override fun onBufferReceived(buffer: ByteArray?) = Unit
-          override fun onEndOfSpeech() = Unit
+          override fun onEndOfSpeech() {
+            if (generation == turn && pending != null) {
+              phase = "finishing"
+              publishStatus()
+            }
+          }
           override fun onPartialResults(partialResults: Bundle?) {
             // Platform support varies. Partial text is never a command, never
             // persisted, and is emitted only for an explicitly held turn.
@@ -198,11 +244,13 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
             val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
               ?.firstOrNull()?.trim()?.take(2048)?.takeIf { it.isNotEmpty() } ?: return
             if (context.hasActiveReactInstance()) {
-              context.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                .emit("BushMeshHeldSpeechPartial", Arguments.createMap().apply {
-                  putString("requestId", requestId)
-                  putString("text", text)
-                })
+              runCatching {
+                context.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                  .emit("BushMeshHeldSpeechPartial", Arguments.createMap().apply {
+                    putString("requestId", requestId)
+                    putString("text", text)
+                  })
+              }
             }
           }
           override fun onEvent(eventType: Int, params: Bundle?) = Unit
@@ -232,6 +280,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
           putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, requestId != null)
         }
         timeout = Runnable { if (generation == turn) fail("TIMEOUT", "Listening timed out.") }.also { main.postDelayed(it, 20_000) }
+        watchAudioDevices(turn)
         recognizer.startListening(intent)
         watchEligibility(turn)
       } catch (_: Exception) { fail("START_FAILED", "On-device recognition could not start. Check language resources and audio focus.") }
@@ -245,7 +294,12 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
           promise.resolve(true)
         }
         VoiceHeldTurn.Finish.STOP -> {
-          try { engine?.stopListening(); promise.resolve(true) }
+          try {
+            phase = "finishing"
+            publishStatus()
+            engine?.stopListening()
+            promise.resolve(true)
+          }
           catch (_: Exception) { fail("STOP_FAILED", "Recognition could not stop."); promise.resolve(false) }
         }
         else -> promise.resolve(false)
@@ -284,8 +338,8 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
     main.post { if (heldTurn != null) { promise.resolve(false); return@post }; try { engine?.stopListening(); promise.resolve(pending != null) } catch (_: Exception) { fail("STOP_FAILED", "Recognition could not stop."); promise.resolve(false) } }
   }
   @ReactMethod fun cancel(promise: Promise) { main.post { fail("CANCELLED", "Recognition cancelled."); promise.resolve(true) } }
-  override fun onHostResume() { main.post { resumed = true } }
-  override fun onHostPause() { main.post { resumed = false; cancelProbe?.invoke(); fail("SUSPENDED", "Recognition suspended.") } }
+  override fun onHostResume() { main.post { if (!invalidated) { resumed = true; publishStatus() } } }
+  override fun onHostPause() { main.post { resumed = false; cancelProbe?.invoke(); fail("SUSPENDED", "Recognition suspended."); publishStatus() } }
   override fun onHostDestroy() = onHostPause()
-  override fun invalidate() { context.removeLifecycleEventListener(this); onHostPause(); super.invalidate() }
+  override fun invalidate() { invalidated = true; context.removeLifecycleEventListener(this); onHostPause(); super.invalidate() }
 }
