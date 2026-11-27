@@ -29,7 +29,7 @@ export const applicationHoldToTalk = new HoldToTalk({
 
 export const applicationVoice=new VoiceAssistant({
  permission:async()=>{
-  if(Platform.OS!=='android'||!nativeSpeechRecognition.isSupported()||!(await nativeSpeechRecognition.getStatus()).supported)return false;
+  if(Platform.OS!=='android'||!nativeSpeechRecognition.isSupported()||!(await nativeSpeechRecognition.getStatus()).supported)throw new Error('On-device recognizer unavailable. Open Voice assistant readiness.');
   // Finish all asynchronous settings work before the controller rechecks
   // its token and issues the synchronous native recognition request.
   recognitionLocale=(await nativeSpeech.getStatus()).recognitionLocale??'en-AU';

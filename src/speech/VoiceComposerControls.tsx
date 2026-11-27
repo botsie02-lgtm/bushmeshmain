@@ -41,6 +41,7 @@ export function VoiceComposerControls({destination,visible,disabled}:{destinatio
   </View>
   {armed&&<Text style={styles.detail}>One-command quick send armed · this chat only</Text>}
   {active||state.detail?<Text accessibilityLiveRegion="polite" style={styles.detail}>{state.detail}{state.transcript?' · '+state.transcript:''}</Text>:null}
+  {state.phase==='error'&&action('Voice setup instructions','Voice setup',()=>Alert.alert('Offline voice setup','Open Radio → Messaging settings → Voice assistant readiness. Check the selected offline model, download it if offered, or choose an installed English language. Then test recognition before returning to this chat.'))}
   {active&&<View style={styles.row}>{!held&&['listening','dictating','confirming'].includes(state.phase)&&action('Finish recognition','Finish',()=>{applicationVoice.stopListening().catch(()=>undefined);})}{action('Cancel voice session','Cancel',()=>{applicationVoice.cancel().catch(()=>undefined);})}</View>}
  </View>;
 }

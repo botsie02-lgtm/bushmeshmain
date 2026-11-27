@@ -48,6 +48,7 @@ export class VoiceAssistant {
  private transmitting=false;
  private holding=false;
  private heldKey:string|null=null;
+ private finiteKey:string|null=null;
  private quickGrant:{key:string;text:string}|null=null;
  armQuickMessage(d:VoiceDestination,text:string):boolean {
   if(this.active||!d.isCurrent()||!d.send||!validateCarrierText(text).valid||matchQuickMessage(text,d.quick())!==text)return false;
@@ -69,7 +70,10 @@ export class VoiceAssistant {
   // Keep ownership until the native cancellation has completed.
   await Promise.allSettled(this.holding && this.held ? [this.held.cancel()] : [this.adapter.cancel(),this.adapter.stopSpeech()]);
   this.cancelling=false;
-  if(!this.transmitting&&!this.holding)this.active=false;
+  if(!this.transmitting&&!this.holding){this.active=false;this.finiteKey=null;}
+ }
+ async cancelDestination(key:string){
+  if(this.active&&this.finiteKey===key)await this.cancel();
  }
  stopListening=()=>this.holding?this.releaseHeld():this.adapter.stopListening();
  async releaseHeld(key?:string){
@@ -109,7 +113,7 @@ export class VoiceAssistant {
  }
  async run(mode:'dictation'|'command',d:VoiceDestination){
   if(this.active||!d.isCurrent())return;
-  this.active=true;const token=++this.sequence;
+  this.active=true;this.finiteKey=d.key;const token=++this.sequence;
   const grant=this.quickGrant;
   this.disarmQuickMessage(); // one explicit command invocation only
   const check=()=>{if(!this.valid(token,d))throw new Error('Voice destination changed.');};
@@ -169,7 +173,7 @@ export class VoiceAssistant {
    }
    check();this.set({phase:'idle',detail:'Voice command finished.'});
   }catch(error){if(token===this.sequence)this.set({phase:'error',detail:error instanceof Error?error.message:'Voice command failed.'});}
-  finally{if(token===this.sequence)this.active=false;}
+  finally{if(token===this.sequence){this.active=false;this.finiteKey=null;}}
  }
  async readSelection(kind:'unread'|'repeat',d:VoiceDestination){
   if(this.active||!d.isCurrent())return;
