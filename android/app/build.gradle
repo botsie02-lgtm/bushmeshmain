@@ -71,6 +71,16 @@ android {
         versionCode 1
         versionName "1.0"
     }
+    // Explicit evaluation-only source set. Neither model nor Vosk JNI code
+    // enters the normal application, even in the isolated field-test variant.
+    if (project.hasProperty("wakeEvaluationAssets")) {
+        sourceSets {
+            androidTest {
+                java.srcDir("src/wakeEvaluationAndroidTest/java")
+                assets.srcDir(project.property("wakeEvaluationAssets"))
+            }
+        }
+    }
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -105,6 +115,11 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("junit:junit:4.13.2")
+
+    if (project.hasProperty("wakeEvaluationAssets")) {
+        androidTestImplementation("com.alphacephei:vosk-android:0.3.75")
+        androidTestImplementation("net.java.dev.jna:jna:5.18.1@aar")
+    }
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
