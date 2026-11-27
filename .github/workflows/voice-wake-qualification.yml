@@ -4,12 +4,6 @@ on:
   push:
     branches:
       - feature/voice-handsfree-native-v1
-    paths:
-      - 'tools/voice/qualify_wake_audio.py'
-      - '.github/workflows/voice-wake-qualification.yml'
-      - 'android/app/src/wakeEvaluationAndroidTest/**'
-      - 'android/app/build.gradle'
-      - 'docs/VOICE_WAKE_QUALIFICATION.md'
   workflow_dispatch:
 
 concurrency:
@@ -126,6 +120,20 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: bash tools/voice/verify_wake_audio_android.sh android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/wake-test.apk" wake-android-evidence
+      - name: Evaluate candidate ARM64 ELF load alignment
+        if: ${{ !cancelled() && hashFiles('wake-android-evidence/arm64-elf.txt') != '' }}
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          path = pathlib.Path('wake-android-evidence/arm64-elf.txt')
+          align = [int(line.split()[-1], 16) for line in path.read_text().splitlines() if re.match(r'\s*LOAD\s', line)]
+          assert align, 'No ELF LOAD segment evidence'
+          result = {'load_segments': len(align), 'min_alignment': min(align), 'all_16k_aligned': all(a >= 16384 for a in align)}
+          print(result)
+          pathlib.Path('wake-android-evidence/arm64-alignment.txt').write_text(str(result) + '\n')
+          if not result['all_16k_aligned']:
+              sys.exit('Candidate ARM64 native library is not 16 KiB aligned')
+          PY
       - name: Upload qualification evidence (no executable or model distribution)
         if: always()
         uses: actions/upload-artifact@v4
