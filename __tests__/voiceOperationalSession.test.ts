@@ -8,6 +8,7 @@ import {
 } from '../src/app/voiceContext/voiceContextAdapters';
 import type {RadioConversationScope} from '../src/screens/radioMessenger/messengerModel';
 import type {AuthorizedConvoyMembership} from '../src/app/activeContext/operationalConvoy';
+import type {ChatPreferences} from '../src/radio/chatManagement/chatPreferences';
 
 const chatId = 'a'.repeat(64);
 const radioScope: RadioConversationScope = {
@@ -309,7 +310,7 @@ test('a received-message command string can never activate a session or masquera
 test('protected Radio chat adapters require actual configuration identity, incarnation and session', () => {
   const chat = {id: chatId, radio: radioScope.radioId, slot: 3,
     name: 'High Country', privateChannel: true};
-  const pref = {configuration: chat, incarnation: 4, retired: false} as never;
+  const pref = {configuration: chat, incarnation: 4, retired: false} as ChatPreferences;
   const good = {
     chats: [chat], preferences: {[chatId]: pref},
     radioId: radioScope.radioId, radioSessionEpoch: 17,
