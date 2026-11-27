@@ -60,6 +60,7 @@ internal object HandsFreeRuntime {
    * fixture switch. Fixtures use a deterministic non-recording capture. */
   internal fun requestFixture(activity: MainActivity, owner: Any, capture: () -> WakeCapture,
                               changed: (WakeSnapshot) -> Unit): Boolean =
+    activity.packageName.endsWith(".radioredesign") &&
     issue(activity, owner, { activity.voiceForegroundResumed && !activity.isFinishing && !activity.isDestroyed },
       { true }, { _, _ -> capture() }, true, changed)
 

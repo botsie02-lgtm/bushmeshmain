@@ -34,8 +34,11 @@ launch() {
 # or synthetic wake event. Native denial must not activate capture.
 launch fresh-launch
 run_test VoicePermissionDeniedTest voice-denied
+run_test WakeServiceColdStartTest wake-cold-start
 adb shell pm grant "$pkg" android.permission.RECORD_AUDIO
 run_test VoiceSuspendedRecognitionTest voice-suspended
+adb shell pm grant "$pkg" android.permission.POST_NOTIFICATIONS
+run_test WakeServiceLifecycleTest wake-service-notification
 
 # Permission revocation may terminate the process. Relaunch and verify wake
 # remains unavailable and recognition denies access without a new grant.
@@ -43,4 +46,5 @@ adb shell pm revoke "$pkg" android.permission.RECORD_AUDIO
 adb shell am force-stop "$pkg"
 launch revoked-launch
 run_test VoicePermissionDeniedTest voice-revoked
-printf '%s\n' 'API36 permission denial, suspension, revocation and relaunch passed. No recorded-audio wake recognition tested.' | tee "$out/result.txt"
+run_test WakeServiceColdStartTest wake-post-revocation-cold-start
+printf '%s\n' 'API36 finite voice lifecycle and synthetic hands-free service notification/stop/cold-start passed. No wake microphone or acoustic detector tested.' | tee "$out/result.txt"
