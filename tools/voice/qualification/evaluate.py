@@ -244,7 +244,7 @@ def evaluate_stream(
                 # the spoken phrase end (for a streaming endpoint decoder).
                 wake_start = base + clip["wake_start_ms"]/1000
                 wake_end = base + clip["wake_end_ms"]/1000
-                positives.append((max(0, wake_start - .15), wake_end + 1.5, wake_end))
+                # Never award a positive to wake-like noise from the next clip.\n                clip_end = base + clip["frames"] / SAMPLE_RATE\n                positives.append((max(base, wake_start - .15),\n                                  min(clip_end, wake_end + 1.5), wake_end))
             sigma = 0.0
             path = root / clip["file"]
             if noise_snr_db is not None:
