@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {AppState, FlatList, KeyboardAvoidingView, Modal, PermissionsAndroid, Platform, StyleSheet} from 'react-native';
+import {AppState, FlatList, Keyboard, KeyboardAvoidingView, Modal, PermissionsAndroid, Platform, StyleSheet} from 'react-native';
 import {RadioScreen} from '../src/screens/RadioScreen';
 import {RadioInbox} from '../src/screens/radioMessenger/RadioInbox';
 import {ViewedConversationProvider} from '../src/app/activeContext/ViewedConversationContext';
@@ -732,4 +732,34 @@ test('switching conversations cancels held capture and cannot append its late re
     await press('Back to chats');await room('Private');
     expect(draftValue()).toBe('Private draft');expect(verifiedSend).not.toHaveBeenCalled();
   }finally{await act(async()=>{await applicationVoice.cancel();f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
+});
+
+test('multiline composer retains its draft across keyboard dismissal and room changes without sending', async () => {
+  await mount();
+  await room('Private');
+  const input = tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' &&
+    typeof node.props.onChangeText === 'function')[0];
+  expect(input.props.multiline).toBe(true);
+  expect(input.props.submitBehavior).toBe('newline');
+  await draft('first line\nsecond line');
+  const dismiss = jest.spyOn(Keyboard, 'dismiss');
+  await press('Back to chats');
+  expect(dismiss).toHaveBeenCalled();
+  await room('Public');
+  await draft('separate room');
+  await press('Back to chats');
+  await room('Private');
+  expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' &&
+    typeof node.props.onChangeText === 'function')[0].props.value).toBe('first line\nsecond line');
+  expect(send).not.toHaveBeenCalled();
+});
+
+test('quick message selection fills a draft rather than transmitting it', async () => {
+  await mount();
+  await room('Private');
+  await press('Quick messages');
+  await press('Ready to go.');
+  expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' &&
+    typeof node.props.onChangeText === 'function')[0].props.value).toBe('Ready to go.');
+  expect(send).not.toHaveBeenCalled();
 });

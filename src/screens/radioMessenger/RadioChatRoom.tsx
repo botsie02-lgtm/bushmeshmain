@@ -1,9 +1,10 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
-  Alert, BackHandler, FlatList, KeyboardAvoidingView, Modal, Pressable, ScrollView, NativeScrollEvent, NativeSyntheticEvent,
+  Alert, BackHandler, FlatList, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, NativeScrollEvent, NativeSyntheticEvent,
   Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {colors} from '../../theme/colors';
+import {useRadioImeLayout} from './useRadioImeLayout';
 import {radioMessageClipboard} from '../../native/SensitiveClipboard';
 import {VoiceComposerControls} from '../../speech/VoiceComposerControls';
 import type {VoiceDestination} from '../../speech/VoiceAssistant';
@@ -24,6 +25,7 @@ export type RadioChatRoomProps = {
   autoRead?:boolean;
   initialSearch?: boolean;
   visible?: boolean;
+  onKeyboardVisibilityChange?: (visible: boolean) => void;
   firstUnreadId?: string;
   quickMessages?: readonly string[];
   onSaveQuickMessages?: (values: string[]) => Promise<void>;
@@ -106,8 +108,11 @@ export function RadioChatRoom({
   scope, voiceDestination, onToggleAutoRead, autoRead, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
   onTogglePinned, personalisation, displayName, persistentPin, visible = true,
-  starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false, firstUnreadId, onForwardMessage,
+  starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false, firstUnreadId, onForwardMessage, onKeyboardVisibilityChange,
 }: RadioChatRoomProps): React.JSX.Element {
+  const {viewRef, onLayout, keyboardOpen, overlap, accessoryMaxHeight, inputMaxHeight} = useRadioImeLayout(visible);
+  useEffect(() => {onKeyboardVisibilityChange?.(keyboardOpen);}, [keyboardOpen, onKeyboardVisibilityChange]);
+  useEffect(() => () => onKeyboardVisibilityChange?.(false), [onKeyboardVisibilityChange]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [replyId, setReplyId] = useState<string | null>(null);
@@ -152,7 +157,8 @@ export function RadioChatRoom({
   };
 
   return (
-    <KeyboardAvoidingView style={styles.root}
+    <View ref={viewRef} collapsable={false} onLayout={onLayout} style={styles.root}>
+    <KeyboardAvoidingView style={[styles.root, Platform.OS === 'android' && {paddingBottom: overlap}]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.header}>
         <TouchableOpacity accessibilityRole="button"
@@ -172,7 +178,7 @@ export function RadioChatRoom({
         <TouchableOpacity accessibilityRole="button"
           accessibilityLabel="Chat room options"
           accessibilityState={{expanded: menuOpen}}
-          onPress={() => {setMenuOpen(v => !v); if (onOpenMenu) onOpenMenu(scope);}}
+          onPress={() => {if (!menuOpen) Keyboard.dismiss(); setMenuOpen(v => !v); if (onOpenMenu) onOpenMenu(scope);}}
           style={styles.more}>
           <Text style={styles.moreText}>⋮</Text>
         </TouchableOpacity>
@@ -284,11 +290,14 @@ export function RadioChatRoom({
           </View>
         </View>
       </Modal> : null}
+      <View style={styles.historyActions}>
       {unreadIndex >= 0 ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to first unread message" onPress={() => {setPageSize(n => Math.max(n, unreadIndex + 1)); setJumpUnread(true);}} style={styles.menuButton}><Text style={styles.menuText}>↑ First unread</Text></TouchableOpacity> : null}
       <TouchableOpacity accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => listRef.current?.scrollToOffset({offset: 0, animated: true})} style={styles.menuButton}><Text style={styles.menuText}>↓ Latest</Text></TouchableOpacity>
+      </View>
       <View style={styles.composerArea}>
+        <ScrollView style={[styles.composerAccessories, keyboardOpen && {maxHeight: accessoryMaxHeight}]} keyboardShouldPersistTaps="always" nestedScrollEnabled>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Quick messages" onPress={() => setQuickOpen(v => !v)} style={styles.menuButton}><Text style={styles.menuText}>Quick messages</Text></TouchableOpacity>
-        {quickOpen && <ScrollView style={{maxHeight: 180}} keyboardShouldPersistTaps="always"><View style={styles.quick}>{templates.map((text, index) => <TouchableOpacity key={index} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}{onSaveQuickMessages && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit quick messages" style={styles.quickItem} onPress={() => {setQuickOpen(false); setEditingQuick(true);}}><Text style={styles.menuText}>Edit templates</Text></TouchableOpacity>}</View></ScrollView>}
+        {quickOpen && <ScrollView style={{maxHeight: 180}} keyboardShouldPersistTaps="always" nestedScrollEnabled><View style={styles.quick}>{templates.map((text, index) => <TouchableOpacity key={index} accessibilityRole="button" accessibilityLabel={text} style={styles.quickItem} onPress={() => {if (validateCarrierText(text).valid) onDraft(text); setQuickOpen(false);}}><Text style={styles.menuText}>{text}</Text></TouchableOpacity>)}{onSaveQuickMessages && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit quick messages" style={styles.quickItem} onPress={() => {setQuickOpen(false); setEditingQuick(true);}}><Text style={styles.menuText}>Edit templates</Text></TouchableOpacity>}</View></ScrollView>}
         {editingQuick && onSaveQuickMessages && <QuickMessageEditor initial={templates} onSave={onSaveQuickMessages} onClose={() => setEditingQuick(false)}/>}
         {replyMessage ? <View style={styles.details}>
           <Text numberOfLines={2} style={styles.menuText}>Replying to: {replyMessage.text}</Text>
@@ -300,6 +309,7 @@ export function RadioChatRoom({
         </View> : null}
         {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
         {voiceDestination && <VoiceComposerControls destination={voiceDestination} visible={visible} disabled={isSubmitting}/>}
+        </ScrollView>
         <View style={styles.composerRow}>
           <TextInput
             accessibilityLabel="Carrier message draft"
@@ -310,7 +320,8 @@ export function RadioChatRoom({
             onChangeText={onDraft}
             editable={!isSubmitting}
             maxLength={512}
-            style={styles.input}
+            style={[styles.input, keyboardOpen && {maxHeight: inputMaxHeight}]}
+            submitBehavior="newline"
             textAlignVertical="center"
           />
           <TouchableOpacity accessibilityRole="button"
@@ -329,6 +340,7 @@ export function RadioChatRoom({
         </Text>
       </View>
     </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -358,7 +370,8 @@ const styles = StyleSheet.create({
   statusBar: {backgroundColor: colors.surfaceSoft, paddingHorizontal: 16,
     paddingVertical: 7},
   statusText: {color: colors.warning, fontSize: 12, lineHeight: 18},
-  messages: {flex: 1},
+  messages: {flex: 1, minHeight: 0},
+  historyActions: {flexDirection: 'row', flexShrink: 0},
   messageContent: {flexGrow: 1, paddingHorizontal: 11, paddingVertical: 12},
   bubbleWrap: {flexDirection: 'row', justifyContent: 'flex-start', marginVertical: 4,
     paddingRight: 40},
@@ -386,10 +399,11 @@ const styles = StyleSheet.create({
     textAlign: 'center', marginTop: 7},
   quick: {flexDirection: 'row', flexWrap: 'wrap', gap: 5},
   quickItem: {minHeight: 48, paddingHorizontal: 8, justifyContent: 'center', backgroundColor: colors.surfaceSoft},
-  composerArea: {paddingHorizontal: 10, paddingTop: 8, paddingBottom: 6,
+  composerArea: {flexShrink: 1, minHeight: 0, paddingHorizontal: 10, paddingTop: 8, paddingBottom: 6,
     borderTopColor: colors.border, borderTopWidth: 1,
     backgroundColor: colors.surface},
-  composerRow: {flexDirection: 'row', alignItems: 'flex-end', gap: 8},
+  composerAccessories: {flexGrow: 0, flexShrink: 1},
+  composerRow: {flexDirection: 'row', alignItems: 'flex-end', gap: 8, flexShrink: 0},
   input: {flex: 1, minHeight: 50, maxHeight: 126, borderRadius: 22,
     paddingHorizontal: 15, paddingVertical: 8, color: colors.textPrimary,
     backgroundColor: colors.surfaceSoft, fontSize: 16},

@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Alert, AppState, BackHandler, Modal, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {Alert, AppState, BackHandler, Keyboard, Modal, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {ChatManagementDialog, type ChatManagementSelection} from '../radio/chatManagement/ChatManagementDialog';
 import {useChatManagement, type ChatManagementController} from '../radio/chatManagement/useChatManagement';
 import {chatPreferenceStore, DEFAULT_QUICK_MESSAGES, defaultChatPreferences, type ChatConfiguration} from '../radio/chatManagement/chatPreferences';
@@ -36,6 +36,7 @@ export type RadioScreenProps = {
   enableChatManagement?: boolean;
   settingsVisible?: boolean;
   tabVisible?: boolean;
+  onRoomKeyboardVisibilityChange?: (visible: boolean) => void;
   /** Existing carrier/legacy channel tools; no provisioning is performed here. */
   onOpenCarrierDetails?: () => void;
   /** Owned by the channel-management worker. If absent, fall back to carrier tools. */
@@ -95,7 +96,7 @@ function RadioMessenger({
   onOpenCarrierDetails, onCreateChat, onJoinChat,
   onOpenChatSettings, onOpenConversationMenu, onOpenMessagingSettings, onOpenRadioConnection,
   trustedScopes = [], verifiedMessageOwnership = NO_PROOF,
-  unreadCounts = NO_UNREAD, onConversationRead, management, settingsVisible, tabVisible = true,
+  unreadCounts = NO_UNREAD, onConversationRead, management, settingsVisible, tabVisible = true, onRoomKeyboardVisibilityChange,
 }: RadioScreenProps & {management?: ChatManagementController}): React.JSX.Element {
   const {
     connectionStatus, connectedDeviceName, channels, channelMessages,
@@ -456,6 +457,7 @@ function RadioMessenger({
     }
   };
   const closeRoom = () => {
+    Keyboard.dismiss();
     setSearchRoom(false);
     setSelectedScope(null);
     lastNavigation.current = null;
@@ -776,6 +778,7 @@ function RadioMessenger({
           autoRead={localPreference?.autoRead!==false}
           connected={connected && radioId === selectedScope.radioId}
           visible={roomVisible}
+          onKeyboardVisibilityChange={onRoomKeyboardVisibilityChange}
           firstUnreadId={unreadAnchor?.key === activeKey ? unreadAnchor?.id : undefined}
           onForwardMessage={management && liveScopes.length ? setForwardingMessage : undefined}
           quickMessages={localPreference?.quickMessages ?? globalTemplates}
