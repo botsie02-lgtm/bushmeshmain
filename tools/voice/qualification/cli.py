@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import resource
 import sys
+import time
 
 from .adapters import NoOpAdapter, VoskEndpointAdapter, ExternalJsonLinesAdapter
 from .evaluate import evaluate_stream
@@ -110,15 +112,24 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("Conditions list must be 1–6 nonempty items")
         rows = []
         for condition in conditions:
+            init_wall = time.perf_counter()
+            init_cpu = time.process_time()
+            init_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
             adapter = (NoOpAdapter() if args.adapter == "noop" else
                        VoskEndpointAdapter(str(args.model), args.vosk_mode)
                        if args.adapter == "vosk" else
                        ExternalJsonLinesAdapter(args.adapter_command))
+            setup_wall_ms = (time.perf_counter() - init_wall) * 1000
+            setup_cpu_ms = (time.process_time() - init_cpu) * 1000
+            setup_rss_growth = max(0, resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - init_rss)
             row = evaluate_stream(
                 data, args.manifest.resolve().parent, adapter,
                 condition=condition, seed=args.seed,
                 chunk_ms=args.chunk_ms, negative_loop_hours=args.negative_loop_hours,
             )
+            row["resource"]["adapter_setup_wall_ms"] = round(setup_wall_ms, 3)
+            row["resource"]["adapter_setup_cpu_ms"] = round(setup_cpu_ms, 3)
+            row["resource"]["adapter_setup_peak_rss_growth_kib"] = setup_rss_growth
             rows.append(row)
         report = {
             "schema": "bushmesh-voice-continuous-acoustic-report-v1",
