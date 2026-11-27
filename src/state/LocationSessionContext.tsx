@@ -64,6 +64,7 @@ export type RequestedPositionResponseResult = {
 type LocationSessionContextValue = {
   status: LocationSessionStatus;
   providerLabel: string | null;
+  nativeSource: boolean;
   latestFix: BushMeshLocationFix | null;
   lastPlan: PositionPlanResult | null;
   transmittedPlanCount: number;
@@ -117,6 +118,7 @@ export function LocationSessionProvider({
 
   const [status, setStatus] = useState<LocationSessionStatus>('stopped');
   const [providerLabel, setProviderLabel] = useState<string | null>(null);
+  const [nativeSource,setNativeSource]=useState(false);
   const [latestFix, setLatestFix] = useState<BushMeshLocationFix | null>(null);
   const [lastPlan, setLastPlan] = useState<PositionPlanResult | null>(null);
   const [transmittedPlanCount, setTransmittedPlanCount] = useState(0);
@@ -298,6 +300,7 @@ export function LocationSessionProvider({
     plannerRef.current.reset();
     latestFixRef.current = null;
     setProviderLabel(null);
+    setNativeSource(false);
     setLatestFix(null);
     setStatus('stopped');
     setLastError(null);
@@ -519,6 +522,7 @@ export function LocationSessionProvider({
         trackRecorderRef.current.snapshot().lastRecordedAtMs;
       latestFixRef.current = null;
       setProviderLabel(provider.label);
+      setNativeSource(provider === androidGpsLocationProvider);
       setLatestFix(null);
       setLastPlan(null);
       setRejectedFixCount(0);
@@ -570,6 +574,7 @@ export function LocationSessionProvider({
     () => ({
       status,
       providerLabel,
+      nativeSource,
       latestFix,
       lastPlan,
       transmittedPlanCount,
@@ -593,6 +598,7 @@ export function LocationSessionProvider({
     [
       status,
       providerLabel,
+      nativeSource,
       latestFix,
       lastPlan,
       transmittedPlanCount,
@@ -631,3 +637,6 @@ export function useLocationSession(): LocationSessionContextValue {
   }
   return context;
 }
+
+/** Optional read-only consumer for reusable voice features. */
+export function useOptionalLocationSession(){return useContext(LocationSessionContext);}

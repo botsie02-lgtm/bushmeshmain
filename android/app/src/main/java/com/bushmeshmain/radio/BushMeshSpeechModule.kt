@@ -52,9 +52,11 @@ class BushMeshSpeechModule(
   private var selectedLanguage: Locale? = null
   private var activeFocusRequest: AudioFocusRequest? = null
   private val utterances = mutableMapOf<String, Promise?>()
+  private val deadlines = mutableMapOf<String,Runnable>()
   private var utteranceSequence = 0L
   private fun finish(id: String?, success: Boolean) {
     if (id == null || !utterances.containsKey(id)) return
+    deadlines.remove(id)?.let { mainHandler.removeCallbacks(it) }
     val p = utterances.remove(id)
     if (success) p?.resolve(true) else p?.reject("BUSHMESH_TTS_INTERRUPTED", "Speech did not finish.")
     if (utterances.isEmpty()) { VoiceAudioOwnership.speaking = false; VoiceAudioOwnership.critical = false; abandonSpeechFocus() }
@@ -132,7 +134,7 @@ class BushMeshSpeechModule(
         promise.reject("BUSHMESH_TTS_BUSY", "Microphone or critical speech is active."); return@withReady
       }
       if (critical) { VoiceAudioOwnership.cancelRecognition?.invoke(); clearSpeech() }
-      if (!requestSpeechFocus()) { promise.reject("BUSHMESH_TTS_FOCUS", "Speech audio focus unavailable."); return@withReady }
+      if (utterances.isEmpty() && !requestSpeechFocus()) { promise.reject("BUSHMESH_TTS_FOCUS", "Speech audio focus unavailable."); return@withReady }
       val id = "bushmesh-" + (++utteranceSequence)
       VoiceAudioOwnership.speaking = true
       VoiceAudioOwnership.critical = critical
@@ -140,7 +142,12 @@ class BushMeshSpeechModule(
       if (tts.speak(text.trim(), TextToSpeech.QUEUE_ADD, null, id) == TextToSpeech.ERROR) {
         finish(id, false)
         if (!wait) promise.reject("BUSHMESH_TTS_SPEAK_FAILED", "Android TTS rejected the utterance.")
-      } else if (!wait) promise.resolve(true)
+      } else {
+        val deadline = Runnable { if (utterances.containsKey(id)) clearSpeech() }
+        deadlines[id] = deadline
+        mainHandler.postDelayed(deadline, 60_000L)
+        if (!wait) promise.resolve(true)
+      }
     }
   }
   @ReactMethod

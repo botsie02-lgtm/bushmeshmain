@@ -10,7 +10,7 @@ export function VoiceComposerControls({destination,visible,disabled}:{destinatio
  const active=!['idle','error','suspended'].includes(state.phase);
  const key=destination.key;
  useEffect(()=>()=>{applicationVoice.cancel(true).catch(()=>undefined);},[key]);
- useEffect(()=>{if(!visible)applicationVoice.cancel(true).catch(()=>undefined);},[visible]);
+ useEffect(()=>{if(!visible&&state.phase!=='permission')applicationVoice.cancel(true).catch(()=>undefined);},[visible,state.phase]);
  if(!visible||(!nativeSpeechRecognition.isSupported()&&!nativeSpeech.isSupported()))return null;
  const action=(label:string,text:string,run:()=>void,off=false)=><TouchableOpacity accessibilityRole="button" accessibilityLabel={label} disabled={off} style={[styles.button,off&&styles.disabled]} onPress={run}><Text style={styles.label}>{text}</Text></TouchableOpacity>;
  return <View>

@@ -47,7 +47,7 @@ export function RadioMessageSpeechBridge(): null {
           if (!permitsAssociatedRadioSpeech(message, entries)) return;
         }
         if (!alive.current || !enabled.current) return;
-        await nativeSpeech.speak(speechForRadioMessage(message.channelName, message.text), false);
+        await nativeSpeech.speakOrdinaryAndWait(speechForRadioMessage(message.channelName, message.text));
       }).catch(() => undefined);
     }
   }, [messagePersistenceStatus, channelMessages, radioMessagesEnabled, runtimeState]);

@@ -12,7 +12,8 @@ const commands:Record<string,VoiceCommand>={
  'what is my heading':'heading',"what's my heading":'heading',
 };
 export function parseVoiceCommand(result:Recognition):VoiceCommand|null {
- const command=commands[normalize(result.text)];
+ const key=normalize(result.text);
+ const command=Object.prototype.hasOwnProperty.call(commands,key)?commands[key]:null;
  if(!command || !Number.isFinite(result.confidence) || result.confidence<0.65) return null;
  if(result.alternatives?.some(value=>commands[normalize(value)]!==command)) return null;
  return command;
@@ -37,18 +38,22 @@ export class VoiceAssistant {
  private active=false;
  private listeners=new Set<()=>void>();
  private state:VoiceState={phase:'idle',detail:''};
- private last:string|null=null;
+ private last:{key:string;text:string}|null=null;
+ private cancelling=false;
+ private transmitting=false;
  constructor(private readonly adapter:VoiceAdapter){}
  snapshot=()=>this.state;
  subscribe=(listener:()=>void)=>{this.listeners.add(listener);return()=>{this.listeners.delete(listener);};};
  private set(state:VoiceState){this.state=state;this.listeners.forEach(f=>f());}
  private valid(token:number,d:VoiceDestination){return token===this.sequence&&d.isCurrent();}
  async cancel(suspended=false){
-  if(!this.active)return;
-  ++this.sequence; this.set({phase:suspended?'suspended':'idle',detail:suspended?'Voice session suspended.':'Cancelled.'});
+  if(!this.active||this.cancelling)return;
+  this.cancelling=true;
+  ++this.sequence; this.set({phase:suspended?'suspended':'idle',detail:this.transmitting?'Further voice turns cancelled. Check the submission outcome in history.':suspended?'Voice session suspended.':'Cancelled.'});
   // Keep ownership until the native cancellation has completed.
   await Promise.allSettled([this.adapter.cancel(),this.adapter.stopSpeech()]);
-  this.active=false;
+  this.cancelling=false;
+  if(!this.transmitting)this.active=false;
  }
  stopListening=()=>this.adapter.stopListening();
  async run(mode:'dictation'|'command',d:VoiceDestination){
@@ -57,7 +62,7 @@ export class VoiceAssistant {
   const check=()=>{if(!this.valid(token,d))throw new Error('Voice destination changed.');};
   const listen=async(phase:VoiceState['phase'],detail:string)=>{check();this.set({phase,detail});const r=await this.adapter.recognize();check();if(!r.text.trim())throw new Error('No speech recognized.');return r;};
   const say=async(text:string)=>{check();this.set({phase:'speaking',detail:text});await this.adapter.speak(text);check();};
-  const read=async(text:string)=>{this.last=text;await say(text);};
+  const read=async(text:string)=>{this.last={key:d.key,text};await say(text);};
   try{
    this.set({phase:'permission',detail:'Checking microphone permission…'});
    if(!await this.adapter.permission())throw new Error('Microphone permission denied.');
@@ -71,7 +76,7 @@ export class VoiceAssistant {
    if(!command)throw new Error('Unknown or uncertain command. Nothing sent.');
    if(command==='cancel'||command==='stop'){await this.adapter.stopSpeech();this.set({phase:'idle',detail:'Stopped.'});return;}
    if(command==='last'||command==='unread'||command==='repeat'){
-    const values=command==='last'?[d.latest()]:command==='unread'?d.unread():[this.last];
+    const values=command==='last'?[d.latest()]:command==='unread'?d.unread():[this.last?.key===d.key?this.last.text:null];
     const usable=values.filter((value):value is string=>!!value);
     // Bounded playback per explicit request, never mark read here.
     for(const value of usable.slice(0,10))await read(value);
@@ -94,7 +99,9 @@ export class VoiceAssistant {
      if(reliable&&answer==='dictate again')continue;
      if(!reliable||answer!=='yes'){this.set({phase:'idle',detail:'Not confirmed. Nothing sent.'});return;}
      check();this.set({phase:'executing',detail:'Submitting verified message…'});
-     const outcome=await d.send(text,()=>this.valid(token,d));
+     this.transmitting=true;
+     let outcome:string;
+     try{outcome=await d.send(text,()=>this.valid(token,d));}finally{this.transmitting=false;if(token!==this.sequence&&!this.cancelling)this.active=false;}
      if(this.valid(token,d)){this.set({phase:'speaking',detail:outcome});await this.adapter.speak(outcome);check();this.set({phase:'idle',detail:outcome});}
      return;
     }
@@ -107,7 +114,7 @@ export class VoiceAssistant {
  async readText(text:string,d:VoiceDestination){
   if(this.active||!d.isCurrent()||!text.trim())return;
   this.active=true;const token=++this.sequence;
-  try{this.last=text;this.set({phase:'speaking',detail:'Reading message aloud…'});await this.adapter.speak(text);if(this.valid(token,d))this.set({phase:'idle',detail:''});}
+  try{this.last={key:d.key,text};this.set({phase:'speaking',detail:'Reading message aloud…'});await this.adapter.speak(text);if(this.valid(token,d))this.set({phase:'idle',detail:''});}
   catch{if(token===this.sequence)this.set({phase:'error',detail:'Offline speech unavailable or interrupted.'});}
   finally{if(token===this.sequence)this.active=false;}
  }

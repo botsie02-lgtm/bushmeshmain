@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Alert, AppState, BackHandler, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import {Alert, AppState, BackHandler, Modal, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {ChatManagementDialog, type ChatManagementSelection} from '../radio/chatManagement/ChatManagementDialog';
 import {useChatManagement, type ChatManagementController} from '../radio/chatManagement/useChatManagement';
 import {chatPreferenceStore, DEFAULT_QUICK_MESSAGES, defaultChatPreferences, type ChatConfiguration} from '../radio/chatManagement/chatPreferences';
@@ -25,6 +25,8 @@ import {
 import {RadioInbox} from './radioMessenger/RadioInbox';
 import {RadioChatRoom} from './radioMessenger/RadioChatRoom';
 import type {VoiceDestination} from '../speech/VoiceAssistant';
+import {useOptionalLocationSession} from '../state/LocationSessionContext';
+import {localGpsReading} from '../speech/voiceGps';
 import {RadioTechnicalDrawer} from './radioMessenger/RadioTechnicalDrawer';
 import {buildConversationExport} from '../radio/chatManagement/conversationExport';
 import {nativeFileExport} from '../native/NativeFileExport';
@@ -616,8 +618,10 @@ function RadioMessenger({
     }
   };
 
-  const voiceLive = useRef({key: activeKey, epoch: management?.sessionEpoch, ready: roomVisible, draft: activeDraft, submit, updateDraft});
-  voiceLive.current = {key: activeKey, epoch: management?.sessionEpoch, ready: roomVisible, draft: activeDraft, submit, updateDraft};
+  const gps = useOptionalLocationSession();
+  const gpsRef=useRef(gps);gpsRef.current=gps;
+  const voiceLive = useRef({key: activeKey, epoch: management?.sessionEpoch, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft});
+  voiceLive.current = {key: activeKey, epoch: management?.sessionEpoch, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft};
   const voiceDestination: VoiceDestination | undefined = selectedScope && activeKey && management ? (() => {
     const key = activeKey; const epoch = management.sessionEpoch;
     const current = () => voiceLive.current.key === key && voiceLive.current.epoch === epoch && voiceLive.current.ready && radioConnection.getChatSessionEpoch() === epoch;
@@ -628,7 +632,12 @@ function RadioMessenger({
       latest: () => incoming[incoming.length-1]?.message.text ?? null,
       unread: () => {const index=incoming.findIndex(m=>m.message.id===unreadAnchor?.id);return index>=0?incoming.slice(index).map(m=>m.message.text):[];},
       quick: () => localPreference?.quickMessages ?? globalTemplates,
-      radio: () => connected ? 'Radio connected locally. Peer reachability not confirmed.' : 'Radio disconnected.'};
+      radio: () => connected ? 'Radio connected locally. Peer reachability not confirmed.' : 'Radio disconnected.',
+      localReading: async command => {
+        const allowed=Platform.OS==='android' && await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+        const latest=gpsRef.current;
+        return localGpsReading(command,latest?.latestFix??null,latest?.nativeSource===true&&(latest.status==='tracking'||latest.status==='tracking-no-link'),allowed);
+      }};
   })() : undefined;
 
   const openSettings = () => {
