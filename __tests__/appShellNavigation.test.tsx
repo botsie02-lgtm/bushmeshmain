@@ -12,6 +12,7 @@ import {RadioMessagingSettingsScreen} from '../src/screens/RadioMessagingSetting
 import {CarMessagingStatusBanner} from '../src/components/CarMessagingStatusBanner';
 import {RadioSpeechStatusBanner} from '../src/components/RadioSpeechStatusBanner';
 import {SpeechPttPanel} from '../src/components/SpeechPttPanel';
+import {VoiceReadinessPanel} from '../src/speech/VoiceReadinessPanel';
 import {nativeOutboundDiagnostics} from '../src/meshcore/nativeOutboundDiagnostics';
 
 jest.mock('../src/state/SpeechContext', () => ({
@@ -87,6 +88,7 @@ jest.mock('../src/components/RecoveryReferenceNotice', () => ({RecoveryReference
 jest.mock('../src/components/RouteGuidanceBanner', () => ({RouteGuidanceBanner: () => null}));
 jest.mock('../src/components/SecureDataStatusBanner', () => ({SecureDataStatusBanner: () => null}));
 jest.mock('../src/components/SpeechPttPanel', () => ({SpeechPttPanel: () => null}));
+jest.mock('../src/speech/VoiceReadinessPanel', () => ({VoiceReadinessPanel: () => null}));
 jest.mock('../src/components/SpeechStatusBanner', () => ({SpeechStatusBanner: () => null}));
 
 function visibleText(renderer: ReactTestRenderer.ReactTestRenderer): string {
@@ -329,8 +331,9 @@ test('radio settings replaces the banner stack, preserves messenger instance, an
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Privacy and storage');});
     expect(visibleText(renderer)).toContain('does not prove verified membership');
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
-    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Push-to-talk');});
-    expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(1);
+    await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Voice assistant readiness');});
+    expect(renderer.root.findAllByType(VoiceReadinessPanel)).toHaveLength(1);
+    expect(renderer.root.findAllByType(SpeechPttPanel)).toHaveLength(0);
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Back to Radio');});
     await ReactTestRenderer.act(() => {pressByLabel(renderer, 'Advanced diagnostics');});
     expect(renderedTabs(renderer)).toHaveLength(5);

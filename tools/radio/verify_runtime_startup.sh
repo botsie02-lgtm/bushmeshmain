@@ -31,13 +31,16 @@ run_test() {
 }
 run_test RuntimeLifecycleDeniedTest
 run_test ConversationMenuUiTest
+run_test VoicePermissionDeniedTest
 # Grants are only test-environment setup, after the ungranted smoke.
 adb shell pm grant "$pkg" android.permission.BLUETOOTH_CONNECT
 adb shell pm grant "$pkg" android.permission.ACCESS_FINE_LOCATION
+adb shell pm grant "$pkg" android.permission.RECORD_AUDIO
 adb shell svc bluetooth disable
 adb shell cmd location set-location-enabled true
 sleep 3
 run_test RuntimeLifecycleGrantedTest
+run_test VoiceSuspendedRecognitionTest
 run_test ProtectedChannelKeyWindowTest
 run_test ProtectedInvitationWindowTest
 run_test HistoryNativeStorageTest
@@ -48,6 +51,7 @@ grep -Fq "RADIO_HISTORY_NATIVE_SCALE count=50000 status=capacity_rejected " "$ou
 # and denied release paths rather than assuming an in-process callback.
 adb shell pm revoke "$pkg" android.permission.BLUETOOTH_CONNECT
 adb shell pm revoke "$pkg" android.permission.ACCESS_FINE_LOCATION
+adb shell pm revoke "$pkg" android.permission.RECORD_AUDIO
 adb shell am force-stop "$pkg"
 adb logcat -c
 adb shell am start -W -n "$pkg/com.bushmeshmain.MainActivity" | tee "$out/smoke-revoked-launch.txt"
@@ -60,4 +64,5 @@ test "$(adb shell pidof "$pkg" | tr -d '\r')" = "$pid"
 adb logcat -d -b crash > "$out/smoke-revoked-crash.txt"
 if grep -Fq "$pkg" "$out/smoke-revoked-crash.txt"; then exit 1; fi
 run_test RuntimeLifecycleDeniedTest
+run_test VoicePermissionDeniedTest
 printf 'Fresh install and post-revocation launch survived; native lifecycle tests passed.\n' | tee "$out/smoke-result.txt"

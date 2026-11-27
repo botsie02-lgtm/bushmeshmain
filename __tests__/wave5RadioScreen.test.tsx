@@ -10,6 +10,9 @@ import {useRadioSession} from '../src/state/RadioSessionContext';
 import type {BushMeshChannelMessage} from '../src/state/BushMeshContext';
 import {chatPreferenceStore, defaultChatPreferences} from '../src/radio/chatManagement/chatPreferences';
 import {ChatOperationError} from '../src/radio/chatManagement/chatInvitations';
+import {applicationVoice} from '../src/speech/applicationVoice';
+import {nativeSpeechRecognition} from '../src/native/NativeSpeechRecognition';
+import {PermissionsAndroid, Platform} from 'react-native';
 import {meshCoreInboundInbox} from '../src/meshcore/meshcoreInboundInbox';
 import {meshCoreInboundMessageId} from '../src/meshcore/meshcoreInboundIdentity';
 import type {ParsedChannelMessage} from '../src/meshcore/meshcoreParsers';
@@ -632,4 +635,23 @@ test('message reply and forwarding prepare drafts without transmitting', async (
   expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Carrier message draft' && typeof node.props.onChangeText === 'function')[0].props.value).toBe('Camp is ready');
   expect(verifiedSend).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
+});
+
+
+test('composer microphone appends recognized text to current draft and does not transmit',async()=>{
+  const os=Platform.OS;
+  try {
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+    jest.spyOn(nativeSpeechRecognition,'isSupported').mockReturnValue(true);
+    jest.spyOn(nativeSpeechRecognition,'getStatus').mockResolvedValue({supported:true,listening:false,apiLevel:36,reason:null});
+    jest.spyOn(PermissionsAndroid,'check').mockResolvedValue(true);
+    jest.spyOn(nativeSpeechRecognition,'recognizeOnce').mockResolvedValue({text:'tree ahead',confidence:.95,durationMs:200,alternatives:[]});
+    await mount({enableChatManagement:true});
+    await room('Private');
+    const input=()=>tree.root.findAll(node=>node.props.accessibilityLabel==='Carrier message draft'&&typeof node.props.onChangeText==='function')[0];
+    await act(async()=>{input().props.onChangeText('Existing draft');});
+    await press('Dictate message');
+    expect(input().props.value).toBe('Existing draft tree ahead');
+    expect(send).not.toHaveBeenCalled();expect(verifiedSend).not.toHaveBeenCalled();
+  } finally {await applicationVoice.cancel();Object.defineProperty(Platform,'OS',{configurable:true,value:os});jest.restoreAllMocks();}
 });

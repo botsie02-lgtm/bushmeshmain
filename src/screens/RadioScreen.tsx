@@ -620,6 +620,8 @@ function RadioMessenger({
 
   const gps = useOptionalLocationSession();
   const gpsRef=useRef(gps);gpsRef.current=gps;
+  const voiceQuick=useRef(localPreference?.quickMessages??globalTemplates);
+  voiceQuick.current=localPreference?.quickMessages??globalTemplates;
   const voiceLive = useRef({key: activeKey, epoch: management?.sessionEpoch, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft});
   voiceLive.current = {key: activeKey, epoch: management?.sessionEpoch, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, submit, updateDraft};
   const voiceDestination: VoiceDestination | undefined = selectedScope && activeKey && management ? (() => {
@@ -631,7 +633,7 @@ function RadioMessenger({
       send: chatFor(selectedScope) && canSubmit ? (text,guard) => voiceLive.current.submit(text,()=>current()&&AppState.currentState==='active'&&guard()) : undefined,
       latest: () => incoming[incoming.length-1]?.message.text ?? null,
       unread: () => {const index=incoming.findIndex(m=>m.message.id===unreadAnchor?.id);return index>=0?incoming.slice(index).map(m=>m.message.text):[];},
-      quick: () => localPreference?.quickMessages ?? globalTemplates,
+      quick: () => current()?voiceQuick.current:[],
       radio: () => connected ? 'Radio connected locally. Peer reachability not confirmed.' : 'Radio disconnected.',
       localReading: async command => {
         const allowed=Platform.OS==='android' && await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);

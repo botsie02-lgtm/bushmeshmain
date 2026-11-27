@@ -123,7 +123,7 @@ function SettingsDetail({page}: {page: RadioSettingsPage}): React.JSX.Element {
       </Section>}
       {page === 'speech' && <><Section
         heading="Incoming message auto-read"
-        detail="Auto-read mute is a global local speech preference, not a per-conversation mute. Replay Last speaks the latest received channel message aloud, even when auto-read is off.">
+        detail="Global auto-read enables ordinary incoming speech. Each verified chat also has its own auto-read preference and timed speech mute. Explicit readback remains available.">
         {supported ? <RadioSpeechStatusBanner /> : (
           <Text style={styles.detail}>Local speech is unavailable in this build.</Text>
         )}

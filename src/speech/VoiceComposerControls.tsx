@@ -23,7 +23,7 @@ export function VoiceComposerControls({destination,visible,disabled}:{destinatio
    {destination.send&&!active&&nativeSpeechRecognition.isSupported()&&action('Voice quick send policy',armed?'Disarm quick send':'Quick send policy',()=>{
      if(armed){applicationVoice.cancel().catch(()=>undefined);return;}
      const choices=destination.quick().slice(0,2);
-     Alert.alert('One-command quick send','Choose one saved phrase to transmit without another spoken yes on the next voice command only. Destination: '+destination.label+'. Ordinary dictation and all other sends still require confirmation.',[{text:'Cancel',style:'cancel'},...choices.map(text=>({text,onPress:()=>{applicationVoice.armQuickMessage(destination,text);}}))]);
+     Alert.alert('One-command quick send','Choose one of the first two saved phrases to transmit without another spoken yes on the next voice command only. Destination: '+destination.label+'. Ordinary dictation and all other sends still require confirmation.',[{text:'Cancel',style:'cancel'},...choices.map(text=>({text,onPress:()=>{applicationVoice.armQuickMessage(destination,text);}}))]);
    })}
   </View>
   {armed&&<Text style={styles.detail}>One-command quick send armed · this chat only</Text>}

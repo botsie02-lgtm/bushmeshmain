@@ -14,7 +14,7 @@ const commands:Record<string,VoiceCommand>={
 export function parseVoiceCommand(result:Recognition):VoiceCommand|null {
  const key=normalize(result.text);
  const command=Object.prototype.hasOwnProperty.call(commands,key)?commands[key]:null;
- if(!command || !Number.isFinite(result.confidence) || result.confidence<0.65) return null;
+ if(!command || !Number.isFinite(result.confidence) || (result.confidence<0.65||result.confidence>1)) return null;
  if(result.alternatives?.some(value=>commands[normalize(value)]!==command)) return null;
  return command;
 }
@@ -103,12 +103,12 @@ export class VoiceAssistant {
      const dictated=await listen('dictating','Listening for message…');
      text=command==='quick'?matchQuickMessage(dictated.text,d.quick())??'':dictated.text.trim();
      if(!text||!validateCarrierText(text).valid)throw new Error('Message unavailable or exceeds 133 UTF-8 bytes. Nothing sent.');
-     const auto=command==='quick'&&grant?.key===d.key&&grant.text===text&&dictated.confidence>=0.9&&result.confidence>=0.9&&!dictated.alternatives?.some(v=>matchQuickMessage(v,d.quick())!==text);
+     const auto=command==='quick'&&grant?.key===d.key&&grant.text===text&&Number.isFinite(dictated.confidence)&&dictated.confidence>=0.9&&dictated.confidence<=1&&result.confidence>=0.9&&result.confidence<=1&&!dictated.alternatives?.some(v=>matchQuickMessage(v,d.quick())!==text);
      if(!auto){
       await say('Send to '+d.label+'? '+text+'. Say yes, no, cancel, or dictate again.');
       const confirmation=await listen('confirming','Confirm sending to '+d.label+' · '+text);
       const answer=normalize(confirmation.text);
-      const reliable=Number.isFinite(confirmation.confidence)&&confirmation.confidence>=0.8&&!confirmation.alternatives?.some(v=>normalize(v)!==answer);
+      const reliable=Number.isFinite(confirmation.confidence)&&confirmation.confidence>=0.8&&confirmation.confidence<=1&&!confirmation.alternatives?.some(v=>normalize(v)!==answer);
       if(reliable&&answer==='dictate again')continue;
       if(!reliable||answer!=='yes'){this.set({phase:'idle',detail:'Not confirmed. Nothing sent.'});return;}
      }
@@ -126,6 +126,7 @@ export class VoiceAssistant {
   finally{if(token===this.sequence)this.active=false;}
  }
  async readSelection(kind:'unread'|'repeat',d:VoiceDestination){
+  if(this.active||!d.isCurrent())return;
   const values=kind==='unread'?d.unread().slice(0,10):this.last?.key===d.key?[this.last.text]:[];
   if(!values.length){this.set({phase:'idle',detail:'No messages available.'});return;}
   await this.readText(values.join('. Next message. '),d);
