@@ -78,15 +78,29 @@ test('unmount before status resolves never starts a stale language probe', async
   expect(content()).toContain('reported installed');
 });
 
-test('late language probe after navigation cannot overwrite the new readiness panel', async () => {
+test('reopening the same locale shares the pending native language probe', async () => {
   const pending = deferred<'installed' | 'download-required' | 'unknown'>();
   jest.spyOn(nativeSpeechRecognition, 'checkLanguage').mockReturnValueOnce(pending.promise);
   await mount();
   await act(async () => {tree!.update(view(false));});
+  await act(async () => {tree!.update(view());});
+  expect(nativeSpeechRecognition.checkLanguage).toHaveBeenCalledTimes(1);
+  await act(async () => {pending.resolve('installed');});
+  expect(content()).toContain('reported installed');
+});
+
+test('a different locale waits for the previous probe and ignores its old result', async () => {
+  const pending = deferred<'installed' | 'download-required' | 'unknown'>();
+  jest.spyOn(nativeSpeechRecognition, 'checkLanguage').mockReturnValueOnce(pending.promise);
+  await mount();
+  await act(async () => {tree!.update(view(false));});
+  jest.spyOn(nativeSpeech, 'getVoicePreferences').mockResolvedValue({...preferences, locale: 'en-GB'});
   jest.spyOn(nativeSpeechRecognition, 'checkLanguage').mockResolvedValue('download-required');
   await act(async () => {tree!.update(view());});
-  expect(content()).toContain('download required');
+  expect(nativeSpeechRecognition.checkLanguage).toHaveBeenCalledTimes(1);
   await act(async () => {pending.resolve('installed');});
-  expect(content()).toContain('download required');
+  expect(nativeSpeechRecognition.checkLanguage).toHaveBeenCalledTimes(2);
+  expect(nativeSpeechRecognition.checkLanguage).toHaveBeenLastCalledWith('en-GB');
+  expect(content()).toContain('en-GB model: download required');
   expect(content()).not.toContain('reported installed');
 });

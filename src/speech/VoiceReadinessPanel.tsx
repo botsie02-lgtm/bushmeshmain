@@ -5,6 +5,28 @@ import {nativeSpeech, type VoicePreferences} from '../native/NativeSpeech';
 import {colors} from '../theme/colors';
 import {useSpeech} from '../state/SpeechContext';
 
+// Android admits one language probe at a time. Share an outstanding probe
+// across panel navigation; defer a different locale until it finishes.
+type LanguageReadiness = Awaited<ReturnType<typeof nativeSpeechRecognition.checkLanguage>>;
+let languageProbe: {locale: string; promise: Promise<LanguageReadiness>} | null = null;
+async function readLanguage(locale: string, current: () => boolean): Promise<LanguageReadiness> {
+  while (languageProbe) {
+    const pending = languageProbe;
+    if (pending.locale === locale) return pending.promise;
+    await pending.promise.catch(() => undefined);
+    if (!current()) return 'unknown';
+  }
+  if (!current()) return 'unknown';
+  const promise = nativeSpeechRecognition.checkLanguage(locale);
+  const request = {locale, promise};
+  languageProbe = request;
+  try {
+    return await promise;
+  } finally {
+    if (languageProbe === request) languageProbe = null;
+  }
+}
+
 export function VoiceReadinessPanel() {
   const {refresh: refreshSpeech, supported} = useSpeech();
   const [status, setStatus] = useState('Checking local speech…');
@@ -41,7 +63,7 @@ export function VoiceReadinessPanel() {
       ]);
       if (!current()) return;
       const locale = p?.locale ?? 'en-AU';
-      const model = r.supported ? await nativeSpeechRecognition.checkLanguage(locale) : 'unknown';
+      const model = r.supported ? await readLanguage(locale, current) : 'unknown';
       if (!current()) return;
       setPrefs(p);
       setStatus((r.supported ? 'On-device recognizer available. ' + locale + ' model: ' +
