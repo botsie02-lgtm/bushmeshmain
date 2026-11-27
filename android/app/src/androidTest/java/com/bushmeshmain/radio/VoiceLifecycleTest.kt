@@ -107,6 +107,23 @@ abstract class VoiceLifecycleFixture {
   }
 }
 class VoicePermissionDeniedTest : VoiceLifecycleFixture() {
+  @Test fun modelInspectionNeverAcquiresMicrophoneOrRequestsCapture() {
+    withRecognition { _, _, module ->
+      val (ok, value) = call { module.getLanguageInventory("en-AU", it) }
+      assertTrue(ok)
+      val inventory = value as ReadableMap
+      assertEquals("en-AU", inventory.getString("locale"))
+      assertTrue(inventory.getString("status") in listOf("installed", "pending", "download-required", "unsupported", "unknown"))
+      assertNotNull(inventory.getArray("installed"))
+      assertNotNull(inventory.getArray("pending"))
+      assertNotNull(inventory.getArray("downloadable"))
+      assertEquals(Pair(true, false), call { module.stopDownloadObservation("unowned-request", it) })
+      // An invalid locale cannot trigger provider provisioning.
+      assertEquals(Pair(true, "unavailable"), call { module.downloadLanguage("fr-FR", "invalid-language", it) })
+      assertNeverAdmitted(module, true)
+    }
+  }
+
   @Test fun permissionDenialNeverStartsMicrophone() {
     assertEquals(PackageManager.PERMISSION_DENIED, context.checkSelfPermission(Manifest.permission.RECORD_AUDIO))
     withRecognition { _, _, module ->

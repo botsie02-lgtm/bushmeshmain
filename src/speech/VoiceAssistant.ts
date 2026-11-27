@@ -30,7 +30,7 @@ export type VoiceDestination={
  latest:()=>string|null; unread:()=>readonly string[]; quick:()=>readonly string[];
  radio:()=>string; localReading?:(command:'speed'|'heading')=>Promise<string>;
 };
-export type VoiceAdapter={permission:()=>Promise<boolean>;recognize:()=>Promise<Recognition>;cancel:()=>Promise<unknown>;stopListening:()=>Promise<unknown>;speak:(text:string)=>Promise<unknown>;stopSpeech:()=>Promise<unknown>};
+export type VoiceAdapter={permission:()=>Promise<boolean>;recognize:(onPhase?: (phase: 'starting' | 'listening' | 'finishing') => void)=>Promise<Recognition>;cancel:()=>Promise<unknown>;stopListening:()=>Promise<unknown>;speak:(text:string)=>Promise<unknown>;stopSpeech:()=>Promise<unknown>};
 export type HeldVoiceAdapter = {
  press: (partial: (text: string) => void, phase: (phase: 'listening' | 'finishing') => void, eligible: () => boolean) => Promise<Recognition | null>;
  release: () => Promise<boolean>;
@@ -72,8 +72,14 @@ export class VoiceAssistant {
   this.cancelling=false;
   if(!this.transmitting&&!this.holding){this.active=false;this.finiteKey=null;}
  }
- async cancelDestination(key:string){
-  if(this.active&&this.finiteKey===key)await this.cancel();
+ async cancelDestination(key:string,suspended=false){
+  if(this.active&&(this.finiteKey===key||this.heldKey===key)){
+   await this.cancel(suspended);return;
+  }
+  if(this.quickGrant?.key===key){
+   this.disarmQuickMessage();
+   if(!this.active)this.set({phase:'idle',detail:''});
+  }
  }
  stopListening=()=>this.holding?this.releaseHeld():this.adapter.stopListening();
  async releaseHeld(key?:string){
@@ -117,7 +123,15 @@ export class VoiceAssistant {
   const grant=this.quickGrant;
   this.disarmQuickMessage(); // one explicit command invocation only
   const check=()=>{if(!this.valid(token,d))throw new Error('Voice destination changed.');};
-  const listen=async(phase:VoiceState['phase'],detail:string)=>{check();this.set({phase,detail});const r=await this.adapter.recognize();check();if(!r.text.trim())throw new Error('No speech recognized.');return r;};
+  const listen=async(phase:VoiceState['phase'],detail:string)=>{
+   check();this.set({phase,detail});
+   const r=await this.adapter.recognize(nativePhase=>{
+    if(!this.valid(token,d))return;
+    const prefix=nativePhase==='finishing'?'Processing offline speech… ':nativePhase==='starting'?'Starting microphone… ':'';
+    this.set({phase,detail:prefix+detail});
+   });
+   check();if(!r.text.trim())throw new Error('No speech recognized.');return r;
+  };
   const say=async(text:string)=>{check();this.set({phase:'speaking',detail:text});await this.adapter.speak(text);check();};
   const read=async(text:string)=>{this.last={key:d.key,text};await say(text);};
   try{
@@ -183,9 +197,9 @@ export class VoiceAssistant {
  }
  async readText(text:string,d:VoiceDestination){
   if(this.active||!d.isCurrent()||!text.trim())return;
-  this.active=true;const token=++this.sequence;
+  this.active=true;this.finiteKey=d.key;const token=++this.sequence;
   try{this.last={key:d.key,text};this.set({phase:'speaking',detail:'Reading message aloud…'});await this.adapter.speak(text);if(this.valid(token,d))this.set({phase:'idle',detail:''});}
   catch{if(token===this.sequence)this.set({phase:'error',detail:'Offline speech unavailable or interrupted.'});}
-  finally{if(token===this.sequence)this.active=false;}
+  finally{if(token===this.sequence){this.active=false;this.finiteKey=null;}}
  }
 }

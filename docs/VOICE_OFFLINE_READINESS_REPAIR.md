@@ -21,4 +21,4 @@ Use an isolated field-test APK from this exact branch only after application and
 
 ## Limits
 
-Provider inventory may be incomplete and download callbacks may not be implemented. Unknown readiness remains visibly unknown; a successful offline recognition test is separate evidence. No wake-word training or persistent microphone service is in scope. No keyboard or RadioChatRoom layout changes. The composer setup action provides navigation instructions rather than forcing navigation during a conversation.
+Provider inventory may be incomplete and download callbacks may not be implemented. Unknown readiness remains visibly unknown; a successful offline recognition test is separate evidence. No wake-word training or persistent microphone service is in scope. No keyboard or RadioChatRoom layout changes. The composer setup action provides navigation instructions and, when the app navigation context is available, an explicit button to open messaging settings. Composer cleanup is scoped to its own voice destination; a settings-local test cannot be cancelled by a hidden composer.

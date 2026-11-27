@@ -38,7 +38,13 @@ export const applicationVoice=new VoiceAssistant({
   const p=PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
   return await PermissionsAndroid.check(p)||await PermissionsAndroid.request(p)===PermissionsAndroid.RESULTS.GRANTED;
  },
- recognize:()=>nativeSpeechRecognition.recognizeOnce(recognitionLocale),
+ recognize:async onPhase=>{
+  const unsubscribe=nativeSpeechRecognition.subscribeSessionState(status=>{
+   if(status.microphoneOwner==='command'&&status.phase&&status.phase!=='idle')onPhase?.(status.phase);
+  });
+  try{return await nativeSpeechRecognition.recognizeOnce(recognitionLocale);}
+  finally{unsubscribe();}
+ },
  cancel:()=>nativeSpeechRecognition.cancel(),
  stopListening:()=>nativeSpeechRecognition.stopListening(),
  speak:async text=>{if(!await nativeSpeech.speakOrdinaryAndWait(text))throw new Error('Offline speech unavailable.');},
