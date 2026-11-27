@@ -3,12 +3,17 @@ set -euo pipefail
 apk="$1"
 test_apk="$2"
 out="$3"
+mode="${4:-all}"
+case "$mode" in all|ui|native) ;; *) echo "Unknown qualification mode: $mode" >&2; exit 2;; esac
 pkg=com.bushmeshmain.radioredesign
 runner="$pkg.test/androidx.test.runner.AndroidJUnitRunner"
 mkdir -p "$out"
 trap 'adb logcat -d -b crash > "$out/smoke-crash-log.txt" || true; adb logcat -d -t 2000 > "$out/smoke-logcat.txt" || true; if [ ! -s "$out/smoke-native-history-scale.txt" ]; then adb logcat -d -s BushMeshHistoryScale:I | tee "$out/smoke-native-history-scale.txt" || true; fi' EXIT
 adb shell getprop ro.build.version.sdk | tr -d '\r' | tee "$out/smoke-api.txt"
 grep -qx 36 "$out/smoke-api.txt"
+# This script may reset contaminated synthetic fixtures. Refuse physical devices.
+case "$(adb get-serialno)" in emulator-*) ;; *) echo "CI emulator required" >&2; exit 2;; esac
+adb shell getprop ro.kernel.qemu | tr -d '\r' | grep -qx 1
 adb shell input keyevent 82
 adb install "$apk"
 adb install "$test_apk"
@@ -57,7 +62,10 @@ reset_synthetic_fixture() {
   adb shell am force-stop "$pkg" &&
     adb shell pm clear "$pkg" | grep -qx 'Success'
 }
-independent_test RuntimeLifecycleDeniedTest || overall=1
+if [ "$mode" != ui ]; then
+  independent_test RuntimeLifecycleDeniedTest || overall=1
+fi
+if [ "$mode" != native ]; then
 menu_result=0
 adb shell "rm -f /sdcard/Android/data/$pkg/files/menu-*.txt /sdcard/Android/data/$pkg/files/menu-*.png" || menu_result=1
 independent_test ConversationMenuUiTest || menu_result=1
@@ -75,7 +83,7 @@ if [ "$menu_result" -eq 0 ]; then
 fi
 if [ "$menu_result" -eq 0 ]; then record_stage menu-evidence passed; else record_stage menu-evidence failed; fi
 # Force a visible software IME even with the emulator's hardware keyboard.
-adb shell settings put secure show_ime_with_hard_keyboard 1
+if adb shell settings put secure show_ime_with_hard_keyboard 1; then record_stage keyboard-ime-setup passed; else record_stage keyboard-ime-setup failed; fi
 # Three predetermined independent executions, not retry-until-pass.
 # A fresh process and exact catalogue restoration isolate each execution.
 # Remove only synthetic screenshots, never app data or production preferences.
@@ -85,14 +93,16 @@ adb shell settings get secure default_input_method | tee "$out/smoke-keyboard-in
 : > "$out/smoke-keyboard-qualification.txt"
 for round in 1 2 3; do
   round_result=0
-  adb shell am force-stop "$pkg"
-  adb shell "rm -f /sdcard/Android/data/$pkg/files/keyboard-*.png"
+  adb shell am force-stop "$pkg" || round_result=1
+  adb shell "rm -f /sdcard/Android/data/$pkg/files/keyboard-*.png" || round_result=1
   # Scope each round's transition evidence; retain earlier crash logs.
-  adb logcat -d -b crash > "$out/smoke-keyboard-before-$round-crash.txt"
-  adb logcat -c
-  run_test RadioComposerKeyboardUiTest "-run-$round" || round_result=$?
+  adb logcat -d -b crash > "$out/smoke-keyboard-before-$round-crash.txt" || round_result=1
+  adb logcat -c || round_result=1
+  if [ "$round_result" -eq 0 ]; then run_test RadioComposerKeyboardUiTest "-run-$round" || round_result=$?; fi
   transitions="$out/smoke-keyboard-transitions-run-$round.txt"
   adb logcat -d -s BushMeshRadioIme:I BushMeshKeyboardTest:I ImeTracker:I InsetsController:D FrameTracker:W > "$transitions" || round_result=1
+  adb logcat -d -b crash > "$out/smoke-keyboard-run-$round-crash.txt" || round_result=1
+  adb logcat -d -t 2000 > "$out/smoke-keyboard-run-$round-logcat.txt" || round_result=1
   if ! grep -Fq 'FIXTURE_RESTORED_EXACT' "$transitions"; then
     round_result=1
     fixture_contaminated=1
@@ -124,6 +134,8 @@ printf 'KEYBOARD_QUALIFICATION consecutive_required=3 passed=%s\n' "$keyboard_pa
 test "$keyboard_passes" -eq 3 || keyboard_result=1
 cat "$out"/smoke-keyboard-transitions-run-*.txt > "$out/smoke-keyboard-transitions.txt"
 if [ "$keyboard_result" -eq 0 ]; then record_stage keyboard-three-rounds passed; else record_stage keyboard-three-rounds failed; fi
+fi
+if [ "$mode" != ui ]; then
 voice_denied() {
   local suffix="$1"
   local result=0
@@ -165,10 +177,10 @@ for permission in BLUETOOTH_CONNECT ACCESS_FINE_LOCATION RECORD_AUDIO; do
 done
 if [ "$revoked" -eq 0 ]; then
   record_stage revoked-setup passed
-  adb shell am force-stop "$pkg"
-  adb logcat -d -b crash > "$out/smoke-before-revocation-crash.txt"
-  adb logcat -c
   launch_result=0
+  adb shell am force-stop "$pkg" || launch_result=1
+  adb logcat -d -b crash > "$out/smoke-before-revocation-crash.txt" || launch_result=1
+  adb logcat -c || launch_result=1
   adb shell am start -W -n "$pkg/com.bushmeshmain.MainActivity" | tee "$out/smoke-revoked-launch.txt" || launch_result=1
   grep -q 'Status: ok' "$out/smoke-revoked-launch.txt" || launch_result=1
   sleep 5
@@ -187,8 +199,9 @@ else
   record_stage RuntimeLifecycleDeniedTest-revoked blocked
   record_stage VoicePermissionDeniedTest-revoked blocked
 fi
+fi
 if [ "$overall" -ne 0 ]; then
   printf 'Mandatory qualification failed; see per-stage evidence.\n' | tee "$out/smoke-result.txt"
   exit 1
 fi
-printf 'All mandatory native stages and three keyboard rounds passed.\n' | tee "$out/smoke-result.txt"
+printf 'All mandatory %s qualification stages passed.\n' "$mode" | tee "$out/smoke-result.txt"
