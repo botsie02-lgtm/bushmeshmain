@@ -42,15 +42,22 @@ internal class VoiceMicrophoneOwnership {
 internal class VoiceHeldTurn(val requestId: String) {
   enum class Finish { IGNORE, CANCEL, STOP }
   private var ready = false
-  private var finished = false
+  private var stopRequested = false
+  private var cancelled = false
 
   fun markReady() {
-    if (!finished) ready = true
+    if (!cancelled && !stopRequested) ready = true
   }
 
   fun finish(id: String, cancel: Boolean): Finish {
-    if (id != requestId || finished) return Finish.IGNORE
-    finished = true
-    return if (cancel || !ready) Finish.CANCEL else Finish.STOP
+    if (id != requestId || cancelled) return Finish.IGNORE
+    // A cancel after release must still terminate the pending final result.
+    if (cancel || !ready) {
+      cancelled = true
+      return Finish.CANCEL
+    }
+    if (stopRequested) return Finish.IGNORE
+    stopRequested = true
+    return Finish.STOP
   }
 }
