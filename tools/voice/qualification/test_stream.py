@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
+import shlex
+import sys
 import tempfile
 import unittest
 
 from tools.voice.qualification.adapters import (
-    NoOpAdapter, WakeEvent, _events, qualified_vosk_endpoint,
+    NoOpAdapter, ExternalJsonLinesAdapter, WakeEvent, _events, qualified_vosk_endpoint,
 )
 from tools.voice.qualification.evaluate import (
     evaluate_stream, false_activations_interval, make_plan, stable_seed, wilson,
@@ -72,6 +74,7 @@ class StreamingScoreTests(unittest.TestCase):
         self.assertEqual(report["false_negatives"], 0)
         self.assertEqual(report["duplicate_wake_events"], 1)
         self.assertEqual(report["false_activations"], 1)
+        self.assertEqual(report["false_activations_by_category"]["silence"]["false_events"], 1)
         self.assertEqual(detector.start_calls, 1)
         self.assertEqual(detector.end_calls, 1)
         self.assertEqual(report["detection_latency_ms"]["median"], -500)
@@ -119,6 +122,28 @@ class StreamingScoreTests(unittest.TestCase):
             _events({"events": [{"sample_index": 1, "confidence": 1.2}]})
         with self.assertRaisesRegex(ValueError, "response"):
             _events({"event": []})
+
+    def test_external_json_lines_detector_stays_alive_for_continuous_stream(self):
+        command = shlex.quote(sys.executable) + " -m tools.voice.qualification.example_adapter"
+        result = evaluate_stream(self.manifest, self.path.parent,
+                                 ExternalJsonLinesAdapter(command), condition="clean")
+        self.assertEqual(result["true_positives"], 0)
+        self.assertEqual(result["resource"]["detector_start_calls"], 1)
+        self.assertEqual(result["resource"]["per_phrase_resets"], 0)
+
+    def test_forced_eof_or_pre_pcm_wake_is_always_rejected(self):
+        class BadEnd(ScriptedDetector):
+            def finish(self):
+                return [WakeEvent(sample_index=4800)]
+
+        class BadStart(ScriptedDetector):
+            def start(self, sample_rate):
+                super().start(sample_rate)
+                return [WakeEvent(sample_index=4800)]
+
+        for bad in (BadEnd([]), BadStart([])):
+            with self.assertRaisesRegex(ValueError, "before any PCM|end-of-file"):
+                evaluate_stream(self.manifest, self.path.parent, bad)
 
     def test_vosk_whole_endpoint_rejects_partial_substrings_and_low_confidence(self):
         good = {"text": "hey bush mesh", "result": [
