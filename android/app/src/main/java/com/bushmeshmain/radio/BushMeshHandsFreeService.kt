@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
@@ -17,6 +18,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import com.bushmeshmain.MainActivity
 import java.lang.ref.WeakReference
@@ -41,6 +43,10 @@ internal object HandsFreeRuntime {
   private var active: WakeActivation? = null
   private val main = Handler(Looper.getMainLooper())
   private var pendingTimeout: Runnable? = null
+
+  fun screenEligible(context: Context): Boolean =
+    context.getSystemService(PowerManager::class.java)?.isInteractive == true &&
+      context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == false
 
   fun permission(context: Context) =
     context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -71,7 +77,7 @@ internal object HandsFreeRuntime {
                     fixture: Boolean, changed: (WakeSnapshot) -> Unit): Boolean {
     check(Looper.myLooper() == Looper.getMainLooper())
     if (Build.VERSION.SDK_INT < 31 || service != null || gate.peek() != null ||
-      !foreground() || !activity.voiceForegroundResumed || !permission(activity) ||
+      !foreground() || !activity.voiceForegroundResumed || !screenEligible(activity) || !permission(activity) ||
       !notifications(activity) || !runCatching { modelReady() }.getOrDefault(false)) return false
     val id = UUID.randomUUID().toString()
     val grant = WakeActivation(id, owner, WeakReference(activity), activity.voiceForegroundEpoch,
@@ -107,7 +113,7 @@ internal object HandsFreeRuntime {
     clearTimeout()
     val activity = grant.activity.get()
     val admitted = activity != null && activity.voiceForegroundResumed && activity.voiceForegroundEpoch == grant.epoch &&
-      !activity.isFinishing && !activity.isDestroyed && grant.foreground() && permission(activity) &&
+      !activity.isFinishing && !activity.isDestroyed && grant.foreground() && screenEligible(activity) && permission(activity) &&
       notifications(activity) && runCatching { grant.modelReady() }.getOrDefault(false)
     if (!admitted) {
       runCatching { grant.changed(WakeSnapshot(grant.id, WakePhase.STOPPED, WakeReason.FOREGROUND_REQUIRED, 0, false, null, false, 0, 0)) }
@@ -211,7 +217,7 @@ class BushMeshHandsFreeService : Service() {
     val call = audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_IN_COMMUNICATION ||
       audio.mode == AudioManager.MODE_RINGTONE
     return WakeEligibility(HandsFreeRuntime.permission(this) && !audio.isMicrophoneMute,
-      HandsFreeRuntime.notifications(this), accepted.foreground(), call,
+      HandsFreeRuntime.notifications(this), accepted.foreground() && HandsFreeRuntime.screenEligible(this), call,
       runCatching { accepted.modelReady() }.getOrDefault(false))
   }
 

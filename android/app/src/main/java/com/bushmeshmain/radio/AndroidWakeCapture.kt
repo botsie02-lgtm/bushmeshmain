@@ -31,6 +31,8 @@ internal class AndroidWakeCapture(
   private val detectorLock = Any()
   @Volatile private var running = false
   @Volatile private var workerDone = true
+  @Volatile private var lastProgress = 0L
+  override val healthy: Boolean get() = running && SystemClock.elapsedRealtime() - lastProgress <= 3000L
   override val drained: Boolean get() = workerDone
   private var record: AudioRecord? = null
   private var focus: AudioFocusRequest? = null
@@ -74,6 +76,7 @@ internal class AndroidWakeCapture(
       input.startRecording()
       check(input.recordingState == AudioRecord.RECORDSTATE_RECORDING)
       routeId = input.routedDevice?.id
+      lastProgress = SystemClock.elapsedRealtime()
       running = true
       Thread({
         var engine: WakeDetector? = null
@@ -84,6 +87,7 @@ internal class AndroidWakeCapture(
           engine = opened
           synchronized(detectorLock) { detector.set(opened) }
           if (!running) { synchronized(detectorLock) { opened.cancel() }; return@Thread }
+          lastProgress = SystemClock.elapsedRealtime()
           event(WakeCaptureEvent.Ready)
           while (running) {
             // No inference inside this lock. Nonblocking bounded read permits
@@ -98,6 +102,7 @@ internal class AndroidWakeCapture(
             }
             if (count == 0) { SystemClock.sleep(10); continue }
             val match = opened.acceptPcm(frame, count)
+            lastProgress = SystemClock.elapsedRealtime()
             frame.fill(0)
             if (match != null) {
               event(WakeCaptureEvent.Detected(match.confidence))
@@ -127,7 +132,6 @@ internal class AndroidWakeCapture(
 
   override fun stop(): Boolean {
     running = false
-    synchronized(detectorLock) { runCatching { detector.get()?.cancel() } }
     val released = synchronized(lock) {
       val input = record
       if (input == null) true
@@ -138,6 +142,7 @@ internal class AndroidWakeCapture(
       }
     }
     routing = null
+    synchronized(detectorLock) { runCatching { detector.get()?.cancel() } }
     focus?.let { runCatching { audio.abandonAudioFocusRequest(it) } }; focus = null
     return released
   }

@@ -25,6 +25,8 @@ internal interface WakeCapture {
   fun stop(): Boolean
   /** Worker closed the detector. Never rearm before this becomes true. */
   val drained: Boolean
+  /** Capture worker progress watchdog; false is terminal, never a retry. */
+  val healthy: Boolean get() = true
 }
 internal data class WakeEligibility(
   val permission: Boolean, val notification: Boolean, val foreground: Boolean,
@@ -74,6 +76,7 @@ internal class WakeSessionController(
   private var deadline = 0L
   private var drainDeadline = 0L
   private var quietUntil = 0L
+  private var waitForIdle = false
   private var handover: WakeHandover? = null
   private var claimed = false
   private var starts = 0L
@@ -131,11 +134,19 @@ internal class WakeSessionController(
       if (now() >= deadline) stop(WakeReason.START_TIMEOUT)
       return
     }
-    if (phase == WakePhase.LISTENING || draining != null) return
+    if (phase == WakePhase.LISTENING) {
+      if (capture?.healthy != true) stop(WakeReason.DETECTOR_FAILED)
+      return
+    }
+    if (draining != null) return
     if (microphone.busy || playback.busy) {
-      quietUntil = now() + 750
+      waitForIdle = true
       transition(WakePhase.SUSPENDED, WakeReason.COMPETING_AUDIO)
       return
+    }
+    if (waitForIdle) {
+      // Start the full quiet period only after observing both leases idle.
+      waitForIdle = false; quietUntil = now() + 750; return
     }
     if (now() < quietUntil) return
     startCapture()
@@ -152,11 +163,11 @@ internal class WakeSessionController(
     try {
       val next = makeCapture()
       capture = next
-      starts++
       transition(WakePhase.STARTING, WakeReason.NONE)
       // A notification failure or synchronous observer can invalidate this
       // session during publication. Never open capture after that stop.
       if (terminal || generation != turn || !microphone.owns(lease)) return
+      starts++
       next.start { event -> accept(turn, event) }
     } catch (_: Exception) { stop(WakeReason.CAPTURE_FAILED) }
   }
@@ -196,14 +207,14 @@ internal class WakeSessionController(
     }
   fun completeHandover(key: WakeHandover): Boolean {
     if (terminal || handover != key || phase != WakePhase.HANDOVER) return false
-    handover = null; claimed = false; quietUntil = now() + 750
+    handover = null; claimed = false; waitForIdle = true
     transition(WakePhase.SUSPENDED, WakeReason.COMPETING_AUDIO)
     return true
   }
 
   private fun suspendCapture(why: WakeReason) {
     if (!releaseCapture()) { stop(WakeReason.RELEASE_FAILED); return }
-    quietUntil = now() + 750
+    waitForIdle = true
     transition(WakePhase.SUSPENDED, why)
   }
 

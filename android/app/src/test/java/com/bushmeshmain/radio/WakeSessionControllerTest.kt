@@ -12,6 +12,7 @@ class WakeSessionControllerTest {
     var autoReady = true
     var release = true
     override var drained = true
+    override var healthy = true
     override fun start(callback: (WakeCaptureEvent) -> Unit) {
       this.callback = callback; starts++
       if (autoReady) callback(WakeCaptureEvent.Ready)
@@ -94,6 +95,7 @@ class WakeSessionControllerTest {
     assertFalse(f.session.ownsHandover(key))
     f.advance(); assertEquals(1, f.captures.size)
     f.mic.release(turn)
+    f.advance(); assertEquals(1, f.captures.size)
     f.advance(); assertEquals(2, f.captures.size)
     old.wake(); assertEquals(1L, f.session.snapshot().acceptedWakes)
   }
@@ -109,6 +111,7 @@ class WakeSessionControllerTest {
     f.advance(500); first.wake()
     assertNull(f.session.snapshot().handover)
     f.playback.release(speech)
+    f.advance(1); assertEquals(1, f.captures.size)
     f.advance(749); assertEquals(1, f.captures.size)
     f.advance(1); assertEquals(2, f.captures.size)
   }
@@ -122,7 +125,8 @@ class WakeSessionControllerTest {
     assertFalse(f.mic.busy); assertEquals(WakeReason.FOREGROUND_REQUIRED, f.session.snapshot().reason)
     f.advance(10000); assertEquals(1, f.captures.size)
     f.e = f.e.copy(foreground = true); f.advance()
-    assertEquals(2, f.captures.size)
+    assertEquals(1, f.captures.size)
+    f.advance(); assertEquals(2, f.captures.size)
   }
 
   @Test fun revokedPermissionCallFocusRouteAndStopAreTerminal() {
@@ -155,6 +159,9 @@ class WakeSessionControllerTest {
     val invalid = Fixture(); invalid.start()
     invalid.captures.single().callback(WakeCaptureEvent.Detected(Double.NaN))
     invalid.stopped(WakeReason.DETECTOR_FAILED)
+    val stalled = Fixture(); stalled.start()
+    stalled.captures.single().healthy = false; stalled.advance()
+    stalled.stopped(WakeReason.DETECTOR_FAILED)
   }
 
   @Test fun failedPhysicalReleaseNeverAllowsAnotherMicrophoneOrPlayback() {

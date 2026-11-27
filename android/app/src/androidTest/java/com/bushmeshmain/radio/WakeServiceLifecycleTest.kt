@@ -52,7 +52,7 @@ class WakeServiceLifecycleTest : VoiceLifecycleFixture() {
         val note = manager.activeNotifications.first { it.id == BushMeshHandsFreeService.NOTIFICATION_ID }.notification
         assertTrue(note.flags and android.app.Notification.FLAG_ONGOING_EVENT != 0)
         assertTrue(note.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString().contains("test"))
-        val stop = note.actions.single().actionIntent
+        val stop = requireNotNull(requireNotNull(note.actions).single().actionIntent)
         // Real activity background/resume while the independently promoted
         // FGS stays active. Existing finite engine is foreground-only.
         instrumentation.runOnMainSync { assertTrue(activity.moveTaskToBack(true)) }
