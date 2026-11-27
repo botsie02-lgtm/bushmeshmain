@@ -25,7 +25,8 @@ acceptance dataset. The exposure used for false-event rate is about 0.0444 h
 
 | Detector control | 2 wake phrases detected (clean / 10 dB SNR) | False events (clean / 10 dB SNR) | Clean observed false/hour | Decision |
 |---|---:|---:|---:|---|
-| No-op and external JSONL no-op | 0 / 0 | 0 / 0 | 0 | Wiring negative control only |
+| Built-in no-op control | 0 / 0 | 0 / 0 | 0 | Negative control only |
+| External JSONL no-op | 0 / not run | 0 / not run | 0 | Clean-condition adapter wire smoke only |
 | Offline Vosk unconstrained | 0 / 0 | 0 / 0 | 0 | Failed recall, **not accepted** |
 | Offline Vosk constrained grammar | 2 / 2 | 8 / 7 | ~180.04 | Excessive false activations, **not accepted** |
 
