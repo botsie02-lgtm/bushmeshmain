@@ -51,6 +51,27 @@ export function useVoiceOperationalSession(): {
   return useMemo(() => ({controller, snapshot}), [controller, snapshot]);
 }
 
+/**
+ * Shell integration adapter for applicationVoice.cancel(true). Never owns or
+ * creates VoiceAssistant; only reports the point where existing dialogue
+ * must stop. The callback is integration-supplied and may be asynchronous.
+ */
+export function subscribeVoiceSafetyStop(
+  controller: VoiceOperationalSessionController,
+  onStop: () => void,
+): () => void {
+  let previous = controller.snapshot().session;
+  return controller.subscribe(() => {
+    const next = controller.snapshot().session;
+    const shouldStop = previous?.status === 'active' &&
+      (!next || next.status !== 'active' ||
+        next.identity !== previous.identity ||
+        (previous.handsFreeAuthorised && !next.handsFreeAuthorised));
+    previous = next;
+    if (shouldStop) onStop();
+  });
+}
+
 export type VerifiedVoiceDestinationAdapter = Readonly<{
   /** Existing Radio verified-chat source of VoiceDestination; no new sender. */
   destination: VoiceDestination;
