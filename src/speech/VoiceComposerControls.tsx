@@ -1,19 +1,21 @@
-import React,{useEffect,useRef,useSyncExternalStore} from 'react';
+import React,{useContext,useEffect,useRef,useSyncExternalStore} from 'react';
 import {Alert,AppState,Pressable,StyleSheet,Text,TouchableOpacity,View} from 'react-native';
 import {applicationVoice} from './applicationVoice';
 import {nativeSpeechRecognition} from '../native/NativeSpeechRecognition';
 import {nativeSpeech} from '../native/NativeSpeech';
 import type {VoiceDestination} from './VoiceAssistant';
 import {colors} from '../theme/colors';
+import {RadioMessagingNavigationContext} from '../app/shell/RadioMessagingNavigation';
 export function VoiceComposerControls({destination,visible,disabled}:{destination:VoiceDestination;visible:boolean;disabled:boolean}){
+ const navigation=useContext(RadioMessagingNavigationContext);
  const state=useSyncExternalStore(applicationVoice.subscribe,applicationVoice.snapshot);
  const active=!['idle','error','suspended'].includes(state.phase);
  const held=state.phase==='held'||state.phase==='held-finishing';
  const gesture=useRef({long:false});
  const key=destination.key;
  const armed=applicationVoice.isQuickArmed(key);
- useEffect(()=>()=>{applicationVoice.cancel(true).catch(()=>undefined);},[key]);
- useEffect(()=>{if(!visible&&state.phase!=='permission')applicationVoice.cancel(true).catch(()=>undefined);},[visible,state.phase]);
+ useEffect(()=>()=>{applicationVoice.cancelDestination(key,true).catch(()=>undefined);},[key]);
+ useEffect(()=>{if(!visible&&state.phase!=='permission')applicationVoice.cancelDestination(key,true).catch(()=>undefined);},[visible,state.phase,key]);
  // Never start a second turn on release after a long press.
  const tap=()=>{if(!gesture.current.long)applicationVoice.run('dictation',destination).catch(()=>undefined);};
  const longPress=()=>{
@@ -41,6 +43,7 @@ export function VoiceComposerControls({destination,visible,disabled}:{destinatio
   </View>
   {armed&&<Text style={styles.detail}>One-command quick send armed · this chat only</Text>}
   {active||state.detail?<Text accessibilityLiveRegion="polite" style={styles.detail}>{state.detail}{state.transcript?' · '+state.transcript:''}</Text>:null}
+  {state.phase==='error'&&action('Voice setup instructions','Voice setup',()=>Alert.alert('Offline voice setup','Open Radio → Messaging settings → Voice assistant readiness. Check the selected offline model, download it if offered, or choose an installed English language. Then test recognition before returning to this chat.',navigation?[{text:'Cancel',style:'cancel'},{text:'Open messaging settings',onPress:navigation.openMessagingSettings}]:[{text:'OK'}]))}
   {active&&<View style={styles.row}>{!held&&['listening','dictating','confirming'].includes(state.phase)&&action('Finish recognition','Finish',()=>{applicationVoice.stopListening().catch(()=>undefined);})}{action('Cancel voice session','Cancel',()=>{applicationVoice.cancel().catch(()=>undefined);})}</View>}
  </View>;
 }

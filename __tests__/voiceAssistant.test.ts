@@ -119,3 +119,25 @@ test('held result for a replaced destination is discarded even before UI cancell
  resolve(heard('wrong conversation'));await running;
  expect(f.d.draft()).toBe('unsent');expect(f.send).not.toHaveBeenCalled();
 });
+
+test('composer-scoped cancellation cannot cancel a settings-owned finite test; stale phase and transcript are fenced',async()=>{
+ const f=fixture([]);
+ let complete!:(r:Recognition)=>void;
+ let progress:((p:'starting'|'listening'|'finishing')=>void)|undefined;
+ jest.spyOn(f.adapter,'recognize').mockImplementation(onPhase=>{
+  progress=onPhase;return new Promise(resolve=>{complete=resolve;});
+ });
+ const running=f.a.run('dictation',f.d);
+ await Promise.resolve();
+ await f.a.cancelDestination('different-composer',true);
+ expect(f.adapter.cancel).not.toHaveBeenCalled();
+ progress?.('finishing');
+ expect(f.a.snapshot().detail).toContain('Processing offline speech');
+ await f.a.cancelDestination(f.d.key);
+ const cancelled=f.a.snapshot();
+ progress?.('listening');
+ complete(heard('late transcript'));
+ await running;
+ expect(f.a.snapshot()).toEqual(cancelled);
+ expect(f.d.draft()).toBe('unsent');
+});

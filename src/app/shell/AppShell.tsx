@@ -232,6 +232,8 @@ export function AppShell(): React.JSX.Element {
   const [radioPage, setRadioPage] = useState<RadioSettingsPage>('hub');
   const [directRadioPage, setDirectRadioPage] = useState(false);
   const [radioVisited, setRadioVisited] = useState(false);
+  const [radioRoomKeyboardOpen, setRadioRoomKeyboardOpen] = useState(false);
+  const hideRadioTabs = activeTab === 'radio' && !radioSettingsOpen && radioRoomKeyboardOpen;
   useEffect(() => {if (activeTab === 'radio') setRadioVisited(true);}, [activeTab]);
   const openMessagingSettings = useCallback(() => {
     Keyboard.dismiss();
@@ -428,6 +430,7 @@ export function AppShell(): React.JSX.Element {
                 enableChatManagement
                 settingsVisible={radioSettingsOpen || activeTab !== 'radio'}
                 tabVisible={activeTab === 'radio'}
+                onRoomKeyboardVisibilityChange={setRadioRoomKeyboardOpen}
                 onOpenMessagingSettings={openMessagingSettings}
                 onOpenRadioConnection={openRadioConnection}
                 onOpenCarrierDetails={() => {
@@ -544,7 +547,8 @@ export function AppShell(): React.JSX.Element {
         </ScreenMountGate>
       </View>
 
-      <View style={styles.tabBar} accessibilityRole="tablist">
+      <View testID="radio-ime-bottom-navigation" style={[styles.tabBar, hideRadioTabs && styles.radioCovered]} accessibilityRole="tablist"
+        importantForAccessibility={hideRadioTabs ? 'no-hide-descendants' : 'auto'}>
         {MAIN_TABS.map(tab => {
           const selected = activeTab === tab.key;
           return (

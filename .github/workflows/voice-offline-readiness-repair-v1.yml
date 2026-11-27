@@ -1,0 +1,114 @@
+name: Offline voice readiness repair validation
+
+on:
+  push:
+    branches:
+      - feature/voice-offline-readiness-repair-v1
+  workflow_dispatch:
+
+concurrency:
+  group: voice-offline-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Record installed React lifecycle implementation
+        run: |
+          node -p "require('react-native/package.json').version"
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/bridge')
+          for source in sorted(root.glob('ReactContext.*')):
+              lines = source.read_text().splitlines()
+              for i, line in enumerate(lines):
+                  if 'addLifecycleEventListener(' in line:
+                      print(f'{source}:{i+1}')
+                      print('\n'.join(f'{n+1}: {lines[n]}' for n in range(max(0,i-2),min(len(lines),i+32))))
+                      break
+          PY
+      - name: Jest
+        run: npm test -- --runInBand
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Full repository ESLint
+        run: npm run lint
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Android debug compile and JVM tests
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+      - name: Isolated release and instrumentation compilation
+        working-directory: android
+        run: ./gradlew :app:assembleRelease :app:assembleReleaseAndroidTest -PradioRedesignFieldTest --no-daemon
+      - name: APK byte size and provenance (not distribution approval)
+        id: feature_bytes
+        run: |
+          mkdir -p voice-test
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          wc -c < "$apk" | tee voice-test/feature-apk-bytes.txt
+          printf '%s\n' "$GITHUB_SHA" > voice-test/feature-commit.txt
+          sha256sum "$apk" > voice-test/feature-apk-sha256.txt
+          unzip -l "$apk" | grep -F assets/index.android.bundle
+          test_apk="$(find android/app/build/outputs/apk/androidTest -name '*.apk' -type f -print -quit)"
+          test -n "$test_apk"
+          cp "$test_apk" "$RUNNER_TEMP/voice-instrumentation.apk"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android 16 voice permission, suspension and revocation
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash tools/voice/verify_native_voice_lifecycle.sh android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/voice-instrumentation.apk" voice-test
+      - name: Upload isolated field-test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-offline-readiness-apk-${{ github.sha }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload native validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-voice-evidence-${{ github.sha }}
+          path: voice-test/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -9,11 +9,13 @@ let recognitionLocale='en-AU';
 // activation nor completion calls VoiceDestination.send.
 export const applicationHoldToTalk = new HoldToTalk({
   permission: async stillHeld => {
-    if (Platform.OS !== 'android' || !stillHeld() ||
-        !nativeSpeechRecognition.supportsHeldRecognition() ||
-        !(await nativeSpeechRecognition.getStatus()).supported || !stillHeld()) {
-      return false;
+    if (!stillHeld()) return false;
+    if (Platform.OS !== 'android' || !nativeSpeechRecognition.supportsHeldRecognition() ||
+        !(await nativeSpeechRecognition.getStatus()).supported) {
+      if (!stillHeld()) return false;
+      throw new Error('On-device recognizer unavailable. Open Voice assistant readiness.');
     }
+    if (!stillHeld()) return false;
     const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
     const granted = await PermissionsAndroid.check(permission);
     if (!stillHeld()) {
@@ -29,14 +31,20 @@ export const applicationHoldToTalk = new HoldToTalk({
 
 export const applicationVoice=new VoiceAssistant({
  permission:async()=>{
-  if(Platform.OS!=='android'||!nativeSpeechRecognition.isSupported()||!(await nativeSpeechRecognition.getStatus()).supported)return false;
+  if(Platform.OS!=='android'||!nativeSpeechRecognition.isSupported()||!(await nativeSpeechRecognition.getStatus()).supported)throw new Error('On-device recognizer unavailable. Open Voice assistant readiness.');
   // Finish all asynchronous settings work before the controller rechecks
   // its token and issues the synchronous native recognition request.
   recognitionLocale=(await nativeSpeech.getStatus()).recognitionLocale??'en-AU';
   const p=PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
   return await PermissionsAndroid.check(p)||await PermissionsAndroid.request(p)===PermissionsAndroid.RESULTS.GRANTED;
  },
- recognize:()=>nativeSpeechRecognition.recognizeOnce(recognitionLocale),
+ recognize:async onPhase=>{
+  const unsubscribe=nativeSpeechRecognition.subscribeSessionState(status=>{
+   if(status.microphoneOwner==='command'&&status.phase&&status.phase!=='idle')onPhase?.(status.phase);
+  });
+  try{return await nativeSpeechRecognition.recognizeOnce(recognitionLocale);}
+  finally{unsubscribe();}
+ },
  cancel:()=>nativeSpeechRecognition.cancel(),
  stopListening:()=>nativeSpeechRecognition.stopListening(),
  speak:async text=>{if(!await nativeSpeech.speakOrdinaryAndWait(text))throw new Error('Offline speech unavailable.');},
