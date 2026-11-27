@@ -6,11 +6,12 @@ evidence is a locally maintained record ID, not the voice recording itself.
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import shutil
 
-from .manifest import SCHEMA, SPLITS, inspect_wav, sha256
+from .manifest import SCHEMA, SPLITS, CATEGORIES, _id, inspect_wav, sha256
 
 
 def ingest_human(
@@ -27,19 +28,40 @@ def ingest_human(
         raise ValueError("Consented recording must be assigned to training, tuning or acceptance")
     if not consent_id or not source_description or not licence:
         raise ValueError("Consent reference, licence and recording provenance required")
+    for field, value in (
+        ("clip_id", clip_id), ("speaker_id", speaker_id),
+        ("recording_source_id", recording_source_id),
+        ("source_family_id", source_family_id), ("session_id", session_id),
+        ("consent_id", consent_id),
+    ):
+        _id(value, field)
+    if category not in CATEGORIES:
+        raise ValueError("Unknown recording category")
+    if category == "wake":
+        if (not isinstance(wake_start_ms, (float, int)) or
+                not isinstance(wake_end_ms, (float, int)) or
+                not math.isfinite(wake_start_ms) or
+                not math.isfinite(wake_end_ms) or
+                not 0 <= wake_start_ms < wake_end_ms):
+            raise ValueError("Positive wake requires annotated onset and end")
+    elif wake_start_ms is not None or wake_end_ms is not None:
+        raise ValueError("Negative must not contain a positive wake region")
     input_path = Path(input_path)
     if input_path.is_symlink() or not input_path.is_file():
         raise ValueError("Input must be a regular local WAV")
-    inspect_wav(input_path)
+    source_frames, _ = inspect_wav(input_path)
+    if category == "wake" and wake_end_ms > source_frames * 1000 / 16000:
+        raise ValueError("Wake annotation extends past source audio")
     root = Path(output_root)
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(root, 0o700)
     manifest_path = root / "manifest.json"
     if manifest_path.exists():
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         if data.get("schema") != SCHEMA or data.get("split") != split:
             raise ValueError("Cannot mix dataset versions or splits")
     else:
-        data = {"schema": SCHEMA, "dataset_id": "consented-" + split + "-" + root.name,
+        data = {"schema": SCHEMA, "dataset_id": "consented-" + split + "-local",
                 "split": split, "clips": []}
     filename = clip_id + ".wav"
     if filename != Path(filename).name or "/" in filename or "\\" in filename:
