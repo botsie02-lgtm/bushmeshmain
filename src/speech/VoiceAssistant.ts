@@ -32,7 +32,7 @@ export type VoiceDestination={
 };
 export type VoiceAdapter={permission:()=>Promise<boolean>;recognize:()=>Promise<Recognition>;cancel:()=>Promise<unknown>;stopListening:()=>Promise<unknown>;speak:(text:string)=>Promise<unknown>;stopSpeech:()=>Promise<unknown>};
 export type HeldVoiceAdapter = {
- press: (partial: (text: string) => void, phase: (phase: 'listening' | 'finishing') => void) => Promise<Recognition | null>;
+ press: (partial: (text: string) => void, phase: (phase: 'listening' | 'finishing') => void, eligible: () => boolean) => Promise<Recognition | null>;
  release: () => Promise<boolean>;
  cancel: () => Promise<boolean>;
 };
@@ -47,6 +47,7 @@ export class VoiceAssistant {
  private cancelling=false;
  private transmitting=false;
  private holding=false;
+ private heldKey:string|null=null;
  private quickGrant:{key:string;text:string}|null=null;
  armQuickMessage(d:VoiceDestination,text:string):boolean {
   if(this.active||!d.isCurrent()||!d.send||!validateCarrierText(text).valid||matchQuickMessage(text,d.quick())!==text)return false;
@@ -71,8 +72,8 @@ export class VoiceAssistant {
   if(!this.transmitting&&!this.holding)this.active=false;
  }
  stopListening=()=>this.holding?this.releaseHeld():this.adapter.stopListening();
- async releaseHeld(){
-  if(!this.holding||!this.held||this.cancelling||this.state.phase==='held-finishing')return false;
+ async releaseHeld(key?:string){
+  if((key!==undefined&&key!==this.heldKey)||!this.holding||!this.held||this.cancelling||this.state.phase==='held-finishing')return false;
   const token=this.sequence;
   this.set({...this.state,phase:'held-finishing',detail:'Finishing recognition…'});
   try{return await this.held.release();}
@@ -83,7 +84,7 @@ export class VoiceAssistant {
  }
  async runHeld(d:VoiceDestination){
   if(this.active||!this.held||!d.isCurrent())return;
-  this.active=true;this.holding=true;const token=++this.sequence;
+  this.active=true;this.holding=true;this.heldKey=d.key;const token=++this.sequence;
   this.disarmQuickMessage();
   try{
    this.set({phase:'held',detail:'Starting microphone… Keep holding.'});
@@ -92,7 +93,7 @@ export class VoiceAssistant {
    },phase=>{
     if(!this.valid(token,d)||this.state.phase!=='held')return;
     this.set({...this.state,detail:phase==='listening'?'Listening… Release to finish.':'Recognizing speech…'});
-   });
+   },()=>this.valid(token,d));
    if(!this.valid(token,d))return;
    if(result?.text.trim()){
     d.editDraft(appendDictation(d.draft(),result.text));
@@ -101,7 +102,7 @@ export class VoiceAssistant {
   }catch(error){
    if(this.valid(token,d))this.set({phase:'error',detail:error instanceof Error?error.message:'Held recognition failed.'});
   }finally{
-   this.holding=false;
+   this.holding=false;this.heldKey=null;
    if(!this.cancelling)this.active=false;
    if(token===this.sequence&&!d.isCurrent())this.set({phase:'suspended',detail:'Voice destination changed.'});
   }

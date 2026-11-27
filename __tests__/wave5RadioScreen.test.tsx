@@ -716,3 +716,20 @@ test('held composer cancels on hidden tab and discards late final text',async()=
     expect(draftValue()).toBe('Keep');expect(verifiedSend).not.toHaveBeenCalled();
   }finally{await act(async()=>{await applicationVoice.cancel();f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
 });
+
+test('switching conversations cancels held capture and cannot append its late result in either chat',async()=>{
+  const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const f=heldFixture();
+  try{
+    await mount({enableChatManagement:true});await room('Private');await draft('Private draft');
+    const mic=button('Dictate message').props;
+    await act(async()=>{mic.onPressIn();mic.onLongPress();});
+    expect(f.recognize).toHaveBeenCalledTimes(1);
+    await press('Back to chats');await room('Public');
+    expect(f.finish).toHaveBeenCalledWith(f.recognize.mock.calls[0][1],true);
+    await draft('Public draft');await act(async()=>{f.resolve(finalHeld);});
+    expect(draftValue()).toBe('Public draft');
+    await press('Back to chats');await room('Private');
+    expect(draftValue()).toBe('Private draft');expect(verifiedSend).not.toHaveBeenCalled();
+  }finally{await act(async()=>{await applicationVoice.cancel();f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
+});

@@ -139,3 +139,25 @@ test('release bridge failure attempts one scoped cancel and discards late text',
   f.recognition.resolve(result);
   expect(await turn).toBeNull();
 });
+
+test('release during asynchronous locale selection prevents permission and native startup', async () => {
+  const f = fixture();
+  const locale = deferred<string>();
+  const turn = f.held.press(() => locale.promise);
+  expect(await f.held.release()).toBe(true);
+  locale.resolve('en-GB');
+  expect(await turn).toBeNull();
+  expect(f.adapter.permission).not.toHaveBeenCalled();
+  expect(f.adapter.recognize).not.toHaveBeenCalled();
+});
+
+test('destination eligibility lost during permission prevents held native admission', async () => {
+  const f = fixture();
+  let eligible = true;
+  const turn = f.held.press('en-GB', undefined, () => eligible);
+  eligible = false;
+  expect(f.adapter.permission.mock.calls[0][0]()).toBe(false);
+  f.permission.resolve(true);
+  expect(await turn).toBeNull();
+  expect(f.adapter.recognize).not.toHaveBeenCalled();
+});

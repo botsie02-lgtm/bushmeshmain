@@ -42,12 +42,12 @@ export const applicationVoice=new VoiceAssistant({
  speak:async text=>{if(!await nativeSpeech.speakOrdinaryAndWait(text))throw new Error('Offline speech unavailable.');},
  stopSpeech:()=>nativeSpeech.stopOrdinary(),
 }, {
- press: async (partial, phase) => {
+ press: async (partial, phase, eligible) => {
   const unsubscribe = nativeSpeechRecognition.subscribeSessionState(status => {
    if (status.microphoneOwner === 'hold-to-talk' && (status.phase === 'listening' || status.phase === 'finishing')) phase(status.phase);
   });
   try {
-   return await applicationHoldToTalk.press(async () => (await nativeSpeech.getStatus()).recognitionLocale ?? 'en-AU', partial);
+   return await applicationHoldToTalk.press(async () => (await nativeSpeech.getStatus()).recognitionLocale ?? 'en-AU', partial, eligible);
   } finally {unsubscribe();}
  },
  release: () => applicationHoldToTalk.release(),

@@ -39,7 +39,9 @@ export class HoldToTalk {
   async press(
     locale: string | (() => Promise<string>) = 'en-AU',
     onPartial?: (text: string) => void,
+    eligible: () => boolean = () => true,
   ): Promise<NativeSpeechRecognitionResult | null> {
+    if (!eligible()) return null;
     if (this.current) {
       throw new Error('A held recognition turn is already active.');
     }
@@ -53,24 +55,24 @@ export class HoldToTalk {
     let unsubscribe: (() => void) | undefined;
     try {
       const selectedLocale = typeof locale === 'string' ? locale : await locale();
-      if (turn.cancelled || turn.released || this.current !== turn) return null;
+      if (turn.cancelled || turn.released || this.current !== turn || !eligible()) return null;
       const permitted = await this.adapter.permission(() =>
-        this.current === turn && !turn.cancelled && !turn.released,
+        this.current === turn && !turn.cancelled && !turn.released && eligible(),
       );
-      if (turn.cancelled || turn.released || this.current !== turn) {
+      if (turn.cancelled || turn.released || this.current !== turn || !eligible()) {
         return null;
       }
       if (!permitted) {
         throw new Error('Foreground microphone permission denied.');
       }
       unsubscribe = this.adapter.subscribePartial(partial => {
-        if (this.current === turn && !turn.cancelled && partial.requestId === turn.id) {
+        if (this.current === turn && !turn.cancelled && eligible() && partial.requestId === turn.id) {
           onPartial?.(partial.text);
         }
       });
       turn.started = true;
       const result = await this.adapter.recognize(selectedLocale, turn.id);
-      return turn.cancelled || this.current !== turn ? null : result;
+      return turn.cancelled || this.current !== turn || !eligible() ? null : result;
     } catch (error) {
       // Native startup may not have reached onReadyForSpeech when released.
       // Its explicit cancellation is not a successful transcript.

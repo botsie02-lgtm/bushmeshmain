@@ -1,4 +1,4 @@
-import {VoiceAssistant,parseVoiceCommand,appendDictation,matchQuickMessage,type VoiceAdapter,type VoiceDestination,type Recognition} from '../src/speech/VoiceAssistant';
+import {VoiceAssistant,parseVoiceCommand,appendDictation,matchQuickMessage,type VoiceAdapter,type HeldVoiceAdapter,type VoiceDestination,type Recognition} from '../src/speech/VoiceAssistant';
 import {localGpsReading} from '../src/speech/voiceGps';
 const heard=(text:string,confidence=.95):Recognition=>({text,confidence});
 function fixture(values:Recognition[]){
@@ -65,4 +65,57 @@ test('failed spoken outcome preserves uncertain submission and never retries',as
  f.send.mockResolvedValue('Radio acceptance uncertain. Do not resend automatically.');
  jest.spyOn(f.adapter,'speak').mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Offline speech unavailable.'));
  await f.a.run('command',f.d);expect(f.send).toHaveBeenCalledTimes(1);expect(f.a.snapshot().detail).toContain('Radio acceptance uncertain. Do not resend automatically.');expect(f.a.snapshot().detail).toContain('readback');
+});
+
+test('held recognition excludes dialogue and readback, previews without editing, then appends only final text',async()=>{
+ const f=fixture([heard('send message')]);
+ let resolve!:(result:Recognition|null)=>void;
+ const result=new Promise<Recognition|null>(done=>{resolve=done;});
+ let preview!:(text:string)=>void;
+ const held:HeldVoiceAdapter={press:jest.fn(partial=>{preview=partial;return result;}),release:jest.fn(async()=>true),cancel:jest.fn(async()=>true)};
+ const controller=new VoiceAssistant(f.adapter,held);
+ const running=controller.runHeld(f.d);
+ preview('send message');
+ expect(controller.snapshot().transcript).toBe('send message');
+ expect(f.d.draft()).toBe('unsent');
+ await controller.run('command',f.d);
+ await controller.readText('readback',f.d);
+ expect(f.adapter.recognize).not.toHaveBeenCalled();expect(f.adapter.speak).not.toHaveBeenCalled();
+ await controller.releaseHeld('other-key');expect(held.release).not.toHaveBeenCalled();
+ await controller.releaseHeld(f.d.key);await controller.releaseHeld(f.d.key);
+ expect(held.release).toHaveBeenCalledTimes(1);
+ resolve(heard('final'));await running;
+ expect(f.d.draft()).toBe('unsent final');expect(f.send).not.toHaveBeenCalled();
+});
+
+test('held capture cannot start while a command is awaiting recognition; scoped cancel rejects late held text',async()=>{
+ const f=fixture([]);
+ let finishCommand!:(result:Recognition)=>void;
+ jest.spyOn(f.adapter,'recognize').mockImplementation(()=>new Promise(done=>{finishCommand=done;}));
+ let resolve!:(result:Recognition|null)=>void;
+ const result=new Promise<Recognition|null>(done=>{resolve=done;});
+ let preview!:(text:string)=>void;
+ const held:HeldVoiceAdapter={press:jest.fn(partial=>{preview=partial;return result;}),release:jest.fn(async()=>true),cancel:jest.fn(async()=>true)};
+ const controller=new VoiceAssistant(f.adapter,held);
+ const command=controller.run('command',f.d);await Promise.resolve();
+ await controller.runHeld(f.d);expect(held.press).not.toHaveBeenCalled();
+ finishCommand(heard('cancel'));await command;
+ const running=controller.runHeld(f.d);
+ await controller.cancel(true);
+ preview('stale');expect(controller.snapshot().transcript).toBeUndefined();
+ resolve(heard('stale final'));await running;
+ expect(held.cancel).toHaveBeenCalledTimes(1);expect(f.adapter.cancel).not.toHaveBeenCalled();
+ expect(f.d.draft()).toBe('unsent');expect(f.send).not.toHaveBeenCalled();
+});
+
+test('held result for a replaced destination is discarded even before UI cancellation',async()=>{
+ const f=fixture([]);
+ let resolve!:(result:Recognition|null)=>void;
+ let eligible!:()=>boolean;
+ const held:HeldVoiceAdapter={press:jest.fn((_partial,_phase,guard)=>{eligible=guard;return new Promise(done=>{resolve=done;});}),release:jest.fn(async()=>true),cancel:jest.fn(async()=>true)};
+ const controller=new VoiceAssistant(f.adapter,held);
+ const running=controller.runHeld(f.d);
+ expect(eligible()).toBe(true);f.change();expect(eligible()).toBe(false);
+ resolve(heard('wrong conversation'));await running;
+ expect(f.d.draft()).toBe('unsent');expect(f.send).not.toHaveBeenCalled();
 });
