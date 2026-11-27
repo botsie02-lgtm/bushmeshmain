@@ -9,7 +9,7 @@ export const applicationVoice=new VoiceAssistant({
   const p=PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
   return await PermissionsAndroid.check(p)||await PermissionsAndroid.request(p)===PermissionsAndroid.RESULTS.GRANTED;
  },
- recognize:()=>nativeSpeechRecognition.recognizeOnce('en-AU'),
+ recognize:async()=>{const status=await nativeSpeech.getStatus();return nativeSpeechRecognition.recognizeOnce(status.recognitionLocale??'en-AU');},
  cancel:()=>nativeSpeechRecognition.cancel(),
  stopListening:()=>nativeSpeechRecognition.stopListening(),
  speak:async text=>{if(!await nativeSpeech.speakOrdinaryAndWait(text))throw new Error('Offline speech unavailable.');},

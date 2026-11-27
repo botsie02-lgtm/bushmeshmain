@@ -7,11 +7,16 @@ export type NativeSpeechStatus = {
   languageTag: string | null;
   offlineVoice?: boolean;
   speaking?: boolean;
+  recognitionLocale?: string;
   criticalAlertsEnabled: boolean;
   radioMessagesEnabled: boolean;
 };
 
+export type VoicePreferences = {locale:string; rate:number; voice:string|null; voices:{name:string;locale:string}[]};
+
 type NativeSpeechModule = {
+  getVoicePreferences?:()=>Promise<VoicePreferences>;
+  setVoicePreferences?:(locale:string,voice:string|null,rate:number)=>Promise<boolean>;
   speak: (text: string, interrupt: boolean) => Promise<boolean>;
   stop: () => Promise<boolean>;
   speakOrdinaryAndWait?: (text: string) => Promise<boolean>;
@@ -52,6 +57,8 @@ export const nativeSpeech = {
     return module.speak(clean, interrupt);
   },
 
+  async getVoicePreferences():Promise<VoicePreferences|null>{return module?.getVoicePreferences?module.getVoicePreferences():null;},
+  async setVoicePreferences(value:Pick<VoicePreferences,'locale'|'voice'|'rate'>):Promise<void>{if(!module?.setVoicePreferences||!await module.setVoicePreferences(value.locale,value.voice,value.rate))throw Error('Voice preference not saved.');},
   async speakOrdinaryAndWait(text: string): Promise<boolean> {
     if (!module?.speakOrdinaryAndWait) throw new Error('Offline speech output unavailable.');
     return module.speakOrdinaryAndWait(text);

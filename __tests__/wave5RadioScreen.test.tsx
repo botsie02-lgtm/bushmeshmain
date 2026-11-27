@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {AppState, FlatList, KeyboardAvoidingView, Modal, StyleSheet} from 'react-native';
+import {AppState, FlatList, KeyboardAvoidingView, Modal, PermissionsAndroid, Platform, StyleSheet} from 'react-native';
 import {RadioScreen} from '../src/screens/RadioScreen';
 import {RadioInbox} from '../src/screens/radioMessenger/RadioInbox';
 import {ViewedConversationProvider} from '../src/app/activeContext/ViewedConversationContext';
@@ -12,7 +12,6 @@ import {chatPreferenceStore, defaultChatPreferences} from '../src/radio/chatMana
 import {ChatOperationError} from '../src/radio/chatManagement/chatInvitations';
 import {applicationVoice} from '../src/speech/applicationVoice';
 import {nativeSpeechRecognition} from '../src/native/NativeSpeechRecognition';
-import {PermissionsAndroid, Platform} from 'react-native';
 import {meshCoreInboundInbox} from '../src/meshcore/meshcoreInboundInbox';
 import {meshCoreInboundMessageId} from '../src/meshcore/meshcoreInboundIdentity';
 import type {ParsedChannelMessage} from '../src/meshcore/meshcoreParsers';

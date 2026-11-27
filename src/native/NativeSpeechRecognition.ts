@@ -16,6 +16,7 @@ export type NativeSpeechRecognitionResult = {
 
 type NativeSpeechRecognitionModule = {
   getStatus: () => Promise<NativeSpeechRecognitionStatus>;
+  checkLanguage?: (locale:string)=>Promise<'installed'|'download-required'|'unknown'>;
   recognizeOnce: (
     localeTag: string | null,
   ) => Promise<NativeSpeechRecognitionResult>;
@@ -46,6 +47,7 @@ export const nativeSpeechRecognition = {
     return module.getStatus();
   },
 
+  async checkLanguage(locale:string){return module?.checkLanguage?module.checkLanguage(locale):'unknown' as const;},
   async recognizeOnce(
     localeTag: string | null = null,
   ): Promise<NativeSpeechRecognitionResult> {

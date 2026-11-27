@@ -89,9 +89,6 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
         const persisted = await nativeSpeech.setCriticalAlertsEnabled(enabled);
         setCriticalEnabledState(persisted);
         setErrorMessage(null);
-        if (!persisted) {
-          await nativeSpeech.stop();
-        }
         await refresh();
       } catch (error) {
         setRuntimeState('error');

@@ -12,6 +12,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
+import android.speech.RecognitionSupport
+import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import com.facebook.react.bridge.*
@@ -27,6 +29,8 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   private var focus: AudioFocusRequest? = null
   private var timeout: Runnable? = null
   private var generation = 0L
+  private var probe: SpeechRecognizer? = null
+  private var cancelProbe: (() -> Unit)? = null
   private var resumed = context.lifecycleState == com.facebook.react.common.LifecycleState.RESUMED
   init { context.addLifecycleEventListener(this) }
   override fun getName() = "BushMeshSpeechRecognition"
@@ -42,6 +46,43 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
       })
     }
   }
+  @ReactMethod fun checkLanguage(locale: String, promise: Promise) {
+    main.post {
+      if (Build.VERSION.SDK_INT < 33 || !runCatching { supported() }.getOrDefault(false) || pending != null || probe != null) {
+        promise.resolve("unknown"); return@post
+      }
+      try {
+        val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+        probe = recognizer
+        var completed = false
+        fun finish(status: String) {
+          if (completed) return
+          completed = true
+          if (probe === recognizer) { probe = null; cancelProbe = null }
+          runCatching { recognizer.destroy() }
+          promise.resolve(status)
+        }
+        cancelProbe = { finish("unknown") }
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+          putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+          putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
+          putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        }
+        main.postDelayed({ finish("unknown") }, 4_000)
+        try {
+          recognizer.checkRecognitionSupport(intent, context.mainExecutor, object : RecognitionSupportCallback {
+            override fun onSupportResult(support: RecognitionSupport) {
+              val installed = support.installedOnDeviceLanguages.any { it.equals(locale, ignoreCase = true) }
+              val downloadable = (support.supportedOnDeviceLanguages + support.pendingOnDeviceLanguages).any { it.equals(locale, ignoreCase = true) }
+              finish(if (installed) "installed" else if (downloadable) "download-required" else "unknown")
+            }
+            override fun onError(error: Int) { finish("unknown") }
+          })
+        } catch (_: Exception) { finish("unknown") }
+      } catch (_: Exception) { promise.resolve("unknown") }
+    }
+  }
+
   private fun release() {
     generation++
     pending = null
@@ -59,7 +100,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   }
   @ReactMethod fun recognizeOnce(localeTag: String?, promise: Promise) {
     main.post {
-      if (pending != null || VoiceAudioOwnership.cancelRecognition != null || VoiceAudioOwnership.speaking) {
+      if (pending != null || probe != null || VoiceAudioOwnership.cancelRecognition != null || VoiceAudioOwnership.speaking) {
         promise.reject("BUSHMESH_STT_BUSY", "Microphone or speech output is busy."); return@post
       }
       if (!resumed || context.currentActivity == null || context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -122,7 +163,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   }
   @ReactMethod fun cancel(promise: Promise) { main.post { fail("CANCELLED", "Recognition cancelled."); promise.resolve(true) } }
   override fun onHostResume() { main.post { resumed = true } }
-  override fun onHostPause() { main.post { resumed = false; fail("SUSPENDED", "Recognition suspended.") } }
+  override fun onHostPause() { main.post { resumed = false; cancelProbe?.invoke(); fail("SUSPENDED", "Recognition suspended.") } }
   override fun onHostDestroy() = onHostPause()
   override fun invalidate() { context.removeLifecycleEventListener(this); onHostPause(); super.invalidate() }
 }

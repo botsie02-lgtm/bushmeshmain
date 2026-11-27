@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -54,6 +55,11 @@ class BushMeshSpeechModule(
   private val utterances = mutableMapOf<String, Promise?>()
   private val deadlines = mutableMapOf<String,Runnable>()
   private var utteranceSequence = 0L
+  private var ordinaryGeneration = 0L
+  private fun installedVoices(tts: TextToSpeech): List<Voice> = tts.voices.orEmpty().filter { !it.isNetworkConnectionRequired && !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) && it.locale.language == "en" }.sortedWith(compareBy({ it.locale.toLanguageTag() != "en-AU" }, { it.locale != Locale.getDefault() }, { it.name }))
+  private fun preferredVoice(tts: TextToSpeech, name: String?): Voice? = installedVoices(tts).let { voices -> if (name.isNullOrEmpty()) voices.firstOrNull() else voices.find { it.name == name } }
+  private fun recognitionLocale(): String = preferences().getString("recognition_locale", "en-AU")?.takeIf { it in listOf("en-AU", "en-GB", "en-US") } ?: "en-AU"
+  private fun speechRate(): Float = preferences().getFloat("speech_rate", 1f).takeIf { it.isFinite() && it in 0.75f..1.35f } ?: 1f
   private fun finish(id: String?, success: Boolean) {
     if (id == null || !utterances.containsKey(id)) return
     deadlines.remove(id)?.let { mainHandler.removeCallbacks(it) }
@@ -62,6 +68,7 @@ class BushMeshSpeechModule(
     if (utterances.isEmpty()) { VoiceAudioOwnership.speaking = false; VoiceAudioOwnership.critical = false; abandonSpeechFocus() }
   }
   private fun clearSpeech() {
+    ordinaryGeneration++
     engine?.stop()
     for (id in utterances.keys.toList()) finish(id, false)
     VoiceAudioOwnership.speaking = false; VoiceAudioOwnership.critical = false
@@ -76,7 +83,9 @@ class BushMeshSpeechModule(
 
   override fun getName(): String = "BushMeshSpeech"
 
-  override fun onInit(status: Int) {
+  override fun onInit(status: Int) { mainHandler.post { initializeSpeech(status) } }
+
+  private fun initializeSpeech(status: Int) {
     if (status != TextToSpeech.SUCCESS) {
       initFailed = true
       initComplete = true
@@ -89,8 +98,8 @@ class BushMeshSpeechModule(
       return
     }
 
-    val voices = tts.voices.orEmpty().filter { !it.isNetworkConnectionRequired && !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) && it.locale.language == "en" }
-    val voice = voices.sortedWith(compareBy({ it.locale.toLanguageTag() != "en-AU" }, { it.locale != Locale.getDefault() }, { it.name })).firstOrNull()
+    val voice = preferredVoice(tts, preferences().getString("offline_voice", null)) ?: preferredVoice(tts, null)
+    tts.setSpeechRate(speechRate())
     selectedLanguage = if (voice != null && tts.setVoice(voice) == TextToSpeech.SUCCESS) voice.locale else null
 
     tts.setAudioAttributes(speechAudioAttributes)
@@ -129,12 +138,15 @@ class BushMeshSpeechModule(
   }
   private fun enqueue(text: String, critical: Boolean, wait: Boolean, promise: Promise) {
     if (text.isBlank()) { promise.reject("BUSHMESH_TTS_EMPTY", "Speech text cannot be empty."); return }
+    mainHandler.post {
+    val generation = ordinaryGeneration
     withReady(promise) { tts ->
+      if (!critical && generation != ordinaryGeneration) { promise.reject("BUSHMESH_TTS_INTERRUPTED", "Speech was cancelled."); return@withReady }
       if (!critical && (VoiceAudioOwnership.cancelRecognition != null || VoiceAudioOwnership.critical)) {
         promise.reject("BUSHMESH_TTS_BUSY", "Microphone or critical speech is active."); return@withReady
       }
       if (critical) { VoiceAudioOwnership.cancelRecognition?.invoke(); clearSpeech() }
-      if (utterances.isEmpty() && !requestSpeechFocus()) { promise.reject("BUSHMESH_TTS_FOCUS", "Speech audio focus unavailable."); return@withReady }
+      if (utterances.isEmpty() && !requestSpeechFocus()) { abandonSpeechFocus(); promise.reject("BUSHMESH_TTS_FOCUS", "Speech audio focus unavailable."); return@withReady }
       val id = "bushmesh-" + (++utteranceSequence)
       VoiceAudioOwnership.speaking = true
       VoiceAudioOwnership.critical = critical
@@ -149,10 +161,11 @@ class BushMeshSpeechModule(
         if (!wait) promise.resolve(true)
       }
     }
+    }
   }
   @ReactMethod
   fun stopOrdinary(promise: Promise) {
-    mainHandler.post { if (!VoiceAudioOwnership.critical) clearSpeech(); promise.resolve(!VoiceAudioOwnership.critical) }
+    mainHandler.post { ordinaryGeneration++; if (!VoiceAudioOwnership.critical) clearSpeech(); promise.resolve(!VoiceAudioOwnership.critical) }
   }
   @ReactMethod
   fun stop(promise: Promise) {
@@ -169,10 +182,57 @@ class BushMeshSpeechModule(
         putString("languageTag", selectedLanguage?.toLanguageTag())
         putBoolean("offlineVoice", selectedLanguage != null)
         putBoolean("speaking", VoiceAudioOwnership.speaking)
+        putString("recognitionLocale", recognitionLocale())
         putBoolean("criticalAlertsEnabled", criticalAlertsEnabled())
         putBoolean("radioMessagesEnabled", radioMessagesEnabled())
       }
       promise.resolve(status)
+    }
+  }
+
+  @ReactMethod
+  fun getVoicePreferences(promise: Promise) {
+    mainHandler.post {
+      try {
+        val tts = engine
+        promise.resolve(Arguments.createMap().apply {
+          putString("locale", recognitionLocale())
+          putDouble("rate", speechRate().toDouble())
+          putString("voice", tts?.voice?.name)
+          putArray("voices", Arguments.createArray().apply {
+            if (initComplete && tts != null) installedVoices(tts).forEach { voice ->
+              pushMap(Arguments.createMap().apply { putString("name",voice.name);putString("locale",voice.locale.toLanguageTag()) })
+            }
+          })
+        })
+      } catch (_: Exception) { promise.reject("BUSHMESH_VOICE_PREF", "Could not inspect local voices.") }
+    }
+  }
+
+  @ReactMethod
+  fun setVoicePreferences(locale: String, voiceName: String?, rate: Double, promise: Promise) {
+    mainHandler.post {
+      try {
+        require(locale in listOf("en-AU","en-GB","en-US") && rate.isFinite() && rate in 0.75..1.35)
+        check(!VoiceAudioOwnership.speaking && VoiceAudioOwnership.cancelRecognition == null)
+        val tts = engine
+        val previous = tts?.voice
+        val previousRate = speechRate()
+        val voice = if (tts != null && initComplete) preferredVoice(tts,voiceName) else null
+        require(voiceName.isNullOrEmpty() || voice != null)
+        try {
+          if (tts != null && voice != null) {
+            check(tts.setVoice(voice) == TextToSpeech.SUCCESS)
+            check(tts.setSpeechRate(rate.toFloat()) == TextToSpeech.SUCCESS)
+          }
+          check(preferences().edit().putString("recognition_locale",locale).putString("offline_voice",voiceName).putFloat("speech_rate",rate.toFloat()).commit())
+          if (voice != null) { selectedLanguage = voice.locale; initFailed = false }
+          promise.resolve(true)
+        } catch (error: Exception) {
+          if (tts != null && previous != null) { tts.setVoice(previous); tts.setSpeechRate(previousRate) }
+          throw error
+        }
+      } catch (_: Exception) { promise.reject("BUSHMESH_VOICE_PREF", "Voice preference not saved. Stop speech and choose an installed offline voice.") }
     }
   }
 
@@ -186,7 +246,7 @@ class BushMeshSpeechModule(
 
       if (!enabled) {
         mainHandler.post {
-          clearSpeech()
+          if (VoiceAudioOwnership.critical) clearSpeech()
         }
       }
       promise.resolve(enabled)
