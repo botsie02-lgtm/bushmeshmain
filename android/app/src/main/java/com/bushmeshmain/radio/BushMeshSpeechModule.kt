@@ -53,7 +53,7 @@ class BushMeshSpeechModule(
   private var allSpeechGeneration = 0L
   private fun installedVoices(tts: TextToSpeech): List<Voice> = tts.voices.orEmpty().filter { !it.isNetworkConnectionRequired && !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) && it.locale.language == "en" }.sortedWith(compareBy({ it.locale.toLanguageTag() != "en-AU" }, { it.locale != Locale.getDefault() }, { it.name }))
   private fun preferredVoice(tts: TextToSpeech, name: String?): Voice? = installedVoices(tts).let { voices -> if (name.isNullOrEmpty()) voices.firstOrNull() else voices.find { it.name == name } }
-  private fun recognitionLocale(): String = preferences().getString("recognition_locale", "en-AU")?.takeIf { it in listOf("en-AU", "en-GB", "en-US") } ?: "en-AU"
+  private fun recognitionLocale(): String = preferences().getString("recognition_locale", "en-AU")?.takeIf { isEnglishRecognitionLocale(it) } ?: "en-AU"
   private fun speechRate(): Float = preferences().getFloat("speech_rate", 1f).takeIf { it.isFinite() && it in 0.75f..1.35f } ?: 1f
   private fun finish(id: String?, success: Boolean) {
     if (id == null || !utterances.containsKey(id)) return
@@ -244,7 +244,7 @@ class BushMeshSpeechModule(
   fun setVoicePreferences(locale: String, voiceName: String?, rate: Double, promise: Promise) {
     mainHandler.post {
       try {
-        require(locale in listOf("en-AU","en-GB","en-US") && rate.isFinite() && rate in 0.75..1.35)
+        require(isEnglishRecognitionLocale(locale) && rate.isFinite() && rate in 0.75..1.35)
         check(!VoiceAudioOwnership.speaking && !VoiceAudioOwnership.microphoneBusy)
         val tts = engine
         val previous = tts?.voice

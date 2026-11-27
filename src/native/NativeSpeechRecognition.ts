@@ -21,6 +21,17 @@ export type NativeHandsFreeStatus = {
   reason: string | null;
 };
 
+export type OfflineLanguageInventory = {
+  locale: string;
+  status: 'installed' | 'pending' | 'download-required' | 'unsupported' | 'unknown';
+  reason: string | null;
+  installed: string[];
+  pending: string[];
+  downloadable: string[];
+};
+
+export type ModelDownloadProgress = {requestId: string; percent: number};
+
 export type HeldSpeechPartial = {requestId: string; text: string};
 
 export type NativeSpeechRecognitionResult = {
@@ -33,6 +44,9 @@ export type NativeSpeechRecognitionResult = {
 type NativeSpeechRecognitionModule = {
   getStatus: () => Promise<NativeSpeechRecognitionStatus>;
   checkLanguage?: (locale:string)=>Promise<'installed'|'download-required'|'unknown'>;
+  getLanguageInventory?: (locale: string) => Promise<OfflineLanguageInventory>;
+  downloadLanguage?: (locale: string, requestId: string) => Promise<string>;
+  stopDownloadObservation?: (requestId: string) => Promise<boolean>;
   recognizeOnce: (
     localeTag: string | null,
   ) => Promise<NativeSpeechRecognitionResult>;
@@ -69,6 +83,19 @@ export const nativeSpeechRecognition = {
   },
 
   async checkLanguage(locale:string){return module?.checkLanguage?module.checkLanguage(locale):'unknown' as const;},
+  async getLanguageInventory(locale: string): Promise<OfflineLanguageInventory | null> {
+    return this.isSupported() && module?.getLanguageInventory ? module.getLanguageInventory(locale) : null;
+  },
+  async downloadLanguage(locale: string, requestId: string): Promise<string> {
+    return this.isSupported() && module?.downloadLanguage ? module.downloadLanguage(locale, requestId) : 'unavailable';
+  },
+  async stopDownloadObservation(requestId: string): Promise<boolean> {
+    return module?.stopDownloadObservation ? module.stopDownloadObservation(requestId) : false;
+  },
+  subscribeModelProgress(listener: (value: ModelDownloadProgress) => void): () => void {
+    const subscription = DeviceEventEmitter.addListener('BushMeshSpeechModelProgress', listener);
+    return () => subscription.remove();
+  },
   async recognizeOnce(
     localeTag: string | null = null,
   ): Promise<NativeSpeechRecognitionResult> {

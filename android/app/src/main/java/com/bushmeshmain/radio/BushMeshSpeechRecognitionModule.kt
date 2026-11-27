@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.speech.ModelDownloadListener
 import android.speech.RecognitionListener
 import android.speech.RecognitionSupport
 import android.speech.RecognitionSupportCallback
@@ -83,40 +84,131 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   @ReactMethod fun getStatus(promise: Promise) {
     main.post { promise.resolve(statusMap()) }
   }
-  @ReactMethod fun checkLanguage(locale: String, promise: Promise) {
+  private fun recognitionIntent(locale: String, partial: Boolean = false) =
+    Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+      putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+      putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
+      putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+      putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+      putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, partial)
+    }
+
+  @ReactMethod fun checkLanguage(locale: String, promise: Promise) =
+    inspectLanguages(locale, false, promise)
+
+  @ReactMethod fun getLanguageInventory(locale: String, promise: Promise) =
+    inspectLanguages(locale, true, promise)
+
+  private fun inspectLanguages(locale: String, inventory: Boolean, promise: Promise) {
     main.post {
-      if (invalidated || Build.VERSION.SDK_INT < 33 || !runCatching { supported() }.getOrDefault(false) || pending != null || probe != null) {
-        promise.resolve("unknown"); return@post
+      fun respond(status: String, reason: String? = null, installed: List<String> = emptyList(),
+                  pendingLanguages: List<String> = emptyList(), downloadable: List<String> = emptyList()) {
+        if (!inventory) {
+          promise.resolve(if (status == "pending") "download-required" else if (status == "unsupported") "unknown" else status)
+          return
+        }
+        promise.resolve(Arguments.createMap().apply {
+          putString("locale", locale)
+          putString("status", status)
+          putString("reason", reason)
+          putArray("installed", Arguments.createArray().apply { installed.forEach { pushString(it) } })
+          putArray("pending", Arguments.createArray().apply { pendingLanguages.forEach { pushString(it) } })
+          putArray("downloadable", Arguments.createArray().apply { downloadable.forEach { pushString(it) } })
+        })
+      }
+      if (invalidated || Build.VERSION.SDK_INT < 33 || !runCatching { supported() }.getOrDefault(false) ||
+          pending != null || probe != null) {
+        respond("unknown", "Support inspection unavailable or busy."); return@post
       }
       try {
         val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         probe = recognizer
         var completed = false
-        fun finish(status: String) {
+        var deadline: Runnable? = null
+        fun finish(status: String, reason: String? = null, support: RecognitionSupport? = null) {
           if (completed) return
           completed = true
+          deadline?.let { main.removeCallbacks(it) }
           if (probe === recognizer) { probe = null; cancelProbe = null }
           runCatching { recognizer.destroy() }
-          promise.resolve(status)
+          respond(status, reason, support?.installedOnDeviceLanguages.orEmpty(),
+            support?.pendingOnDeviceLanguages.orEmpty(), support?.supportedOnDeviceLanguages.orEmpty())
         }
-        cancelProbe = { finish("unknown") }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-          putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-          putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
-          putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-        }
-        main.postDelayed({ finish("unknown") }, 4_000)
+        cancelProbe = { finish("unknown", "Support inspection interrupted.") }
+        deadline = Runnable { finish("unknown", "Support inspection timed out.") }.also { main.postDelayed(it, 4_000) }
         try {
-          recognizer.checkRecognitionSupport(intent, context.mainExecutor, object : RecognitionSupportCallback {
+          recognizer.checkRecognitionSupport(recognitionIntent(locale), context.mainExecutor, object : RecognitionSupportCallback {
             override fun onSupportResult(support: RecognitionSupport) {
-              val installed = support.installedOnDeviceLanguages.any { it.equals(locale, ignoreCase = true) }
-              val downloadable = (support.supportedOnDeviceLanguages + support.pendingOnDeviceLanguages).any { it.equals(locale, ignoreCase = true) }
-              finish(if (installed) "installed" else if (downloadable) "download-required" else "unknown")
+              finish(offlineLanguageStatus(locale, support.installedOnDeviceLanguages,
+                support.pendingOnDeviceLanguages, support.supportedOnDeviceLanguages), support = support)
             }
-            override fun onError(error: Int) { finish("unknown") }
+            override fun onError(error: Int) {
+              finish(if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED) "unsupported" else "unknown",
+                recognitionFailure(error, locale).second)
+            }
           })
-        } catch (_: Exception) { finish("unknown") }
-      } catch (_: Exception) { promise.resolve("unknown") }
+        } catch (_: Exception) { finish("unknown", "Provider could not inspect offline models.") }
+      } catch (_: Exception) { respond("unknown", "Could not create on-device recognizer.") }
+    }
+  }
+
+  // Explicit provisioning only. No microphone is acquired by this operation.
+  // Destroying the observer does not promise cancellation of a provider download.
+  private var downloadId: String? = null
+  @ReactMethod fun downloadLanguage(locale: String, requestId: String, promise: Promise) {
+    main.post {
+      if (invalidated || foregroundActivity() == null || Build.VERSION.SDK_INT < 33 ||
+          !runCatching { supported() }.getOrDefault(false) || pending != null || probe != null ||
+          VoiceAudioOwnership.microphoneBusy || VoiceAudioOwnership.speaking || !isEnglishRecognitionLocale(locale)) {
+        promise.resolve("unavailable"); return@post
+      }
+      try {
+        val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+        probe = recognizer
+        downloadId = requestId
+        var completed = false
+        var deadline: Runnable? = null
+        fun finish(outcome: String) {
+          if (completed) return
+          completed = true
+          deadline?.let { main.removeCallbacks(it) }
+          if (probe === recognizer) { probe = null; cancelProbe = null; downloadId = null }
+          runCatching { recognizer.destroy() }
+          promise.resolve(outcome)
+        }
+        cancelProbe = { finish("interrupted") }
+        try {
+          if (Build.VERSION.SDK_INT >= 34) {
+            deadline = Runnable { finish("unconfirmed") }.also { main.postDelayed(it, 120_000) }
+            recognizer.triggerModelDownload(recognitionIntent(locale), context.mainExecutor, object : ModelDownloadListener {
+              override fun onProgress(completedPercent: Int) {
+                if (completed || probe !== recognizer || !context.hasActiveReactInstance()) return
+                runCatching {
+                  context.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit("BushMeshSpeechModelProgress", Arguments.createMap().apply {
+                      putString("requestId", requestId)
+                      putDouble("percent", completedPercent.coerceIn(0, 100).toDouble())
+                    })
+                }
+              }
+              override fun onSuccess() { finish("completed") }
+              override fun onScheduled() { finish("scheduled") }
+              override fun onError(error: Int) { finish("failed:" + error) }
+            })
+          } else {
+            recognizer.triggerModelDownload(recognitionIntent(locale))
+            deadline = Runnable { finish("requested") }.also { main.postDelayed(it, 4_000) }
+          }
+        } catch (_: Exception) { finish("failed") }
+      } catch (_: Exception) { promise.resolve("failed") }
+    }
+  }
+
+  @ReactMethod fun stopDownloadObservation(requestId: String, promise: Promise) {
+    main.post {
+      val matches = downloadId == requestId
+      if (matches) cancelProbe?.invoke()
+      promise.resolve(matches)
     }
   }
 
@@ -219,6 +311,9 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
       if (callActive()) {
         promise.reject("BUSHMESH_STT_INTERRUPTED", "Call or communication audio is active."); return@post
       }
+      if (!runCatching { supported() }.getOrDefault(false)) {
+        promise.reject("BUSHMESH_STT_UNAVAILABLE", "No on-device recognizer is available. Open Voice assistant readiness."); return@post
+      }
       admittedActivity = activity
       admittedEpoch = activity.voiceForegroundEpoch
       pending = promise
@@ -228,14 +323,15 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
       val turn = ++generation
       val started = android.os.SystemClock.elapsedRealtime()
       try {
-        check(supported())
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
           .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
           .setOnAudioFocusChangeListener({ change ->
             if (change < 0 && generation == turn) fail("FOCUS", "Microphone audio focus lost.")
           }, main).build()
         focus = request
-        check(audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+        if (audio.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+          fail("FOCUS", "Microphone audio focus unavailable. End calls or other audio and retry."); return@post
+        }
         val kind = if (requestId == null) VoiceMicrophoneOwnership.Kind.COMMAND else VoiceMicrophoneOwnership.Kind.HOLD_TO_TALK
         microphoneLease = VoiceAudioOwnership.microphone.claim(kind, VoiceAudioOwnership.speaking) {
           if (generation == turn) fail("INTERRUPTED", "Interrupted by critical speech.")
@@ -282,7 +378,10 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
           }
           override fun onEvent(eventType: Int, params: Bundle?) = Unit
           override fun onError(error: Int) {
-            if (generation == turn) fail("RECOGNITION", "On-device recognition unavailable or unsuccessful (code $error). Check offline language resources and retry.")
+            if (generation == turn) {
+              val failure = recognitionFailure(error, localeTag ?: "en-AU")
+              fail(failure.first, failure.second)
+            }
           }
           override fun onResults(results: Bundle?) {
             if (generation != turn || !VoiceAudioOwnership.microphone.owns(microphoneLease)) return
@@ -300,13 +399,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
             val p = pending; release(); p?.resolve(result)
           }
         })
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-          putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-          putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag ?: "en-AU")
-          putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-          putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-          putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, requestId != null)
-        }
+        val intent = recognitionIntent(localeTag ?: "en-AU", requestId != null)
         timeout = Runnable { if (generation == turn) fail("TIMEOUT", "Listening timed out.") }.also { main.postDelayed(it, 20_000) }
         watchAudioDevices(turn)
         if (!eligibleTurn()) { fail("SUSPENDED", "Recognition suspended before start."); return@post }
