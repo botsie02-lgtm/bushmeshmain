@@ -4,6 +4,8 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useLayoutEffect,
+  useRef,
   useState,
 } from 'react';
 
@@ -25,7 +27,7 @@ type SpeechContextValue = {
   errorMessage: string | null;
   setCriticalAlertsEnabled: (enabled: boolean) => Promise<void>;
   setRadioMessagesEnabled: (enabled: boolean) => Promise<void>;
-  refresh: () => Promise<void>;
+  refresh: (afterMutation?: boolean) => Promise<NativeSpeechStatus | null>;
 };
 
 const SpeechContext = createContext<SpeechContextValue | null>(null);
@@ -49,28 +51,61 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
   const [languageTag, setLanguageTag] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  // A single native status read serves both the provider and readiness panel.
+  // Invalidate the owner on unmount, including StrictMode effect replay.
+  const lifecycle = useRef({generation: 0, mounted: false});
+  const pending = useRef<Promise<NativeSpeechStatus | null> | null>(null);
+  useLayoutEffect(() => {
+    lifecycle.current.mounted = true;
+    return () => {
+      lifecycle.current.mounted = false;
+      lifecycle.current.generation++;
+      pending.current = null;
+    };
+  }, [supported]);
+
+  const refresh = useCallback(async (afterMutation = false): Promise<NativeSpeechStatus | null> => {
+    const generation = lifecycle.current.generation;
+    const current = () => lifecycle.current.mounted && lifecycle.current.generation === generation;
+    if (!current()) return null;
+    // A read begun before a preference write must not be reused as its
+    // post-write result. Ordinary refresh callers share an in-flight read.
+    if (afterMutation && pending.current) await pending.current;
+    if (!current()) return null;
+    if (pending.current) return pending.current;
     if (!supported) {
       setCriticalEnabledState(false);
       setRadioMessagesEnabledState(false);
       setRuntimeState('unavailable');
       setLanguageTag(null);
       setErrorMessage(null);
-      return;
+      return null;
     }
 
+    const read = async () => {
+      try {
+        const status = await nativeSpeech.getStatus();
+        if (!current()) return null;
+        setCriticalEnabledState(status.criticalAlertsEnabled);
+        setRadioMessagesEnabledState(status.radioMessagesEnabled);
+        setRuntimeState(runtimeStateFromStatus(status));
+        setLanguageTag(status.languageTag);
+        setErrorMessage(null);
+        return status;
+      } catch (error) {
+        if (current()) {
+          setRuntimeState('error');
+          setErrorMessage(error instanceof Error ? error.message : 'Could not read speech status.');
+        }
+        return null;
+      }
+    };
+    const request = read();
+    pending.current = request;
     try {
-      const status = await nativeSpeech.getStatus();
-      setCriticalEnabledState(status.criticalAlertsEnabled);
-      setRadioMessagesEnabledState(status.radioMessagesEnabled);
-      setRuntimeState(runtimeStateFromStatus(status));
-      setLanguageTag(status.languageTag);
-      setErrorMessage(null);
-    } catch (error) {
-      setRuntimeState('error');
-      setErrorMessage(
-        error instanceof Error ? error.message : 'Could not read speech status.',
-      );
+      return await request;
+    } finally {
+      if (pending.current === request) pending.current = null;
     }
   }, [supported]);
 
@@ -97,7 +132,7 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
         const persisted = await nativeSpeech.setCriticalAlertsEnabled(enabled);
         setCriticalEnabledState(persisted);
         setErrorMessage(null);
-        await refresh();
+        await refresh(true);
       } catch (error) {
         setRuntimeState('error');
         setErrorMessage(
@@ -121,7 +156,7 @@ export function SpeechProvider({children}: {children: React.ReactNode}): React.J
         const persisted = await nativeSpeech.setRadioMessagesEnabled(enabled);
         setRadioMessagesEnabledState(persisted);
         setErrorMessage(null);
-        await refresh();
+        await refresh(true);
       } catch (error) {
         setRuntimeState('error');
         setErrorMessage(
