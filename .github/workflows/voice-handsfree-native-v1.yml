@@ -23,6 +23,20 @@ jobs:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
+      - name: Record installed React lifecycle implementation
+        run: |
+          node -p "require('react-native/package.json').version"
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/bridge')
+          for source in sorted(root.glob('ReactContext.*')):
+              lines = source.read_text().splitlines()
+              for i, line in enumerate(lines):
+                  if 'addLifecycleEventListener(' in line:
+                      print(f'{source}:{i+1}')
+                      print('\n'.join(f'{n+1}: {lines[n]}' for n in range(max(0,i-2),min(len(lines),i+32))))
+                      break
+          PY
       - name: Jest
         run: npm test -- --runInBand
       - name: TypeScript
