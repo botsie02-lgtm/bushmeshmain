@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import copy
+from contextlib import redirect_stdout
+import io
+import json
 from pathlib import Path
 import shlex
 import sys
 import tempfile
 import unittest
 
+from tools.voice.qualification.cli import main as qualification_cli
+from tools.voice.qualification.manifest import sha256
 from tools.voice.qualification.adapters import (
     NoOpAdapter, ExternalJsonLinesAdapter, WakeEvent, _events, qualified_vosk_endpoint,
 )
@@ -122,6 +127,22 @@ class StreamingScoreTests(unittest.TestCase):
             _events({"events": [{"sample_index": 1, "confidence": 1.2}]})
         with self.assertRaisesRegex(ValueError, "response"):
             _events({"event": []})
+
+    def test_cli_pins_actual_dataset_manifest_digest_in_report(self):
+        report_path = self.path.parent / "report.json"
+        with redirect_stdout(io.StringIO()):
+            code = qualification_cli([
+                "evaluate", "--manifest", str(self.path),
+                "--adapter", "noop", "--conditions", "clean",
+                "--detector-id", "development-noop-001",
+                "--report", str(report_path),
+            ])
+        self.assertEqual(code, 0)
+        saved = json.loads(report_path.read_text())
+        self.assertEqual(saved["dataset_manifest_sha256"], sha256(self.path))
+        self.assertEqual(saved["detector"]["detector_id"], "development-noop-001")
+        self.assertFalse(saved["held_out_acceptance"])
+        self.assertFalse(saved["detector"]["operational_approval"])
 
     def test_external_json_lines_detector_stays_alive_for_continuous_stream(self):
         command = shlex.quote(sys.executable) + " -m tools.voice.qualification.example_adapter"
