@@ -1,11 +1,27 @@
-import {NativeModules, Platform} from 'react-native';
+import {DeviceEventEmitter, NativeModules, Platform} from 'react-native';
 
 export type NativeSpeechRecognitionStatus = {
   supported: boolean;
   listening: boolean;
   apiLevel: number;
   reason: string | null;
+  foreground?: boolean;
+  permissionGranted?: boolean;
+  microphoneOwner?: 'command' | 'hold-to-talk' | 'wake-detector' | null;
+  playbackActive?: boolean;
+  lastFailure?: string | null;
+  phase?: 'idle' | 'starting' | 'listening' | 'finishing';
 };
+
+export type NativeHandsFreeStatus = {
+  available: boolean;
+  active: boolean;
+  offlineModelReady: boolean;
+  backgroundCaptureSupported: boolean;
+  reason: string | null;
+};
+
+export type HeldSpeechPartial = {requestId: string; text: string};
 
 export type NativeSpeechRecognitionResult = {
   text: string;
@@ -20,6 +36,11 @@ type NativeSpeechRecognitionModule = {
   recognizeOnce: (
     localeTag: string | null,
   ) => Promise<NativeSpeechRecognitionResult>;
+  recognizeHeld?: (localeTag: string | null, requestId: string) => Promise<NativeSpeechRecognitionResult>;
+  finishHeld?: (requestId: string, cancel: boolean) => Promise<boolean>;
+  getHandsFreeStatus?: () => Promise<NativeHandsFreeStatus>;
+  activateHandsFree?: () => Promise<NativeHandsFreeStatus>;
+  deactivateHandsFree?: () => Promise<boolean>;
   stopListening: () => Promise<boolean>;
   cancel: () => Promise<boolean>;
 };
@@ -55,6 +76,61 @@ export const nativeSpeechRecognition = {
       throw new Error('Strict on-device speech recognition is unavailable.');
     }
     return module.recognizeOnce(localeTag);
+  },
+
+  supportsHeldRecognition(): boolean {
+    return this.isSupported() && !!module?.recognizeHeld && !!module?.finishHeld;
+  },
+
+  async recognizeHeld(localeTag: string | null, requestId: string): Promise<NativeSpeechRecognitionResult> {
+    if (!this.supportsHeldRecognition() || !module?.recognizeHeld) {
+      throw new Error('Scoped on-device held recognition is unavailable.');
+    }
+    return module.recognizeHeld(localeTag, requestId);
+  },
+
+  async finishHeld(requestId: string, cancel: boolean): Promise<boolean> {
+    return this.supportsHeldRecognition() && module?.finishHeld
+      ? module.finishHeld(requestId, cancel) : false;
+  },
+
+  subscribeHeldPartial(listener: (value: HeldSpeechPartial) => void): () => void {
+    if (!this.supportsHeldRecognition()) {
+      return () => undefined;
+    }
+    const subscription = DeviceEventEmitter.addListener('BushMeshHeldSpeechPartial', listener);
+    return () => subscription.remove();
+  },
+
+  /** Metadata-only finite recognition transitions; no transcripts or wake events. */
+  subscribeSessionState(listener: (status: NativeSpeechRecognitionStatus) => void): () => void {
+    if (!this.supportsHeldRecognition()) {
+      return () => undefined;
+    }
+    const subscription = DeviceEventEmitter.addListener('BushMeshSpeechSessionState', listener);
+    return () => subscription.remove();
+  },
+
+  async getHandsFreeStatus(): Promise<NativeHandsFreeStatus> {
+    if (this.isSupported() && module?.getHandsFreeStatus) {
+      return module.getHandsFreeStatus();
+    }
+    return {
+      available: false, active: false, offlineModelReady: false,
+      backgroundCaptureSupported: false, reason: 'native-session-unavailable',
+    };
+  },
+
+  async activateHandsFree(): Promise<NativeHandsFreeStatus> {
+    if (!this.isSupported() || !module?.activateHandsFree) {
+      throw new Error('Offline wake detection is unavailable.');
+    }
+    return module.activateHandsFree();
+  },
+
+  async deactivateHandsFree(): Promise<boolean> {
+    return this.isSupported() && module?.deactivateHandsFree
+      ? module.deactivateHandsFree() : false;
   },
 
   async stopListening(): Promise<boolean> {

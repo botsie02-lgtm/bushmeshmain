@@ -2,6 +2,7 @@ import {AppState, PermissionsAndroid,Platform} from 'react-native';
 import {nativeSpeechRecognition} from '../native/NativeSpeechRecognition';
 import {nativeSpeech} from '../native/NativeSpeech';
 import {VoiceAssistant} from './VoiceAssistant';
+import {HoldToTalk} from './HoldToTalk';
 
 let recognitionLocale='en-AU';
 export const applicationVoice=new VoiceAssistant({
@@ -19,6 +20,33 @@ export const applicationVoice=new VoiceAssistant({
  speak:async text=>{if(!await nativeSpeech.speakOrdinaryAndWait(text))throw new Error('Offline speech unavailable.');},
  stopSpeech:()=>nativeSpeech.stopOrdinary(),
 });
+// Separate held-text adapter for the composer integration worker. Neither
+// activation nor completion calls VoiceDestination.send.
+export const applicationHoldToTalk = new HoldToTalk({
+  permission: async stillHeld => {
+    if (Platform.OS !== 'android' || !stillHeld() ||
+        !nativeSpeechRecognition.supportsHeldRecognition() ||
+        !(await nativeSpeechRecognition.getStatus()).supported || !stillHeld()) {
+      return false;
+    }
+    const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
+    const granted = await PermissionsAndroid.check(permission);
+    if (!stillHeld()) {
+      return false;
+    }
+    return granted ||
+      await PermissionsAndroid.request(permission) === PermissionsAndroid.RESULTS.GRANTED;
+  },
+  recognize: (locale, requestId) => nativeSpeechRecognition.recognizeHeld(locale, requestId),
+  finish: (requestId, cancel) => nativeSpeechRecognition.finishHeld(requestId, cancel),
+  subscribePartial: listener => nativeSpeechRecognition.subscribeHeldPartial(listener),
+});
+
 // Permission dialogs may transition through inactive; native recognition
 // checks actual host lifecycle before starting. Background always cancels.
-AppState.addEventListener('change',state=>{if(state==='background')applicationVoice.cancel(true).catch(()=>undefined);});
+AppState.addEventListener('change', state => {
+  if (state === 'background') {
+    applicationVoice.cancel(true).catch(() => undefined);
+    applicationHoldToTalk.cancel().catch(() => undefined);
+  }
+});

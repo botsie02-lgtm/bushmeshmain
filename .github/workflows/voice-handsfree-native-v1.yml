@@ -1,0 +1,155 @@
+name: Native hands-free voice specialist validation
+
+on:
+  push:
+    branches:
+      - feature/voice-handsfree-native-v1
+  workflow_dispatch:
+
+concurrency:
+  group: voice-handsfree-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Record installed React lifecycle implementation
+        run: |
+          node -p "require('react-native/package.json').version"
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/bridge')
+          for source in sorted(root.glob('ReactContext.*')):
+              lines = source.read_text().splitlines()
+              for i, line in enumerate(lines):
+                  if 'addLifecycleEventListener(' in line:
+                      print(f'{source}:{i+1}')
+                      print('\n'.join(f'{n+1}: {lines[n]}' for n in range(max(0,i-2),min(len(lines),i+32))))
+                      break
+          PY
+      - name: Jest
+        run: npm test -- --runInBand
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Changed voice code ESLint
+        run: npx eslint src/native/NativeSpeechRecognition.ts src/speech/HoldToTalk.ts src/speech/applicationVoice.ts __tests__/holdToTalk.test.ts
+      - name: Repository ESLint (exact inherited failure isolated)
+        run: |
+          git diff --quiet 626fc26e09a07a8b1b90429009adcd6aa082c5ba -- src/speech/VoiceReadinessPanel.tsx
+          status=0
+          npm run lint -- --format json --output-file "$RUNNER_TEMP/voice-lint.json" || status=$?
+          test "$status" -le 1
+          python3 - "$RUNNER_TEMP/voice-lint.json" <<'PY'
+          import json, sys
+          results = json.load(open(sys.argv[1]))
+          errors = [(r['filePath'], m) for r in results for m in r['messages'] if m['severity'] == 2]
+          warnings = sum(r['warningCount'] for r in results)
+          print('Repository warnings:', warnings)
+          for path, m in errors:
+              print(path, m.get('line'), m.get('column'), m.get('ruleId'), m.get('message'))
+          if not errors:
+              print('Full ESLint passed.')
+          elif (len(errors) == 1 and errors[0][0].endswith('/src/speech/VoiceReadinessPanel.tsx')
+                and errors[0][1].get('ruleId') == 'react-hooks/exhaustive-deps'
+                and errors[0][1].get('line') == 21 and errors[0][1].get('column') == 50
+                and "missing dependency: 'refresh'" in errors[0][1].get('message', '')):
+              print('::warning::Full ESLint remains failed on the independently verified unchanged integration baseline issue (run 45922899145). No new lint errors.')
+          else:
+              sys.exit('New or changed lint error; not the inherited baseline failure.')
+          PY
+      - name: Upload lint evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-lint-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/voice-lint.json
+          if-no-files-found: ignore
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: npm ci
+      - name: Android debug compile and JVM tests
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+      - name: Isolated release and instrumentation compilation
+        working-directory: android
+        run: ./gradlew :app:assembleRelease :app:assembleReleaseAndroidTest -PradioRedesignFieldTest --no-daemon
+      - name: APK byte size and provenance (not distribution approval)
+        id: feature_bytes
+        run: |
+          mkdir -p voice-test
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          wc -c < "$apk" | tee voice-test/feature-apk-bytes.txt
+          printf '%s\n' "$GITHUB_SHA" > voice-test/feature-commit.txt
+          sha256sum "$apk" > voice-test/feature-apk-sha256.txt
+          unzip -l "$apk" | grep -F assets/index.android.bundle
+          test_apk="$(find android/app/build/outputs/apk/androidTest -name '*.apk' -type f -print -quit)"
+          test -n "$test_apk"
+          cp "$test_apk" "$RUNNER_TEMP/voice-instrumentation.apk"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android 16 voice permission, suspension and revocation
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash tools/voice/verify_native_voice_lifecycle.sh android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/voice-instrumentation.apk" voice-test
+      - name: Measure exact baseline APK and byte delta
+        if: ${{ !cancelled() && steps.feature_bytes.outcome == 'success' }}
+        run: |
+          trap 'git checkout --detach "$GITHUB_SHA"' EXIT
+          git checkout --detach 626fc26e09a07a8b1b90429009adcd6aa082c5ba
+          git rev-parse HEAD > voice-test/base-commit.txt
+          (cd android && ./gradlew :app:assembleRelease -PradioRedesignFieldTest --no-daemon)
+          wc -c < android/app/build/outputs/apk/release/app-release.apk | tee voice-test/base-apk-bytes.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          out = Path('voice-test')
+          base = int((out / 'base-apk-bytes.txt').read_text())
+          feature = int((out / 'feature-apk-bytes.txt').read_text())
+          result = f'base={base} feature={feature} delta={feature-base} bytes'
+          print(result)
+          (out / 'apk-size-delta.txt').write_text(result + '\n')
+          PY
+      - name: Upload native validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-voice-evidence-${{ github.sha }}
+          path: voice-test/
+          if-no-files-found: ignore
+          retention-days: 14
