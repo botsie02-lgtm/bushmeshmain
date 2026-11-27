@@ -21,14 +21,15 @@ export function useChatManagement() {
   const [configs, setConfigs] = useState<ChatConfiguration[]>([]);
   const [preferences, setPreferences] = useState<ChatPreferenceSnapshot>({});
   const [ready, setReady] = useState(false);
+  const [catalogueStatus, setCatalogueStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const currentPreferences = useRef(preferences);
   currentPreferences.current = preferences;
   const [sort, setSort] = useState<ChatSort>('recent');
   useEffect(() => {
     let active = true;
     chatPreferenceStore.loadState().then(({entries, sort: savedSort}) => {
-      if (active && !busyRef.current) {setPreferences(entries); setSort(savedSort);}
-    }).catch(() => {if (active) setError('Saved chats could not be restored.');});
+      if (active && !busyRef.current) {setPreferences(entries); setSort(savedSort);setCatalogueStatus('ready');}
+    }).catch(() => {if (active && !busyRef.current) {setCatalogueStatus('error');setError('Saved chats could not be restored.');}});
     return () => {active = false;};
   }, []);
 
@@ -61,6 +62,7 @@ export function useChatManagement() {
     const entries = await chatPreferenceStore.rememberConfigurations(expected, next);
     if (live.current.getChatRadio() !== expected || live.current.getChatSessionEpoch() !== expectedEpoch) throw new Error('Radio changed.');
     setPreferences(entries);
+    setCatalogueStatus('ready');
     setSort(savedSort);
     setConfigs(next);
     setLoadedRadio(expected);
@@ -193,7 +195,7 @@ export function useChatManagement() {
     ready: current,
     // Display cache only: all transport operations continue to require current.
     chats: configs,
-    preferences,
+    preferences, catalogueStatus,
     refresh, update, provision, leave, credential, sort, changeSort,
     updateLocal,
     invalidate: () => setReady(false),

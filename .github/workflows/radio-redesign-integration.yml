@@ -122,6 +122,8 @@ jobs:
           path: |
             field-test/smoke-*.txt
             field-test/keyboard-*.png
+            field-test/menu-*.txt
+            field-test/menu-*.png
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload standalone field-test APK and provenance

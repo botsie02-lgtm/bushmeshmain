@@ -30,6 +30,7 @@ export type RadioInboxProps = {
   online: boolean;
   radioLabel: string | null;
   restoring: boolean;
+  catalogueStatus?: 'loading' | 'ready' | 'error';
   historyIssue: string | null;
   unknownHistoryCount: number;
   search: string;
@@ -59,7 +60,7 @@ function clock(value: number | null) {
 }
 
 export function RadioInbox({
-  conversations, online, radioLabel, restoring, historyIssue,
+  conversations, online, radioLabel, restoring, historyIssue, catalogueStatus,
   unknownHistoryCount, search, onSearch, onOpen, onPin, onNewChat,
   onSettings, onReviewUnattributed, onOpenRowMenu, onOpenChatSettings, managed,
   visible = true, filter = 'all', onFilter, onRefresh, refreshing = false,
@@ -207,11 +208,15 @@ export function RadioInbox({
           <View style={styles.empty}>
             <Text style={styles.emptySymbol}>◎</Text>
             <Text style={styles.emptyTitle}>
-              {search ? 'No chats match your search'
+              {catalogueStatus === 'loading' ? 'Restoring saved chats…'
+                : catalogueStatus === 'error' ? 'Saved chats unavailable'
+                : search ? 'No chats match your search'
                 : online ? 'No configured channel chats' : 'No chats available offline'}
             </Text>
             <Text style={styles.emptyBody}>
-              {search ? 'Try a channel name or a safely attributed message preview.'
+              {catalogueStatus === 'loading' ? 'Reading the encrypted local catalogue.'
+                : catalogueStatus === 'error' ? 'Protected catalogue could not be read. Existing data is retained.'
+                : search ? 'Try a channel name or a safely attributed message preview.'
                 : managed ? 'Refresh the connected radio or use + to create or join. Unattributed history stays separate.'
                   : 'Create or join a MeshCore channel through your existing carrier tools. Radio History without ownership proof stays quarantined.'}
             </Text>

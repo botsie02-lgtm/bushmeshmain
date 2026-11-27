@@ -818,3 +818,25 @@ test('voice setup leaves multiline draft intact and hidden composer cannot cance
     expect(draftValue()).toBe('first line\nsecond line tap text');
   }finally{await act(async()=>{finishTest(finalHeld);f.resolve(finalHeld);await applicationVoice.cancel();});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
 });
+
+test('offline catalogue distinguishes hydration from an empty catalogue and exposes exact saved rows after load',async()=>{
+  connected=false;addr=null;
+  let resolve!:(state:Awaited<ReturnType<typeof chatPreferenceStore.loadState>>)=>void;
+  const pending=new Promise<Awaited<ReturnType<typeof chatPreferenceStore.loadState>>>(done=>{resolve=done;});
+  jest.spyOn(chatPreferenceStore,'loadState').mockReturnValue(pending);
+  await mount({enableChatManagement:true});
+  expect(viewText()).toContain('Restoring saved chats');
+  expect(viewText()).not.toContain('No chats available offline');
+  const chat=chatConfigs[0];
+  await act(async()=>{resolve({entries:{[chat.id]:{...defaultChatPreferences,configuration:chat,incarnation:1,retired:false}},sort:'recent'});});
+  expect(button('Chat options Public')).toBeDefined();
+  expect(viewText()).not.toContain('Restoring saved chats');
+  expect(verifiedSend).not.toHaveBeenCalled();
+});
+test('offline catalogue read failure is distinguished from a genuinely empty catalogue',async()=>{
+  connected=false;addr=null;
+  jest.spyOn(chatPreferenceStore,'loadState').mockRejectedValue(new Error('protected read failed'));
+  await mount({enableChatManagement:true});
+  expect(viewText()).toContain('Saved chats unavailable');
+  expect(viewText()).not.toContain('No chats available offline');
+});

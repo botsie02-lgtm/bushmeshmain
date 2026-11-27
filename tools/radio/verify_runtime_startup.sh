@@ -31,8 +31,49 @@ run_test() {
   grep -Eq 'OK \([1-9][0-9]* tests?\)' "$report" || return 1
   if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$report"; then return 1; fi
 }
-run_test RuntimeLifecycleDeniedTest
-run_test ConversationMenuUiTest
+overall=0
+: > "$out/smoke-stage-results.txt"
+record_stage() {
+  local name="$1" result="$2"
+  printf 'STAGE %s %s\n' "$name" "$result" | tee -a "$out/smoke-stage-results.txt"
+  if [ "$result" != passed ]; then overall=1; fi
+}
+independent_test() {
+  local class="$1" suffix="${2:-}"
+  local name="$class$suffix"
+  local result=0
+  adb shell am force-stop "$pkg" || result=1
+  if [ "$result" -eq 0 ]; then
+    run_test "$class" "$suffix" || result=1
+  fi
+  adb logcat -d -b crash > "$out/smoke-$name-crash.txt" || result=1
+  adb logcat -d -t 2000 > "$out/smoke-$name-logcat.txt" || result=1
+  if [ "$result" -eq 0 ]; then record_stage "$name" passed; else record_stage "$name" failed; fi
+  return "$result"
+}
+# Explicitly only the fresh isolated CI emulator may discard contaminated
+# synthetic fixtures. Never use this on a physical device or shared install.
+reset_synthetic_fixture() {
+  adb shell am force-stop "$pkg" &&
+    adb shell pm clear "$pkg" | grep -qx 'Success'
+}
+independent_test RuntimeLifecycleDeniedTest || overall=1
+menu_result=0
+adb shell "rm -f /sdcard/Android/data/$pkg/files/menu-*.txt /sdcard/Android/data/$pkg/files/menu-*.png" || menu_result=1
+independent_test ConversationMenuUiTest || menu_result=1
+for name in $(adb shell "ls /sdcard/Android/data/$pkg/files/menu-*.txt /sdcard/Android/data/$pkg/files/menu-*.png 2>/dev/null" | tr -d '\r'); do
+  adb pull "$name" "$out/" || menu_result=1
+done
+if ! grep -Fq 'FIXTURE_RESTORED_EXACT' "$out/menu-stages.txt"; then
+  menu_result=1
+  reset_synthetic_fixture || { record_stage menu-fixture-isolation failed; exit 1; }
+fi
+if [ "$menu_result" -eq 0 ]; then
+  for stage in drive-before-fixture fixture-written radio-selected catalogue-ready alpha-menu back-dismissed bravo-menu button-dismissed backdrop-dismissed bravo-details details-returned complete; do
+    test -s "$out/menu-$stage.txt" || menu_result=1
+  done
+fi
+if [ "$menu_result" -eq 0 ]; then record_stage menu-evidence passed; else record_stage menu-evidence failed; fi
 # Force a visible software IME even with the emulator's hardware keyboard.
 adb shell settings put secure show_ime_with_hard_keyboard 1
 # Three predetermined independent executions, not retry-until-pass.
@@ -52,7 +93,12 @@ for round in 1 2 3; do
   run_test RadioComposerKeyboardUiTest "-run-$round" || round_result=$?
   transitions="$out/smoke-keyboard-transitions-run-$round.txt"
   adb logcat -d -s BushMeshRadioIme:I BushMeshKeyboardTest:I ImeTracker:I InsetsController:D FrameTracker:W > "$transitions" || round_result=1
-  grep -Fq 'FIXTURE_RESTORED_EXACT' "$transitions" || round_result=1
+  if ! grep -Fq 'FIXTURE_RESTORED_EXACT' "$transitions"; then
+    round_result=1
+    fixture_contaminated=1
+  else
+    fixture_contaminated=0
+  fi
   grep -Fq 'KEY_EVENT_PROBE expected=' "$transitions" || round_result=1
   for screenshot in keyboard-closed.png keyboard-multiline.png keyboard-reopen-1.png keyboard-reopen-2.png keyboard-reopen-3.png keyboard-quick-message.png keyboard-final.png; do
     destination="$out/keyboard-run-$round-${screenshot#keyboard-}"
@@ -63,6 +109,9 @@ for round in 1 2 3; do
       cp "$destination" "$out/$screenshot"
     fi
   done
+  if [ "$fixture_contaminated" -eq 1 ]; then
+    reset_synthetic_fixture || { record_stage keyboard-fixture-isolation failed; exit 1; }
+  fi
   if [ "$round_result" -eq 0 ]; then
     keyboard_passes=$((keyboard_passes + 1))
     printf 'KEYBOARD_QUALIFICATION round=%s result=passed\n' "$round" | tee -a "$out/smoke-keyboard-qualification.txt"
@@ -74,46 +123,72 @@ done
 printf 'KEYBOARD_QUALIFICATION consecutive_required=3 passed=%s\n' "$keyboard_passes" | tee -a "$out/smoke-keyboard-qualification.txt"
 test "$keyboard_passes" -eq 3 || keyboard_result=1
 cat "$out"/smoke-keyboard-transitions-run-*.txt > "$out/smoke-keyboard-transitions.txt"
-run_test VoicePermissionDeniedTest
-grep -Fq 'modelInspectionNeverAcquiresMicrophoneOrRequestsCapture' "$out/smoke-VoicePermissionDeniedTest.txt"
-grep -Fq 'OK (2 tests)' "$out/smoke-VoicePermissionDeniedTest.txt"
-# Grants are only test-environment setup, after the ungranted smoke.
-adb shell pm grant "$pkg" android.permission.BLUETOOTH_CONNECT
-adb shell pm grant "$pkg" android.permission.ACCESS_FINE_LOCATION
-adb shell pm grant "$pkg" android.permission.RECORD_AUDIO
-adb shell svc bluetooth disable
-adb shell cmd location set-location-enabled true
-sleep 3
-run_test RuntimeLifecycleGrantedTest
-run_test VoiceSuspendedRecognitionTest
-run_test ProtectedChannelKeyWindowTest
-run_test ProtectedInvitationWindowTest
-run_test HistoryNativeStorageTest
-adb logcat -d -s BushMeshHistoryScale:I | tee "$out/smoke-native-history-scale.txt"
-for count in 1000 10000; do grep -Fq "RADIO_HISTORY_NATIVE_SCALE count=$count status=committed " "$out/smoke-native-history-scale.txt"; done
-grep -Fq "RADIO_HISTORY_NATIVE_SCALE count=50000 status=capacity_rejected " "$out/smoke-native-history-scale.txt"
-# Revocation can kill the app process on Android. Check the actual relaunch
-# and denied release paths rather than assuming an in-process callback.
-adb shell pm revoke "$pkg" android.permission.BLUETOOTH_CONNECT
-adb shell pm revoke "$pkg" android.permission.ACCESS_FINE_LOCATION
-adb shell pm revoke "$pkg" android.permission.RECORD_AUDIO
-adb shell am force-stop "$pkg"
-adb logcat -c
-adb shell am start -W -n "$pkg/com.bushmeshmain.MainActivity" | tee "$out/smoke-revoked-launch.txt"
-grep -q 'Status: ok' "$out/smoke-revoked-launch.txt"
-sleep 5
-pid="$(adb shell pidof "$pkg" | tr -d '\r')"
-test -n "$pid"
-sleep 25
-test "$(adb shell pidof "$pkg" | tr -d '\r')" = "$pid"
-adb logcat -d -b crash > "$out/smoke-revoked-crash.txt"
-if grep -Fq "$pkg" "$out/smoke-revoked-crash.txt"; then exit 1; fi
-run_test RuntimeLifecycleDeniedTest
-run_test VoicePermissionDeniedTest
-grep -Fq 'modelInspectionNeverAcquiresMicrophoneOrRequestsCapture' "$out/smoke-VoicePermissionDeniedTest.txt"
-grep -Fq 'OK (2 tests)' "$out/smoke-VoicePermissionDeniedTest.txt"
-if [ "$keyboard_result" -ne 0 ]; then
-  printf 'Keyboard qualification failed; subsequent native regression gates executed.\n' | tee "$out/smoke-result.txt"
-  exit "$keyboard_result"
+if [ "$keyboard_result" -eq 0 ]; then record_stage keyboard-three-rounds passed; else record_stage keyboard-three-rounds failed; fi
+voice_denied() {
+  local suffix="$1"
+  local result=0
+  independent_test VoicePermissionDeniedTest "$suffix" || result=1
+  grep -Fq 'modelInspectionNeverAcquiresMicrophoneOrRequestsCapture' "$out/smoke-VoicePermissionDeniedTest$suffix.txt" || result=1
+  grep -Fq 'OK (2 tests)' "$out/smoke-VoicePermissionDeniedTest$suffix.txt" || result=1
+  if [ "$result" -eq 0 ]; then record_stage "voice-model-inspection$suffix" passed; else record_stage "voice-model-inspection$suffix" failed; fi
+}
+voice_denied ""
+# Permission-dependent groups have explicit prerequisites. A failed grant
+# never permits a misleading successful test or a skip without failure.
+granted=0
+for permission in BLUETOOTH_CONNECT ACCESS_FINE_LOCATION RECORD_AUDIO; do
+  adb shell pm grant "$pkg" "android.permission.$permission" || granted=1
+done
+adb shell svc bluetooth disable || granted=1
+adb shell cmd location set-location-enabled true || granted=1
+if [ "$granted" -eq 0 ]; then
+  record_stage granted-setup passed
+  independent_test RuntimeLifecycleGrantedTest || overall=1
+  independent_test VoiceSuspendedRecognitionTest || overall=1
+else
+  record_stage granted-setup failed
+  record_stage RuntimeLifecycleGrantedTest blocked
+  record_stage VoiceSuspendedRecognitionTest blocked
 fi
-printf 'Fresh install and post-revocation launch survived; native lifecycle tests passed.\n' | tee "$out/smoke-result.txt"
+# These fixtures have no granted microphone/location prerequisite.
+independent_test ProtectedChannelKeyWindowTest || overall=1
+independent_test ProtectedInvitationWindowTest || overall=1
+independent_test HistoryNativeStorageTest || overall=1
+history_result=0
+adb logcat -d -s BushMeshHistoryScale:I | tee "$out/smoke-native-history-scale.txt" || history_result=1
+for count in 1000 10000; do grep -Fq "RADIO_HISTORY_NATIVE_SCALE count=$count status=committed " "$out/smoke-native-history-scale.txt" || history_result=1; done
+grep -Fq "RADIO_HISTORY_NATIVE_SCALE count=50000 status=capacity_rejected " "$out/smoke-native-history-scale.txt" || history_result=1
+if [ "$history_result" -eq 0 ]; then record_stage history-scale passed; else record_stage history-scale failed; fi
+revoked=0
+for permission in BLUETOOTH_CONNECT ACCESS_FINE_LOCATION RECORD_AUDIO; do
+  adb shell pm revoke "$pkg" "android.permission.$permission" || revoked=1
+done
+if [ "$revoked" -eq 0 ]; then
+  record_stage revoked-setup passed
+  adb shell am force-stop "$pkg"
+  adb logcat -d -b crash > "$out/smoke-before-revocation-crash.txt"
+  adb logcat -c
+  launch_result=0
+  adb shell am start -W -n "$pkg/com.bushmeshmain.MainActivity" | tee "$out/smoke-revoked-launch.txt" || launch_result=1
+  grep -q 'Status: ok' "$out/smoke-revoked-launch.txt" || launch_result=1
+  sleep 5
+  pid="$(adb shell pidof "$pkg" | tr -d '\r')" || launch_result=1
+  test -n "$pid" || launch_result=1
+  sleep 25
+  test "$(adb shell pidof "$pkg" | tr -d '\r')" = "$pid" || launch_result=1
+  adb logcat -d -b crash > "$out/smoke-revoked-crash.txt" || launch_result=1
+  if grep -Fq "$pkg" "$out/smoke-revoked-crash.txt"; then launch_result=1; fi
+  if [ "$launch_result" -eq 0 ]; then record_stage revoked-launch passed; else record_stage revoked-launch failed; fi
+  independent_test RuntimeLifecycleDeniedTest "-revoked" || overall=1
+  voice_denied "-revoked"
+else
+  record_stage revoked-setup failed
+  record_stage revoked-launch blocked
+  record_stage RuntimeLifecycleDeniedTest-revoked blocked
+  record_stage VoicePermissionDeniedTest-revoked blocked
+fi
+if [ "$overall" -ne 0 ]; then
+  printf 'Mandatory qualification failed; see per-stage evidence.\n' | tee "$out/smoke-result.txt"
+  exit 1
+fi
+printf 'All mandatory native stages and three keyboard rounds passed.\n' | tee "$out/smoke-result.txt"

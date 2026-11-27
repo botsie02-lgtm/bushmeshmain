@@ -849,6 +849,7 @@ function RadioMessenger({
       <RadioInbox
         conversations={conversations}
         managed={!!management}
+        catalogueStatus={management?.catalogueStatus}
         visible={tabVisible && !settingsVisible && !coveredBySettings}
         filter={archived ? 'archived' : filter}
         onFilter={next => {setArchived(next === 'archived'); setFilter(next === 'archived' ? 'all' : next);}}
