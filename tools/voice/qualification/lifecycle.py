@@ -52,6 +52,13 @@ class WakeLifecycleModel:
         return self.log(at_ms, "activate", self.phase == "armed", "explicit-request")
 
     def wake(self, at_ms: int) -> bool:
+        # Duplicate callbacks during an active listening lease must also be
+        # counted and suppressed, not silently scheduled as a second turn.
+        if (self.active and self.last_wake_at_ms is not None and
+                self.phase == "listening" and
+                0 <= at_ms - self.last_wake_at_ms < self.cooldown_ms):
+            self.duplicate_suppressed += 1
+            return self.log(at_ms, "wake", False, "duplicate-active-listen")
         if not self.active or self.phase != "armed" or not self.microphone_permission:
             return self.log(at_ms, "wake", False, "not-armed")
         if not self.radio_connected or self.conversation is None:
