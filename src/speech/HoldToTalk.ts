@@ -4,7 +4,7 @@ import type {
 } from '../native/NativeSpeechRecognition';
 
 export type HeldRecognitionAdapter = {
-  permission: () => Promise<boolean>;
+  permission: (stillHeld: () => boolean) => Promise<boolean>;
   recognize: (locale: string, requestId: string) => Promise<NativeSpeechRecognitionResult>;
   finish: (requestId: string, cancel: boolean) => Promise<boolean>;
   subscribePartial: (listener: (partial: HeldSpeechPartial) => void) => () => void;
@@ -18,6 +18,8 @@ type Turn = {
 };
 
 let sequence = 0;
+// Correlation only, not a security credential. Avoid ID reuse across JS reloads.
+const sessionPrefix = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
 
 /**
  * One press is one finite native turn. A release before permission completes
@@ -30,6 +32,10 @@ export class HoldToTalk {
 
   constructor(private readonly adapter: HeldRecognitionAdapter) {}
 
+  isActive(): boolean {
+    return this.current !== null;
+  }
+
   async press(
     locale = 'en-AU',
     onPartial?: (text: string) => void,
@@ -38,7 +44,7 @@ export class HoldToTalk {
       throw new Error('A held recognition turn is already active.');
     }
     const turn: Turn = {
-      id: 'held-' + (++sequence),
+      id: 'held-' + sessionPrefix + '-' + (++sequence),
       started: false,
       released: false,
       cancelled: false,
@@ -46,7 +52,9 @@ export class HoldToTalk {
     this.current = turn;
     let unsubscribe: (() => void) | undefined;
     try {
-      const permitted = await this.adapter.permission();
+      const permitted = await this.adapter.permission(() =>
+        this.current === turn && !turn.cancelled && !turn.released,
+      );
       if (turn.cancelled || turn.released || this.current !== turn) {
         return null;
       }
@@ -87,7 +95,15 @@ export class HoldToTalk {
       turn.cancelled = true;
       return true;
     }
-    return this.adapter.finish(turn.id, false);
+    try {
+      return await this.adapter.finish(turn.id, false);
+    } catch (error) {
+      // A bridge failure is not proof that stop reached the recognizer.
+      // Discard any late text and make one scoped cancellation attempt.
+      turn.cancelled = true;
+      await this.adapter.finish(turn.id, true).catch(() => false);
+      throw error;
+    }
   }
 
   async cancel(): Promise<boolean> {
