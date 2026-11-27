@@ -1,0 +1,60 @@
+name: Voice wake model V1 research
+on:
+  push:
+    branches: [feature/voice-wake-model-v1]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: voice-wake-model-v1-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  candidate:
+    if: github.ref == 'refs/heads/feature/voice-wake-model-v1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    defaults:
+      run:
+        working-directory: tools/voice/model
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install host-only dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y espeak-ng ffmpeg
+          python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+      - name: Regression tests
+        run: python -m unittest -v test_detector
+      - name: Synthesize independent research splits
+        run: python synthetic.py corpus
+      - name: Train and evaluate DS-CNN
+        run: python train.py corpus/manifest.json candidate-ds --architecture ds
+      - name: Train and evaluate temporal CNN
+        run: python train.py corpus/manifest.json candidate-temporal --architecture temporal
+      - name: Record provenance
+        if: always()
+        run: |
+          git rev-parse HEAD > commit.txt
+          python -m pip freeze > environment.txt
+          espeak-ng --version > synthesizer.txt
+          ffmpeg -version > ffmpeg.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wake-model-research-evidence
+          path: |
+            tools/voice/model/candidate-*/report.json
+            tools/voice/model/candidate-*/model.json
+            tools/voice/model/commit.txt
+            tools/voice/model/environment.txt
+            tools/voice/model/synthesizer.txt
+            tools/voice/model/ffmpeg.txt
+          if-no-files-found: error
