@@ -98,9 +98,16 @@ jobs:
             --adapter vosk --model "$RUNNER_TEMP/pinned-model/vosk-model-small-en-us-0.15" \
             --vosk-mode grammar --conditions clean,snr10 --seed 0x5101 \
             --report voice-acoustic-results/vosk-grammar-development.json
-      - name: Record model and development-manifest provenance only (no audio)
+      - name: Record model, generator versions and development provenance (no audio)
         if: always()
         run: |
+          mkdir -p voice-acoustic-results
+          {
+            python --version
+            espeak-ng --version | head -n 1 || true
+            ffmpeg -version | head -n 1 || true
+            python -m pip show vosk | grep -E '^(Name|Version):' || true
+          } > voice-acoustic-results/toolchain.txt
           cp "$RUNNER_TEMP/pinned-model/model-provenance.json" voice-acoustic-results/model-provenance.json 2>/dev/null || true
           cp "$RUNNER_TEMP/voice-development/manifest.json" voice-acoustic-results/development-manifest.json 2>/dev/null || true
           echo "${{ github.sha }}" > voice-acoustic-results/source-sha.txt
