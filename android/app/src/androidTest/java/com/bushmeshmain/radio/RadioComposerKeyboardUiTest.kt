@@ -12,6 +12,9 @@ import android.widget.EditText
 import java.io.File
 import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.KeyCharacterMap
+import android.view.inputmethod.EditorInfo
+import android.text.InputType
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.platform.app.InstrumentationRegistry
@@ -111,10 +114,55 @@ class RadioComposerKeyboardUiTest {
       trace("TIMEOUT $message")
       fail("$phase: $message")
     }
-    fun currentDraft(): String? {
-      val value = AtomicReference<String?>()
-      instrumentation.runOnMainSync { value.set((activity.currentFocus as? EditText)?.text?.toString()) }
-      return value.get()
+    data class DraftState(
+      val text: String?, val focused: Boolean, val focusClass: String?,
+      val focusTag: String?, val selectionStart: Int?, val selectionEnd: Int?,
+      val inputType: Int?, val sentenceCaps: Boolean
+    ) {
+      fun evidence(): String =
+        "observed=${text?.let { JSONObject.quote(it) } ?: "null"} " +
+          "focused=$focused focusClass=$focusClass focusTag=$focusTag " +
+          "selection=$selectionStart:$selectionEnd inputType=$inputType sentenceCaps=$sentenceCaps"
+    }
+    fun draftState(): DraftState {
+      val value = AtomicReference<DraftState>()
+      instrumentation.runOnMainSync {
+        val input = activity.window.decorView.findViewWithTag<EditText>("radio-ime-input")
+        val focus = activity.currentFocus
+        value.set(DraftState(input?.text?.toString(), input != null && focus === input && input.isFocused,
+          focus?.javaClass?.name, focus?.tag?.toString(), input?.selectionStart, input?.selectionEnd,
+          input?.inputType, ((input?.inputType ?: 0) and InputType.TYPE_TEXT_FLAG_CAP_SENTENCES) != 0))
+      }
+      return checkNotNull(value.get())
+    }
+    fun awaitDraft(message: String, expected: String) {
+      try {
+        awaitCondition(message) {
+          val observed = draftState()
+          observed.focused && observed.text == expected
+        }
+      } catch (error: AssertionError) {
+        val evidence = "expected=${JSONObject.quote(expected)} ${draftState().evidence()}"
+        trace("DRAFT_MISMATCH $evidence")
+        throw AssertionError("$phase: $message; $evidence", error)
+      }
+      trace("DRAFT_EXACT expected=${JSONObject.quote(expected)} ${draftState().evidence()}")
+    }
+    // Use the real focused RN editor's InputConnection instead of synthetic
+    // printable key events, which can invoke Android/IME capitalisation.
+    // No inputType, keyboard preference, JS draft, or production prop changes.
+    // The editor's normal text watchers still deliver changes to React.
+    fun commitLiteral(text: String, replaceAll: Boolean = false) {
+      instrumentation.runOnMainSync {
+        val input = checkNotNull(activity.window.decorView.findViewWithTag<EditText>("radio-ime-input"))
+        check(activity.currentFocus === input && input.isFocused) { "Literal input requires the focused composer" }
+        val connection = checkNotNull(input.onCreateInputConnection(EditorInfo())) { "No composer input connection" }
+        if (replaceAll) {
+          check(connection.setSelection(0, input.text.length)) { "Could not select synthetic probe text" }
+        }
+        check(connection.commitText(text, 1)) { "Composer refused literal text commit" }
+      }
+      instrumentation.waitForIdleSync()
     }
     fun screenshot(name: String) {
       val directory = context.getExternalFilesDir(null) ?: return
@@ -266,11 +314,41 @@ class RadioComposerKeyboardUiTest {
       phase = "alpha-initial-open"
       tap(inputLabel)
       awaitOpenGeometry(closedHistory, closedHeader)
-      phase = "alpha-multiline"
+      val alphaDraft = "first line\nsecond line"
+      val bravoDraft = "bravo"
+      phase = "alpha-key-event-probe"
+      awaitDraft("Alpha must start empty and focused", "")
+      // Reproduce the previous input path for evidence, not as an equality
+      // oracle. The provider is allowed to transform this disposable probe.
+      val keyEvents = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents("first line".toCharArray())
+      trace("KEY_EVENT_PROBE firstKey=${keyEvents?.firstOrNull()?.keyCode} firstMeta=${keyEvents?.firstOrNull()?.metaState} ${draftState().evidence()}")
       instrumentation.sendStringSync("first line")
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
       instrumentation.sendStringSync("second line")
-      awaitCondition("Multiline typing must remain in the focused draft") { currentDraft() == "first line\nsecond line" }
+      instrumentation.waitForIdleSync()
+      // Wait for the synthetic event stream to be delivered without accepting
+      // any particular case as a successful qualification result.
+      awaitCondition("Key-event diagnostic must reach focused editor") {
+        val observed = draftState()
+        observed.focused && !observed.text.isNullOrEmpty()
+      }
+      trace("KEY_EVENT_PROBE expected=${JSONObject.quote(alphaDraft)} ${draftState().evidence()}")
+      commitLiteral("", replaceAll = true)
+      awaitDraft("Disposable key-event probe must be cleared", "")
+      awaitOpenGeometry(closedHistory, closedHeader)
+      phase = "alpha-multiline"
+      commitLiteral("first line")
+      awaitDraft("First literal line must remain exact", "first line")
+      instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+      awaitDraft("Real Enter must insert a newline in the focused draft", "first line\n")
+      commitLiteral("second line")
+      awaitDraft("Multiline typing must remain in the focused draft", alphaDraft)
+      // Exercise a real deletion and literal reinsertion, not a full-draft
+      // overwrite that could conceal a broken newline or editing path.
+      instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL)
+      awaitDraft("Backspace must edit the final character only", alphaDraft.dropLast(1))
+      commitLiteral("e")
+      awaitDraft("Edited multiline draft must be exactly restored", alphaDraft)
       awaitOpenGeometry(closedHistory, closedHeader)
       screenshot("keyboard-multiline.png")
       phase = "alpha-first-close"
@@ -286,9 +364,9 @@ class RadioComposerKeyboardUiTest {
       phase = "bravo-open"
       tap(inputLabel)
       awaitOpenGeometry(bravoHistory, bravoHeader)
-      awaitCondition("Other conversation must start with its own empty draft") { currentDraft() == "" }
-      instrumentation.sendStringSync("bravo")
-      awaitCondition("Bravo draft must be editable") { currentDraft() == "bravo" }
+      awaitDraft("Other conversation must start with its own empty draft", "")
+      commitLiteral(bravoDraft)
+      awaitDraft("Bravo draft must be editable", bravoDraft)
       phase = "bravo-close"
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
       awaitClosedGeometry(bravoSend)
@@ -303,7 +381,7 @@ class RadioComposerKeyboardUiTest {
         phase = "alpha-reopen-${round + 1}"
         tap(inputLabel)
         awaitOpenGeometry(returnHistory, returnHeader)
-        awaitCondition("Alpha multiline draft must survive room switch and IME reopen") { currentDraft() == "first line\nsecond line" }
+        awaitDraft("Alpha multiline draft must survive room switch and IME reopen", alphaDraft)
         screenshot("keyboard-reopen-${round + 1}.png")
         phase = "alpha-reclose-${round + 1}"
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
@@ -312,25 +390,29 @@ class RadioComposerKeyboardUiTest {
       phase = "alpha-reopen-3"
       tap(inputLabel)
       awaitOpenGeometry(returnHistory, returnHeader)
+      awaitDraft("Alpha multiline draft must survive the third IME reopen", alphaDraft)
       screenshot("keyboard-reopen-3.png")
       phase = "alpha-quick-message"
       tap("Quick messages")
       tap("Ready to go.")
-      awaitCondition("Quick message must populate the draft") { currentDraft() == "Ready to go." }
+      awaitDraft("Quick message must populate the draft", "Ready to go.")
       awaitOpenGeometry(returnHistory, returnHeader)
       screenshot("keyboard-quick-message.png")
       phase = "alpha-final-close"
       instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
       awaitClosedGeometry(returnSend)
     } finally {
-      runCatching { trace("FINAL native=${nativeGeometry()} imeWindows=${imeWindows()}") }
+      runCatching { trace("FINAL native=${nativeGeometry()} imeWindows=${imeWindows()} ${draftState().evidence()}") }
       screenshot("keyboard-final.png")
       instrumentation.runOnMainSync { activity.finish() }
+      instrumentation.waitForIdleSync()
       // Restore only if the fixture actually wrote to the isolated store.
       if (fixtureSaved) {
         val store = checkNotNull(fixtureStore)
         val restored = original ?: "{\"version\":2,\"entries\":{},\"sort\":\"recent\"}"
         assertTrue("Protected catalogue restoration failed", nativeCall { store.saveChatPreferences(restored, it) } == true)
+        assertEquals("Protected catalogue restoration readback mismatch", restored, nativeCall { store.loadChatPreferences(it) })
+        trace("FIXTURE_RESTORED_EXACT")
       }
     }
   }

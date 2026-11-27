@@ -25,24 +25,55 @@ test "$(adb shell pidof "$pkg" | tr -d '\r')" = "$pid"
 adb logcat -d -b crash > "$out/smoke-fresh-crash.txt"
 if grep -Fq "$pkg" "$out/smoke-fresh-crash.txt"; then exit 1; fi
 run_test() {
-  local class="$1"
-  adb shell am instrument -w -r -e class "com.bushmeshmain.radio.$class" "$runner" | tee "$out/smoke-$class.txt" || return 1
-  grep -Eq 'OK \([1-9][0-9]* tests?\)' "$out/smoke-$class.txt" || return 1
-  if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$out/smoke-$class.txt"; then return 1; fi
+  local class="$1" suffix="${2:-}"
+  local report="$out/smoke-$class$suffix.txt"
+  adb shell am instrument -w -r -e class "com.bushmeshmain.radio.$class" "$runner" | tee "$report" || return 1
+  grep -Eq 'OK \([1-9][0-9]* tests?\)' "$report" || return 1
+  if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$report"; then return 1; fi
 }
 run_test RuntimeLifecycleDeniedTest
 run_test ConversationMenuUiTest
 # Force a visible software IME even with the emulator's hardware keyboard.
 adb shell settings put secure show_ime_with_hard_keyboard 1
+# Three predetermined independent executions, not retry-until-pass.
+# A fresh process and exact catalogue restoration isolate each execution.
+# Remove only synthetic screenshots, never app data or production preferences.
 keyboard_result=0
-run_test RadioComposerKeyboardUiTest || keyboard_result=$?
-adb logcat -d -s BushMeshRadioIme:I BushMeshKeyboardTest:I ImeTracker:I InsetsController:D FrameTracker:W > "$out/smoke-keyboard-transitions.txt" || true
-for screenshot in keyboard-closed.png keyboard-multiline.png keyboard-reopen-1.png keyboard-reopen-2.png keyboard-reopen-3.png keyboard-quick-message.png keyboard-final.png; do
-  if ! adb pull "/sdcard/Android/data/$pkg/files/$screenshot" "$out/$screenshot" || [ ! -s "$out/$screenshot" ]; then
-    printf 'Missing keyboard screenshot: %s\n' "$screenshot" >&2
+keyboard_passes=0
+adb shell settings get secure default_input_method | tee "$out/smoke-keyboard-input-method.txt"
+: > "$out/smoke-keyboard-qualification.txt"
+for round in 1 2 3; do
+  round_result=0
+  adb shell am force-stop "$pkg"
+  adb shell "rm -f /sdcard/Android/data/$pkg/files/keyboard-*.png"
+  # Scope each round's transition evidence; retain earlier crash logs.
+  adb logcat -d -b crash > "$out/smoke-keyboard-before-$round-crash.txt"
+  adb logcat -c
+  run_test RadioComposerKeyboardUiTest "-run-$round" || round_result=$?
+  transitions="$out/smoke-keyboard-transitions-run-$round.txt"
+  adb logcat -d -s BushMeshRadioIme:I BushMeshKeyboardTest:I ImeTracker:I InsetsController:D FrameTracker:W > "$transitions" || round_result=1
+  grep -Fq 'FIXTURE_RESTORED_EXACT' "$transitions" || round_result=1
+  grep -Fq 'KEY_EVENT_PROBE expected=' "$transitions" || round_result=1
+  for screenshot in keyboard-closed.png keyboard-multiline.png keyboard-reopen-1.png keyboard-reopen-2.png keyboard-reopen-3.png keyboard-quick-message.png keyboard-final.png; do
+    destination="$out/keyboard-run-$round-${screenshot#keyboard-}"
+    if ! adb pull "/sdcard/Android/data/$pkg/files/$screenshot" "$destination" || [ ! -s "$destination" ]; then
+      printf 'Missing keyboard screenshot in round %s: %s\n' "$round" "$screenshot" >&2
+      round_result=1
+    elif [ "$round" -eq 3 ]; then
+      cp "$destination" "$out/$screenshot"
+    fi
+  done
+  if [ "$round_result" -eq 0 ]; then
+    keyboard_passes=$((keyboard_passes + 1))
+    printf 'KEYBOARD_QUALIFICATION round=%s result=passed\n' "$round" | tee -a "$out/smoke-keyboard-qualification.txt"
+  else
     keyboard_result=1
+    printf 'KEYBOARD_QUALIFICATION round=%s result=failed\n' "$round" | tee -a "$out/smoke-keyboard-qualification.txt"
   fi
 done
+printf 'KEYBOARD_QUALIFICATION consecutive_required=3 passed=%s\n' "$keyboard_passes" | tee -a "$out/smoke-keyboard-qualification.txt"
+test "$keyboard_passes" -eq 3 || keyboard_result=1
+cat "$out"/smoke-keyboard-transitions-run-*.txt > "$out/smoke-keyboard-transitions.txt"
 run_test VoicePermissionDeniedTest
 grep -Fq 'modelInspectionNeverAcquiresMicrophoneOrRequestsCapture' "$out/smoke-VoicePermissionDeniedTest.txt"
 grep -Fq 'OK (2 tests)' "$out/smoke-VoicePermissionDeniedTest.txt"
