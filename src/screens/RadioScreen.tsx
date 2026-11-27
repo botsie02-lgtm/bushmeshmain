@@ -628,7 +628,7 @@ function RadioMessenger({
     const incoming = selectedMessages.filter(m => m.message.direction === 'received');
     return {key: JSON.stringify([key,epoch]), label: selectedScope.channelName, isCurrent: current,
       draft: () => voiceLive.current.draft, editDraft: value => {if(current()) voiceLive.current.updateDraft(value);},
-      send: chatFor(selectedScope) && canSubmit ? (text,guard) => voiceLive.current.submit(text,()=>current()&&guard()) : undefined,
+      send: chatFor(selectedScope) && canSubmit ? (text,guard) => voiceLive.current.submit(text,()=>current()&&AppState.currentState==='active'&&guard()) : undefined,
       latest: () => incoming[incoming.length-1]?.message.text ?? null,
       unread: () => {const index=incoming.findIndex(m=>m.message.id===unreadAnchor?.id);return index>=0?incoming.slice(index).map(m=>m.message.text):[];},
       quick: () => localPreference?.quickMessages ?? globalTemplates,
@@ -770,6 +770,8 @@ function RadioMessenger({
         <RadioChatRoom
           scope={selectedScope} messages={selectedMessages} initialSearch={searchRoom}
           voiceDestination={voiceDestination}
+          onToggleAutoRead={management && localId && localPreference ? () => management.updateLocal(localId,{autoRead: localPreference.autoRead===false},localIncarnation).catch(()=>postNotice(activeKey??'', 'Auto-read preference could not be saved.')) : undefined}
+          autoRead={localPreference?.autoRead!==false}
           connected={connected && radioId === selectedScope.radioId}
           visible={roomVisible}
           firstUnreadId={unreadAnchor?.key === activeKey ? unreadAnchor?.id : undefined}

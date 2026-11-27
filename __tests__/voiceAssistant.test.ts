@@ -46,3 +46,16 @@ test('location disclosure remains disabled; local GPS readings reject stale simu
  expect(localGpsReading('speed',fix,true,true,1100)).toContain('12 kilometres');
  for(const reading of [localGpsReading('speed',fix,false,true,1100),localGpsReading('speed',fix,true,false,1100),localGpsReading('speed',fix,true,true,999),localGpsReading('heading',fix,true,true,20000)])expect(reading).toContain('unavailable');
 });
+
+test('explicit single-use quick grant is exact, scoped and never applies to arbitrary dictation',async()=>{
+ const f=fixture([heard('send quick message'),heard('all clear')]);
+ expect(f.a.armQuickMessage(f.d,'All clear')).toBe(true);
+ await f.a.run('command',f.d);expect(f.send).toHaveBeenCalledTimes(1);expect(f.a.isQuickArmed(f.d.key)).toBe(false);
+ const g=fixture([heard('send message'),heard('arbitrary'),heard('no')]);expect(g.a.armQuickMessage(g.d,'All clear')).toBe(true);await g.a.run('command',g.d);expect(g.send).not.toHaveBeenCalled();
+ const h=fixture([heard('send quick message'),heard('all clear',.8),heard('no')]);expect(h.a.armQuickMessage(h.d,'All clear')).toBe(true);await h.a.run('command',h.d);expect(h.send).not.toHaveBeenCalled();
+});
+test('uncertain submission is never retried and spoken failure cannot convert acceptance into another send',async()=>{
+ const f=fixture([heard('send message'),heard('tree'),heard('yes')]);
+ f.send.mockResolvedValue('Radio acceptance uncertain. Do not resend automatically.');
+ await f.a.run('command',f.d);expect(f.send).toHaveBeenCalledTimes(1);expect(f.a.snapshot().detail).toContain('uncertain');
+});

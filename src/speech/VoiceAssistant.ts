@@ -41,13 +41,22 @@ export class VoiceAssistant {
  private last:{key:string;text:string}|null=null;
  private cancelling=false;
  private transmitting=false;
+ private quickGrant:{key:string;text:string}|null=null;
+ armQuickMessage(d:VoiceDestination,text:string):boolean {
+  if(this.active||!d.isCurrent()||!d.send||!validateCarrierText(text).valid||matchQuickMessage(text,d.quick())!==text)return false;
+  this.quickGrant={key:d.key,text};this.set({phase:'idle',detail:'One automatic quick message armed for '+d.label+'.'});return true;
+ }
+ disarmQuickMessage(){this.quickGrant=null;}
+ isQuickArmed(key:string){return this.quickGrant?.key===key;}
  constructor(private readonly adapter:VoiceAdapter){}
  snapshot=()=>this.state;
  subscribe=(listener:()=>void)=>{this.listeners.add(listener);return()=>{this.listeners.delete(listener);};};
  private set(state:VoiceState){this.state=state;this.listeners.forEach(f=>f());}
  private valid(token:number,d:VoiceDestination){return token===this.sequence&&d.isCurrent();}
  async cancel(suspended=false){
-  if(!this.active||this.cancelling)return;
+  this.disarmQuickMessage();
+  this.last=null;
+  if(!this.active||this.cancelling){if(!this.active)this.set({phase:suspended?'suspended':'idle',detail:''});return;}
   this.cancelling=true;
   ++this.sequence; this.set({phase:suspended?'suspended':'idle',detail:this.transmitting?'Further voice turns cancelled. Check the submission outcome in history.':suspended?'Voice session suspended.':'Cancelled.'});
   // Keep ownership until the native cancellation has completed.
@@ -59,6 +68,8 @@ export class VoiceAssistant {
  async run(mode:'dictation'|'command',d:VoiceDestination){
   if(this.active||!d.isCurrent())return;
   this.active=true;const token=++this.sequence;
+  const grant=this.quickGrant;
+  this.disarmQuickMessage(); // one explicit command invocation only
   const check=()=>{if(!this.valid(token,d))throw new Error('Voice destination changed.');};
   const listen=async(phase:VoiceState['phase'],detail:string)=>{check();this.set({phase,detail});const r=await this.adapter.recognize();check();if(!r.text.trim())throw new Error('No speech recognized.');return r;};
   const say=async(text:string)=>{check();this.set({phase:'speaking',detail:text});await this.adapter.speak(text);check();};
@@ -92,16 +103,19 @@ export class VoiceAssistant {
      const dictated=await listen('dictating','Listening for message…');
      text=command==='quick'?matchQuickMessage(dictated.text,d.quick())??'':dictated.text.trim();
      if(!text||!validateCarrierText(text).valid)throw new Error('Message unavailable or exceeds 133 UTF-8 bytes. Nothing sent.');
-     await say('Send to '+d.label+'? '+text+'. Say yes, no, cancel, or dictate again.');
-     const confirmation=await listen('confirming','Confirm sending to '+d.label);
-     const answer=normalize(confirmation.text);
-     const reliable=Number.isFinite(confirmation.confidence)&&confirmation.confidence>=0.8&&!confirmation.alternatives?.some(v=>normalize(v)!==answer);
-     if(reliable&&answer==='dictate again')continue;
-     if(!reliable||answer!=='yes'){this.set({phase:'idle',detail:'Not confirmed. Nothing sent.'});return;}
+     const auto=command==='quick'&&grant?.key===d.key&&grant.text===text&&dictated.confidence>=0.9&&result.confidence>=0.9&&!dictated.alternatives?.some(v=>matchQuickMessage(v,d.quick())!==text);
+     if(!auto){
+      await say('Send to '+d.label+'? '+text+'. Say yes, no, cancel, or dictate again.');
+      const confirmation=await listen('confirming','Confirm sending to '+d.label+' · '+text);
+      const answer=normalize(confirmation.text);
+      const reliable=Number.isFinite(confirmation.confidence)&&confirmation.confidence>=0.8&&!confirmation.alternatives?.some(v=>normalize(v)!==answer);
+      if(reliable&&answer==='dictate again')continue;
+      if(!reliable||answer!=='yes'){this.set({phase:'idle',detail:'Not confirmed. Nothing sent.'});return;}
+     }
      check();this.set({phase:'executing',detail:'Submitting verified message…'});
      this.transmitting=true;
      let outcome:string;
-     try{outcome=await d.send(text,()=>this.valid(token,d));}finally{this.transmitting=false;if(token!==this.sequence&&!this.cancelling)this.active=false;}
+     try{outcome=await d.send(text,()=>this.valid(token,d)&&(!auto||matchQuickMessage(text,d.quick())===text));}finally{this.transmitting=false;if(token!==this.sequence&&!this.cancelling)this.active=false;}
      if(this.valid(token,d)){this.set({phase:'speaking',detail:outcome});await this.adapter.speak(outcome);check();this.set({phase:'idle',detail:outcome});}
      return;
     }
@@ -110,6 +124,11 @@ export class VoiceAssistant {
    check();this.set({phase:'idle',detail:'Voice command finished.'});
   }catch(error){if(token===this.sequence)this.set({phase:'error',detail:error instanceof Error?error.message:'Voice command failed.'});}
   finally{if(token===this.sequence)this.active=false;}
+ }
+ async readSelection(kind:'unread'|'repeat',d:VoiceDestination){
+  const values=kind==='unread'?d.unread().slice(0,10):this.last?.key===d.key?[this.last.text]:[];
+  if(!values.length){this.set({phase:'idle',detail:'No messages available.'});return;}
+  await this.readText(values.join('. Next message. '),d);
  }
  async readText(text:string,d:VoiceDestination){
   if(this.active||!d.isCurrent()||!text.trim())return;

@@ -20,6 +20,8 @@ import {
 export type RadioChatRoomProps = {
   scope: RadioConversationScope;
   voiceDestination?: VoiceDestination;
+  onToggleAutoRead?:()=>void;
+  autoRead?:boolean;
   initialSearch?: boolean;
   visible?: boolean;
   firstUnreadId?: string;
@@ -101,7 +103,7 @@ function Bubble({entry}: {entry: ScopedMessage}) {
 /** Chat is a UI projection only. It never changes the transport carrier,
  * the operational convoy, secure membership, or Bluetooth owner. */
 export function RadioChatRoom({
-  scope, voiceDestination, messages, connected, canSubmit, reason, draft, isSubmitting,
+  scope, voiceDestination, onToggleAutoRead, autoRead, messages, connected, canSubmit, reason, draft, isSubmitting,
   notice, onDraft, onSend, onBack, onOpenSettings, onOpenMenu, pinned,
   onTogglePinned, personalisation, displayName, persistentPin, visible = true,
   starredIds, pinnedIds, onMessagePreference, quickMessages, onSaveQuickMessages, observedCount = 0, onReviewObserved, initialSearch = false, firstUnreadId, onForwardMessage,
@@ -191,6 +193,8 @@ export function RadioChatRoom({
             style={styles.menuButton}>
             <Text style={styles.menuText}>{pinned ? 'Unpin' : 'Pin'}{persistentPin ? ' chat' : ' for this session'}</Text>
           </TouchableOpacity>
+          {voiceDestination&&<><TouchableOpacity accessibilityRole="button" accessibilityLabel="Read unread messages" style={styles.menuButton} onPress={()=>{setMenuOpen(false);applicationVoice.readSelection('unread',voiceDestination).catch(()=>undefined);}}><Text style={styles.menuText}>Read unread messages</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Repeat spoken message" style={styles.menuButton} onPress={()=>{setMenuOpen(false);applicationVoice.readSelection('repeat',voiceDestination).catch(()=>undefined);}}><Text style={styles.menuText}>Repeat last readback</Text></TouchableOpacity></>}
+          {onToggleAutoRead&&<TouchableOpacity accessibilityRole="button" accessibilityLabel="Toggle conversation auto-read" style={styles.menuButton} onPress={()=>{setMenuOpen(false);onToggleAutoRead();}}><Text style={styles.menuText}>{autoRead?'Mute conversation auto-read':'Enable conversation auto-read'}</Text></TouchableOpacity>}
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Search chat history" onPress={() => {setSearching(true); setMenuOpen(false);}} style={styles.menuButton}><Text style={styles.menuText}>Search messages</Text></TouchableOpacity>
           {onMessagePreference && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Filter important messages" onPress={() => {setMessageFilter(v => v === 'all' ? 'starred' : v === 'starred' ? 'pinned' : 'all'); setMenuOpen(false);}} style={styles.menuButton}><Text style={styles.menuText}>Show {messageFilter === 'all' ? 'starred' : messageFilter === 'starred' ? 'pinned' : 'all'} messages</Text></TouchableOpacity>}
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close room options"

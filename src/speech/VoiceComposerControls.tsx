@@ -1,5 +1,5 @@
 import React,{useEffect,useSyncExternalStore} from 'react';
-import {StyleSheet,Text,TouchableOpacity,View} from 'react-native';
+import {Alert,StyleSheet,Text,TouchableOpacity,View} from 'react-native';
 import {applicationVoice} from './applicationVoice';
 import {nativeSpeechRecognition} from '../native/NativeSpeechRecognition';
 import {nativeSpeech} from '../native/NativeSpeech';
@@ -9,6 +9,7 @@ export function VoiceComposerControls({destination,visible,disabled}:{destinatio
  const state=useSyncExternalStore(applicationVoice.subscribe,applicationVoice.snapshot);
  const active=!['idle','error','suspended'].includes(state.phase);
  const key=destination.key;
+ const armed=applicationVoice.isQuickArmed(key);
  useEffect(()=>()=>{applicationVoice.cancel(true).catch(()=>undefined);},[key]);
  useEffect(()=>{if(!visible&&state.phase!=='permission')applicationVoice.cancel(true).catch(()=>undefined);},[visible,state.phase]);
  if(!visible||(!nativeSpeechRecognition.isSupported()&&!nativeSpeech.isSupported()))return null;
@@ -19,7 +20,13 @@ export function VoiceComposerControls({destination,visible,disabled}:{destinatio
    {nativeSpeechRecognition.isSupported()&&action('Voice command','Command',()=>{applicationVoice.run('command',destination).catch(()=>undefined);},disabled||active)}
    {nativeSpeech.isSupported()&&action('Read latest message','🔊 Read',()=>{const text=destination.latest();if(text)applicationVoice.readText(text,destination).catch(()=>undefined);},active||!destination.latest())}
    {nativeSpeech.isSupported()&&action('Stop ordinary speech','Stop',()=>{nativeSpeech.stopOrdinary().catch(()=>undefined);})}
+   {destination.send&&!active&&nativeSpeechRecognition.isSupported()&&action('Voice quick send policy',armed?'Disarm quick send':'Quick send policy',()=>{
+     if(armed){applicationVoice.cancel().catch(()=>undefined);return;}
+     const choices=destination.quick().slice(0,2);
+     Alert.alert('One-command quick send','Choose one saved phrase to transmit without another spoken yes on the next voice command only. Destination: '+destination.label+'. Ordinary dictation and all other sends still require confirmation.',[{text:'Cancel',style:'cancel'},...choices.map(text=>({text,onPress:()=>{applicationVoice.armQuickMessage(destination,text);}}))]);
+   })}
   </View>
+  {armed&&<Text style={styles.detail}>One-command quick send armed · this chat only</Text>}
   {active||state.detail?<Text accessibilityLiveRegion="polite" style={styles.detail}>{state.detail}{state.transcript?' · '+state.transcript:''}</Text>:null}
   {active&&<View style={styles.row}>{['listening','dictating','confirming'].includes(state.phase)&&action('Finish recognition','Finish',()=>{applicationVoice.stopListening().catch(()=>undefined);})}{action('Cancel voice session','Cancel',()=>{applicationVoice.cancel().catch(()=>undefined);})}</View>}
  </View>;

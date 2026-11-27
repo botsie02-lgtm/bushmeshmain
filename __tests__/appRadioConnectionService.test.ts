@@ -413,6 +413,16 @@ describe('AppRadioConnectionService', () => {
       await service.dispose();
     });
 
+    it('voice confirmation guard is rechecked after the durable journal and exact radio readback',async()=>{
+      const {service,radio,client}=await chatHarness();
+      try{const chat=await service.provisionChat(radio,{name:'Camp'});let valid=true;
+        await expect(service.sendVerifiedChat(chat,'one attempt',async()=>{valid=false;},()=>valid)).rejects.toMatchObject({code:'stale'});
+        expect(client.sendChannelMessage).not.toHaveBeenCalled();
+        await expect(service.sendVerifiedChat(chat,'storage failure',async()=>{throw Error('storage failed');},()=>true)).rejects.toMatchObject({code:'stale'});
+        expect(client.sendChannelMessage).not.toHaveBeenCalled();
+      }finally{await service.dispose();}
+    });
+
     it('invalidates live observation during a disconnect, and never auto-retries a failed send', async () => {
       const {service, radio, client} = await chatHarness();
       const chat = await service.provisionChat(radio, {name: 'Camp'});
