@@ -173,3 +173,52 @@ Before shipping hands-free:
    No measurements are invented. Native code changes only; zero new bundled
    model bytes/dependency packages. Do not approve operational background capture
    or physical reliability until this evidence exists.
+
+
+## 6. Android 16 lifecycle instrumentation repair
+
+Previous specialist head: `75192cf514b5f98cad11608dd635d50c824ad231`.
+Workflow `45923884974`, Android job `140260732634`: debug and JVM tests,
+release and instrumentation compilation, and permission-denied instrumentation
+passed. Suspended recognition failed at VoiceLifecycleTest.kt:80
+(expected BUSHMESH_STT_PERMISSION, actual BUSHMESH_STT_RECOGNITION).
+The ordinary recognition assertion at line 78 preceded the failed held turn,
+so the synthetic suspension initially worked but did not remain effective.
+The old fixture registered an isolated module before waiting for actual
+activity/React resume and manually invoked onHostPause without pausing the
+Activity. Registration-time or real host-resume callbacks could arrive later
+and blindly set the cached resumed flag true. The old log does not record the
+exact callback order: this is a plausible race, not proof that the OS activity
+was actually suspended or that acoustic capture occurred. The integration
+base 626fc26e09a07a8b1b90429009adcd6aa082c5ba has the same shadow-state and
+manual-pause fixture defect; report to Master Coordination for integration,
+do not modify that branch.
+
+Repair: current React lifecycle must be RESUMED and its current MainActivity
+must independently be resumed, not finishing or destroyed. MainActivity tracks
+foreground epoch on the main looper; each turn binds to the admitted activity
+and epoch. Read live state for both command and held admission, immediately
+before startListening, callbacks/results and the finite eligibility watchdog.
+Lifecycle callbacks reconcile state synchronously on main; off-main callbacks
+read live state on execution, never overwrite it. A late resume cannot
+authorize a suspended activity and a late pause cannot invalidate the live
+foreground status. Real activity transitions invalidate any previously admitted
+epoch; module invalidation still cancels explicitly. No automatic restart.
+Metadata counters count successful microphone claims and actual startListening
+invocations, not sound, and contain no user content.
+
+The revised instrumentation waits for actual activity monitor stage and React
+context readiness, registers on main, backgrounds with moveTaskToBack, resumes
+the task, repeats suspension, and finishes the activity. It injects stale resume
+while suspended and stale pause while foreground. Both recognition entrypoints
+must reject permission and leave claims/start counters at zero; an engine error
+is not accepted as evidence of no start. No recorded audio is needed.
+
+Preserved exact-baseline measurement from the failed workflow, which completed
+its APK comparison independently after the instrumentation failure:
+- Base 626fc26e09a07a8b1b90429009adcd6aa082c5ba: 55,125,062 bytes.
+- Feature 75192cf514b5f98cad11608dd635d50c824ad231: 55,151,038 bytes.
+- Increase: 25,976 bytes.
+These values describe the previous SHA, not the lifecycle repair. Re-measure
+the repaired APK in the new specialist run. No additional model or dependency
+was added.
