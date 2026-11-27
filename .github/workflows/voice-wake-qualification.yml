@@ -1,0 +1,55 @@
+name: Offline wake audio qualification (evaluation only)
+
+on:
+  push:
+    branches:
+      - feature/voice-handsfree-native-v1
+    paths:
+      - 'tools/voice/qualify_wake_audio.py'
+      - '.github/workflows/voice-wake-qualification.yml'
+      - 'android/app/src/wakeEvaluationAndroidTest/**'
+      - 'android/app/build.gradle'
+      - 'docs/VOICE_WAKE_QUALIFICATION.md'
+  workflow_dispatch:
+
+concurrency:
+  group: wake-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-audio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install evaluation-only runtime and acoustic fixture tools
+        run: |
+          python -m pip install vosk==0.3.45
+          sudo apt-get update -qq
+          sudo apt-get install -y espeak-ng ffmpeg
+      - name: Provision exact licensed candidate model
+        run: python tools/voice/qualify_wake_audio.py provision "$RUNNER_TEMP/wake"
+      - name: Generate positive and hard-negative PCM fixtures
+        run: python tools/voice/qualify_wake_audio.py generate wake-evidence/fixtures
+      - name: Actual offline streaming recognition (network namespace isolated)
+        run: |
+          PYTHON="$(command -v python)"
+          sudo unshare --net -- "$PYTHON" tools/voice/qualify_wake_audio.py evaluate \
+            "$RUNNER_TEMP/wake/vosk-model-small-en-us-0.15" \
+            wake-evidence/fixtures wake-evidence/host-results.json
+      - name: Record provenance and publish evaluation results
+        if: always()
+        run: |
+          mkdir -p wake-evidence
+          cp "$RUNNER_TEMP/wake/model-provenance.json" wake-evidence/ 2>/dev/null || true
+          printf '%s\n' "$GITHUB_SHA" > wake-evidence/source-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wake-host-evaluation-${{ github.sha }}
+          path: wake-evidence/
+          if-no-files-found: error
+          retention-days: 14
