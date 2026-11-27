@@ -8,8 +8,7 @@ import {useRadioImeLayout} from './useRadioImeLayout';
 import {radioMessageClipboard} from '../../native/SensitiveClipboard';
 import {DictationButton, DictationFeedback, DictationRecordingControls, useDictation} from '../../speech/VoiceComposerControls';
 import {nativeSpeech} from '../../native/NativeSpeech';
-import type {VoiceDestination} from '../../speech/VoiceAssistant';
-import {applicationVoice} from '../../speech/applicationVoice';
+import {applicationVoice, type RadioSpeechDestination} from '../../speech/applicationVoice';
 import {QuickMessageEditor} from '../../radio/chatManagement/QuickMessageEditor';
 import {ChatAvatar} from '../../radio/chatManagement/ChatAvatar';
 import type {ChatPersonalisation} from '../../radio/chatManagement/chatPreferences';
@@ -21,7 +20,7 @@ import {
 
 export type RadioChatRoomProps = {
   scope: RadioConversationScope;
-  voiceDestination?: VoiceDestination;
+  voiceDestination?: RadioSpeechDestination;
   onToggleAutoRead?:()=>void;
   autoRead?:boolean;
   initialSearch?: boolean;
@@ -156,8 +155,8 @@ export function RadioChatRoom({
   useEffect(() => {
     const key = voiceDestination?.key;
     if (!key) return;
-    if (!visible) applicationVoice.cancelDestination(key, true).catch(() => undefined);
-    return () => {applicationVoice.cancelDestination(key, true).catch(() => undefined);};
+    if (!visible) applicationVoice.cancelDestination(key).catch(() => undefined);
+    return () => {applicationVoice.cancelDestination(key).catch(() => undefined);};
   }, [voiceDestination?.key, visible]);
 
   const onListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {

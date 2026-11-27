@@ -700,12 +700,25 @@ test('X cancellation preserves original multiline draft and discards late recogn
   const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
   const f=dictationFixture();
   try{
-    await mount({enableChatManagement:true});await room('Private');await draft('Keep\\nthis');
+    await mount({enableChatManagement:true});await room('Private');await draft('Keep\nthis');
     await press('Dictate message');await press('Cancel dictation');
     expect(f.finish).toHaveBeenCalledWith(f.recognize.mock.calls[0][1],true);
     await act(async()=>{f.resolve(finalHeld);});
-    expect(draftValue()).toBe('Keep\\nthis');expect(verifiedSend).not.toHaveBeenCalled();
+    expect(draftValue()).toBe('Keep\nthis');expect(verifiedSend).not.toHaveBeenCalled();
   }finally{await act(async()=>{f.resolve(finalHeld);});Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
+});
+test('permission denial keeps draft and never starts recognition',async()=>{
+  const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const f=dictationFixture();
+  jest.spyOn(PermissionsAndroid,'check').mockResolvedValue(false);
+  jest.spyOn(PermissionsAndroid,'request').mockResolvedValue(PermissionsAndroid.RESULTS.DENIED);
+  try{
+    await mount({enableChatManagement:true});await room('Private');await draft('Keep');
+    await press('Dictate message');
+    expect(viewText()).toContain('Microphone permission denied');
+    expect(draftValue()).toBe('Keep');
+    expect(f.recognize).not.toHaveBeenCalled();expect(verifiedSend).not.toHaveBeenCalled();
+  }finally{Object.defineProperty(Platform,'OS',{configurable:true,value:os});}
 });
 test('dictation cancels on hidden tab and discards late final text',async()=>{
   const os=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
@@ -768,7 +781,7 @@ test('quick message selection fills a draft rather than transmitting it', async 
 });
 
 /** Real room and readiness panel under the same retained navigation/provider
- * lifetime as AppShell. No mock of VoiceAssistant or the voice composer. */
+ * lifetime as AppShell. No mock of the dictation composer. */
 function VoiceSetupFixture() {
   const [settings, setSettings] = React.useState(false);
   const open = () => {Keyboard.dismiss(); setSettings(true);};

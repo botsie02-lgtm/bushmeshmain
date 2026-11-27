@@ -45,13 +45,13 @@ export function VoiceReadinessPanel() {
   const [modelStatus, setModelStatus] = useState<OfflineLanguageInventory['status']>('unknown');
   const [feedback, setFeedback] = useState('');
   const [testTranscript, setTestTranscript] = useState('');
-  const localTestKey = useRef('speech-settings-test-' + ++nextSetupRequest);
+  const [localTestKey] = useState(() => 'speech-settings-test-' + ++nextSetupRequest);
   const localTranscript = useRef(testTranscript);
   localTranscript.current = testTranscript;
   const downloadRequest = useRef<string | null>(null);
   const lifecycle = useRef({generation: 0, mounted: false, busy: false});
   const test = useDictation({
-    key: localTestKey.current, isCurrent: () => lifecycle.current.mounted,
+    key: localTestKey, isCurrent: () => lifecycle.current.mounted,
     draft: () => localTranscript.current, editDraft: setTestTranscript,
   }, true, busy);
 

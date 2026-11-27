@@ -1,71 +1,56 @@
-import {AppState, PermissionsAndroid,Platform} from 'react-native';
-import {nativeSpeechRecognition} from '../native/NativeSpeechRecognition';
+import {AppState} from 'react-native';
 import {nativeSpeech} from '../native/NativeSpeech';
-import {VoiceAssistant} from './VoiceAssistant';
-import {HoldToTalk} from './HoldToTalk';
+import type {DictationDestination} from './VoiceComposerControls';
 
-let recognitionLocale='en-AU';
-// Separate held-text adapter for the composer integration worker. Neither
-// activation nor completion calls VoiceDestination.send.
-export const applicationHoldToTalk = new HoldToTalk({
-  permission: async stillHeld => {
-    if (!stillHeld()) return false;
-    if (Platform.OS !== 'android' || !nativeSpeechRecognition.supportsHeldRecognition() ||
-        !(await nativeSpeechRecognition.getStatus()).supported) {
-      if (!stillHeld()) return false;
-      throw new Error('On-device recognizer unavailable. Open Voice assistant readiness.');
-    }
-    if (!stillHeld()) return false;
-    const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
-    const granted = await PermissionsAndroid.check(permission);
-    if (!stillHeld()) {
-      return false;
-    }
-    return granted ||
-      await PermissionsAndroid.request(permission) === PermissionsAndroid.RESULTS.GRANTED;
-  },
-  recognize: (locale, requestId) => nativeSpeechRecognition.recognizeHeld(locale, requestId),
-  finish: (requestId, cancel) => nativeSpeechRecognition.finishHeld(requestId, cancel),
-  subscribePartial: listener => nativeSpeechRecognition.subscribeHeldPartial(listener),
-});
+export type RadioSpeechDestination = DictationDestination & {
+  latest: () => string | null;
+  unread: () => readonly string[];
+};
 
-export const applicationVoice=new VoiceAssistant({
- permission:async()=>{
-  if(Platform.OS!=='android'||!nativeSpeechRecognition.isSupported()||!(await nativeSpeechRecognition.getStatus()).supported)throw new Error('On-device recognizer unavailable. Open Voice assistant readiness.');
-  // Finish all asynchronous settings work before the controller rechecks
-  // its token and issues the synchronous native recognition request.
-  recognitionLocale=(await nativeSpeech.getStatus()).recognitionLocale??'en-AU';
-  const p=PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
-  return await PermissionsAndroid.check(p)||await PermissionsAndroid.request(p)===PermissionsAndroid.RESULTS.GRANTED;
- },
- recognize:async onPhase=>{
-  const unsubscribe=nativeSpeechRecognition.subscribeSessionState(status=>{
-   if(status.microphoneOwner==='command'&&status.phase&&status.phase!=='idle')onPhase?.(status.phase);
-  });
-  try{return await nativeSpeechRecognition.recognizeOnce(recognitionLocale);}
-  finally{unsubscribe();}
- },
- cancel:()=>nativeSpeechRecognition.cancel(),
- stopListening:()=>nativeSpeechRecognition.stopListening(),
- speak:async text=>{if(!await nativeSpeech.speakOrdinaryAndWait(text))throw new Error('Offline speech unavailable.');},
- stopSpeech:()=>nativeSpeech.stopOrdinary(),
-}, {
- press: async (partial, phase, eligible) => {
-  const unsubscribe = nativeSpeechRecognition.subscribeSessionState(status => {
-   if (status.microphoneOwner === 'hold-to-talk' && (status.phase === 'listening' || status.phase === 'finishing')) phase(status.phase);
-  });
+// Read-aloud only. Retire the application command/hold-to-talk adapters,
+// without changing the shared native finite recognition or TTS APIs.
+let active: {key: string} | null = null;
+let last: {key: string; text: string} | null = null;
+let cancelling = false;
+
+async function readText(text: string, destination: RadioSpeechDestination) {
+  if (active || cancelling || !destination.isCurrent() || AppState.currentState !== 'active' || !text.trim()) return;
+  const token = {key: destination.key};
+  active = token;
   try {
-   return await applicationHoldToTalk.press(async () => (await nativeSpeech.getStatus()).recognitionLocale ?? 'en-AU', partial, eligible);
-  } finally {unsubscribe();}
- },
- release: () => applicationHoldToTalk.release(),
- cancel: () => applicationHoldToTalk.cancel(),
-});
+    if (await nativeSpeech.speakOrdinaryAndWait(text) && active === token && !cancelling && destination.isCurrent()) {
+      last = {key: destination.key, text};
+    }
+  } finally {
+    if (active === token) active = null;
+  }
+}
 
-// Permission dialogs may transition through inactive; native recognition
-// checks actual host lifecycle before starting. Background always cancels.
+async function cancelDestination(key: string) {
+  if (last?.key === key) last = null;
+  if (active?.key !== key || cancelling) return;
+  const token = active;
+  cancelling = true;
+  try {await nativeSpeech.stopOrdinary();}
+  finally {
+    if (active === token) active = null;
+    cancelling = false;
+  }
+}
+
+export const applicationVoice = {
+  readText,
+  async readSelection(kind: 'unread' | 'repeat', destination: RadioSpeechDestination) {
+    const values = kind === 'unread' ? destination.unread().slice(0, 10) :
+      last?.key === destination.key ? [last.text] : [];
+    if (values.length) await readText(values.join('. Next message. '), destination);
+  },
+  cancelDestination,
+};
+
 AppState.addEventListener('change', state => {
   if (state === 'background') {
-    applicationVoice.cancel(true).catch(() => undefined);
+    last = null;
+    if (active) cancelDestination(active.key).catch(() => undefined);
   }
 });

@@ -24,7 +24,7 @@ import {
 } from './radioMessenger/messengerModel';
 import {RadioInbox} from './radioMessenger/RadioInbox';
 import {RadioChatRoom} from './radioMessenger/RadioChatRoom';
-import type {VoiceDestination} from '../speech/VoiceAssistant';
+import type {RadioSpeechDestination} from '../speech/applicationVoice';
 import {RadioTechnicalDrawer} from './radioMessenger/RadioTechnicalDrawer';
 import {buildConversationExport} from '../radio/chatManagement/conversationExport';
 import {nativeFileExport} from '../native/NativeFileExport';
@@ -618,15 +618,14 @@ function RadioMessenger({
   // readback selection; no spoken command, GPS or transmission port exists.
   const voiceLive = useRef({key: activeKey, epoch: management?.sessionEpoch, radioId, connected, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, updateDraft});
   voiceLive.current = {key: activeKey, epoch: management?.sessionEpoch, radioId, connected, ready: tabVisible && !settingsVisible && appState !== 'background' && !managementSelection && !showUnattributed && !showDiagnostics && !settingsOpen && !showNew && !forwardingMessage, draft: activeDraft, updateDraft};
-  const voiceDestination: VoiceDestination | undefined = selectedScope && activeKey && management ? (() => {
+  const voiceDestination: RadioSpeechDestination | undefined = selectedScope && activeKey && management ? (() => {
     const key = activeKey; const epoch = management.sessionEpoch;
     const current = () => voiceLive.current.key === key && voiceLive.current.epoch === epoch && voiceLive.current.radioId === radioId && voiceLive.current.connected === connected && voiceLive.current.ready && radioConnection.getChatSessionEpoch() === epoch;
     const incoming = selectedMessages.filter(m => m.message.direction === 'received');
-    return {key: JSON.stringify([key,epoch,radioId,connected]), label: selectedScope.channelName, isCurrent: current,
+    return {key: JSON.stringify([key,epoch,radioId,connected]), isCurrent: current,
       draft: () => voiceLive.current.draft, editDraft: value => {if(current()) voiceLive.current.updateDraft(value);},
       latest: () => incoming[incoming.length-1]?.message.text ?? null,
-      unread: () => {const index=incoming.findIndex(m=>m.message.id===unreadAnchor?.id);return index>=0?incoming.slice(index).map(m=>m.message.text):[];},
-      quick: () => [], radio: () => ''};
+      unread: () => {const index=incoming.findIndex(m=>m.message.id===unreadAnchor?.id);return index>=0?incoming.slice(index).map(m=>m.message.text):[];}};
   })() : undefined;
 
   const openSettings = () => {

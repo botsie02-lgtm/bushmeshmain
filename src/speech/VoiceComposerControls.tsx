@@ -91,7 +91,11 @@ export function useDictation(destination: DictationDestination | undefined, visi
       if (!granted && await PermissionsAndroid.request(permission) !== PermissionsAndroid.RESULTS.GRANTED) {
         throw new Error('Microphone permission denied. Enable it in app settings.');
       }
-      if (!current(t) || AppState.currentState !== 'active') return;
+      if (!current(t)) return;
+      if (AppState.currentState !== 'active' || !live.current.visible) {
+        fail(t, 'Return to the conversation and tap the microphone again.');
+        return;
+      }
       t.phase = 'starting';
       setState({...idle, phase: 'starting', detail: 'Starting offline recognition…'});
       unsubscribeState = nativeSpeechRecognition.subscribeSessionState(status => {
@@ -194,12 +198,13 @@ export function DictationFeedback({dictation}: {dictation: Dictation}) {
         if (navigation?.openVoiceReadiness) navigation.openVoiceReadiness();
         else Alert.alert('Offline speech-to-text', 'Open Radio messaging settings, select an installed offline language and test recognition.',
           navigation ? [{text:'Cancel', style:'cancel'}, {text:'Open settings', onPress:navigation.openMessagingSettings}] : [{text:'OK'}]);
-      }} style={styles.button}><Text style={styles.detail}>Speech-to-text setup</Text></TouchableOpacity>}
+      }} style={styles.setup}><Text style={styles.detail}>Speech-to-text setup</Text></TouchableOpacity>}
   </View>;
 }
 
 const styles = StyleSheet.create({
   button: {width: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center'},
+  setup: {minHeight: 48, alignSelf: 'flex-start', justifyContent: 'center', paddingHorizontal: 8},
   disabled: {opacity: .35}, symbol: {color: colors.accent, fontSize: 27, fontWeight: '700'},
   micIcon: {width: 24, height: 29, alignItems: 'center', justifyContent: 'center'},
   micCapsule: {width: 10, height: 17, borderRadius: 5, backgroundColor: colors.accent, position: 'absolute', top: 1},
