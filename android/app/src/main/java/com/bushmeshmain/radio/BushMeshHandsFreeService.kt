@@ -43,7 +43,7 @@ internal object HandsFreeRuntime {
   fun permission(context: Context) =
     context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
   fun notifications(context: Context): Boolean {
-    val manager = context.getSystemService(NotificationManager::class.java)
+    val manager = requireNotNull(context.getSystemService(NotificationManager::class.java))
     return manager.areNotificationsEnabled() &&
       (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
       (Build.VERSION.SDK_INT < 26 || manager.getNotificationChannel(BushMeshHandsFreeService.CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE)
@@ -86,10 +86,15 @@ internal object HandsFreeRuntime {
   fun consume(id: String): WakeActivation? {
     if (service != null) return null
     val grant = gate.consume(id) ?: return null
-    val activity = grant.activity.get() ?: return null
-    return grant.takeIf { activity.voiceForegroundResumed && activity.voiceForegroundEpoch == grant.epoch &&
+    val activity = grant.activity.get()
+    val admitted = activity != null && activity.voiceForegroundResumed && activity.voiceForegroundEpoch == grant.epoch &&
       !activity.isFinishing && !activity.isDestroyed && grant.foreground() && permission(activity) &&
-      notifications(activity) && runCatching { grant.modelReady() }.getOrDefault(false) }
+      notifications(activity) && runCatching { grant.modelReady() }.getOrDefault(false)
+    if (!admitted) {
+      runCatching { grant.changed(WakeSnapshot(grant.id, WakePhase.STOPPED, WakeReason.FOREGROUND_REQUIRED, 0, false, null, false, 0, 0)) }
+      return null
+    }
+    return grant
   }
 
   fun attach(instance: BushMeshHandsFreeService, grant: WakeActivation) {
@@ -103,7 +108,11 @@ internal object HandsFreeRuntime {
   fun starting(owner: Any): Boolean = gate.peek()?.owner === owner
   fun stop(owner: Any, reason: WakeReason): Boolean {
     var stopped = false
-    if (gate.peek()?.owner === owner) { gate.clear(); stopped = true }
+    val pending = gate.peek()
+    if (pending?.owner === owner) {
+      gate.clear(); stopped = true
+      runCatching { pending.changed(WakeSnapshot(pending.id, WakePhase.STOPPED, reason, 0, false, null, false, 0, 0)) }
+    }
     if (active?.owner === owner) { service?.stopSession(reason); stopped = true }
     return stopped
   }
@@ -142,8 +151,8 @@ class BushMeshHandsFreeService : Service() {
 
   override fun onCreate() {
     super.onCreate()
-    audio = getSystemService(AudioManager::class.java)
-    manager = getSystemService(NotificationManager::class.java)
+    audio = requireNotNull(getSystemService(AudioManager::class.java))
+    manager = requireNotNull(getSystemService(NotificationManager::class.java))
   }
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -261,6 +270,7 @@ class BushMeshHandsFreeService : Service() {
   }
   override fun onTaskRemoved(rootIntent: Intent?) { stopSession(WakeReason.STOP_REQUESTED); super.onTaskRemoved(rootIntent) }
   override fun onDestroy() {
+    stopping = true
     main.removeCallbacks(watchdog)
     session?.stop(WakeReason.SERVICE_DESTROYED)
     if (promoted) stopForeground(STOP_FOREGROUND_REMOVE)

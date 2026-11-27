@@ -19,7 +19,23 @@ export type NativeHandsFreeStatus = {
   offlineModelReady: boolean;
   backgroundCaptureSupported: boolean;
   reason: string | null;
+  phase?: 'idle' | 'starting' | 'listening' | 'suspended' | 'handover' | 'stopped';
+  sessionId?: string | null;
+  handoverId?: string | null;
+  handoverClaimed?: boolean;
+  captureActive?: boolean;
+  captureGeneration?: number;
+  captureStarts?: number;
+  acceptedWakes?: number;
+  modelId?: string | null;
+  foreground?: boolean;
+  permissionGranted?: boolean;
+  backgroundCommandSupported?: boolean;
+  microphoneOwner?: 'command' | 'hold-to-talk' | 'wake-detector' | null;
+  playbackActive?: boolean;
 };
+
+export type HandsFreeHandover = {sessionId: string; handoverId: string};
 
 export type HeldSpeechPartial = {requestId: string; text: string};
 
@@ -41,6 +57,9 @@ type NativeSpeechRecognitionModule = {
   getHandsFreeStatus?: () => Promise<NativeHandsFreeStatus>;
   activateHandsFree?: () => Promise<NativeHandsFreeStatus>;
   deactivateHandsFree?: () => Promise<boolean>;
+  claimHandsFreeHandover?: (sessionId: string, handoverId: string) => Promise<boolean>;
+  completeHandsFreeHandover?: (sessionId: string, handoverId: string) => Promise<boolean>;
+  recognizeHandsFreeOnce?: (sessionId: string, handoverId: string, localeTag: string | null) => Promise<NativeSpeechRecognitionResult>;
   stopListening: () => Promise<boolean>;
   cancel: () => Promise<boolean>;
 };
@@ -131,6 +150,31 @@ export const nativeSpeechRecognition = {
   async deactivateHandsFree(): Promise<boolean> {
     return this.isSupported() && module?.deactivateHandsFree
       ? module.deactivateHandsFree() : false;
+  },
+
+  subscribeHandsFreeSession(listener: (status: NativeHandsFreeStatus) => void): () => void {
+    if (!this.isSupported() || !module?.claimHandsFreeHandover) {
+      return () => undefined;
+    }
+    const subscription = DeviceEventEmitter.addListener('BushMeshHandsFreeSessionState', listener);
+    return () => subscription.remove();
+  },
+
+  async claimHandsFreeHandover(key: HandsFreeHandover): Promise<boolean> {
+    return this.isSupported() && module?.claimHandsFreeHandover
+      ? module.claimHandsFreeHandover(key.sessionId, key.handoverId) : false;
+  },
+
+  async completeHandsFreeHandover(key: HandsFreeHandover): Promise<boolean> {
+    return this.isSupported() && module?.completeHandsFreeHandover
+      ? module.completeHandsFreeHandover(key.sessionId, key.handoverId) : false;
+  },
+
+  async recognizeHandsFreeOnce(key: HandsFreeHandover, localeTag = 'en-AU'): Promise<NativeSpeechRecognitionResult> {
+    if (!this.isSupported() || !module?.recognizeHandsFreeOnce) {
+      throw new Error('Scoped hands-free recognition unavailable.');
+    }
+    return module.recognizeHandsFreeOnce(key.sessionId, key.handoverId, localeTag);
   },
 
   async stopListening(): Promise<boolean> {

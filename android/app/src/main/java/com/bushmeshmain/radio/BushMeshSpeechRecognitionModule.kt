@@ -44,6 +44,8 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   private var cancelProbe: (() -> Unit)? = null
   private var admittedActivity: MainActivity? = null
   private var admittedEpoch = -1L
+  private var admittedHandover: WakeHandover? = null
+  private var lastWakeReason: String? = null
   private var microphoneClaims = 0L
   private var startListeningRequests = 0L
   init { context.addLifecycleEventListener(this) }
@@ -140,7 +142,8 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   private fun eligibleTurn(): Boolean {
     val activity = foregroundActivity() ?: return false
     return hasPermission() && activity === admittedActivity &&
-      activity.voiceForegroundEpoch == admittedEpoch
+      activity.voiceForegroundEpoch == admittedEpoch &&
+      (admittedHandover?.let { HandsFreeRuntime.owns(this, it) } ?: true)
   }
 
   private fun watchEligibility(turn: Long) {
@@ -180,6 +183,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
     heldTurn = null
     admittedActivity = null
     admittedEpoch = -1L
+    admittedHandover = null
     audioDevices?.let { runCatching { audio.unregisterAudioDeviceCallback(it) } }; audioDevices = null
     val previous = engine; engine = null
     runCatching { previous?.cancel() }
@@ -207,8 +211,15 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
     recognize(localeTag, requestId, promise)
   }
 
-  private fun recognize(localeTag: String?, requestId: String?, promise: Promise) {
+  private fun recognize(localeTag: String?, requestId: String?, promise: Promise, handover: WakeHandover? = null) {
     main.post {
+      if (handover != null && !HandsFreeRuntime.owns(this, handover)) {
+        promise.reject("BUSHMESH_WAKE_STALE", "Hands-free command handover expired."); return@post
+      }
+      // Only preempt the wake owner for an eligible explicit finite turn.
+      if (pending == null && probe == null && foregroundActivity() != null && hasPermission() && !callActive()) {
+        VoiceAudioOwnership.yieldWakeForAudio()
+      }
       if (pending != null || probe != null || VoiceAudioOwnership.microphoneBusy || VoiceAudioOwnership.speaking) {
         promise.reject("BUSHMESH_STT_BUSY", "Microphone or speech output is busy."); return@post
       }
@@ -221,6 +232,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
       }
       admittedActivity = activity
       admittedEpoch = activity.voiceForegroundEpoch
+      admittedHandover = handover
       pending = promise
       lastFailure = null
       phase = "starting"
@@ -341,27 +353,103 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   @ReactMethod fun addListener(eventName: String) = Unit
   @ReactMethod fun removeListeners(count: Double) = Unit
 
-  @ReactMethod fun getHandsFreeStatus(promise: Promise) {
-    main.post {
-      promise.resolve(Arguments.createMap().apply {
-        putBoolean("available", false)
-        putBoolean("active", false)
-        putBoolean("offlineModelReady", false)
-        putBoolean("backgroundCaptureSupported", false)
-        putString("reason", "offline-wake-engine-not-provisioned")
+  private fun wakeStatus(state: WakeSnapshot? = HandsFreeRuntime.snapshot(this)): WritableMap {
+    val provider = QualifiedWakeDetector.provider
+    val ready = provider != null && runCatching { provider.isModelReady() }.getOrDefault(false)
+    val starting = HandsFreeRuntime.starting(this)
+    val active = state != null && state.phase != WakePhase.STOPPED
+    return Arguments.createMap().apply {
+      putBoolean("available", !invalidated && Build.VERSION.SDK_INT >= 31 && ready)
+      putBoolean("active", active)
+      putBoolean("offlineModelReady", ready)
+      // This implementation intentionally retains foreground-only command
+      // admission, so wake capture is also suspended when backgrounded.
+      putBoolean("backgroundCaptureSupported", false)
+      putBoolean("backgroundCommandSupported", false)
+      putBoolean("captureActive", state?.captureActive == true)
+      putBoolean("foreground", foregroundActivity() != null)
+      putBoolean("permissionGranted", hasPermission())
+      putString("sessionId", state?.sessionId)
+      putString("phase", state?.phase?.name?.lowercase() ?: if (starting) "starting" else "idle")
+      putDouble("captureGeneration", state?.captureGeneration?.toDouble() ?: 0.0)
+      putDouble("captureStarts", state?.captureStarts?.toDouble() ?: 0.0)
+      putDouble("acceptedWakes", state?.acceptedWakes?.toDouble() ?: 0.0)
+      putString("handoverId", state?.handover?.sequence?.toString())
+      putBoolean("handoverClaimed", state?.handoverClaimed == true)
+      putString("microphoneOwner", when (VoiceAudioOwnership.microphone.owner) {
+        VoiceMicrophoneOwnership.Kind.COMMAND -> "command"
+        VoiceMicrophoneOwnership.Kind.HOLD_TO_TALK -> "hold-to-talk"
+        VoiceMicrophoneOwnership.Kind.WAKE_DETECTOR -> "wake-detector"
+        null -> null
+      })
+      putBoolean("playbackActive", VoiceAudioOwnership.speaking)
+      putString("modelId", provider?.modelId)
+      putString("reason", when {
+        provider == null -> "offline-wake-engine-not-provisioned"
+        !ready -> "offline-wake-model-unavailable"
+        state != null && state.reason != WakeReason.NONE -> state.reason.name.lowercase()
+        else -> lastWakeReason
       })
     }
   }
 
+  private fun onWakeState(state: WakeSnapshot) {
+    lastWakeReason = state.reason.takeUnless { it == WakeReason.NONE }?.name?.lowercase()
+    // Stop, background, timeout and completion invalidate only the scoped
+    // hands-free turn. An unrelated manual command retains its own lease.
+    if (pending != null && admittedHandover != null && !eligibleTurn()) {
+      fail("SUSPENDED", "Hands-free handover ended.")
+    }
+    if (!invalidated && context.hasActiveReactInstance()) runCatching {
+      context.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit("BushMeshHandsFreeSessionState", wakeStatus(state))
+    }
+  }
+
+  @ReactMethod fun getHandsFreeStatus(promise: Promise) {
+    main.post { promise.resolve(wakeStatus()) }
+  }
+
   @ReactMethod fun activateHandsFree(promise: Promise) {
-    // No approved, installed detector exists. Never start a service or
-    // substitute repeated SpeechRecognizer turns for actual wake detection.
-    promise.reject("BUSHMESH_WAKE_UNAVAILABLE", "An approved offline wake detector is not provisioned.")
+    main.post {
+      val provider = QualifiedWakeDetector.provider
+      if (provider == null || !runCatching { provider.isModelReady() }.getOrDefault(false)) {
+        promise.reject("BUSHMESH_WAKE_UNAVAILABLE", "An approved offline wake detector is not provisioned."); return@post
+      }
+      val activity = foregroundActivity()
+      if (activity == null || !hasPermission() || !HandsFreeRuntime.notifications(context)) {
+        promise.reject("BUSHMESH_WAKE_PERMISSION", "Visible activity, microphone permission and enabled notifications required."); return@post
+      }
+      lastWakeReason = null
+      if (!HandsFreeRuntime.request(activity, this, { foregroundActivity() != null }, ::onWakeState)) {
+        promise.reject("BUSHMESH_WAKE_START_FAILED", "Hands-free service could not start."); return@post
+      }
+      // Request accepted, not proof of active microphone. Observe subsequent
+      // service state, including failed promotion, before displaying listening.
+      promise.resolve(wakeStatus())
+    }
   }
 
   @ReactMethod fun deactivateHandsFree(promise: Promise) {
-    // No session can be active in this build; do not cancel an unrelated turn.
-    promise.resolve(false)
+    main.post { promise.resolve(HandsFreeRuntime.stop(this, WakeReason.STOP_REQUESTED)) }
+  }
+
+  private fun handoverKey(sessionId: String, handoverId: String): WakeHandover? {
+    if (sessionId.length != 36 || handoverId.length > 19) return null
+    val seq = handoverId.toLongOrNull()?.takeIf { it > 0 } ?: return null
+    return WakeHandover(sessionId, seq)
+  }
+
+  @ReactMethod fun claimHandsFreeHandover(sessionId: String, handoverId: String, promise: Promise) {
+    main.post { promise.resolve(handoverKey(sessionId, handoverId)?.let { HandsFreeRuntime.claim(this, it) } ?: false) }
+  }
+  @ReactMethod fun completeHandsFreeHandover(sessionId: String, handoverId: String, promise: Promise) {
+    main.post { promise.resolve(handoverKey(sessionId, handoverId)?.let { HandsFreeRuntime.complete(this, it) } ?: false) }
+  }
+  @ReactMethod fun recognizeHandsFreeOnce(sessionId: String, handoverId: String, localeTag: String?, promise: Promise) {
+    val key = handoverKey(sessionId, handoverId)
+    if (key == null) { promise.reject("BUSHMESH_WAKE_STALE", "Invalid hands-free handover."); return }
+    recognize(localeTag, null, promise, key)
   }
 
   @ReactMethod fun stopListening(promise: Promise) {
@@ -384,6 +472,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
   }
 
   private fun reconcileLifecycle() = onMain {
+    HandsFreeRuntime.reconcile(this)
     if (foregroundActivity() == null) cancelProbe?.invoke()
     if (pending != null && !eligibleTurn()) fail("SUSPENDED", "Recognition suspended.")
     publishStatus()
@@ -397,6 +486,7 @@ class BushMeshSpeechRecognitionModule(private val context: ReactApplicationConte
     invalidated = true
     context.removeLifecycleEventListener(this)
     onMain {
+      HandsFreeRuntime.stop(this, WakeReason.INVALIDATED)
       cancelProbe?.invoke()
       fail("SUSPENDED", "Recognition module closed.")
     }

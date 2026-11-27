@@ -51,7 +51,7 @@ internal class AndroidWakeCapture(
       focus = request
       if (audio.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
         event(WakeCaptureEvent.Failed(WakeReason.FOCUS_LOST))
-        workerDone = true; workerReserved.set(false); return
+        workerReserved.set(false); workerDone = true; return
       }
       val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
       check(min in 1..131072)
@@ -111,13 +111,13 @@ internal class AndroidWakeCapture(
           detector.set(null)
           val closed = runCatching { engine?.close() }.isSuccess
           // If close fails, fail closed: do not permit another detector worker.
-          workerDone = closed
           if (closed) workerReserved.set(false)
-          else event(WakeCaptureEvent.Failed(WakeReason.DETECTOR_FAILED))
+          workerDone = closed
+          if (!closed) event(WakeCaptureEvent.Failed(WakeReason.DETECTOR_FAILED))
         }
       }, "BushMeshWakePcm").apply { isDaemon = true }.start()
     } catch (error: Exception) {
-      workerDone = true; workerReserved.set(false)
+      workerReserved.set(false); workerDone = true
       throw error
     }
   }
