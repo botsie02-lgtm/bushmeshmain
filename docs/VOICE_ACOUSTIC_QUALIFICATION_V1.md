@@ -114,7 +114,7 @@ The results are descriptive. Host RSS, Python CPU, wall time, and synthesized PC
 
 Manifest schema: `bushmesh-wake-qualification-manifest-v1`. Each clip declares immutable `id`, filename (simple relative .wav), `label`, `category`, pseudonymous `speaker_id` or null only for non-human non-speech, `session_id`, `recording_source_id`, `source_family_id`, SHA-256 hex, actual WAV byte/frame count, positive-only onset/endpoint milliseconds, and a strict provenance block: kind, license, source, consent ID, permission to evaluate and redistribution permission. Fixture ingest and validation accept **mono signed 16-bit PCM, 16,000 Hz only**; reject wrong encodings, truncated content, symlinks/traversal, SHA/byte/frame mismatch, missing consent, mislabeled positives, and incomplete category coverage when requested.
 
-Partitions: `training`, `tuning`, `acceptance`, and synthetic `development`. Cross-partition validation rejects overlap in **speaker, recording session, recording source, source family and exact SHA-256 audio bytes**, not merely duplicated filenames. Synthetic audio is prohibited from the held-out **acceptance** partition. Actual acceptance evaluation refuses to run unless both training and tuning manifests are supplied for the leakage audit. It never trains a model or chooses an operating threshold; a trained detector must be frozen first. After an acceptance failure, fix architecture/hyperparameters on separate development and tuning data and create a genuinely new acceptance collection rather than cycling thresholds on the same holdout.
+Partitions: `training`, `tuning`, `acceptance`, and synthetic `development`. Cross-partition validation rejects overlap in **speaker, recording session, recording source, source family and exact SHA-256 audio bytes**, not merely duplicated filenames. Synthetic audio is prohibited from the held-out **acceptance** partition. Actual acceptance evaluation refuses to run unless both training and tuning manifests are supplied for the leakage audit, a non-no-op detector is selected, and `--detector-id` plus the real frozen model artifact `--detector-sha256` are provided. The report records SHA-256 digests of the acceptance, training and tuning manifests as evidence of the exact audited partitions. It never trains a model or chooses an operating threshold; a trained detector must be frozen first. After an acceptance failure, fix architecture/hyperparameters on separate development and tuning data and create a genuinely new acceptance collection rather than cycling thresholds on the same holdout.
 
 A positive source must be a *real participant saying the entire phrase in a natural way*, not a text label, fake sinusoid, machine prompt, or phrase carved from a model's training samples. Human recordings are **not in the repository**. The optional ingestion command requires explicit locally maintained consent documentation, separate speaker/recording/session IDs, recording rights, and `--confirm-consent`:
 
@@ -130,6 +130,24 @@ python -m tools.voice.qualification.cli ingest-consented \
 ```
 
 This interface records an *operator attestation*, not independently verified legal consent. Keep original written consent securely offline, pseudonymise files and IDs, use privacy-preserving locations, and honour withdrawal. Never commit/upload raw audio, precise coordinates, raw transcripts, private keys, app message history, third-party broadcasts or actual acceptance recordings. The GitHub workflow uploads only **synthetic development manifest**, exact host generator/runtime versions, pinned model provenance, summarized scores and test-only synthetic lifecycle event traces, no WAV.
+
+For a *future, independently approved and frozen* model submission,
+evaluate private held-out acceptance **once** with all three manifests
+and an externally supplied genuine model digest, for example:
+
+```bash
+python -m tools.voice.qualification.cli evaluate \
+  --manifest /private/acceptance-locked/manifest.json \
+  --training-manifest /private/train/manifest.json \
+  --tuning-manifest /private/tune/manifest.json \
+  --adapter external --adapter-command '/path/to/reviewed-offline-detector --model /path/to/frozen-model' \
+  --detector-id reviewed-build-001 --detector-sha256 ACTUAL_64_LOWERCASE_HEX_SHA256 \
+  --conditions clean,snr10 --report /private/evidence/heldout-once.json
+```
+
+The SHA placeholder is intentionally not a real model identifier; a false,
+missing or non-hex digest is rejected. Store this report privately and do not
+give per-utterance acceptance errors back to the training worker for tuning.
 
 Run the cross-partition audit:
 
